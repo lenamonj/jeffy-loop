@@ -15,89 +15,14 @@ Jeffy Loop is an autonomous improvement loop for Claude Code that works on your 
 
 Run `/jeffy 10` in any project and walk away. Jeffy audits every quality dimension that applies, writes a backlog where every task carries a runnable acceptance check, then burns through it - one task per iteration, each one verified, each one checkpointed. When it finishes, it tells you exactly what changed, what it couldn't do, and what needs your decision.
 
-```mermaid
-%%{init: {"flowchart": {"subGraphTitleMargin": {"top": 6, "bottom": 14}}, "themeVariables": {"edgeLabelBackground": "#F1F5F9", "textColor": "#334155", "nodeTextColor": "#1F2937", "lineColor": "#64748B"}}}%%
-flowchart TD
-    subgraph LAUNCH ["<b>LAUNCH</b> - the /jeffy skill, runs once"]
-        USER(["You run  /jeffy 10<br/>an iteration budget, and optionally a focus"])
-        PRE["Pre-flight, then bootstrap<br/>engine installed, no rival loop, tree clean;<br/>PLAN.md, BACKLOG.md, JOURNAL.md<br/>created from templates if missing"]
-        WRITE["Write the loop state file<br/>owner session, iteration 1 of N, the promise<br/>phrase - then start iteration 1 directly"]
-        USER --> PRE --> WRITE
-    end
-
-    subgraph WORK ["<b>THE ITERATION</b> - one unit of verified work per turn"]
-        LOAD["Load context fresh<br/>PLAN.md and BACKLOG.md in full, the last<br/>3 journal entries; salvage any interrupted<br/>work into a commit before touching anything"]
-        OPEN{"Open tasks in<br/>the backlog?"}
-        AUDIT["Audit the project<br/>every applicable dimension, judged against<br/>the operating envelope in PLAN.md; each finding<br/>gets evidence, a severity, an acceptance check"]
-        CLEAN{"Zero High, zero Medium,<br/>nothing left open?"}
-        EXEC["Execute exactly one task<br/>the top unblocked item, never a batch;<br/>run its acceptance check,<br/>3 fix attempts, then mark it blocked"]
-        GATE{"Repo verify command<br/>still green?"}
-        REVERT["Revert to the last checkpoint<br/>an iteration that breaks the project<br/>does not survive; task marked blocked"]
-        RECORD["Record and checkpoint<br/>journal entry, lessons promoted into PLAN.md,<br/>ledger updated, then commit<br/>jeffy: iter i/N - local only, never pushed"]
-        PROMISE["Declare convergence<br/>run report, then the promise phrase<br/>JEFFY CONVERGED"]
-
-        LOAD --> OPEN
-        OPEN -->|"backlog empty"| AUDIT --> CLEAN
-        CLEAN -->|"findings filed, worst first"| RECORD
-        CLEAN -->|"yes - done means done"| PROMISE
-        OPEN -->|"tasks waiting"| EXEC --> GATE
-        GATE -->|"green"| RECORD
-        GATE -->|"newly broken"| REVERT --> RECORD
-    end
-    WRITE --> WORK
-
-    subgraph ENGINE ["<b>THE ENGINE</b> - a Stop hook at every turn end"]
-        PROM{"Promise phrase in the<br/>last assistant message?"}
-        BUDGET{"Iterations left?"}
-        REFEED["Block the stop and re-feed<br/>the iteration prompt, with any<br/>focus directive appended"]
-        PROM -->|"no"| BUDGET
-        BUDGET -->|"yes"| REFEED
-    end
-
-    RECORD -->|"turn ends"| ENGINE
-    PROMISE --> ENGINE
-    REFEED -->|"iteration i+1, context intact"| LOAD
-
-    REPORT["Run report<br/>iterations spent, tasks closed with severities,<br/>the diffstat, blocked items, decisions waiting on you;<br/>JOURNAL.md and git log hold the full record"]
-
-    PROM -->|"yes - converged"| REPORT
-    BUDGET -->|"no - budget spent"| REPORT
-    RECORD -->|"stalled twice, or<br/>needs your decision"| REPORT
-
-    subgraph FILES ["<b>THE CONTROL PLANE</b> - files, not vibes"]
-        SF[("jeffy-loop.local.md<br/>transient loop state, written at launch:<br/>owner session, iteration i of N;<br/>deleted when the run ends")]
-        MEM[("PLAN.md, BACKLOG.md, JOURNAL.md<br/>persistent memory between runs:<br/>envelope and lessons, task ledger,<br/>append-only record")]
-        GIT[("git checkpoints<br/>one jeffy: commit per iteration,<br/>the revert and recovery unit")]
-    end
-
-    REFEED -. "iteration + 1" .-> SF
-    RECORD -. "writes" .-> MEM
-    RECORD -. "commits" .-> GIT
-    REVERT -. "restores" .-> GIT
-
-    classDef entry fill:#BAE6FD,stroke:#0EA5E9,color:#0C4A6E
-    classDef launch fill:#E0F2FE,stroke:#0EA5E9,color:#0C4A6E
-    classDef work fill:#FBE9E0,stroke:#D97757,color:#7C2D12
-    classDef engine fill:#EDE9FE,stroke:#8B5CF6,color:#4C1D95
-    classDef file fill:#FEF9C3,stroke:#CA8A04,color:#713F12
-    classDef good fill:#DCFCE7,stroke:#22C55E,color:#14532D
-
-    class USER entry
-    class PRE,WRITE launch
-    class LOAD,OPEN,AUDIT,CLEAN,EXEC,GATE,REVERT,RECORD work
-    class PROM,BUDGET,REFEED engine
-    class SF,MEM,GIT file
-    class REPORT,PROMISE good
-
-    style LAUNCH fill:#F0F9FF,stroke:#0EA5E9,stroke-width:2px,color:#0C4A6E
-    style WORK fill:#FFF8F4,stroke:#D97757,stroke-width:2px,color:#7C2D12
-    style ENGINE fill:#F5F3FF,stroke:#8B5CF6,stroke-width:2px,color:#4C1D95
-    style FILES fill:#FEFCE8,stroke:#CA8A04,stroke-width:2px,stroke-dasharray:4 4,color:#713F12
-```
-
 <div align="center">
 
-<sub>How one command becomes a run. Solid arrows are control flow; dashed arrows are the file reads and writes that steer it. Outside a run the Stop hook exits instantly - no live state file, no behavior - and <code>/cancel-jeffy</code> ends a run at any time.</sub>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/flowchart-dark.png">
+  <img src="media/flowchart-light.png" alt="Flowchart of a /jeffy run: the launch skill bootstraps the state files, each iteration audits or executes one verified task and checkpoints it, and the Stop hook re-feeds the loop until convergence, budget end, or a blocker - all steered by three files and the git log." width="830">
+</picture>
+
+<sub>How one command becomes a run. Solid arrows are control flow; dashed arrows are the file reads and writes that steer it. Outside a run the Stop hook exits instantly - no live state file, no behavior - and <code>/cancel-jeffy</code> ends a run at any time. Diagram source: <a href="media/flowchart.mmd"><code>media/flowchart.mmd</code></a>.</sub>
 
 </div>
 
