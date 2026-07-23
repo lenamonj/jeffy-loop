@@ -1,0 +1,29 @@
+name: Feature or envelope proposal
+description: Propose a change to what Jeffy does or is allowed to do
+labels: [proposal]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Changes that widen the loop's autonomous authority carry the highest review bar - Jeffy's value is its discipline. Proposals that add discipline, evidence, or auditability are the easiest yes.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What real situation does today's behavior handle badly? A concrete run story beats an abstract wish.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The proposal
+      description: What should change, and what should explicitly stay the same.
+    validations:
+      required: true
+  - type: textarea
+    id: authority
+    attributes:
+      label: Authority impact
+      description: Does this widen what the loop may edit, commit, or decide without the user? If yes, why is that worth it?
+    validations:
+      required: true

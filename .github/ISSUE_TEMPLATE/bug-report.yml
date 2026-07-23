@@ -1,0 +1,41 @@
+name: Bug report
+description: Something in a Jeffy run misbehaved
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The best bug report is Jeffy's own paper trail. The journal entry and the loop's state files usually contain everything needed to reproduce the problem.
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 / macOS 15 / Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: claude-code-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: journal
+    attributes:
+      label: JOURNAL.md excerpt
+      description: The entry (or entries) for the failing iteration, verbatim.
+      render: markdown
+  - type: textarea
+    id: state
+    attributes:
+      label: Loop state
+      description: If relevant - whether `.claude/jeffy-loop.local.md` existed, its frontmatter, and anything the Stop hook printed to stderr.
+      render: text

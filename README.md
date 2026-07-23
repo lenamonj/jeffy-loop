@@ -15,6 +15,18 @@ Jeffy Loop is an autonomous improvement loop for Claude Code that works on your 
 
 Run `/jeffy 10` in any project and walk away. Jeffy audits every quality dimension that applies, writes a backlog where every task carries a runnable acceptance check, then burns through it - one task per iteration, each one verified, each one checkpointed. When it finishes, it tells you exactly what changed, what it couldn't do, and what needs your decision.
 
+## Quickstart
+
+You need [Claude Code](https://claude.com/claude-code) (installed and signed in once) and git. The installer handles everything else, including `jq`.
+
+```bash
+git clone https://github.com/lenamonj/jeffy-loop.git
+cd jeffy-loop
+./install.sh        # Windows PowerShell: .\install.ps1
+```
+
+Then open Claude Code in the project you want to improve and type `/jeffy 10`. It is a slash command inside the Claude Code session, not a shell command. Details, including the Windows execution-policy note, are under [Install](#install).
+
 <div align="center">
 
 <picture>
@@ -110,7 +122,7 @@ Self-runs are easy mode. So Jeffy was pointed at four real, famous, unaffiliated
 
 ## Install
 
-Install Claude Code first from https://claude.com/claude-code and sign in once: it is the only prerequisite the installer cannot handle for you. Then clone and run the installer.
+Install Claude Code first from https://claude.com/claude-code and sign in once, and have git available: they are the only prerequisites the installer cannot handle for you. Then clone and run the installer.
 
 Windows (PowerShell):
 
