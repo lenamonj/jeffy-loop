@@ -154,7 +154,7 @@ Start a new Claude Code session in the project you want to improve and run `/jef
 /jeffy [N] [focus...]
 ```
 
-- `N` - iteration budget, default 10. Size it generously: the loop ends itself at convergence, so unused budget costs nothing, while a budget that runs dry just before the closing audit costs a relaunch. The floor for converging in one run is the opening audit, one iteration per expected finding, and a closing audit - on a fresh project that means 10 is a better first pick than 5.
+- `N` - iteration budget, default 10. Sizing is low-stakes in both directions: the loop ends itself at convergence, so unused budget costs nothing, and a budget that runs dry loses no work - the state files persist, so the next `/jeffy` picks up where the run stopped. The floor for converging in one run is the opening audit, one iteration per expected finding, and a closing audit; when that arithmetic outgrows the default, prefer a second run over a bigger number (see Good to know).
 - `focus` - optional directive for the run, e.g. `/jeffy 8 test coverage and error handling`.
 
 Examples:
