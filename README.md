@@ -87,11 +87,15 @@ ratchet in O(1) instead of re-auditing.
 
 That convergence is re-earned, not archived: every fresh run of Jeffy on this repo has to reach it again with fresh evidence. When Jeffy converges on your project, the checkpoint is recorded in your `git log` and under `## Converged` in the loop's backlog, so relaunches on an unchanged tree re-verify instead of re-auditing. Run `/jeffy` on your own project and read the journal it leaves behind.
 
-## Proven on a stranger's codebase
+## Proven on strangers' codebases
 
-Self-runs are easy mode. So Jeffy was pointed at **[kennethreitz/records](evals/records/REPORT.md)** (~7.2k stars) - a real, famous, unaffiliated project, in a local clone, nothing pushed upstream. At upstream HEAD, `pytest` says 31 passed. At the same HEAD, `INSERT`s silently lose data, `transaction()` swallows every exception, and every query leaks a pooled connection.
+Self-runs are easy mode. So Jeffy was pointed at three real, famous, unaffiliated projects - each in a local clone, nothing pushed upstream, every run converging under the same rules: evidence before filing, one verified task per iteration, checkpoints, and a journal that records the operator's mistakes alongside the fixes.
 
-Jeffy reproduced **four High-severity bugs hiding behind a green test suite**, closed three of them with one structural fix at the boundary they share, restored a fix upstream had reverted the same day it was made, and left behind a regression suite proven to fail on the old code. The receipts live in [`evals/`](evals/): the full run journal, the complete patch, and a standalone repro script - [`repro.py`](evals/records/repro.py) shows the bugs on upstream HEAD, and [`fixes.patch`](evals/records/fixes.patch) makes it show them fixed. The run converged under the same rules as everything else: evidence before filing, one verified task per iteration, checkpoints, and a journal that records the operator's mistakes alongside the fixes. And the findings didn't stay here: all four were disclosed upstream with repros and a PR offer in [kennethreitz/records#236](https://github.com/kennethreitz/records/issues/236) - nothing was ever pushed to the project itself, and merging anything is the maintainers' call.
+**[kennethreitz/records](evals/records/REPORT.md)** (~7.2k stars). At upstream HEAD, `pytest` says 31 passed. At the same HEAD, `INSERT`s silently lose data, `transaction()` swallows every exception, and every query leaks a pooled connection. Jeffy reproduced **four High-severity bugs hiding behind a green test suite**, closed three with one structural fix at the boundary they share, restored a fix upstream had reverted the same day it was made, and left a regression suite proven to fail on the old code - [`repro.py`](evals/records/repro.py) shows the bugs on upstream HEAD, [`fixes.patch`](evals/records/fixes.patch) makes it show them fixed. All four were disclosed upstream with repros and a PR offer in [kennethreitz/records#236](https://github.com/kennethreitz/records/issues/236); merging anything is the maintainers' call.
+
+**[janl/mustache.js](evals/mustache.js/REPORT.md)** (~16.7k stars). At upstream HEAD on current Node, the test suite **cannot start** - the abandoned `esm` shim crashes before a single assertion - and `bin/mustache` crashes outright. Jeffy revived the gate with one structural fix across all three loading sites, fixed a second reproduced correctness bug in the CLI with a regression test, deleted the dead browser-test stack, and modernized the toolchain, taking `npm audit` from **107 vulnerabilities (24 critical) to 2 lows** with the suite at 297 passing, official Mustache spec compliance included. The closing audit then filed a Medium against the run's own earlier work - docs still pointing at the deleted stack - and fixed it before declaring convergence.
+
+**[chalk/chalk](evals/chalk/REPORT.md)** (~23.3k stars) - the control. One of the best-maintained small libraries alive, chosen to test whether the loop invents problems where there are none. The core survived the audit clean: correctness, security, and architecture all scored None on first pass, vendored code was declined rather than churned, and a semver-major engines bump was routed to the owner under Proposed instead of seized. The audit still had teeth: it revived the dead benchmark, cleared the dev-chain audit findings, closed a coverage gap, modernized an all-EOL CI matrix, and surfaced one genuine reproduced Medium - `ansi256` skips level downconversion, contradicting the readme's promise - fixed with a regression test and a recorded behavior-change rationale.
 
 ## Install
 
@@ -127,7 +131,7 @@ Start a new Claude Code session in the project you want to improve and run `/jef
 /jeffy [N] [focus...]
 ```
 
-- `N` - iteration budget, default 10. On a fresh project the first iteration is spent auditing and writing the backlog, so budgets of 5 or more make the most progress.
+- `N` - iteration budget, default 10. Size it generously: the loop ends itself at convergence, so unused budget costs nothing, while a budget that runs dry just before the closing audit costs a relaunch. The floor for converging in one run is the opening audit, one iteration per expected finding, and a closing audit - on a fresh project that means 10 is a better first pick than 5.
 - `focus` - optional directive for the run, e.g. `/jeffy 8 test coverage and error handling`.
 
 Examples:

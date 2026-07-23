@@ -1,0 +1,224 @@
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index d588995..5909c11 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -10,9 +10,8 @@ jobs:
+       fail-fast: false
+       matrix:
+         node-version:
+-          - 18
+-          - 16
+-          - 14
++          - 24
++          - 22
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-node@v4
+@@ -20,7 +19,7 @@ jobs:
+           node-version: ${{ matrix.node-version }}
+       - run: npm install
+       - run: npm test
+-      - uses: codecov/codecov-action@v2
+-        if: matrix.node-version == 16
++      - uses: codecov/codecov-action@v5
++        if: matrix.node-version == 24
+         with:
+           fail_ci_if_error: true
+diff --git a/benchmark.js b/benchmark.js
+index c5c6e27..3d19457 100644
+--- a/benchmark.js
++++ b/benchmark.js
+@@ -1,57 +1,50 @@
+-/* globals suite, bench */
+-import chalk from './index.js';
+-
+-suite('chalk', () => {
+-	const chalkRed = chalk.red;
+-	const chalkBgRed = chalk.bgRed;
+-	const chalkBlueBgRed = chalk.blue.bgRed;
+-	const chalkBlueBgRedBold = chalk.blue.bgRed.bold;
+-
+-	const blueStyledString = 'the fox jumps' + chalk.blue('over the lazy dog') + '!';
+-
+-	bench('1 style', () => {
+-		chalk.red('the fox jumps over the lazy dog');
+-	});
+-
+-	bench('2 styles', () => {
+-		chalk.blue.bgRed('the fox jumps over the lazy dog');
+-	});
+-
+-	bench('3 styles', () => {
+-		chalk.blue.bgRed.bold('the fox jumps over the lazy dog');
+-	});
+-
+-	bench('cached: 1 style', () => {
+-		chalkRed('the fox jumps over the lazy dog');
+-	});
+-
+-	bench('cached: 2 styles', () => {
+-		chalkBlueBgRed('the fox jumps over the lazy dog');
+-	});
+-
+-	bench('cached: 3 styles', () => {
+-		chalkBlueBgRedBold('the fox jumps over the lazy dog');
+-	});
+-
+-	bench('cached: 1 style with newline', () => {
+-		chalkRed('the fox jumps\nover the lazy dog');
+-	});
+-
+-	bench('cached: 1 style nested intersecting', () => {
+-		chalkRed(blueStyledString);
+-	});
+-
+-	bench('cached: 1 style nested non-intersecting', () => {
+-		chalkBgRed(blueStyledString);
+-	});
+-
+-	bench('cached: 1 style template literal', () => {
+-		// eslint-disable-next-line no-unused-expressions
+-		chalkRed`the fox jumps over the lazy dog`;
+-	});
+-
+-	bench('cached: nested styles template literal', () => {
+-		// eslint-disable-next-line no-unused-expressions
+-		chalkRed`the fox {bold jumps} over the {underline lazy} dog`;
+-	});
+-});
++import {performance} from 'node:perf_hooks';
++import chalk from './source/index.js';
++
++// Force full color so the benchmark measures styling work even when
++// stdout is not a TTY (color detection would otherwise report level 0).
++chalk.level = 3;
++
++const chalkRed = chalk.red;
++const chalkBgRed = chalk.bgRed;
++const chalkBlueBgRed = chalk.blue.bgRed;
++const chalkBlueBgRedBold = chalk.blue.bgRed.bold;
++
++const blueStyledString = 'the fox jumps' + chalk.blue('over the lazy dog') + '!';
++
++const benchmarks = new Map([
++	['1 style', () => chalk.red('the fox jumps over the lazy dog')],
++	['2 styles', () => chalk.blue.bgRed('the fox jumps over the lazy dog')],
++	['3 styles', () => chalk.blue.bgRed.bold('the fox jumps over the lazy dog')],
++	['cached: 1 style', () => chalkRed('the fox jumps over the lazy dog')],
++	['cached: 2 styles', () => chalkBlueBgRed('the fox jumps over the lazy dog')],
++	['cached: 3 styles', () => chalkBlueBgRedBold('the fox jumps over the lazy dog')],
++	['cached: 1 style with newline', () => chalkRed('the fox jumps\nover the lazy dog')],
++	['cached: 1 style nested intersecting', () => chalkRed(blueStyledString)],
++	['cached: 1 style nested non-intersecting', () => chalkBgRed(blueStyledString)],
++]);
++
++const warmupIterations = 10_000;
++const iterations = 1_000_000;
++
++// Accumulate result lengths so V8 cannot optimize the calls away.
++let sink = 0;
++
++for (const [name, benchmark] of benchmarks) {
++	for (let index = 0; index < warmupIterations; index++) {
++		sink += benchmark().length;
++	}
++
++	const start = performance.now();
++	for (let index = 0; index < iterations; index++) {
++		sink += benchmark().length;
++	}
++
++	const duration = performance.now() - start;
++	const operationsPerSecond = Math.round(iterations / (duration / 1000));
++	console.log(`${name} x ${operationsPerSecond.toLocaleString('en-US')} ops/sec`);
++}
++
++if (sink === -1) {
++	console.log(sink);
++}
+diff --git a/examples/screenshot.js b/examples/screenshot.js
+index 9ad164b..7d829c8 100644
+--- a/examples/screenshot.js
++++ b/examples/screenshot.js
+@@ -1,6 +1,6 @@
+ import process from 'node:process';
+-import styles from 'ansi-styles';
+ import chalk from '../source/index.js';
++import styles from '#ansi-styles';
+ 
+ // Generates screenshot
+ for (const key of Object.keys(styles)) {
+diff --git a/package.json b/package.json
+index c9e0dc5..c8286f5 100644
+--- a/package.json
++++ b/package.json
+@@ -22,7 +22,7 @@
+ 	},
+ 	"scripts": {
+ 		"test": "xo && c8 ava && tsd",
+-		"bench": "matcha benchmark.js"
++		"bench": "node benchmark.js"
+ 	},
+ 	"files": [
+ 		"source",
+@@ -52,18 +52,19 @@
+ 	],
+ 	"devDependencies": {
+ 		"@types/node": "^16.11.10",
+-		"ava": "^3.15.0",
++		"ava": "^6.4.1",
+ 		"c8": "^7.10.0",
+ 		"color-convert": "^2.0.1",
+ 		"execa": "^6.0.0",
+ 		"log-update": "^5.0.0",
+-		"matcha": "^0.7.0",
+ 		"tsd": "^0.19.0",
+-		"xo": "^0.57.0",
++		"xo": "^0.60.0",
+ 		"yoctodelay": "^2.0.0"
+ 	},
+ 	"xo": {
+ 		"rules": {
++			"n/no-unsupported-features/node-builtins": "off",
++			"n/no-unsupported-features/es-syntax": "off",
+ 			"unicorn/prefer-string-slice": "off",
+ 			"@typescript-eslint/consistent-type-imports": "off",
+ 			"@typescript-eslint/consistent-type-exports": "off",
+diff --git a/source/index.js b/source/index.js
+index 8bc993d..03fb8b9 100644
+--- a/source/index.js
++++ b/source/index.js
+@@ -88,6 +88,10 @@ const getModelAnsi = (model, level, type, ...arguments_) => {
+ 		return getModelAnsi('rgb', level, type, ...ansiStyles.hexToRgb(...arguments_));
+ 	}
+ 
++	if (model === 'ansi256' && level === 'ansi') {
++		return ansiStyles[type].ansi(ansiStyles.ansi256ToAnsi(...arguments_));
++	}
++
+ 	return ansiStyles[type][model](...arguments_);
+ };
+ 
+diff --git a/test/chalk.js b/test/chalk.js
+index 8d58e45..fd353fb 100644
+--- a/test/chalk.js
++++ b/test/chalk.js
+@@ -110,6 +110,18 @@ test('don\'t emit RGB codes if level is 0', t => {
+ 	t.is(new Chalk({level: 0}).bgHex('#FF0000')('hello'), 'hello');
+ });
+ 
++test('properly convert ansi256 to 16 colors on basic color terminals', t => {
++	t.is(new Chalk({level: 1}).ansi256(196)('hello'), '\u001B[91mhello\u001B[39m');
++	t.is(new Chalk({level: 1}).bgAnsi256(196)('hello'), '\u001B[101mhello\u001B[49m');
++});
++
++test('supports the ansi256 color model', t => {
++	t.is(chalk.ansi256(196)('hello'), '\u001B[38;5;196mhello\u001B[39m');
++	t.is(chalk.bgAnsi256(196)('hello'), '\u001B[48;5;196mhello\u001B[49m');
++	t.is(new Chalk({level: 0}).ansi256(196)('hello'), 'hello');
++	t.is(new Chalk({level: 0}).bgAnsi256(196)('hello'), 'hello');
++});
++
+ test('supports blackBright color', t => {
+ 	t.is(chalk.blackBright('foo'), '\u001B[90mfoo\u001B[39m');
+ });
