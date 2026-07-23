@@ -21,7 +21,7 @@ Run `/jeffy 10` in any project and walk away. Jeffy audits every quality dimensi
 
 ![Jeffy Loop vs a raw prompt loop - the head-to-head](media/jeffy-vs-raw-loop.gif)
 
-<sub>The head-to-head vs a raw prompt loop. Every row is a guarantee you can verify in the code, and the receipts are this repository's own history. <a href="media/jeffy-vs-raw-loop.mp4">Watch in HD</a>.</sub>
+<sub>The head-to-head vs a raw prompt loop. Every row is a guarantee you can verify in the code: the engine is <code>skills/jeffy/hooks/stop-hook.sh</code>, the discipline is <code>skills/jeffy/references/iteration-prompt.txt</code>, and the receipts from real runs live under <a href="evals/"><code>evals/</code></a>. <a href="media/jeffy-vs-raw-loop.mp4">Watch in HD</a>.</sub>
 
 </div>
 
@@ -51,7 +51,7 @@ Running `/jeffy` in a Claude Code session:
 
 ## What a run looks like
 
-Jeffy built this repository by running on itself. Two abridged entries from the `JOURNAL.md` it wrote along the way, shown as written - journal headings have since tightened to the pipe-delimited grammar the loop uses today. First, the opening audit that generated the backlog:
+Jeffy built this repository by running on itself. The dev journal it wrote stays out of the published tree - state files are the loop's memory, not the product - but two abridged entries show the shape of a run, shown as written (journal headings have since tightened to the pipe-delimited grammar the loop uses today). First, the opening audit that generated the backlog:
 
 ```
 ## Iteration 1 - 2026-07-03 - Audit (Improvement mode)
@@ -85,7 +85,7 @@ under ## Converged in BACKLOG.md so future relaunches on an unchanged tree
 ratchet in O(1) instead of re-auditing.
 ```
 
-That convergence is re-earned, not archived: every fresh run of Jeffy on this repo has to reach it again with fresh evidence, and the converged checkpoint is recorded in `git log` and under `## Converged` in the loop's backlog. Run `/jeffy` on your own project and read the journal it leaves behind.
+That convergence is re-earned, not archived: every fresh run of Jeffy on this repo has to reach it again with fresh evidence. When Jeffy converges on your project, the checkpoint is recorded in your `git log` and under `## Converged` in the loop's backlog, so relaunches on an unchanged tree re-verify instead of re-auditing. Run `/jeffy` on your own project and read the journal it leaves behind.
 
 ## Proven on a stranger's codebase
 
