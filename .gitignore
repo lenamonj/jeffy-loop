@@ -1,6 +1,10 @@
 .DS_Store
 Thumbs.db
 
+# Python bytecode - evals/records/repro.py generates this when run or compiled,
+# and the loop's git add -A checkpoints would otherwise sweep it in
+__pycache__/
+
 # Jeffy transient loop state - session-scoped, must never be committed
 # (jeffy-loop.local.md is the 2.0 engine's file; ralph-loop.local.md is legacy)
 .claude/jeffy-loop.local.md
