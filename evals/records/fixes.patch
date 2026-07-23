@@ -1,0 +1,323 @@
+diff --git a/.travis.yml b/.travis.yml
+deleted file mode 100644
+index 6df6b36..0000000
+--- a/.travis.yml
++++ /dev/null
+@@ -1,9 +0,0 @@
+-sudo: false
+-language: python
+-python:
+-  - "2.7"
+-  - "3.4"
+-  - "3.5"
+-  - "3.6"
+-install: pip install tox-travis
+-script: tox
+diff --git a/records.py b/records.py
+index b5b6766..d1e36e7 100644
+--- a/records.py
++++ b/records.py
+@@ -341,8 +341,9 @@ class Database(object):
+         try:
+             yield conn
+             tx.commit()
+-        except:
++        except BaseException:
+             tx.rollback()
++            raise
+         finally:
+             conn.close()
+ 
+@@ -354,14 +355,35 @@ class Connection(object):
+         self._conn = connection
+         self.open = not connection.closed
+         self._close_with_result = close_with_result
++        # True while a transaction obtained via Connection.transaction() is
++        # in progress; query paths must not auto-commit inside it.
++        self._explicit_tx = False
+ 
+     def close(self):
+-        # No need to close if this connection is used for a single result.
+-        # The connection will close when the results are all consumed or GCed.
++        # Single-result connections are finalized (committed and returned to
++        # the pool) by the result generator once rows are consumed; closing
++        # here would kill the cursor mid-read. SQLAlchemy 2.x has no
++        # close-with-result behavior of its own, so the generator's finally
++        # block owns the cleanup for that case.
+         if not self._close_with_result:
+             self._conn.close()
+         self.open = False
+ 
++    def _finalize(self):
++        # SQLAlchemy 2.x removed autocommit: without an explicit commit,
++        # writes are rolled back when the connection closes. Commit unless
++        # the caller holds an explicit transaction, then return
++        # single-result connections to the pool.
++        if self._conn.closed:
++            return
++        try:
++            if not self._explicit_tx:
++                self._conn.commit()
++        finally:
++            if self._close_with_result:
++                self._conn.close()
++                self.open = False
++
+     def __enter__(self):
+         return self
+ 
+@@ -378,18 +400,24 @@ class Connection(object):
+         """
+ 
+         # Execute the given query.
+-        cursor = self._conn.execute(
+-            text(query).bindparams(**params)
+-        )  # TODO: PARAMS GO HERE
++        cursor = self._conn.execute(text(query).bindparams(**params))
+ 
+-        # Row-by-row Record generator.
+-        row_gen = iter(Record([], []))
++        if not cursor.returns_rows:
++            # Statements without a result set (DML/DDL) are complete now:
++            # commit and, for single-result connections, return to the pool.
++            self._finalize()
++            return RecordCollection(iter(Record([], [])))
+ 
+-        if cursor.returns_rows:
+-            row_gen = (Record(cursor.keys(), row) for row in cursor)
++        def row_gen():
++            # Yield rows lazily; once the cursor is exhausted (or the
++            # generator is closed or collected), finalize the connection.
++            try:
++                for row in cursor:
++                    yield Record(cursor.keys(), row)
++            finally:
++                self._finalize()
+ 
+-        # Convert psycopg2 results to RecordCollection.
+-        results = RecordCollection(row_gen)
++        results = RecordCollection(row_gen())
+ 
+         # Fetch all results if desired.
+         if fetchall:
+@@ -397,10 +425,26 @@ class Connection(object):
+ 
+         return results
+ 
++    @staticmethod
++    def _normalize_multiparams(multiparams):
++        # Accept both the documented list-of-dicts form and the legacy
++        # varargs form; SQLAlchemy 2.x execute() takes exactly one
++        # parameters argument.
++        if not multiparams:
++            return None
++        if len(multiparams) == 1:
++            return multiparams[0]
++        return list(multiparams)
++
+     def bulk_query(self, query, *multiparams):
+         """Bulk insert or update."""
+ 
+-        self._conn.execute(text(query), *multiparams)
++        params = self._normalize_multiparams(multiparams)
++        if params is None:
++            self._conn.execute(text(query))
++        else:
++            self._conn.execute(text(query), params)
++        self._finalize()
+ 
+     def query_file(self, path, fetchall=False, **params):
+         """Like Connection.query, but takes a filename to load a query from."""
+@@ -437,13 +481,44 @@ class Connection(object):
+         with open(path) as f:
+             query = f.read()
+ 
+-        self._conn.execute(text(query), *multiparams)
++        self.bulk_query(query, *multiparams)
+ 
+     def transaction(self):
+         """Returns a transaction object. Call ``commit`` or ``rollback``
+         on the returned object as appropriate."""
+ 
+-        return self._conn.begin()
++        self._explicit_tx = True
++        return _Transaction(self._conn.begin(), self)
++
++
++class _Transaction(object):
++    """Wraps a SQLAlchemy transaction so the owning Connection knows when
++    the explicit transaction ends and auto-commit may resume."""
++
++    def __init__(self, tx, owner):
++        self._tx = tx
++        self._owner = owner
++
++    def commit(self):
++        try:
++            self._tx.commit()
++        finally:
++            self._owner._explicit_tx = False
++
++    def rollback(self):
++        try:
++            self._tx.rollback()
++        finally:
++            self._owner._explicit_tx = False
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, exc_type, exc_val, tb):
++        if exc_type is None:
++            self.commit()
++        else:
++            self.rollback()
+ 
+ 
+ def _reduce_datetimes(row):
+diff --git a/setup.py b/setup.py
+index ddfee8e..e8ffa21 100644
+--- a/setup.py
++++ b/setup.py
+@@ -74,6 +74,7 @@ setup(
+         "console_scripts": ["records=records:cli"],
+     },
+     install_requires=requires,
++    python_requires=">=3.7",
+     extras_require={
+         "pandas": ["tablib[pandas]"],
+         "pg": ["psycopg2-binary"],
+@@ -89,9 +90,6 @@ setup(
+         "License :: OSI Approved :: ISC License (ISCL)",
+         "Programming Language :: Python",
+         "Programming Language :: Python :: 3",
+-        "Programming Language :: Python :: 3.4",
+-        "Programming Language :: Python :: 3.5",
+-        "Programming Language :: Python :: 3.6",
+         "Programming Language :: Python :: 3.7",
+         "Programming Language :: Python :: 3.8",
+         "Programming Language :: Python :: 3.9",
+diff --git a/tests/test_persistence.py b/tests/test_persistence.py
+new file mode 100644
+index 0000000..1f2406c
+--- /dev/null
++++ b/tests/test_persistence.py
+@@ -0,0 +1,82 @@
++"""Regression tests for SQLAlchemy 2.x semantics.
++
++The historical fixture used only in-memory sqlite, which cannot observe
++commit behavior across connections and masked silent data loss and pool
++leaks entirely. These tests use a file-backed database and a bounded pool
++so those defects fail loudly.
++"""
++import pytest
++
++import records
++from sqlalchemy.pool import QueuePool
++
++
++@pytest.fixture
++def file_db(tmp_path):
++    url = 'sqlite:///{}'.format(tmp_path / 'regress.db')
++    db = records.Database(url)
++    db.query('CREATE TABLE foo (a integer)')
++    yield url, db
++    db.close()
++
++
++def reopened_values(url):
++    db = records.Database(url)
++    try:
++        return sorted(row.a for row in db.query('SELECT a FROM foo').all())
++    finally:
++        db.close()
++
++
++def test_query_insert_persists_across_reopen(file_db):
++    url, db = file_db
++    db.query('INSERT INTO foo VALUES (1)')
++    db.close()
++    assert reopened_values(url) == [1]
++
++
++def test_bulk_query_persists_across_reopen(file_db):
++    url, db = file_db
++    db.bulk_query('INSERT INTO foo VALUES (:a)', [{'a': 1}, {'a': 2}])
++    db.close()
++    assert reopened_values(url) == [1, 2]
++
++
++def test_bulk_query_legacy_varargs_form(file_db):
++    url, db = file_db
++    db.bulk_query('INSERT INTO foo VALUES (:a)', {'a': 3}, {'a': 4})
++    db.close()
++    assert reopened_values(url) == [3, 4]
++
++
++def test_query_does_not_leak_pooled_connections():
++    db = records.Database(
++        'sqlite:///:memory:',
++        poolclass=QueuePool, pool_size=1, max_overflow=1, pool_timeout=2,
++    )
++    try:
++        for _ in range(5):
++            db.query('SELECT 1').all()
++    finally:
++        db.close()
++
++
++def test_transaction_exception_propagates_and_rolls_back(file_db):
++    url, db = file_db
++    with pytest.raises(RuntimeError):
++        with db.transaction() as conn:
++            conn.query('INSERT INTO foo VALUES (9)')
++            raise RuntimeError('boom')
++    db.close()
++    assert reopened_values(url) == []
++
++
++def test_explicit_transaction_rollback_discards_writes(file_db):
++    url, db = file_db
++    conn = db.get_connection()
++    tx = conn.transaction()
++    conn.query('INSERT INTO foo VALUES (7)')
++    tx.rollback()
++    conn.close()
++    db.close()
++    assert reopened_values(url) == []
+diff --git a/tests/test_transactions.py b/tests/test_transactions.py
+index c9255b3..2f43a56 100644
+--- a/tests/test_transactions.py
++++ b/tests/test_transactions.py
+@@ -55,10 +55,14 @@ def test_failing_transaction_self_managed(db):
+ 
+ @pytest.mark.usefixtures('foo_table')
+ def test_failing_transaction(db):
+-    with db.transaction() as conn:
+-        conn.query('INSERT INTO foo VALUES (42)')
+-        conn.query('INSERT INTO foo VALUES (43)')
+-        raise ValueError()
++    # The exception must propagate to the caller AND the transaction must
++    # roll back; the old assertion silently depended on transaction()
++    # swallowing every exception.
++    with pytest.raises(ValueError):
++        with db.transaction() as conn:
++            conn.query('INSERT INTO foo VALUES (42)')
++            conn.query('INSERT INTO foo VALUES (43)')
++            raise ValueError()
+ 
+     assert db.query('SELECT count(*) AS n FROM foo')[0].n == 0
+ 
+diff --git a/tox.ini b/tox.ini
+index 4e93a8b..f4fafab 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -3,7 +3,7 @@
+ # and then run "tox" from this directory.
+ 
+ [tox]
+-envlist = py27, py34, py35, py36
++envlist = py37, py38, py39, py310, py311, py312
+ 
+ [testenv]
+ commands =

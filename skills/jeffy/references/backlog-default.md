@@ -1,0 +1,30 @@
+# Backlog
+
+Ledger, not narrative. Top unblocked item is next. Markers: [ ] open, [b] blocked.
+
+Rules:
+- One line per item: `- [ ] <ID> (<Severity>, <dimension>): <finding>. Acceptance: <runnable command or observable fact>.`
+- A finished task is deleted from its section and recorded as one line in the JOURNAL entry that closed it. No done markers accumulate here.
+- Run context, audit scores, and DONE annotations live in JOURNAL.md only. No prose sections and no headings beyond the ones below, ever.
+
+## Now
+
+## Next
+
+## Later
+
+## Proposed
+
+Items needing a user decision before any work, one plain line each, never a checkbox task: envelope changes, audit escalations, challenges to a settled class. Never worked without explicit user approval and never counted against convergence.
+
+## Settled classes
+
+One line per class: the idiom or defect class, the surface it applies to, and how it was settled - fixed class-complete with its enumerating check, or declined with the reason. Audits must not file findings inside a settled class unless its implementing code changed after settlement.
+
+## Declined
+
+Findings judged not worth fixing, one line each with the reason. Audits must not re-file these.
+
+## Converged
+
+One line per convergence, appended, never rewritten: Converged: <full commit hash> - <date>. The ratchet reads the latest line here.

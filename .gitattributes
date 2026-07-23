@@ -1,0 +1,11 @@
+* text=auto
+*.sh text eol=lf
+*.ps1 text eol=crlf
+# The jeffy templates are copied byte-exact by cp at bootstrap, and the
+# Stop hook cats the iteration prompt straight into its re-feed reason: a
+# CRLF checkout would leak CR bytes into every target project and every
+# re-fed prompt, so pin the whole folder to LF.
+skills/jeffy/references/** text eol=lf
+# Validator check 10 extracts fenced bash blocks from SKILL.md with $-anchored
+# patterns; pin to LF so the check does not depend on CR-stripping tooling.
+skills/*/SKILL.md text eol=lf

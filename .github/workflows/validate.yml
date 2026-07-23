@@ -1,0 +1,27 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Run repo validator
+        run: bash scripts/validate.sh
+  validate-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Run repo validator (Windows PowerShell 5.1)
+        shell: bash
+        env:
+          # Pin the interpreter so check 9 exercises powershell.exe 5.1; the
+          # ubuntu job covers pwsh.
+          JEFFY_PS: powershell
+        run: bash scripts/validate.sh

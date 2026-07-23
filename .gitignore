@@ -1,0 +1,24 @@
+.DS_Store
+Thumbs.db
+
+# Jeffy transient loop state - session-scoped, must never be committed
+# (jeffy-loop.local.md is the 2.0 engine's file; ralph-loop.local.md is legacy)
+.claude/jeffy-loop.local.md
+.claude/ralph-loop.local.md
+
+# Jeffy self-hosting state - dev logs from running Jeffy on this repo, not part
+# of the product. Anchored to the repo root so a future nested product doc with
+# one of these names is not silently ignored.
+/PLAN.md
+/BACKLOG.md
+/JOURNAL.md
+/JOURNAL-archive.md
+
+/CHANGELOG.md
+
+# Fable session dev logs - class patterns so future logs are covered by default
+# (both casings spelled out: gitignore matching is case-sensitive on Linux)
+/FABLE*.md
+/FABLE*.MD
+/Fable*.md
+/Fable*.MD
