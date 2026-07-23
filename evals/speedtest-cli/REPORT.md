@@ -14,3 +14,5 @@ A deliberately contrasting case to [records](../records/REPORT.md): a dormant bu
 **Disclosed limitation**: the live-network legs of the project's tox gate were unreachable in the eval sandbox (proxy 403) - recorded in the journal as an environment limitation, never counted as a finding.
 
 Full iteration-by-iteration record: [journal.md](journal.md).
+
+**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Unlike the other evals, no upstream disclosure was filed: the repository does not accept issues, so the offer-first channel the other disclosures used does not exist here.

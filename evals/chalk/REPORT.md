@@ -33,4 +33,4 @@ Full iteration-by-iteration record: [journal.md](journal.md). Complete product d
 
 End state: 34/34 tests, 100 percent statement coverage, npm audit 0 vulnerabilities.
 
-**Status**: fixes live in this eval's artifacts. Nothing was pushed upstream. Offering CHALK-5's fix to the maintainers remains a pending decision.
+**Status**: fixes live in this eval's artifacts. Nothing was pushed upstream. The correctness finding was disclosed upstream with a repro and a PR offer in [chalk/chalk#686](https://github.com/chalk/chalk/issues/686) (2026-07-23). Merging anything remains the maintainers' call.
