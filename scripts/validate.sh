@@ -190,16 +190,16 @@ if [ -f "$prompt_file" ]; then
   fi
 fi
 
-# 6c. The evaluator-gate marker check has teeth: mangling the gate in a scratch
-#     copy must strip every occurrence of the marker, proving that removing the
-#     gate from the prompt cannot slip past check 6 via a stray duplicate of
-#     the marker text elsewhere in the file. Dependency-free (sed, grep).
+# 6c. The evaluator-gate marker is unique in the prompt. Check 6 only proves
+#     presence, so a stray duplicate of the marker text elsewhere in the file
+#     would keep check 6 green even with the gate section itself removed;
+#     exactly one occurrence closes that hole. Dependency-free (grep, wc).
 if [ -f "$prompt_file" ]; then
-  ev_mangled="$(sed 's/Evaluator gate:/EVALUATOR-GATE-MANGLED:/g' "$prompt_file")"
-  if printf '%s' "$ev_mangled" | grep -qF -- "Evaluator gate:"; then
-    fault "evaluator gate marker check has no teeth (marker survives mangling)"
+  ev_count="$(grep -oF -- "Evaluator gate:" "$prompt_file" | wc -l | tr -d '[:space:]')"
+  if [ "$ev_count" = "1" ]; then
+    pass "evaluator gate marker appears exactly once (removing the gate fails check 6)"
   else
-    pass "evaluator gate marker check has teeth (a mangled prompt fails check 6)"
+    fault "evaluator gate marker count is $ev_count, expected exactly 1 (check 6 loses its teeth)"
   fi
 fi
 
