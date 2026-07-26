@@ -21,12 +21,15 @@ flowchart TD
         GATE{"Repo verify command<br/>still green?"}
         REVERT["Revert to the last checkpoint<br/>an iteration that breaks the project<br/>does not survive; task marked blocked"]
         RECORD["Record and checkpoint<br/>journal entry, lessons promoted into PLAN.md,<br/>ledger updated, then commit<br/>jeffy: iter i/N - local only, never pushed"]
+        EVAL{"Skeptical evaluator PASS?<br/>one fresh-context sub-agent assumes the<br/>work is broken, re-runs every check itself"}
         PROMISE["Declare convergence<br/>run report, then the promise phrase<br/>JEFFY CONVERGED"]
 
         LOAD --> OPEN
         OPEN -->|"backlog empty"| AUDIT --> CLEAN
         CLEAN -->|"findings filed, worst first"| RECORD
-        CLEAN -->|"yes - done means done"| PROMISE
+        CLEAN -->|"yes - done means done"| EVAL
+        EVAL -->|"PASS - countersigned"| PROMISE
+        EVAL -->|"REJECT - reasons filed<br/>as new tasks"| RECORD
         OPEN -->|"tasks waiting"| EXEC --> GATE
         GATE -->|"green"| RECORD
         GATE -->|"newly broken"| REVERT --> RECORD
@@ -71,7 +74,7 @@ flowchart TD
 
     class USER entry
     class PRE,WRITE launch
-    class LOAD,OPEN,AUDIT,CLEAN,EXEC,GATE,REVERT,RECORD work
+    class LOAD,OPEN,AUDIT,CLEAN,EXEC,GATE,REVERT,RECORD,EVAL work
     class PROM,BUDGET,REFEED engine
     class SF,MEM,GIT file
     class REPORT,PROMISE good
