@@ -740,6 +740,48 @@ if command -v jq >/dev/null 2>&1; then
       else
         fault "stop hook ran a Verify command declared none"
       fi
+
+      # Template-shape contract: plan-default.md writes prose under the
+      # heading and the command on a "Command:" line. The hook must run
+      # that line, never the prose - live-reproduced when the prose parsed
+      # as the command and exited 127, rejecting a legitimate convergence.
+      hb_write_plan_templated() { # $1 command for the Command: line
+        printf '# Plan\n\n## Verify command\nOne runnable command that must exit 0 for this project to count as unbroken.\n\nCommand: %s\n' "$1" > "$hb_proj/PLAN.md"
+      }
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_write_plan_templated 'exit 0'
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook parses the template-shaped Verify section (Command: line, not prose)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook mishandled a template-shaped Verify section with a green command"
+      fi
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_write_plan_templated 'exit 3'
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 3' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook runs the Command: line of a template-shaped Verify section"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook did not run the Command: line of a template-shaped Verify section"
+      fi
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_write_plan_templated none
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook skips a template-shaped Verify command declared none"
+      else
+        fault "stop hook ran a template-shaped Verify command declared none"
+      fi
+      hb_write_plan none
     else
       echo "[SKIP] verify-command scenarios (coreutils timeout not on PATH)"
     fi

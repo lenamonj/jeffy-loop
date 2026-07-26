@@ -102,7 +102,14 @@ if [ -n "$promise" ]; then
         elif ! command -v timeout >/dev/null 2>&1; then
           echo "jeffy stop hook: coreutils timeout not found; skipping the verify check." >&2
         else
-          verify_cmd="$(awk '{ sub(/\r$/, "") } /^## Verify command$/ { take = 1; next } /^## / { take = 0 } take && NF { print; exit }' "$root/PLAN.md")"
+          # Two PLAN shapes ship: the template writes prose then a
+          # "Command: <cmd>" line; older hand-written plans put the bare
+          # command as the first non-empty line. Prefer the labeled line,
+          # fall back to the bare shape - never run the section prose.
+          verify_cmd="$(awk '{ sub(/\r$/, "") } /^## Verify command$/ { take = 1; next } /^## / { take = 0 } take && /^Command: / { sub(/^Command: /, ""); print; exit }' "$root/PLAN.md")"
+          if [ -z "$verify_cmd" ]; then
+            verify_cmd="$(awk '{ sub(/\r$/, "") } /^## Verify command$/ { take = 1; next } /^## / { take = 0 } take && NF { print; exit }' "$root/PLAN.md")"
+          fi
           if [ -n "$verify_cmd" ] && [ "$verify_cmd" != "none" ]; then
             vt="$(fm verify_timeout_seconds)"
             case "$vt" in '' | *[!0-9]*) vt=240 ;; esac
