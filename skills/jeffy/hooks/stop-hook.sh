@@ -156,6 +156,16 @@ if [ -f "$root/JOURNAL.md" ]; then
 else
   echo "jeffy stop hook: JOURNAL.md missing at $root; skipping the journal-entry check." >&2
 fi
+# Tracked-tree check: modified or deleted tracked paths mean the iteration
+# ended without its checkpoint. Untracked files never fire it - salvage and
+# the checkpoint's git add -A own those, and they may be user droppings the
+# hook has no right to demand committed. Skipped without git or a born HEAD.
+if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+  dirty="$(git -C "$root" status --porcelain --untracked-files=no 2>/dev/null | head -n 1)"
+  if [ -n "$dirty" ]; then
+    hygiene="$hygiene${hygiene:+; also }iteration $iter ended with uncommitted tracked changes ($dirty); checkpoint them"
+  fi
+fi
 
 next=$((iter + 1))
 tmp="$state.tmp"

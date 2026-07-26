@@ -750,6 +750,45 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook mishandled a missing BACKLOG.md at promise time"
     fi
 
+    # Iteration hygiene, tracked-tree check: a modified tracked file rides
+    # the re-feed as evidence; untracked files never fire it - salvage and
+    # the checkpoint's git add -A own those.
+    if [ -d "$hb_tmp/gitproj/.git" ]; then
+      hb_saved_proj="$hb_proj"; hb_saved_state="$hb_state"
+      hb_proj="$hb_tmp/gitproj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      hb_write_journal 1 3
+      hb_git add JOURNAL.md >/dev/null
+      hb_git commit -q -m reseed-journal
+
+      hb_write_state sess-1 1 3
+      printf 'dirty\n' > "$hb_proj/product.txt"
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION HYGIENE' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'product.txt' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook flags uncommitted tracked changes on the re-feed"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let a dirty tracked tree re-feed silently"
+      fi
+      hb_git checkout -q -- product.txt
+
+      hb_write_state sess-1 1 3
+      printf 'junk\n' > "$hb_proj/junk.txt"
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION HYGIENE' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook ignores untracked files in the tracked-tree check"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook flagged untracked files as hygiene violations"
+      fi
+      rm -f "$hb_proj/junk.txt" "$hb_state"
+      hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
+    fi
+
     hb_write_state sess-other 1 3
     hb_out="$(hb_run sess-1 'still working' '')"
     if [ -z "$hb_out" ] && grep -q '^iteration: 1$' "$hb_state"; then
