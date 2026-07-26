@@ -479,6 +479,9 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_plan() { # $1 verify command line for PLAN.md
       printf '# Plan\n\n## Verify command\n%s\n' "$1" > "$hb_proj/PLAN.md"
     }
+    hb_write_journal() { # $1 iteration, $2 max - heading for the harness session sess-1
+      printf '# Journal\n\n## iter %s/%s | sess-1 | 2026-01-01 | T1 | done\n\nTask: t.\n' "$1" "$2" > "$hb_proj/JOURNAL.md"
+    }
     hb_write_backlog() { # $1 optional open task line, $2 optional Converged line
       {
         printf '# Backlog\n\n## Now\n\n'
@@ -498,16 +501,47 @@ if command -v jq >/dev/null 2>&1; then
     }
 
     hb_write_state sess-1 1 3
+    hb_write_journal 1 3
     hb_out="$(hb_run sess-1 'still working' '')"
     if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Do the jeffy iteration now.' \
       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Focus this run on: speed' \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION HYGIENE' \
       && grep -q '^iteration: 2$' "$hb_state"; then
       pass "stop hook re-feeds mid-budget (block, iteration advanced, prompt and focus in reason)"
     else
       printf '%s\n' "$hb_out"
       fault "stop hook mid-budget re-feed is broken"
     fi
+
+    # Iteration hygiene: a journaled iteration re-feeds silently (asserted
+    # above); a missing entry rides the re-feed as evidence with the counter
+    # still advanced; a missing JOURNAL.md is infrastructure and fails open.
+    hb_write_state sess-1 1 3
+    hb_write_journal 2 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION HYGIENE' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF '## iter 1/3 | sess-1' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook flags a missing journal entry on the re-feed (counter still advances)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let an unjournaled iteration re-feed silently"
+    fi
+
+    hb_write_state sess-1 1 3
+    rm -f "$hb_proj/JOURNAL.md"
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION HYGIENE' \
+      && grep -q 'JOURNAL.md missing' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook fails open on a missing JOURNAL.md at the re-feed (stderr note)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook mishandled a missing JOURNAL.md at the re-feed"
+    fi
+    hb_write_journal 1 3
 
     hb_write_state sess-1 3 3
     hb_out="$(hb_run sess-1 'still working' '')"
@@ -595,6 +629,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_git() { git -C "$hb_proj" -c user.email=jeffy@test -c user.name=jeffy -c core.autocrlf=false "$@"; }
       hb_git init -q -b main
       hb_write_plan none
+      hb_write_journal 1 3
       printf 'v1\n' > "$hb_proj/product.txt"
       hb_git add product.txt >/dev/null
       hb_git commit -q -m c1

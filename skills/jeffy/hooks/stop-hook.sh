@@ -143,6 +143,20 @@ if [ ! -f "$prompt_path" ]; then
   rm -f "$state"
   exit 0
 fi
+# Iteration hygiene at the re-feed boundary: the finished iteration must
+# have journaled itself under the heading grammar. A missing JOURNAL.md is
+# an infrastructure defect and fails open with a stderr note; a violation
+# rides the re-feed as evidence, and the budget bounds retries.
+hygiene=""
+runid8="${fm_session:0:8}"
+if [ -f "$root/JOURNAL.md" ]; then
+  if ! grep -qF -- "## iter $iter/$max | $runid8" "$root/JOURNAL.md"; then
+    hygiene="iteration $iter wrote no JOURNAL.md entry with the heading ## iter $iter/$max | $runid8; record it before proceeding"
+  fi
+else
+  echo "jeffy stop hook: JOURNAL.md missing at $root; skipping the journal-entry check." >&2
+fi
+
 next=$((iter + 1))
 tmp="$state.tmp"
 if awk -v n="$next" '!done && /^iteration: / { print "iteration: " n; done = 1; next } { print }' "$state" > "$tmp"; then
@@ -159,6 +173,9 @@ fi
 reason="$reason This is jeffy iteration $next of $max for this run."
 if [ -n "$violation" ]; then
   reason="$reason CONVERGENCE REJECTED by the stop hook: $violation. Fix this, then re-declare convergence with the promise phrase."
+fi
+if [ -n "$hygiene" ]; then
+  reason="$reason ITERATION HYGIENE: $hygiene."
 fi
 jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'
 exit 0
