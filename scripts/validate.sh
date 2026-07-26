@@ -406,19 +406,23 @@ if command -v jq >/dev/null 2>&1; then
     hb_state="$hb_proj/.claude/jeffy-loop.local.md"
     mkdir -p "$hb_proj/.claude"
     printf 'Do the jeffy iteration now.' > "$hb_tmp/prompt.txt"
-    hb_write_state() { # $1 session_id, $2 iteration, $3 max_iterations
-      cat > "$hb_state" <<EOF
----
-session_id: $1
-iteration: $2
-max_iterations: $3
-prompt_path: $hb_tmp/prompt.txt
-focus: speed
-completion_promise: JEFFY CONVERGED
-started_at: 2026-01-01T00:00:00Z
----
-Jeffy loop state.
-EOF
+    hb_write_state() { # $1 session_id, $2 iteration, $3 max_iterations, $4 optional verify_timeout_seconds
+      {
+        printf -- '---\n'
+        printf 'session_id: %s\n' "$1"
+        printf 'iteration: %s\n' "$2"
+        printf 'max_iterations: %s\n' "$3"
+        printf 'prompt_path: %s\n' "$hb_tmp/prompt.txt"
+        printf 'focus: speed\n'
+        printf 'completion_promise: JEFFY CONVERGED\n'
+        if [ -n "${4:-}" ]; then printf 'verify_timeout_seconds: %s\n' "$4"; fi
+        printf 'started_at: 2026-01-01T00:00:00Z\n'
+        printf -- '---\n'
+        printf 'Jeffy loop state.\n'
+      } > "$hb_state"
+    }
+    hb_write_plan() { # $1 verify command line for PLAN.md
+      printf '# Plan\n\n## Verify command\n%s\n' "$1" > "$hb_proj/PLAN.md"
     }
     hb_write_backlog() { # $1 optional open task line, $2 optional Converged line
       {
@@ -460,6 +464,7 @@ EOF
 
     hb_write_state sess-1 1 3
     hb_write_backlog ''
+    hb_write_plan none
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
     if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
       pass "stop hook honors the completion promise from last_assistant_message"
@@ -534,6 +539,7 @@ EOF
       mkdir -p "$hb_proj/.claude"
       hb_git() { git -C "$hb_proj" -c user.email=jeffy@test -c user.name=jeffy -c core.autocrlf=false "$@"; }
       hb_git init -q -b main
+      hb_write_plan none
       printf 'v1\n' > "$hb_proj/product.txt"
       hb_git add product.txt >/dev/null
       hb_git commit -q -m c1
@@ -590,6 +596,68 @@ EOF
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
       echo "[SKIP] converged-hash git scenarios (git not on PATH)"
+    fi
+
+    # Verify-command check: the project's own gate runs at the converged
+    # stop under a timeout; none skips it, a red or overrunning gate blocks
+    # the promise, and a missing ledger fails open with a stderr note.
+    if command -v timeout >/dev/null 2>&1; then
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_write_plan 'exit 0'
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts the promise when the Verify command is green"
+      else
+        fault "stop hook rejected a convergence promise with a green Verify command"
+      fi
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_write_plan 'exit 3'
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 3' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook rejects the promise when the Verify command fails"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a convergence promise with a failing Verify command"
+      fi
+
+      hb_write_state sess-1 1 3 1
+      hb_write_backlog ''
+      hb_write_plan 'sleep 5'
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exceeded the 1s timeout' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook rejects the promise when the Verify command exceeds verify_timeout_seconds"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook mishandled a Verify command overrunning its timeout"
+      fi
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_write_plan none
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook skips the verify check when the Verify command is none"
+      else
+        fault "stop hook ran a Verify command declared none"
+      fi
+    else
+      echo "[SKIP] verify-command scenarios (coreutils timeout not on PATH)"
+    fi
+
+    hb_write_state sess-1 1 3
+    rm -f "$hb_proj/BACKLOG.md"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'BACKLOG.md missing' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook fails open on a missing BACKLOG.md at promise time (stderr note)"
+    else
+      fault "stop hook mishandled a missing BACKLOG.md at promise time"
     fi
 
     hb_write_state sess-other 1 3

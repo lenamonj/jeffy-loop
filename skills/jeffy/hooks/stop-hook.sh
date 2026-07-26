@@ -94,6 +94,29 @@ if [ -n "$promise" ]; then
         fi
       fi
       if [ -z "$violation" ]; then
+        # Verify-command check: the project's own gate must be green at the
+        # converged stop. A missing PLAN.md or an absent timeout binary is
+        # an infrastructure defect: skip with a stderr note, never trap.
+        if [ ! -f "$root/PLAN.md" ]; then
+          echo "jeffy stop hook: PLAN.md missing at $root; skipping the verify check." >&2
+        elif ! command -v timeout >/dev/null 2>&1; then
+          echo "jeffy stop hook: coreutils timeout not found; skipping the verify check." >&2
+        else
+          verify_cmd="$(awk '{ sub(/\r$/, "") } /^## Verify command$/ { take = 1; next } /^## / { take = 0 } take && NF { print; exit }' "$root/PLAN.md")"
+          if [ -n "$verify_cmd" ] && [ "$verify_cmd" != "none" ]; then
+            vt="$(fm verify_timeout_seconds)"
+            case "$vt" in '' | *[!0-9]*) vt=240 ;; esac
+            ( cd "$root" && timeout "$vt" bash -c "$verify_cmd" ) >/dev/null 2>&1
+            vrc=$?
+            if [ "$vrc" -eq 124 ]; then
+              violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; get it green, then re-declare convergence"
+            elif [ "$vrc" -ne 0 ]; then
+              violation="the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence"
+            fi
+          fi
+        fi
+      fi
+      if [ -z "$violation" ]; then
         rm -f "$state"
         exit 0
       fi
