@@ -1,6 +1,6 @@
 # Plan: independent convergence evaluator (the second signature)
 
-Status: proposed, not yet implemented. This is an implementation plan, not loop state -
+Status: implemented (same branch/PR as this document). This is an implementation plan, not loop state -
 it deliberately lives in docs/ because a root PLAN.md would be adopted by Jeffy's own
 bootstrap as loop state.
 

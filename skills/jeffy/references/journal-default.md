@@ -9,4 +9,6 @@ SALVAGE entries take status salvage; ROTATION entries take status rotation.
 
 run-id is the first 8 characters of the session id. Body fields, in order: Task, Changed, Checkpoint (the jeffy checkpoint commit hash, or none with the reason), Verification, Learnings, Next.
 
+The closing entry that declares convergence carries the evaluator verdict in its Verification field: `Evaluator: PASS - <one-line summary>`, or `Evaluator: unavailable (<reason>)`.
+
 Closed tasks are recorded here as one line each (ID, title, closing evidence), because BACKLOG.md deletes them. Rotation: when this file exceeds 500 lines, move all but the last 10 entries to JOURNAL-archive.md and record the rotation as a ROTATION entry.

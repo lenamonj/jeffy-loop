@@ -56,7 +56,7 @@ Jeffy Loop descends from the [Ralph technique](https://ghuntley.com/ralph/), Geo
 
 - **It doesn't invent problems.** Severity is judged against a declared operating envelope - your project's real input surfaces, not imagined attackers. Out-of-envelope findings can't inflate the backlog, and only you can widen the envelope: the loop files a proposal and moves on.
 
-- **Done means done.** The loop converges only when a full fresh audit finds zero High and zero Medium findings *and* the backlog is empty - every Low either fixed or explicitly declined with a reason. No trail of "minor" issues quietly left behind.
+- **Done means done.** The loop converges only when a full fresh audit finds zero High and zero Medium findings *and* the backlog is empty - every Low either fixed or explicitly declined with a reason. No trail of "minor" issues quietly left behind. And the declaration is countersigned: an agent grading its own work praises it, so before the loop may claim convergence, a fresh-context skeptical evaluator - a sub-agent carrying none of the run's self-persuasion - re-runs the verify gate and the closed tasks' acceptance checks, hunts for missed findings in the run's changes, and must return PASS. A rejection files its evidence as new tasks and the run continues.
 
 - **It knows when to stop.** Budget spent, convergence reached, progress stalled, or a decision only you can make - the loop ends itself and says why, instead of burning budget spinning.
 
@@ -178,6 +178,7 @@ By default `/jeffy` runs in Improvement mode: an open-ended audit-and-fix loop. 
 - Two consecutive no-progress iterations end the loop as a hard blocker instead of burning budget.
 - Severity comes from the operating envelope, never from imagination; envelope changes and audit escalations go to the Proposed section of `BACKLOG.md` for your approval - the loop never widens its own mandate.
 - Convergence is sticky: the converged commit is recorded, and relaunching on an unchanged tree with an empty backlog re-verifies and re-converges immediately instead of re-rolling the audit dice. A seeded backlog or a focus directive always gets a real run. Settled defect classes are not re-litigated on unchanged code.
+- Convergence needs a second signature. The closing declaration is gated by one independent fresh-context evaluator sub-agent that assumes the work is broken, re-runs the checks itself, and is bound by the same envelope and evidence rules as the audit. At most two evaluator reviews per run - a second rejection ends the run as a blocker with the reasons in the report - and a session that cannot spawn sub-agents records that in the journal and report instead of silently skipping the gate. The sticky-convergence ratchet, which re-verifies a mechanical fact rather than a judgment, never invokes it.
 - Lessons persist. An operational rule the loop learns the hard way - a build quirk, a command that must not be used - is promoted to the Lessons section of `PLAN.md`, which every future iteration reads in full. Add your own lines there to steer future runs: fix the loop, not the run.
 - Repeated-idiom fixes must enumerate and cover every sibling site to count as done; the third finding sharing one root cause forces a single structural fix or a user decision, never a fourth spot patch.
 

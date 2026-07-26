@@ -139,7 +139,9 @@ check_markers skills/jeffy/references/plan-default.md \
   "## Verify command" \
   "## Lessons" \
   "leaves no open task behind" \
-  "run report"
+  "run report" \
+  "independent evaluator gate" \
+  "the only sub-agent review this Method authorizes"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
@@ -155,7 +157,10 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Lessons:" \
   "Run report:" \
   "no Low is silently left behind" \
-  "wrapped in promise XML tags"
+  "wrapped in promise XML tags" \
+  "Evaluator gate:" \
+  "Evaluator: PASS" \
+  "at most 2 evaluator invocations per run"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
@@ -182,6 +187,19 @@ if [ -f "$prompt_file" ]; then
     fault "$prompt_file has an embedded newline: must be one line (a single trailing LF is fine)"
   else
     pass "$prompt_file is a single line, no double quotes, no CR"
+  fi
+fi
+
+# 6c. The evaluator-gate marker check has teeth: mangling the gate in a scratch
+#     copy must strip every occurrence of the marker, proving that removing the
+#     gate from the prompt cannot slip past check 6 via a stray duplicate of
+#     the marker text elsewhere in the file. Dependency-free (sed, grep).
+if [ -f "$prompt_file" ]; then
+  ev_mangled="$(sed 's/Evaluator gate:/EVALUATOR-GATE-MANGLED:/g' "$prompt_file")"
+  if printf '%s' "$ev_mangled" | grep -qF -- "Evaluator gate:"; then
+    fault "evaluator gate marker check has no teeth (marker survives mangling)"
+  else
+    pass "evaluator gate marker check has teeth (a mangled prompt fails check 6)"
   fi
 fi
 
