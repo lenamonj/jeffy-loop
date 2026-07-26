@@ -275,6 +275,34 @@ else
       echo "-----------------------------------------"
       fault "install.sh duplicated or lost the hook registration on a second run"
     fi
+    rt_timeouts() {
+      jq -r '[.hooks.Stop[]?.hooks[]? | select((.command // "") | contains("skills/jeffy/hooks/stop-hook.sh")) | .timeout // "none" | tostring] | join(",")' \
+        "$rt_home/.claude/settings.json" 2>/dev/null || echo ""
+    }
+    if [ "$(rt_timeouts)" = "600" ]; then
+      pass "install.sh registers the Stop hook with a 600s timeout"
+    else
+      fault "install.sh fresh registration lacks the 600s timeout (got: $(rt_timeouts))"
+    fi
+    # Legacy upgrade: a pre-1.2 registration without the timeout field gets
+    # it added exactly once, and a further run leaves the file byte-identical.
+    jq -n --arg cmd "bash \"$rt_home/.claude/skills/jeffy/hooks/stop-hook.sh\"" \
+      '{hooks: {Stop: [{hooks: [{type: "command", command: $cmd}]}]}}' > "$rt_home/.claude/settings.json"
+    HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/upgrade.log" 2>&1 || true
+    if [ "$(rt_count)" = "1" ] && [ "$(rt_timeouts)" = "600" ]; then
+      cp "$rt_home/.claude/settings.json" "$rt_tmp/settings.after-upgrade"
+      HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/upgrade2.log" 2>&1 || true
+      if cmp -s "$rt_home/.claude/settings.json" "$rt_tmp/settings.after-upgrade"; then
+        pass "install.sh upgrades a legacy registration with the 600s timeout exactly once"
+      else
+        fault "install.sh kept rewriting the upgraded registration on later runs"
+      fi
+    else
+      echo "---- install.sh upgrade run output ----"
+      cat "$rt_tmp/upgrade.log"
+      echo "---------------------------------------"
+      fault "install.sh did not upgrade a legacy hook registration with the timeout"
+    fi
   else
     echo "[SKIP] install.sh hook-registration assertions (jq not on PATH)"
   fi
@@ -344,6 +372,33 @@ if [ -n "$ps" ]; then
       cat "$pr_tmp/rerun.log"
       echo "------------------------------------------"
       fault "install.ps1 duplicated or lost the hook registration on a second run"
+    fi
+    pr_timeout_count() {
+      grep -c '"timeout": *600' "$pr_home/.claude/settings.json" 2>/dev/null | tr -d '[:space:]'
+    }
+    if [ "$(pr_timeout_count)" = "1" ]; then
+      pass "install.ps1 registers the Stop hook with a 600s timeout ($ps)"
+    else
+      fault "install.ps1 fresh registration lacks the 600s timeout"
+    fi
+    # Legacy upgrade: a pre-1.2 registration without the timeout field gets
+    # it added exactly once, and a further run leaves the file byte-identical.
+    printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          { "type": "command", "command": "bash \\"%s\\"" }\n        ]\n      }\n    ]\n  }\n}\n' \
+      "$pr_home/.claude/skills/jeffy/hooks/stop-hook.sh" > "$pr_home/.claude/settings.json"
+    pr_run >"$pr_tmp/upgrade.log" 2>&1 || true
+    if [ "$(pr_count)" = "1" ] && [ "$(pr_timeout_count)" = "1" ]; then
+      cp "$pr_home/.claude/settings.json" "$pr_tmp/settings.after-upgrade"
+      pr_run >"$pr_tmp/upgrade2.log" 2>&1 || true
+      if cmp -s "$pr_home/.claude/settings.json" "$pr_tmp/settings.after-upgrade"; then
+        pass "install.ps1 upgrades a legacy registration with the 600s timeout exactly once ($ps)"
+      else
+        fault "install.ps1 kept rewriting the upgraded registration on later runs"
+      fi
+    else
+      echo "---- install.ps1 upgrade run output ----"
+      cat "$pr_tmp/upgrade.log"
+      echo "----------------------------------------"
+      fault "install.ps1 did not upgrade a legacy hook registration with the timeout"
     fi
     rm -rf "$pr_tmp"
   fi

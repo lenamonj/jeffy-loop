@@ -79,13 +79,29 @@ if command -v jq >/dev/null 2>&1; then
     echo "[FAILED] $settings is not valid JSON; fix it, then re-run this installer to register the hook."
     ok=0
   elif jq -e --arg frag "$hook_frag" '[.hooks.Stop[]?.hooks[]?.command // empty] | any(contains($frag))' "$settings" >/dev/null 2>&1; then
-    echo "[OK] Jeffy Stop hook already registered in $settings"
+    # Already registered. A pre-1.2 registration lacks the timeout field; the
+    # hook now runs the project's verify command at the converged stop, which
+    # the default hook timeout cannot contain, so upgrade it exactly once.
+    if jq -e --arg frag "$hook_frag" '[.hooks.Stop[]?.hooks[]? | select((.command // "") | contains($frag)) | has("timeout")] | all' "$settings" >/dev/null 2>&1; then
+      echo "[OK] Jeffy Stop hook already registered in $settings"
+    else
+      tmp="$(mktemp)"
+      if jq --arg frag "$hook_frag" '.hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | if ((.command // "") | contains($frag)) and (has("timeout") | not) then . + {"timeout": 600} else . end]) else . end]' "$settings" > "$tmp" \
+        && jq empty "$tmp" >/dev/null 2>&1; then
+        mv "$tmp" "$settings"
+        echo "[OK] Jeffy Stop hook registration upgraded with a 600s timeout in $settings"
+      else
+        rm -f "$tmp"
+        echo "[FAILED] could not upgrade the Stop hook timeout in $settings; add \"timeout\": 600 to the hook entry by hand and re-run to verify."
+        ok=0
+      fi
+    fi
   else
     tmp="$(mktemp)"
-    if jq --arg cmd "$hook_cmd" '.hooks //= {} | .hooks.Stop //= [] | .hooks.Stop += [{"hooks": [{"type": "command", "command": $cmd}]}]' "$settings" > "$tmp" \
+    if jq --arg cmd "$hook_cmd" '.hooks //= {} | .hooks.Stop //= [] | .hooks.Stop += [{"hooks": [{"type": "command", "command": $cmd, "timeout": 600}]}]' "$settings" > "$tmp" \
       && jq empty "$tmp" >/dev/null 2>&1; then
       mv "$tmp" "$settings"
-      echo "[OK] Jeffy Stop hook registered in $settings"
+      echo "[OK] Jeffy Stop hook registered in $settings (600s timeout)"
     else
       rm -f "$tmp"
       echo "[FAILED] could not update $settings; add the Stop hook entry by hand (see README) and re-run to verify."

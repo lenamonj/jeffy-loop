@@ -82,19 +82,35 @@ if ((Test-Path $settingsPath) -and ((Get-Item $settingsPath).Length -gt 0)) {
 }
 if ($null -ne $settings) {
     $already = $false
+    $upgrade = @()
     if ($settings.PSObject.Properties['hooks'] -and $settings.hooks.PSObject.Properties['Stop']) {
         foreach ($entry in @($settings.hooks.Stop)) {
             if ($null -eq $entry) { continue }
             foreach ($h in @($entry.hooks)) {
-                if ($null -ne $h -and "$($h.command)" -like "*skills/jeffy/hooks/stop-hook.sh*") { $already = $true }
+                if ($null -ne $h -and "$($h.command)" -like "*skills/jeffy/hooks/stop-hook.sh*") {
+                    $already = $true
+                    if (-not $h.PSObject.Properties['timeout']) { $upgrade += $h }
+                }
             }
         }
     }
-    if ($already) {
+    if ($already -and $upgrade.Count -eq 0) {
         Write-Host "[OK] Jeffy Stop hook already registered in $settingsPath"
+    } elseif ($already) {
+        # Pre-1.2 registration: the hook now runs the project's verify command
+        # at the converged stop, which the default hook timeout cannot
+        # contain, so add the timeout field exactly once.
+        try {
+            foreach ($h in $upgrade) { $h | Add-Member -MemberType NoteProperty -Name timeout -Value 600 }
+            [System.IO.File]::WriteAllText($settingsPath, (($settings | ConvertTo-Json -Depth 32) + "`n"))
+            Write-Host "[OK] Jeffy Stop hook registration upgraded with a 600s timeout in $settingsPath"
+        } catch {
+            Write-Host "[FAILED] could not upgrade the Stop hook timeout in $settingsPath ($($_.Exception.Message)); add `"timeout`": 600 to the hook entry by hand and re-run to verify."
+            $ok = $false
+        }
     } else {
         try {
-            $hookObj = [pscustomobject]@{ type = "command"; command = $hookCmd }
+            $hookObj = [pscustomobject]@{ type = "command"; command = $hookCmd; timeout = 600 }
             $entryObj = [pscustomobject]@{ hooks = @($hookObj) }
             if (-not $settings.PSObject.Properties['hooks']) {
                 $settings | Add-Member -MemberType NoteProperty -Name hooks -Value (New-Object psobject)
