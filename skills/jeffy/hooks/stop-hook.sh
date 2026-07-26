@@ -74,11 +74,29 @@ if [ -n "$promise" ]; then
         exit 0
       fi
       open_tasks="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { print }' "$root/BACKLOG.md")"
-      if [ -z "$open_tasks" ]; then
+      if [ -n "$open_tasks" ]; then
+        violation="BACKLOG.md still lists open tasks in Now, Next, or Later, first: $(printf '%s' "$open_tasks" | head -n 1)"
+      elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+        # Converged-hash check: the latest Converged line must name a commit
+        # in this repository, and nothing but loop state may have changed
+        # between it and HEAD - the ratchet's definition of an unchanged
+        # tree. HEAD-exact equality would be unsatisfiable wherever the state
+        # files are tracked, because the closing checkpoint commits the
+        # Converged line itself. Skipped in non-git projects.
+        conv_hash="$(awk '{ sub(/\r$/, "") } /^## Converged$/ { take = 1; next } /^## / { take = 0 } take && /^Converged: / { h = $2 } END { if (h) print h }' "$root/BACKLOG.md")"
+        if [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
+          violation="the ## Converged section of BACKLOG.md does not name a commit in this repository; append the Converged line for the certified checkpoint"
+        else
+          nonstate="$(git -C "$root" diff --name-only "$conv_hash" HEAD 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md)$' | head -n 1)"
+          if [ -n "$nonstate" ]; then
+            violation="product path $nonstate changed after the Converged hash $conv_hash; certify the current tree before declaring"
+          fi
+        fi
+      fi
+      if [ -z "$violation" ]; then
         rm -f "$state"
         exit 0
       fi
-      violation="BACKLOG.md still lists open tasks in Now, Next, or Later, first: $(printf '%s' "$open_tasks" | head -n 1)"
       ;;
   esac
 fi

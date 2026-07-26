@@ -420,11 +420,12 @@ started_at: 2026-01-01T00:00:00Z
 Jeffy loop state.
 EOF
     }
-    hb_write_backlog() { # $1 optional open task line for the Now section
+    hb_write_backlog() { # $1 optional open task line, $2 optional Converged line
       {
         printf '# Backlog\n\n## Now\n\n'
         if [ -n "${1:-}" ]; then printf '%s\n' "$1"; fi
         printf '\n## Next\n\n## Later\n\n## Converged\n\n'
+        if [ -n "${2:-}" ]; then printf '%s\n' "$2"; fi
       } > "$hb_proj/BACKLOG.md"
     }
     hb_run() { # $1 session_id, $2 last_assistant_message, $3 transcript_path
@@ -513,6 +514,82 @@ EOF
       pass "stop hook ends the run at budget exhaustion even with a pending violation (stderr note)"
     else
       fault "stop hook mishandled a violation at budget exhaustion"
+    fi
+
+    # Converged-hash check: outside a git repository even a stale Converged
+    # line is skipped; inside one, the named commit must resolve and only
+    # loop-state paths may differ between it and HEAD.
+    hb_write_state sess-1 1 3
+    hb_write_backlog '' 'Converged: 1111111111111111111111111111111111111111 - 2026-01-01'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook skips the converged-hash check outside a git repository"
+    else
+      fault "stop hook applied the converged-hash check to a non-git project"
+    fi
+
+    if command -v git >/dev/null 2>&1; then
+      hb_saved_proj="$hb_proj"; hb_saved_state="$hb_state"
+      hb_proj="$hb_tmp/gitproj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      mkdir -p "$hb_proj/.claude"
+      hb_git() { git -C "$hb_proj" -c user.email=jeffy@test -c user.name=jeffy -c core.autocrlf=false "$@"; }
+      hb_git init -q -b main
+      printf 'v1\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null
+      hb_git commit -q -m c1
+      hb_c1="$(hb_git rev-parse HEAD)"
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts the promise when the Converged line certifies HEAD"
+      else
+        fault "stop hook rejected a Converged line naming HEAD"
+      fi
+
+      printf 'v2\n' > "$hb_proj/product.txt"
+      hb_git commit -aqm c2
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'product.txt changed after the Converged hash' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook rejects the promise when product paths changed after the Converged hash"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a convergence promise on an uncertified tree"
+      fi
+
+      hb_c2="$(hb_git rev-parse HEAD)"
+      printf 'entry\n' > "$hb_proj/JOURNAL.md"
+      hb_git add JOURNAL.md >/dev/null
+      hb_git commit -q -m state-only
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts state-file-only commits after the Converged hash"
+      else
+        fault "stop hook rejected a tree where only loop state changed since the Converged hash"
+      fi
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'does not name a commit' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook rejects the promise when no Converged line names a commit"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a convergence promise with no certifying Converged line"
+      fi
+
+      hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
+    else
+      echo "[SKIP] converged-hash git scenarios (git not on PATH)"
     fi
 
     hb_write_state sess-other 1 3
