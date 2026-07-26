@@ -390,7 +390,10 @@ fi
 #     blocked with the prompt and focus in the reason and the iteration
 #     counter advanced; budget exhaustion deletes the state file and allows
 #     the stop; the completion promise ends the run (via the stdin field and
-#     via the transcript fallback); a foreign session's state file is left
+#     via the transcript fallback) but only when its closing claims verify -
+#     open tasks in Now, Next, or Later reject the promise with a corrective
+#     re-feed, and a pending violation at budget exhaustion still ends the
+#     run with a stderr note; a foreign session's state file is left
 #     untouched; and a project with no state file is a silent no-op. Needs jq
 #     (the hook's own runtime dependency); skips cleanly without it.
 if command -v jq >/dev/null 2>&1; then
@@ -416,6 +419,13 @@ started_at: 2026-01-01T00:00:00Z
 ---
 Jeffy loop state.
 EOF
+    }
+    hb_write_backlog() { # $1 optional open task line for the Now section
+      {
+        printf '# Backlog\n\n## Now\n\n'
+        if [ -n "${1:-}" ]; then printf '%s\n' "$1"; fi
+        printf '\n## Next\n\n## Later\n\n## Converged\n\n'
+      } > "$hb_proj/BACKLOG.md"
     }
     hb_run() { # $1 session_id, $2 last_assistant_message, $3 transcript_path
       # Feed the hook from a file, not a pipe: the no-state fast path exits
@@ -448,6 +458,7 @@ EOF
     fi
 
     hb_write_state sess-1 1 3
+    hb_write_backlog ''
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
     if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
       pass "stop hook honors the completion promise from last_assistant_message"
@@ -466,6 +477,42 @@ EOF
       pass "stop hook honors the completion promise via the transcript fallback"
     else
       fault "stop hook missed the completion promise in the transcript fallback"
+    fi
+
+    # Machine-checked converged stop: an open task in Now, Next, or Later
+    # rejects the promise with a corrective re-feed (block, counter advanced,
+    # evidence in the reason); an empty ledger accepts it; a pending
+    # violation at budget exhaustion still ends the run, with a stderr note.
+    hb_write_state sess-1 1 3
+    hb_write_backlog '- [ ] T1: unfinished task'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'T1: unfinished task' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Do the jeffy iteration now.' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook rejects the promise while open tasks remain (corrective re-feed)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a convergence promise with open backlog tasks"
+    fi
+
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook accepts the promise once Now, Next, and Later are empty"
+    else
+      fault "stop hook rejected a legitimate convergence promise"
+    fi
+
+    hb_write_state sess-1 3 3
+    hb_write_backlog '- [ ] T1: unfinished task'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'convergence rejected' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook ends the run at budget exhaustion even with a pending violation (stderr note)"
+    else
+      fault "stop hook mishandled a violation at budget exhaustion"
     fi
 
     hb_write_state sess-other 1 3

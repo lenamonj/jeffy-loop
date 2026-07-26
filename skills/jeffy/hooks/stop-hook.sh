@@ -53,6 +53,7 @@ esac
 
 # Completion promise: prefer the last_assistant_message field newer CLIs put
 # on stdin; fall back to the last assistant entry of the JSONL transcript.
+violation=""
 if [ -n "$promise" ]; then
   last="$(printf '%s' "$input" | jq -r '.last_assistant_message // empty')"
   if [ -z "$last" ]; then
@@ -63,14 +64,31 @@ if [ -n "$promise" ]; then
   fi
   case "$last" in
     *"<promise>"*"$promise"*"</promise>"*)
-      rm -f "$state"
-      exit 0
+      # Machine-checked converged stop: the promise alone does not end the
+      # run; the closing claims must verify. A missing ledger is an
+      # infrastructure defect and fails open; a discipline violation falls
+      # through to the re-feed below with the evidence appended.
+      if [ ! -f "$root/BACKLOG.md" ]; then
+        echo "jeffy stop hook: BACKLOG.md missing at $root; accepting the promise unchecked." >&2
+        rm -f "$state"
+        exit 0
+      fi
+      open_tasks="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { print }' "$root/BACKLOG.md")"
+      if [ -z "$open_tasks" ]; then
+        rm -f "$state"
+        exit 0
+      fi
+      violation="BACKLOG.md still lists open tasks in Now, Next, or Later, first: $(printf '%s' "$open_tasks" | head -n 1)"
       ;;
   esac
 fi
 
-# Budget spent: end the run and let the session stop.
+# Budget spent: end the run and let the session stop. A convergence claim
+# whose checks failed gets a stderr note instead of a silent swallow.
 if [ "$iter" -ge "$max" ]; then
+  if [ -n "$violation" ]; then
+    echo "jeffy stop hook: convergence rejected ($violation) but the budget is spent; ending the run." >&2
+  fi
   rm -f "$state"
   exit 0
 fi
@@ -98,5 +116,8 @@ if [ -n "$focus" ]; then
   reason="$reason Focus this run on: $focus."
 fi
 reason="$reason This is jeffy iteration $next of $max for this run."
+if [ -n "$violation" ]; then
+  reason="$reason CONVERGENCE REJECTED by the stop hook: $violation. Fix this, then re-declare convergence with the promise phrase."
+fi
 jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'
 exit 0
