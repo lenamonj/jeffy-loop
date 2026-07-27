@@ -787,6 +787,21 @@ if command -v jq >/dev/null 2>&1; then
       echo "[SKIP] verify-command scenarios (coreutils timeout not on PATH)"
     fi
 
+    # Fail-open contract: a missing PLAN.md is an infrastructure defect,
+    # not a red gate - the hook skips the verify check with a stderr note
+    # and the promise still ends the run. Sits before the timeout check in
+    # the hook, so this scenario runs even where coreutils timeout is absent.
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    rm -f "$hb_proj/PLAN.md"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'PLAN.md missing' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook fails open on a missing PLAN.md at promise time (stderr note, verify skipped)"
+    else
+      fault "stop hook mishandled a missing PLAN.md at promise time"
+    fi
+    hb_write_plan none
+
     hb_write_state sess-1 1 3
     rm -f "$hb_proj/BACKLOG.md"
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
