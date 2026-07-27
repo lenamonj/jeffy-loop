@@ -1,0 +1,644 @@
+diff --git a/quantstats/reports.py b/quantstats/reports.py
+index f0d8a9a..10cbb24 100644
+--- a/quantstats/reports.py
++++ b/quantstats/reports.py
+@@ -1408,7 +1408,8 @@ def metrics(
+                     df["returns"], df["benchmark"], prepare_returns=False
+                 )
+                 metrics["Information Ratio"] = _get_stats().information_ratio(
+-                    df["returns"], df["benchmark"], prepare_returns=False
++                    df["returns"], df["benchmark"], win_year, True,
++                    prepare_returns=False
+                 )
+             elif isinstance(returns, _pd.DataFrame):
+                 metrics["R^2"] = (
+@@ -1422,7 +1423,8 @@ def metrics(
+                 metrics["Information Ratio"] = (
+                     [
+                         _get_stats().information_ratio(
+-                            df[strategy_col], df["benchmark"], prepare_returns=False
++                            df[strategy_col], df["benchmark"], win_year, True,
++                            prepare_returns=False
+                         ).round(2)
+                         for strategy_col in df_strategy_columns
+                     ]
+@@ -1441,7 +1443,7 @@ def metrics(
+ 
+         # Additional ratios
+         metrics["Ulcer Performance Index"] = _get_stats().ulcer_performance_index(df, rf)
+-        metrics["Risk-Adjusted Return %"] = _get_stats().rar(df, rf) * pct
++        metrics["Risk-Adjusted Return %"] = _get_stats().rar(df, rf, win_year) * pct
+         metrics["Risk-Return Ratio"] = _get_stats().risk_return_ratio(df, prepare_returns=False)
+ 
+         # Add separator
+@@ -1498,8 +1500,8 @@ def metrics(
+         metrics["Max Consecutive Losses *int"] = _get_stats().consecutive_losses(df)
+ 
+     # Pain-based metrics (Gain/Pain ratio)
+-    metrics["Gain/Pain Ratio"] = _get_stats().gain_to_pain_ratio(df, rf)
+-    metrics["Gain/Pain (1M)"] = _get_stats().gain_to_pain_ratio(df, rf, "ME")
++    metrics["Gain/Pain Ratio"] = _get_stats().gain_to_pain_ratio(df, rf, "D", win_year)
++    metrics["Gain/Pain (1M)"] = _get_stats().gain_to_pain_ratio(df, rf, "ME", win_year)
+     # if mode.lower() == 'full':
+     #     metrics['GPR (3M)'] = _get_stats().gain_to_pain_ratio(df, rf, "QE")
+     #     metrics['GPR (6M)'] = _get_stats().gain_to_pain_ratio(df, rf, "2Q")
+@@ -1555,7 +1557,7 @@ def metrics(
+         _get_stats().cagr(df[df.index >= d], 0.0, compounded, win_year) * pct
+     )
+ 
+-    d = today - relativedelta(years=10)
++    d = today - relativedelta(months=119)
+     metrics["10Y (ann.) %"] = (
+         _get_stats().cagr(df[df.index >= d], 0.0, compounded, win_year) * pct
+     )
+@@ -1608,7 +1610,7 @@ def metrics(
+         metrics[metric_name] = dd.loc[metric_name].values
+ 
+     # Additional drawdown-based metrics
+-    metrics["Recovery Factor"] = _get_stats().recovery_factor(df)
++    metrics["Recovery Factor"] = _get_stats().recovery_factor(df, compounded=compounded)
+     metrics["Ulcer Index"] = _get_stats().ulcer_index(df)
+     metrics["Serenity Index"] = _get_stats().serenity_index(df, rf)
+ 
+diff --git a/quantstats/stats.py b/quantstats/stats.py
+index 266f951..faee6c2 100644
+--- a/quantstats/stats.py
++++ b/quantstats/stats.py
+@@ -36,6 +36,7 @@ import numpy as _np
+ from numpy.typing import NDArray
+ from math import ceil as _ceil, sqrt as _sqrt
+ from scipy.stats import norm as _norm, linregress as _linregress
++from scipy.optimize import brentq as _brentq
+ 
+ from . import utils as _utils
+ from ._compat import safe_concat
+@@ -749,7 +750,9 @@ def rolling_volatility(
+         >>> print(rolling_vol)
+     """
+     if prepare_returns:
+-        returns = _utils._prepare_returns(returns, rolling_period)
++        # rolling_period used to be passed into _prepare_returns' rf slot; it is
++        # not a risk-free rate and volatility takes no rf.
++        returns = _utils._prepare_returns(returns)
+ 
+     # Calculate rolling standard deviation and annualize
+     return returns.rolling(rolling_period).std() * _np.sqrt(periods_per_year)
+@@ -1248,9 +1251,15 @@ def probabilistic_ratio(
+     ratio = (base - rf) / sigma_sr
+     psr = _norm.cdf(ratio)
+ 
+-    # Annualize if requested
++    # A probabilistic ratio is a probability in [0, 1]. There is no meaningful
++    # annualization of one; the previous `psr * sqrt(252)` returned values above
++    # 1 (and ignored `periods`, hardcoding 252). The frequency already enters
++    # through the base ratio, so the probability is returned unscaled.
+     if annualize:
+-        return psr * (252**0.5)
++        warn(
++            "annualize has no effect on a probabilistic ratio: the result is a "
++            "probability in [0, 1]. Pass a frequency via `periods` instead."
++        )
+ 
+     return psr
+ 
+@@ -1387,8 +1396,11 @@ def treynor_ratio(returns, benchmark, periods=252.0, rf=0.0):
+         warn("Beta is zero, cannot calculate Treynor ratio, returning 0")
+         return 0
+ 
+-    # Calculate excess return over risk-free rate divided by beta
+-    return (comp(returns) - rf) / beta
++    # Calculate annualized excess return over risk-free rate divided by beta.
++    # The numerator must be annualized to match the annualized rf it is netted
++    # against; comp(returns) is the whole-sample cumulative return, which grows
++    # with the length of the backtest and is not comparable across horizons.
++    return cagr(returns, rf, periods=int(periods)) / beta
+ 
+ 
+ def omega(
+@@ -1463,7 +1475,7 @@ def omega(
+         return _np.nan
+ 
+ 
+-def gain_to_pain_ratio(returns, rf=0, resolution="D"):
++def gain_to_pain_ratio(returns, rf=0, resolution="D", periods=252):
+     """
+     Calculate Jack Schwager's Gain-to-Pain Ratio (GPR).
+ 
+@@ -1473,8 +1485,9 @@ def gain_to_pain_ratio(returns, rf=0, resolution="D"):
+ 
+     Args:
+         returns (pd.Series): Return series to analyze
+-        rf (float): Risk-free rate (default: 0)
++        rf (float): Risk-free rate (annualized, default: 0)
+         resolution (str): Resampling frequency ('D', 'W', 'M', etc.)
++        periods (int): Periods per year used to deannualize rf (default: 252)
+ 
+     Returns:
+         float: Gain-to-Pain ratio
+@@ -1487,8 +1500,10 @@ def gain_to_pain_ratio(returns, rf=0, resolution="D"):
+     Note:
+         See here for more info: https://archive.is/wip/2rwFW
+     """
+-    # Prepare returns and resample to specified frequency
+-    returns = _utils._prepare_returns(returns, rf).resample(resolution).sum()
++    # Prepare returns and resample to specified frequency.
++    # periods is forwarded so an annualized rf is deannualized rather than
++    # subtracted whole from every period (or, as before this fix, dropped).
++    returns = _utils._prepare_returns(returns, rf, periods).resample(resolution).sum()
+ 
+     # Calculate absolute sum of negative returns (pain)
+     downside = abs(returns[returns < 0].sum())
+@@ -1533,8 +1548,10 @@ def cagr(
+     """
+     validate_input(returns)
+ 
+-    # Prepare returns (subtract risk-free rate if applicable)
+-    total = _utils._prepare_returns(returns, rf)
++    # Prepare returns (subtract risk-free rate if applicable).
++    # periods is forwarded so an annualized rf is deannualized to this series'
++    # frequency, exactly as sharpe() and sortino() do.
++    total = _utils._prepare_returns(returns, rf, periods)
+ 
+     # Calculate total return
+     if compounded:
+@@ -1558,7 +1575,7 @@ def cagr(
+     return res
+ 
+ 
+-def rar(returns, rf=0.0):
++def rar(returns, rf=0.0, periods=252):
+     """
+     Calculate the Risk-Adjusted Return (RAR).
+ 
+@@ -1569,6 +1586,7 @@ def rar(returns, rf=0.0):
+     Args:
+         returns (pd.Series): Return series to analyze
+         rf (float): Risk-free rate (annualized, default: 0.0)
++        periods (int): Periods per year for annualization (default: 252)
+ 
+     Returns:
+         float: Risk-adjusted return
+@@ -1578,11 +1596,10 @@ def rar(returns, rf=0.0):
+         >>> rar_value = rar(returns)
+         >>> print(f"Risk-adjusted return: {rar_value:.4f}")
+     """
+-    # Prepare returns (subtract risk-free rate if applicable)
+-    returns = _utils._prepare_returns(returns, rf)
+-
+-    # Calculate CAGR and divide by exposure time
+-    return cagr(returns) / exposure(returns)
++    # Calculate CAGR and divide by exposure time. periods must be forwarded:
++    # without it a monthly series was annualized at 252 periods/year here while
++    # the report's CAGR row used 12.
++    return cagr(returns, rf, periods=periods) / exposure(returns)
+ 
+ 
+ def skew(returns, prepare_returns=True):
+@@ -2329,7 +2346,7 @@ def outlier_loss_ratio(returns, quantile=0.01, prepare_returns=True):
+         return quantile_val / negative_mean
+ 
+ 
+-def recovery_factor(returns, rf=0.0, prepare_returns=True):
++def recovery_factor(returns, rf=0.0, compounded=True, prepare_returns=True):
+     """
+     Calculate the recovery factor (total returns / maximum drawdown).
+ 
+@@ -2340,6 +2357,7 @@ def recovery_factor(returns, rf=0.0, prepare_returns=True):
+     Args:
+         returns (pd.Series): Return series to analyze
+         rf (float): Risk-free rate (default: 0.0)
++        compounded (bool): Compound the total return (default: True)
+         prepare_returns (bool): Whether to prepare returns first (default: True)
+ 
+     Returns:
+@@ -2353,8 +2371,10 @@ def recovery_factor(returns, rf=0.0, prepare_returns=True):
+     if prepare_returns:
+         returns = _utils._prepare_returns(returns)
+ 
+-    # Calculate total excess returns
+-    total_returns = returns.sum() - rf
++    # Calculate total excess returns. The denominator, max_drawdown, is computed
++    # on a compounded equity curve, so the numerator compounds by default too;
++    # summing simple returns here mixed the two conventions in one ratio.
++    total_returns = (comp(returns) if compounded else returns.sum()) - rf
+ 
+     # Calculate maximum drawdown
+     max_dd = max_drawdown(returns)
+@@ -2374,8 +2394,11 @@ def risk_return_ratio(returns, prepare_returns=True):
+     """
+     Calculate the risk-return ratio (mean return / standard deviation).
+ 
+-    This function calculates the Sharpe ratio without factoring in the
+-    risk-free rate, providing a simple measure of return per unit of risk.
++    This is the per-period ratio of mean return to standard deviation, with no
++    risk-free rate and no annualization. It is *not* the Sharpe ratio this
++    module reports: sharpe() annualizes by sqrt(periods), so on daily data
++    sharpe(returns, rf=0) is sqrt(252) times this value. Compare it only with
++    other per-period figures.
+ 
+     Args:
+         returns (pd.Series): Return series to analyze
+@@ -2550,29 +2573,66 @@ def to_drawdown_series(returns):
+     return dd.replace([_np.inf, -_np.inf, -0], 0)  # type: ignore[attr-defined]
+ 
+ 
++def _growth_optimal_fraction(returns: _np.ndarray) -> float:
++    """
++    Solve for the growth-optimal fraction of capital for one return series.
++
++    Maximises E[log(1 + f * r)] over f, i.e. finds the root of
++    E[r / (1 + f * r)] = 0. The objective is strictly concave in f on
++    (-1/max(r), 1/|min(r)|), so the root is unique and bracketed by 0.
++    """
++    r = _np.asarray(returns, dtype=float)
++    r = r[_np.isfinite(r)]
++    if len(r) == 0:
++        return _np.nan
++
++    mean = r.mean()
++    if mean == 0:
++        return 0.0
++
++    def slope(f):
++        return _np.mean(r / (1.0 + f * r))
++
++    if mean > 0:
++        if r.min() >= 0:
++            return _np.inf  # no downside: growth is unbounded in leverage
++        lo, hi = 0.0, 1.0 / abs(r.min())
++    else:
++        if r.max() <= 0:
++            return -_np.inf  # no upside: the optimal position is an unbounded short
++        lo, hi = -1.0 / r.max(), 0.0
++
++    # Step just inside the open interval so the objective stays finite.
++    eps = (hi - lo) * 1e-12
++    return _brentq(slope, lo + eps, hi - eps, xtol=1e-14)
++
++
+ def kelly_criterion(returns, prepare_returns=True):
+     """
+     Calculates the recommended maximum amount of capital that
+     should be allocated to the given strategy, based on the
+     Kelly Criterion (http://en.wikipedia.org/wiki/Kelly_criterion)
++
++    Returns the growth-optimal fraction of capital: the f that maximises
++    E[log(1 + f * r)] over the supplied return series. A value of 1.0 means
++    "hold the strategy unlevered", 2.0 means "hold it at 2x leverage".
++
++    Note that the textbook two-outcome form f = (b*p - q)/b assumes a losing
++    bet forfeits the whole stake. Applied to a return series whose losing
++    periods are a few percent, that form understates the growth-optimal
++    fraction by roughly a factor of the average loss, and is invariant to the
++    scale of the returns, so it is not used here.
+     """
+     if prepare_returns:
+         returns = _utils._prepare_returns(returns)
+-    win_loss_ratio = payoff_ratio(returns)
+-    win_prob = win_rate(returns)
+-    lose_prob = 1 - win_prob
+ 
+     # Handle both Series (DataFrame input) and scalar (Series input) cases
+-    if isinstance(win_loss_ratio, _pd.Series):
+-        # DataFrame input - element-wise operations with zero/nan protection
+-        # Replace 0 and NaN values with NaN to avoid division issues
+-        win_loss_ratio_safe = win_loss_ratio.replace(0, _np.nan)
+-        return ((win_loss_ratio_safe * win_prob) - lose_prob) / win_loss_ratio_safe
+-    else:
+-        # Series input - scalar operations
+-        if win_loss_ratio == 0 or _pd.isna(win_loss_ratio):
+-            return _np.nan
+-        return ((win_loss_ratio * win_prob) - lose_prob) / win_loss_ratio
++    if isinstance(returns, _pd.DataFrame):
++        return _pd.Series(
++            {col: _growth_optimal_fraction(returns[col].dropna().values)
++             for col in returns.columns}
++        )
++    return _growth_optimal_fraction(returns.dropna().values)
+ 
+ 
+ # ==== VS. BENCHMARK ====
+@@ -2632,18 +2692,27 @@ def r2(returns, benchmark):
+     return r_squared(returns, benchmark)
+ 
+ 
+-def information_ratio(returns, benchmark, prepare_returns=True):
++def information_ratio(
++    returns,
++    benchmark,
++    periods: int = 252,
++    annualize: bool = True,
++    prepare_returns: bool = True,
++):
+     """
+     Calculate the Information Ratio.
+ 
+     The Information Ratio measures the risk-adjusted excess return of a
+     portfolio relative to a benchmark. It's calculated as the active return
+     (return - benchmark) divided by the tracking error (standard deviation
+-    of active returns).
++    of active returns), then annualized by sqrt(periods) - the same
++    annualization sharpe() applies, so the two are directly comparable.
+ 
+     Args:
+         returns (pd.Series): Return series to analyze
+         benchmark (pd.Series): Benchmark return series for comparison
++        periods (int): Periods per year for annualization (default: 252)
++        annualize (bool): Whether to annualize the ratio (default: True)
+         prepare_returns (bool): Whether to prepare returns first (default: True)
+ 
+     Returns:
+@@ -2654,6 +2723,10 @@ def information_ratio(returns, benchmark, prepare_returns=True):
+         >>> benchmark = pd.Series([0.005, -0.01, 0.02, -0.005, 0.015])
+         >>> info_ratio = information_ratio(returns, benchmark)
+         >>> print(f"Information Ratio: {info_ratio:.4f}")
++
++    Note:
++        The active return is the arithmetic difference returns - benchmark,
++        the standard (Grinold-Kahn) convention.
+     """
+     if prepare_returns:
+         returns = _utils._prepare_returns(returns)
+@@ -2662,15 +2735,21 @@ def information_ratio(returns, benchmark, prepare_returns=True):
+     benchmark = _utils._prepare_benchmark(benchmark, returns.index)
+ 
+     # Calculate active returns (returns - benchmark)
+-    diff_rets = returns - _utils._prepare_benchmark(benchmark, returns.index)
++    diff_rets = returns - benchmark
+ 
+     # Calculate tracking error (standard deviation of active returns)
+     std = diff_rets.std()
+ 
+     # Return Information Ratio (active return / tracking error)
+-    if std != 0:
+-        return diff_rets.mean() / diff_rets.std()
+-    return 0
++    if std == 0:
++        return 0
++
++    res = diff_rets.mean() / std
++
++    if annualize:
++        return res * _np.sqrt(1 if periods is None else periods)
++
++    return res
+ 
+ 
+ def greeks(returns, benchmark, periods=252.0, prepare_returns=True):
+@@ -2772,8 +2851,12 @@ def rolling_greeks(returns, benchmark, periods=252, prepare_returns=True):
+     # Calculate rolling beta (protect against division by zero)
+     beta = corr * std["returns"] / std["benchmark"].replace(0, _np.nan)
+ 
+-    # Calculate rolling alpha (not annualized for rolling version)
+-    alpha = df["returns"].mean() - beta * df["benchmark"].mean()
++    # Calculate rolling alpha (not annualized for rolling version).
++    # The means must be rolling too: using df[...].mean() put the whole-sample
++    # mean - future data included - into every point of the series, so alpha was
++    # not a rolling statistic at all.
++    roll_mean = df.rolling(int(periods)).mean()
++    alpha = roll_mean["returns"] - beta * roll_mean["benchmark"]
+ 
+     # Return DataFrame with rolling Greeks
+     return _pd.DataFrame(index=returns.index, data={"beta": beta, "alpha": alpha})
+diff --git a/quantstats/utils.py b/quantstats/utils.py
+index 14c235d..5e00422 100644
+--- a/quantstats/utils.py
++++ b/quantstats/utils.py
+@@ -22,7 +22,6 @@ import pandas as _pd
+ import numpy as _np
+ from ._compat import safe_yfinance_download
+ from ._compat import safe_concat, safe_resample
+-import inspect
+ import threading
+ 
+ # Type alias for return data
+@@ -107,7 +106,7 @@ _CACHE_MAX_SIZE = 100
+ _cache_lock = threading.Lock()
+ 
+ 
+-def _generate_cache_key(data, rf, nperiods):
++def _generate_cache_key(data, rf, nperiods, apply_rf):
+     """
+     Generate a cache key for the _prepare_returns function
+ 
+@@ -119,6 +118,8 @@ def _generate_cache_key(data, rf, nperiods):
+         Risk-free rate parameter
+     nperiods : int
+         Number of periods parameter
++    apply_rf : bool
++        Whether the risk-free rate is subtracted
+ 
+     Returns
+     -------
+@@ -135,7 +136,7 @@ def _generate_cache_key(data, rf, nperiods):
+             data_hash = hash(str(data))
+ 
+         # Include parameters in the key
+-        key = f"{data_hash}_{rf}_{nperiods}"
++        key = f"{data_hash}_{rf}_{nperiods}_{apply_rf}"
+         return key
+     except (ValueError, TypeError, AttributeError, MemoryError):
+         # If hashing fails, return None to skip caching
+@@ -440,6 +441,35 @@ def group_returns(returns: Returns, groupby, compounded: bool = False) -> Return
+     return returns.groupby(groupby).sum()
+ 
+ 
++# Single-letter pandas offset aliases documented across the public API, mapped
++# onto the calendar-period codes this module actually implements. Without this
++# 'M', 'Q' and 'Y' fell through every branch below and returned the unaggregated
++# series, so e.g. best(returns, aggregate='M') silently reported the best *day*.
++_PERIOD_ALIASES = {
++    "d": "day",
++    "b": "day",
++    "w": "eow",
++    "m": "eom",
++    "q": "eoq",
++    "y": "eoy",
++    "a": "eoy",
++}
++
++
++def _normalize_period(period):
++    """
++    Map a pandas-style offset alias onto this module's calendar-period codes.
++
++    Bare aliases ('M', 'W', 'Y', 'ME', 'YE', ...) become the end-of-period code
++    the grouping branches below understand. Anything already spelled out
++    ('month', 'eoy', ...) or not a string is returned unchanged.
++    """
++    if not isinstance(period, str):
++        return period
++    head = period.split("-")[0].rstrip("EeSs").lower()
++    return _PERIOD_ALIASES.get(head, period.lower())
++
++
+ def aggregate_returns(returns: Returns, period: str | None = None, compounded: bool = True) -> Returns:
+     """
+     Aggregate returns based on specified time periods
+@@ -449,7 +479,12 @@ def aggregate_returns(returns: Returns, period: str | None = None, compounded: b
+     returns : pd.Series or pd.DataFrame
+         Returns data
+     period : str, optional
+-        Time period for aggregation ('month', 'quarter', 'year', etc.)
++        Time period for aggregation. Accepts the pandas offset aliases
++        'D', 'W', 'M'/'ME', 'Q'/'QE', 'Y'/'YE' as well as the spelled-out
++        codes 'day', 'week'/'eow', 'month'/'eom', 'quarter'/'eoq',
++        'year'/'eoy'. 'month', 'quarter' and 'week' pool the same calendar
++        period across every year; the 'eom'/'eoq'/'eow' forms (and the
++        pandas aliases, which map onto them) keep years distinct.
+     compounded : bool, default True
+         Whether to compound returns
+ 
+@@ -462,7 +497,13 @@ def aggregate_returns(returns: Returns, period: str | None = None, compounded: b
+     # Convert to UTC if timezone-aware, then make naive
+     if hasattr(returns.index, 'tz') and returns.index.tz is not None:
+         returns = returns.tz_convert('UTC').tz_localize(None)
+-    
++
++    # Custom period grouping (non-string) - pass straight through
++    if period is not None and not isinstance(period, str):
++        return group_returns(returns, period, compounded)
++
++    period = _normalize_period(period)
++
+     # Return original data if no period specified or daily period
+     if period is None or "day" in period:
+         return returns
+@@ -478,33 +519,38 @@ def aggregate_returns(returns: Returns, period: str | None = None, compounded: b
+         return group_returns(returns, index.quarter, compounded=compounded)
+ 
+     # Group by year (multiple possible period strings)
+-    if period == "YE" or any(x in period for x in ["year", "eoy", "yoy"]):
++    if any(x in period for x in ["year", "eoy", "yoy"]):
+         return group_returns(returns, index.year, compounded=compounded)
+ 
++    # ISO week number: DatetimeIndex.week was removed in pandas 2.0, which made
++    # every weekly aggregation path raise AttributeError.
++    isoweek = index.isocalendar().week.values
++
+     # Group by week
+     if "week" in period:
+-        return group_returns(returns, index.week, compounded=compounded)
++        return group_returns(returns, isoweek, compounded=compounded)
+ 
+     # End of week grouping
+-    if "eow" in period or period == "W":
+-        return group_returns(returns, [index.year, index.week], compounded=compounded)
++    if "eow" in period:
++        return group_returns(returns, [index.year, isoweek], compounded=compounded)
+ 
+     # End of month grouping
+-    if "eom" in period or period == "ME":
++    if "eom" in period:
+         return group_returns(returns, [index.year, index.month], compounded=compounded)
+ 
+     # End of quarter grouping
+-    if "eoq" in period or period == "QE":
++    if "eoq" in period:
+         return group_returns(
+             returns, [index.year, index.quarter], compounded=compounded
+         )
+ 
+-    # Custom period grouping (non-string)
+-    if not isinstance(period, str):
+-        return group_returns(returns, period, compounded)
+-
+-    # Default: return original data
+-    return returns
++    # Unrecognised period code - fail loudly rather than silently returning
++    # the unaggregated series.
++    raise ValueError(
++        f"Unrecognised aggregation period {period!r}. Use one of "
++        "'D', 'W', 'M'/'ME', 'Q'/'QE', 'Y'/'YE', or the spelled-out forms "
++        "'day', 'week'/'eow', 'month'/'eom', 'quarter'/'eoq', 'year'/'eoy'."
++    )
+ 
+ 
+ def to_excess_returns(returns: Returns, rf: float, nperiods: int | None = None) -> Returns:
+@@ -580,7 +626,7 @@ def _prepare_prices(data, base=1.0):
+     return data
+ 
+ 
+-def _prepare_returns(data, rf=0.0, nperiods=None):
++def _prepare_returns(data, rf=0.0, nperiods=None, apply_rf=True):
+     """
+     Convert price data into returns and perform cleanup
+ 
+@@ -592,6 +638,9 @@ def _prepare_returns(data, rf=0.0, nperiods=None):
+         Risk-free rate
+     nperiods : int, optional
+         Number of periods for risk-free rate conversion
++    apply_rf : bool, default True
++        Whether to subtract the risk-free rate. Callers that handle rf
++        themselves, or that must not double-subtract it, pass False.
+ 
+     Returns
+     -------
+@@ -599,15 +648,13 @@ def _prepare_returns(data, rf=0.0, nperiods=None):
+         Cleaned returns data
+     """
+     # Try to get from cache first
+-    cache_key = _generate_cache_key(data, rf, nperiods)
++    cache_key = _generate_cache_key(data, rf, nperiods, apply_rf)
+     if cache_key:
+         with _cache_lock:
+             if cache_key in _PREPARE_RETURNS_CACHE:
+                 return _PREPARE_RETURNS_CACHE[cache_key].copy()
+ 
+     data = data.copy()
+-    # Get calling function name for conditional processing
+-    function = inspect.stack()[1][3]
+ 
+     # Process DataFrame columns
+     if isinstance(data, _pd.DataFrame):
+@@ -628,24 +675,17 @@ def _prepare_returns(data, rf=0.0, nperiods=None):
+     if isinstance(data, (_pd.DataFrame, _pd.Series)):
+         data = data.fillna(0).replace([_np.inf, -_np.inf], float("NaN"))
+ 
+-    # Functions that don't need excess returns calculation
+-    unnecessary_function_calls = [
+-        "_prepare_benchmark",
+-        "cagr",
+-        "gain_to_pain_ratio",
+-        "rolling_volatility",
+-    ]
+-
+-    # Calculate excess returns if rf > 0 and function needs it
+-    if function not in unnecessary_function_calls:
+-        if rf > 0:
+-            result = to_excess_returns(data, rf, nperiods)
+-            # Cache the result
+-            if cache_key:
+-                _clear_cache_if_full()
+-                with _cache_lock:
+-                    _PREPARE_RETURNS_CACHE[cache_key] = result.copy()
+-            return result
++    # Calculate excess returns when the caller asked for them.
++    # rf != 0 rather than rf > 0: negative policy rates are real and a
++    # negative rf must raise the excess return, not be silently dropped.
++    if apply_rf and rf != 0:
++        result = to_excess_returns(data, rf, nperiods)
++        # Cache the result
++        if cache_key:
++            _clear_cache_if_full()
++            with _cache_lock:
++                _PREPARE_RETURNS_CACHE[cache_key] = result.copy()
++        return result
+ 
+     # Normalize timezone information for consistency
+     # Convert to UTC if timezone-aware, then make naive
+@@ -737,9 +777,12 @@ def _prepare_benchmark(benchmark=None, period="max", rf=0.0, prepare_returns=Tru
+         benchmark = benchmark.tz_convert('UTC').tz_localize(None)
+     # If already timezone-naive, no action needed
+ 
+-    # Prepare returns or return raw data
++    # Prepare returns or return raw data.
++    # apply_rf=False: every caller that passes rf here also passes the same rf
++    # to the metric it feeds (sharpe, sortino, ...), which subtracts it itself.
++    # Subtracting here as well would double-count the risk-free rate.
+     if prepare_returns:
+-        return _prepare_returns(benchmark.dropna(), rf=rf)
++        return _prepare_returns(benchmark.dropna(), rf=rf, apply_rf=False)
+     return benchmark.dropna()
+ 
+ 

@@ -1,0 +1,282 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..20d1c2e
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,10 @@
++# Keep the repository, and above all the CSV fixtures the tests compare byte for
++# byte, on LF in every working tree. Without this a default Windows clone
++# (core.autocrlf=true) rewrites tests/*.csv to CRLF and reddens the node suite
++# on line endings alone.
++* text=auto eol=lf
++
++*.png binary
++*.jpg binary
++*.gif binary
++*.ico binary
+diff --git a/papaparse.js b/papaparse.js
+index 230dafe..74ef801 100755
+--- a/papaparse.js
++++ b/papaparse.js
+@@ -509,7 +509,19 @@ License: MIT
+ 		};
+ 		replaceConfig.call(this, config);
+ 
++		// A step or chunk callback is free to pause and then resume while parseChunk
++		// is still on the stack. Continuing here, rather than letting resume() poll
++		// for the halt with a timer, keeps a synchronous resume free of timer
++		// latency and cannot recurse back into the parser. (bug #636)
+ 		this.parseChunk = function(chunk, isFakeChunk)
++		{
++			var results = this._parseChunk(chunk, isFakeChunk);
++			while (this._halted && this._handle.resumeRequested())
++				results = this._parseChunk(this._handle.acceptResume(), true);
++			return results;
++		};
++
++		this._parseChunk = function(chunk, isFakeChunk)
+ 		{
+ 			// First chunk pre-processing
+ 			const skipFirstNLines = parseInt(this._config.skipFirstNLines) || 0;
+@@ -602,6 +614,12 @@ License: MIT
+ 					finished: false
+ 				});
+ 			}
++			else
++			{
++				// Never drop it. Without an error callback this used to end the parse
++				// in silence: no rows, no complete, no diagnostic.
++				throw error;
++			}
+ 		};
+ 
+ 		function replaceConfig(config)
+@@ -617,6 +635,11 @@ License: MIT
+ 		}
+ 	}
+ 
++	// Source flow control. Streamers whose source can be throttled override these;
++	// for the rest, pausing the parser simply does not throttle anything.
++	ChunkStreamer.prototype.pause = function() {};
++	ChunkStreamer.prototype.resume = function() {};
++
+ 
+ 	function NetworkStreamer(config)
+ 	{
+@@ -829,7 +852,7 @@ License: MIT
+ 			return this.parseChunk(chunk);
+ 		};
+ 	}
+-	StringStreamer.prototype = Object.create(StringStreamer.prototype);
++	StringStreamer.prototype = Object.create(ChunkStreamer.prototype);
+ 	StringStreamer.prototype.constructor = StringStreamer;
+ 
+ 
+@@ -842,17 +865,20 @@ License: MIT
+ 		var queue = [];
+ 		var parseOnData = true;
+ 		var streamHasEnded = false;
++		var decoder = null;
+ 
+ 		this.pause = function()
+ 		{
+ 			ChunkStreamer.prototype.pause.apply(this, arguments);
+-			this._input.pause();
++			if (this._input)
++				this._input.pause();
+ 		};
+ 
+ 		this.resume = function()
+ 		{
+ 			ChunkStreamer.prototype.resume.apply(this, arguments);
+-			this._input.resume();
++			if (this._input)
++				this._input.resume();
+ 		};
+ 
+ 		this.stream = function(stream)
+@@ -884,11 +910,29 @@ License: MIT
+ 			}
+ 		};
+ 
++		// A chunk boundary can fall inside a multi-byte character, so the bytes
++		// cannot be decoded one chunk at a time: an incomplete sequence has to be
++		// held back until the next chunk completes it, or both halves decode to
++		// U+FFFD and the field is silently corrupted.
++		this._decode = function(chunk)
++		{
++			if (typeof PAPA_BROWSER_CONTEXT === 'undefined')
++			{
++				if (decoder === null)
++				{
++					var StringDecoder = require('string_decoder').StringDecoder;
++					decoder = new StringDecoder(this._config.encoding || 'utf8');
++				}
++				return decoder.write(chunk);
++			}
++			return chunk.toString(this._config.encoding);
++		};
++
+ 		this._streamData = bindFunction(function(chunk)
+ 		{
+ 			try
+ 			{
+-				queue.push(typeof chunk === 'string' ? chunk : chunk.toString(this._config.encoding));
++				queue.push(typeof chunk === 'string' ? chunk : this._decode(chunk));
+ 
+ 				if (parseOnData)
+ 				{
+@@ -913,7 +957,9 @@ License: MIT
+ 		{
+ 			this._streamCleanUp();
+ 			streamHasEnded = true;
+-			this._streamData('');
++			// Flushing the decoder also delivers the empty sentinel chunk the
++			// finish check below looks for.
++			this._streamData(decoder === null ? '' : decoder.end());
+ 		}, this);
+ 
+ 		this._streamCleanUp = bindFunction(function()
+@@ -1042,6 +1088,7 @@ License: MIT
+ 		var _input;				// The input being parsed
+ 		var _parser;			// The core parser being used
+ 		var _paused = false;	// Whether we are paused or not
++		var _resumeRequested = false;	// resume() called while the parse was still unwinding
+ 		var _aborted = false;	// Whether the parser has aborted or not
+ 		var _delimiterError;	// Temporary state between delimiter detection and processing results
+ 		var _fields = [];		// Fields are from the header row of the input, if there is one
+@@ -1087,13 +1134,28 @@ License: MIT
+ 		this.parse = function(input, baseIndex, ignoreLastRow)
+ 		{
+ 			var quoteChar = _config.quoteChar || '"';
+-			if (!_config.newline)
+-				_config.newline = this.guessLineEndings(input, quoteChar);
++
++			// When the input is one chunk of a longer stream, its tail is an
++			// incomplete row and can even stop between the CR and the LF of a CRLF
++			// pair. Both guesses below are cached for the whole file, so a guess
++			// taken from that tail silently corrupts every later row. Guess from
++			// complete lines only, and cache the line ending only once the sample
++			// actually contained one.
++			var completeSample = ignoreLastRow ? completeLines(input) : input;
++			var guessSample = completeSample === null ? input : completeSample;
++
++			var newline = _config.newline;
++			if (!newline)
++			{
++				newline = this.guessLineEndings(guessSample, quoteChar);
++				if (completeSample !== null)
++					_config.newline = newline;
++			}
+ 
+ 			_delimiterError = false;
+ 			if (!_config.delimiter)
+ 			{
+-				var delimGuess = guessDelimiter(input, _config.newline, _config.skipEmptyLines, _config.comments, _config.delimitersToGuess);
++				var delimGuess = guessDelimiter(guessSample, newline, _config.skipEmptyLines, _config.comments, _config.delimitersToGuess);
+ 				if (delimGuess.successful)
+ 					_config.delimiter = delimGuess.bestDelimiter;
+ 				else
+@@ -1110,6 +1172,13 @@ License: MIT
+ 			}
+ 
+ 			var parserConfig = copy(_config);
++			parserConfig.newline = newline;
++			// The core parser reads the header row out of the first rows it sees.
++			// It decides "first" from baseIndex, which does not advance while the
++			// caller is paused, so on every resume it treated the next data row as
++			// a header and rewrote its duplicate values in place. The handle
++			// already knows whether the header has been consumed. (issues #985, #998)
++			parserConfig.header = needsHeaderRow();
+ 			if (_config.preview && _config.header)
+ 				parserConfig.preview++;	// to compensate for header row
+ 
+@@ -1128,25 +1197,62 @@ License: MIT
+ 		this.pause = function()
+ 		{
+ 			_paused = true;
++			_resumeRequested = false;
+ 			_parser.abort();
+ 
++			// Throttle the source as well. Without this the streamer keeps queueing
++			// the rest of the input in memory for as long as the caller stays
++			// paused, which is exactly the case pausing exists to avoid.
++			if (self.streamer)
++				self.streamer.pause();
++
+ 			// If it is streaming via "chunking", the reader will start appending correctly already so no need to substring,
+ 			// otherwise we can get duplicate content within a row
+-			_input = isFunction(_config.chunk) ? "" : _input.substring(_parser.getCharIndex());
++			if (isFunction(_config.chunk))
++				_input = "";
++			else
++			{
++				var consumed = _parser.getCharIndex();
++				// The streamer's base index is the file offset of the text it handed
++				// us. Dropping the consumed prefix has to move it too, or every row
++				// parsed after a resume reports meta.cursor as an offset into the
++				// remainder instead of into the file. (issue #985)
++				if (self.streamer)
++					self.streamer._baseIndex += consumed;
++				_input = _input.substring(consumed);
++			}
+ 		};
+ 
+ 		this.resume = function()
+ 		{
+-			if(self.streamer._halted) {
++			if (self.streamer)
++				self.streamer.resume();
++
++			if (self.streamer._halted) {
++				_resumeRequested = false;
+ 				_paused = false;
+ 				self.streamer.parseChunk(_input, true);
+ 			} else {
+-				// Bugfix: #636 In case the processing hasn't halted yet
+-				// wait for it to halt in order to resume
+-				setTimeout(self.resume, 3);
++				// Bugfix: #636 The parse has not unwound yet, so it cannot be
++				// re-entered from here. Record the request instead; parseChunk picks
++				// it up the moment it halts. This used to poll with
++				// setTimeout(resume, 3), which cost one timer per resumed row.
++				_resumeRequested = true;
+ 			}
+ 		};
+ 
++		this.resumeRequested = function()
++		{
++			return _paused && _resumeRequested;
++		};
++
++		this.acceptResume = function()
++		{
++			_resumeRequested = false;
++			_paused = false;
++			return _input;
++		};
++
+ 		this.aborted = function()
+ 		{
+ 			return _aborted;
+@@ -1412,6 +1518,20 @@ License: MIT
+ 		}
+ 	}
+ 
++	/**
++	 * The leading part of input that is known to consist of whole lines, or null
++	 * when input holds no line ending that is certainly complete. A trailing CR is
++	 * never trusted: the LF that would pair with it may be in the next chunk.
++	 */
++	function completeLines(input)
++	{
++		var lastLf = input.lastIndexOf('\n');
++		if (lastLf !== -1)
++			return input.substring(0, lastLf + 1);
++		var lastCr = input.lastIndexOf('\r', input.length - 2);
++		return lastCr === -1 ? null : input.substring(0, lastCr + 1);
++	}
++
+ 	/** https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions */
+ 	function escapeRegExp(string)
+ 	{

@@ -1,0 +1,249 @@
+diff --git a/pypfopt/base/_base_optimizer.py b/pypfopt/base/_base_optimizer.py
+index ad8c771..0332430 100644
+--- a/pypfopt/base/_base_optimizer.py
++++ b/pypfopt/base/_base_optimizer.py
+@@ -336,7 +336,10 @@ class BaseConvexOptimizer(BaseOptimizer):
+                 solver=self._solver, verbose=self._verbose, **self._solver_options
+             )
+ 
+-        except (TypeError, cp.DCPError) as e:
++        except (TypeError, cp.DCPError, cp.SolverError) as e:
++            # cp.SolverError carries the raw solver status code as its whole
++            # message (e.g. "4"), which tells the caller nothing. Wrap it in
++            # the library's own error, keeping the original as __cause__.
+             raise OptimizationError from e
+ 
+         if self._opt.status not in {"optimal", "optimal_inaccurate"}:
+diff --git a/pypfopt/cla.py b/pypfopt/cla.py
+index bde53b1..e61d308 100644
+--- a/pypfopt/cla.py
++++ b/pypfopt/cla.py
+@@ -69,11 +69,24 @@ class CLA(BaseOptimizer):
+         """
+         # Initialize the class
+         self.mean = np.array(expected_returns).reshape((len(expected_returns), 1))
+-        # if (self.mean == np.ones(self.mean.shape) * self.mean.mean()).all():
+-        #     self.mean[-1, 0] += 1e-5
+         self.expected_returns = self.mean.reshape((len(self.mean),))
+         self.cov_matrix = np.asarray(cov_matrix)
+ 
++        # Single validation boundary for the numeric inputs. Without it a NaN
++        # anywhere in either input propagates silently all the way to a
++        # portfolio containing NaN weights; EfficientFrontier rejects the same
++        # input, so CLA was the only entry point that did not.
++        for name, arr in (
++            ("expected_returns", self.mean),
++            ("cov_matrix", self.cov_matrix),
++        ):
++            if not np.all(np.isfinite(arr)):
++                raise ValueError(
++                    "{} contains NaN or infinite values. Check your price "
++                    "history for gaps or zero prices before estimating "
++                    "it.".format(name)
++                )
++
+         # Bounds
+         if len(weight_bounds) == len(self.mean) and not isinstance(
+             weight_bounds[0], (float, int)
+@@ -192,15 +205,42 @@ class CLA(BaseOptimizer):
+         res = float(res[0, 0])
+         return res, bi
+ 
+-    def _get_matrices(self, f):
++    def _get_matrices(self, f, w):
+         # Slice covarF,covarFB,covarB,meanF,meanB,wF,wB
++        #
++        # ``w`` is the weight vector currently being built, not self.w[-1].
++        # They differ in exactly one place: after a free asset has been pushed
++        # to its boundary, ``w`` already holds the boundary value while
++        # self.w[-1] still holds the previous turning point's interior value.
++        # Slicing wB out of the stale vector solves the free weights against
++        # the wrong bounded budget and yields a turning point whose weights do
++        # not sum to 1.
+         covarF = self._reduce_matrix(self.cov_matrix, f, f)
+         meanF = self._reduce_matrix(self.mean, f, [0])
+         b = self._get_b(f)
+         covarFB = self._reduce_matrix(self.cov_matrix, f, b)
+-        wB = self._reduce_matrix(self.w[-1], b, [0])
++        wB = self._reduce_matrix(w, b, [0])
+         return covarF, covarFB, meanF, wB
+ 
++    @staticmethod
++    def _invert(matrix):
++        """
++        Invert a covariance submatrix, converting numpy's raw ``LinAlgError``
++        into an actionable message. The critical line algorithm requires the
++        covariance matrix to be positive *definite*; a merely positive
++        semidefinite one (perfectly collinear assets) is singular.
++        """
++        try:
++            return np.linalg.inv(matrix)
++        except np.linalg.LinAlgError as e:
++            raise ValueError(
++                "The covariance matrix is singular, so the critical line algorithm "
++                "cannot invert it. This happens when assets are perfectly collinear. "
++                "Drop the redundant assets, apply a shrinkage estimator "
++                "(pypfopt.risk_models.CovarianceShrinkage), or use EfficientFrontier, "
++                "which does not require an invertible covariance matrix."
++            ) from e
++
+     def _get_b(self, f):
+         return self._diff_lists(list(range(self.mean.shape[0])), f)
+ 
+@@ -262,6 +302,9 @@ class CLA(BaseOptimizer):
+ 
+     def _purge_excess(self):
+         # Remove violations of the convex hull
++        if len(self.w) < 2:
++            # Nothing to compare against; the indexing below would run off the end.
++            return
+         i, repeat = 0, False
+         while True:
+             if repeat is False:
+@@ -329,6 +372,18 @@ class CLA(BaseOptimizer):
+ 
+     def _solve(self):
+         # Compute the turning points,free sets and weights
++        if self.mean.shape[0] > 1 and np.all(self.mean == self.mean[0, 0]):
++            # Every lambda in _compute_lambda has an exactly zero denominator,
++            # so no turning point is well defined. Left unguarded the recursion
++            # either raises a raw TypeError/IndexError or returns a portfolio
++            # that is not on the efficient frontier at all.
++            raise ValueError(
++                "All expected returns are identical, so the efficient frontier "
++                "collapses to the single minimum-variance portfolio and the "
++                "critical line algorithm has no turning points to trace. Use "
++                "EfficientFrontier(mu, S).min_volatility() instead, or supply "
++                "expected returns that differ between assets."
++            )
+         f, w = self._init_algo()
+         self.w.append(np.copy(w))  # store solution
+         self.ls.append(None)
+@@ -338,8 +393,8 @@ class CLA(BaseOptimizer):
+             # 1) case a): Bound one free weight
+             l_in = None
+             if len(f) > 1:
+-                covarF, covarFB, meanF, wB = self._get_matrices(f)
+-                covarF_inv = np.linalg.inv(covarF)
++                covarF, covarFB, meanF, wB = self._get_matrices(f, w)
++                covarF_inv = self._invert(covarF)
+                 j = 0
+                 for i in f:
+                     lam, bi = self._compute_lambda(
+@@ -353,8 +408,8 @@ class CLA(BaseOptimizer):
+             if len(f) < self.mean.shape[0]:
+                 b = self._get_b(f)
+                 for i in b:
+-                    covarF, covarFB, meanF, wB = self._get_matrices(f + [i])
+-                    covarF_inv = np.linalg.inv(covarF)
++                    covarF, covarFB, meanF, wB = self._get_matrices(f + [i], w)
++                    covarF_inv = self._invert(covarF)
+                     lam, bi = self._compute_lambda(
+                         covarF_inv,
+                         covarFB,
+@@ -370,8 +425,8 @@ class CLA(BaseOptimizer):
+             if (l_in is None or l_in < 0) and (l_out is None or l_out < 0):
+                 # 3) compute minimum variance solution
+                 self.ls.append(0)
+-                covarF, covarFB, meanF, wB = self._get_matrices(f)
+-                covarF_inv = np.linalg.inv(covarF)
++                covarF, covarFB, meanF, wB = self._get_matrices(f, w)
++                covarF_inv = self._invert(covarF)
+                 meanF = np.zeros(meanF.shape)
+             else:
+                 # 4) decide lambda
+@@ -382,8 +437,8 @@ class CLA(BaseOptimizer):
+                 else:
+                     self.ls.append(l_out)
+                     f.append(i_out)
+-                covarF, covarFB, meanF, wB = self._get_matrices(f)
+-                covarF_inv = np.linalg.inv(covarF)
++                covarF, covarFB, meanF, wB = self._get_matrices(f, w)
++                covarF_inv = self._invert(covarF)
+             # 5) compute solution vector
+             wF, g = self._compute_w(covarF_inv, covarFB, meanF, wB)
+             for i in range(len(f)):
+diff --git a/pypfopt/hierarchical_portfolio.py b/pypfopt/hierarchical_portfolio.py
+index 6dc76d0..81d26dd 100644
+--- a/pypfopt/hierarchical_portfolio.py
++++ b/pypfopt/hierarchical_portfolio.py
+@@ -171,14 +171,16 @@ class HRPOpt(BaseOptimizer):
+         linkage_method : str
+             which scipy linkage method to use
+ 
++        Raises
++        ------
++        ValueError
++            if ``linkage_method`` is not one recognised by scipy
++
+         Returns
+         -------
+         OrderedDict
+             weights for the HRP portfolio
+         """
+-        if linkage_method not in sch._LINKAGE_METHODS:
+-            raise ValueError("linkage_method must be one recognised by scipy")
+-
+         if self.returns is None:
+             cov = self.cov_matrix
+             corr = cov_to_corr(self.cov_matrix).round(6)
+@@ -192,6 +194,10 @@ class HRPOpt(BaseOptimizer):
+         matrix = np.sqrt(np.clip((1.0 - corr) / 2.0, a_min=0.0, a_max=1.0))
+         dist = ssd.squareform(matrix, checks=False)
+ 
++        # scipy validates linkage_method itself and raises
++        # ValueError("Invalid method: ..."). Do not pre-check against
++        # sch._LINKAGE_METHODS: that private attribute left the
++        # scipy.cluster.hierarchy namespace in scipy 1.18.
+         self.clusters = sch.linkage(dist, linkage_method)
+         sort_ix = HRPOpt._get_quasi_diag(self.clusters)
+         ordered_tickers = corr.index[sort_ix].tolist()
+diff --git a/pypfopt/risk_models.py b/pypfopt/risk_models.py
+index 171ce0d..8216977 100644
+--- a/pypfopt/risk_models.py
++++ b/pypfopt/risk_models.py
+@@ -459,6 +459,25 @@ class CovarianceShrinkage:
+         else:
+             self.X = returns_from_prices(prices, log_returns).dropna(how="all")
+ 
++        # Every shrinkage estimator on this class feeds self.X to numpy or
++        # sklearn through np.nan_to_num, which has no notion of a missing
++        # return: a NaN becomes a 0% return, so an asset that was not yet
++        # listed reads as an asset that did not move. Variances and
++        # covariances are diluted in proportion to how much data is missing.
++        # self.S, computed just below, uses pandas' pairwise deletion instead,
++        # so the two disagree on the same input. Say so rather than doing it
++        # silently; picking the estimator's NaN convention is the maintainer's
++        # call, not something to change underneath existing users.
++        n_missing = int(self.X.isnull().values.sum())
++        if n_missing:
++            warnings.warn(
++                "{} missing return(s) will be treated as 0% returns by the "
++                "shrinkage estimators, which understates the variance of any "
++                "asset with an incomplete history. self.S uses pairwise "
++                "deletion instead, so the two do not agree.".format(n_missing),
++                UserWarning,
++            )
++
+         self.S = self.X.cov().values
+         self.delta = None  # shrinkage constant
+ 
+diff --git a/tests/test_risk_models.py b/tests/test_risk_models.py
+index 2b25072..d52b89c 100644
+--- a/tests/test_risk_models.py
++++ b/tests/test_risk_models.py
+@@ -225,8 +225,12 @@ def test_shrunk_covariance():
+     assert risk_models._is_positive_semidefinite(shrunk_cov)
+     with pytest.warns(RuntimeWarning) as w:
+         cs_numpy = risk_models.CovarianceShrinkage(df.to_numpy())
+-        assert len(w) == 1
+-        assert str(w[0].message) == "data is not in a dataframe"
++        # Count only RuntimeWarnings: this assertion is about the
++        # "data is not in a dataframe" warning, and pytest.warns records
++        # every warning raised in the block, not just the matching category.
++        runtime = [x for x in w if issubclass(x.category, RuntimeWarning)]
++        assert len(runtime) == 1
++        assert str(runtime[0].message) == "data is not in a dataframe"
+         shrunk_cov_numpy = cs_numpy.shrunk_covariance(0.2)
+         assert isinstance(shrunk_cov_numpy, pd.DataFrame)
+         np.testing.assert_equal(shrunk_cov_numpy.to_numpy(), shrunk_cov.to_numpy())
