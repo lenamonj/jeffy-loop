@@ -174,9 +174,44 @@ if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/de
   fi
 fi
 
+# Stall gate: progress since the previous turn end means HEAD moved or
+# BACKLOG.md changed - an audit that files tasks is progress even without a
+# commit, and journal-only iterations deliberately count as no progress. The
+# first re-feed initializes the baseline and never fires. A flat iteration
+# rides a STALL note; the stall flag arms the second-strike stop. With no
+# git HEAD and no ledger there is no signal at all: skip with a stderr note.
+stall_note=""
+new_stall=0
+cur_head="none"
+if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+  cur_head="$(git -C "$root" rev-parse HEAD 2>/dev/null || echo none)"
+fi
+cur_backlog="none"
+if [ -f "$root/BACKLOG.md" ]; then
+  cur_backlog="$(cksum < "$root/BACKLOG.md" | tr ' \t' '--')"
+fi
+last_head="$(fm last_head)"
+last_backlog="$(fm last_backlog)"
+stall_flag="$(fm stall)"
+if [ "$cur_head" = "none" ] && [ "$cur_backlog" = "none" ]; then
+  echo "jeffy stop hook: no git HEAD and no BACKLOG.md; skipping the stall check." >&2
+elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
+  if [ "$cur_head" = "$last_head" ] && [ "$cur_backlog" = "$last_backlog" ]; then
+    new_stall=1
+    stall_note="iteration $iter made no progress (HEAD and BACKLOG.md unchanged since the previous turn end); a second consecutive flat iteration ends the run"
+  fi
+fi
+
 next=$((iter + 1))
 tmp="$state.tmp"
-if awk -v n="$next" '!done && /^iteration: / { print "iteration: " n; done = 1; next } { print }' "$state" > "$tmp"; then
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" '
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf } print; next }
+  fmc == 1 && /^iteration: / { print "iteration: " n; next }
+  fmc == 1 && /^last_head: / { print "last_head: " lh; slh = 1; next }
+  fmc == 1 && /^last_backlog: / { print "last_backlog: " lb; slb = 1; next }
+  fmc == 1 && /^stall: / { print "stall: " sf; ssf = 1; next }
+  { print }
+' "$state" > "$tmp"; then
   mv "$tmp" "$state"
 else
   rm -f "$tmp"
@@ -193,6 +228,9 @@ if [ -n "$violation" ]; then
 fi
 if [ -n "$hygiene" ]; then
   reason="$reason ITERATION HYGIENE: $hygiene."
+fi
+if [ -n "$stall_note" ]; then
+  reason="$reason STALL: $stall_note."
 fi
 jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'
 exit 0

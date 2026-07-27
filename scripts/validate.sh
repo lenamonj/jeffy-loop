@@ -483,6 +483,23 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_plan() { # $1 verify command line for PLAN.md
       printf '# Plan\n\n## Verify command\n%s\n' "$1" > "$hb_proj/PLAN.md"
     }
+    hb_write_state_stall() { # $1 session_id, $2 iteration, $3 max, $4 last_head, $5 last_backlog, $6 stall flag
+      {
+        printf -- '---\n'
+        printf 'session_id: %s\n' "$1"
+        printf 'iteration: %s\n' "$2"
+        printf 'max_iterations: %s\n' "$3"
+        printf 'prompt_path: %s\n' "$hb_tmp/prompt.txt"
+        printf 'focus: speed\n'
+        printf 'completion_promise: JEFFY CONVERGED\n'
+        printf 'last_head: %s\n' "$4"
+        printf 'last_backlog: %s\n' "$5"
+        printf 'stall: %s\n' "$6"
+        printf 'started_at: 2026-01-01T00:00:00Z\n'
+        printf -- '---\n'
+        printf 'Jeffy loop state.\n'
+      } > "$hb_state"
+    }
     hb_write_journal() { # $1 iteration, $2 max - heading for the harness session sess-1
       printf '# Journal\n\n## iter %s/%s | sess-1 | 2026-01-01 | T1 | done\n\nTask: t.\n' "$1" "$2" > "$hb_proj/JOURNAL.md"
     }
@@ -511,6 +528,7 @@ if command -v jq >/dev/null 2>&1; then
       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Do the jeffy iteration now.' \
       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Focus this run on: speed' \
       && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION HYGIENE' \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
       && grep -q '^iteration: 2$' "$hb_state"; then
       pass "stop hook re-feeds mid-budget (block, iteration advanced, prompt and focus in reason)"
     else
@@ -847,6 +865,62 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook flagged untracked files as hygiene violations"
       fi
       rm -f "$hb_proj/junk.txt" "$hb_state"
+      hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
+    fi
+
+    # Stall gate: progress on either recorded signal (HEAD, ledger cksum)
+    # stays silent and refreshes the baseline; a flat iteration rides a
+    # STALL note and arms the flag. Baseline initialization is asserted in
+    # the first mid-budget check above (state with no stall fields, no note).
+    if [ -d "$hb_tmp/gitproj/.git" ]; then
+      hb_saved_proj="$hb_proj"; hb_saved_state="$hb_state"
+      hb_proj="$hb_tmp/gitproj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      hb_write_backlog ''
+      hb_write_journal 1 3
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m stall-baseline >/dev/null 2>&1 || true
+      hb_head="$(hb_git rev-parse HEAD)"
+      hb_ck="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
+
+      hb_write_state_stall sess-1 1 3 stale-head "$hb_ck" 0
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q "^last_head: $hb_head\$" "$hb_state" \
+        && grep -q '^stall: 0$' "$hb_state" \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook stays silent when HEAD moved since the last re-feed (baseline refreshed)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook mishandled a committing iteration in the stall gate"
+      fi
+
+      hb_write_state_stall sess-1 1 3 "$hb_head" stale-0 0
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q "^last_backlog: $hb_ck\$" "$hb_state" \
+        && grep -q '^stall: 0$' "$hb_state"; then
+        pass "stop hook counts a backlog-only change as progress (no commit needed)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook flagged a backlog-only iteration as flat"
+      fi
+
+      hb_write_state_stall sess-1 1 3 "$hb_head" "$hb_ck" 0
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no progress' \
+        && grep -q '^stall: 1$' "$hb_state" \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook flags the first flat iteration with a STALL note and arms the flag"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook missed a flat iteration"
+      fi
+
+      rm -f "$hb_state"
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     fi
 
