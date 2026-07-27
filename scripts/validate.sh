@@ -143,7 +143,8 @@ check_markers skills/jeffy/references/plan-default.md \
   "run report" \
   "independent evaluator gate" \
   "the only sub-agent review this Method authorizes" \
-  "strong enough to fail"
+  "strong enough to fail" \
+  "stops auditing for the rest of the run"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
@@ -173,7 +174,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Evaluator: PASS" \
   "at most 2 evaluator invocations per run" \
   "never overwriting it" \
-  "so two runs in one session are told apart"
+  "so two runs in one session are told apart" \
+  "Closeout:"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
