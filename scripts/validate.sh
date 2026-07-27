@@ -137,6 +137,7 @@ check_markers skills/jeffy/references/plan-default.md \
   "Three-strike rule:" \
   "one structural task" \
   "## Verify command" \
+  "Command: " \
   "## Lessons" \
   "leaves no open task behind" \
   "run report" \
