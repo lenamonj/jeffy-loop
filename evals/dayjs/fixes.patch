@@ -1,0 +1,322 @@
+diff --git a/package.json b/package.json
+index 238ce1e..51112b1 100644
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,7 @@
+   "types": "index.d.ts",
+   "scripts": {
+     "test": "cross-env TZ=Pacific/Auckland npm run test-tz && cross-env TZ=Europe/London npm run test-tz && cross-env TZ=America/Whitehorse npm run test-tz && npm run test-tz && jest --coverage --coverageThreshold=\"{ \\\"global\\\": { \\\"lines\\\": 100} }\"",
+-    "test-tz": "date && jest test/timezone.test --coverage=false",
++    "test-tz": "date && jest --coverage=false",
+     "lint": "./node_modules/.bin/eslint src/* test/* build/*",
+     "prettier": "prettier --write \"docs/**/*.md\"",
+     "babel": "cross-env BABEL_ENV=build babel src --out-dir esm --copy-files && node build/esm",
+diff --git a/src/plugin/timezone/index.js b/src/plugin/timezone/index.js
+index bcacf9a..eeb8e7b 100644
+--- a/src/plugin/timezone/index.js
++++ b/src/plugin/timezone/index.js
+@@ -135,12 +135,16 @@ export default (o, c, d) => {
+   d.tz = function (input, arg1, arg2) {
+     const parseFormat = arg2 && arg1
+     const timezone = arg2 || arg1 || defaultTimezone
+-    const previousOffset = tzOffset(+d(), timezone)
+     if (typeof input !== 'string') {
+       // timestamp number || js Date || Day.js
+       return d(input).tz(timezone)
+     }
+     const localTs = d.utc(input, parseFormat).valueOf()
++    // Seed the guess from the input, not from Date.now(). Seeding it from the current
++    // moment made the same call resolve an ambiguous or skipped local time to
++    // different instants depending on which side of a DST transition the process
++    // happened to be running on.
++    const previousOffset = tzOffset(localTs, timezone)
+     const [targetTs, targetOffset] = fixOffset(localTs, previousOffset, timezone)
+     const ins = d(targetTs).utcOffset(targetOffset)
+     ins.$x.$timezone = timezone
+diff --git a/src/plugin/utc/index.js b/src/plugin/utc/index.js
+index d565f32..b8d772a 100644
+--- a/src/plugin/utc/index.js
++++ b/src/plugin/utc/index.js
+@@ -100,9 +100,18 @@ export default (option, Dayjs, dayjs) => {
+       return ins
+     }
+ 
+-    const localTimezoneOffset = this.$u
++    const base = this.local()
++    const guessedOffset = this.$u
+       ? this.toDate().getTimezoneOffset() : -1 * this.utcOffset()
+-    ins = this.local().add(offset + localTimezoneOffset, MIN)
++    // The shift below moves the instant by a fixed number of milliseconds, so it can
++    // land on the far side of a DST transition in the *host* zone, where the guessed
++    // host offset no longer applies and the stored wall clock stops describing the
++    // same moment as valueOf(). Probe first and re-anchor on the offset that really
++    // applies at the shifted instant.
++    const probe = base.add(offset + guessedOffset, MIN)
++    const localTimezoneOffset = probe.toDate().getTimezoneOffset()
++    ins = localTimezoneOffset === guessedOffset
++      ? probe : base.add(offset + localTimezoneOffset, MIN)
+     ins.$offset = offset
+     ins.$x.$localOffset = localTimezoneOffset
+ 
+@@ -117,9 +126,17 @@ export default (option, Dayjs, dayjs) => {
+   }
+ 
+   proto.valueOf = function () {
+-    const addedOffset = !this.$utils().u(this.$offset)
+-      ? this.$offset + (this.$x.$localOffset || this.$d.getTimezoneOffset()) : 0
+-    return this.$d.valueOf() - (addedOffset * MILLISECONDS_A_MINUTE)
++    const { u } = this.$utils()
++    if (u(this.$offset)) {
++      return this.$d.valueOf()
++    }
++    // $localOffset is legitimately 0 whenever the host zone sat at UTC+00 for the
++    // shift, so it has to be tested for absence, not for truthiness. Treating 0 as
++    // missing made valueOf() fall back to a different offset and report the wrong
++    // instant on hosts such as Europe/London.
++    const localOffset = u(this.$x.$localOffset)
++      ? this.$d.getTimezoneOffset() : this.$x.$localOffset
++    return this.$d.valueOf() - ((this.$offset + localOffset) * MILLISECONDS_A_MINUTE)
+   }
+ 
+   proto.isUTC = function () {
+diff --git a/test/get-set.test.js b/test/get-set.test.js
+index dae4d47..6386549 100644
+--- a/test/get-set.test.js
++++ b/test/get-set.test.js
+@@ -100,13 +100,13 @@ it('Set Millisecond', () => {
+ 
+ it('Set Month and Year in last day of month', () => {
+   // 2011-07-31 -> 2011-02-28
+-  const origin = dayjs('2011-07-31T14:48:00.000Z')
++  const origin = dayjs('2011-07-31T14:48:00.000')
+   const setMonth = origin.set('month', 1)
+   expect(setMonth.month()).toBe(1)
+   expect(origin.date()).toBe(31)
+   expect(setMonth.date()).toBe(28)
+   // 2000-02-29 -> 2001-02-28
+-  const origin2 = dayjs('2000-02-29T14:48:00.000Z')
++  const origin2 = dayjs('2000-02-29T14:48:00.000')
+   const setYear = origin2.set('year', 2001)
+   expect(setYear.month()).toBe(1)
+   expect(origin2.date()).toBe(29)
+diff --git a/test/plugin/calendar.test.js b/test/plugin/calendar.test.js
+index 1282961..9f68b7d 100644
+--- a/test/plugin/calendar.test.js
++++ b/test/plugin/calendar.test.js
+@@ -20,41 +20,41 @@ it('No argument && null && undefined', () => {
+ })
+ 
+ it('ReferenceTime', () => {
+-  const now = '2015-01-15T14:21:22.000Z'
++  const now = '2015-01-15T14:21:22.000'
+   const dates = [
+     {
+       name: 'nextDay',
+-      date: '2015-01-14T11:23:55.000Z',
++      date: '2015-01-14T11:23:55.000',
+       result: 'Tomorrow'
+     },
+     {
+       name: 'sameDay',
+-      date: '2015-01-15T11:23:55.000Z',
++      date: '2015-01-15T11:23:55.000',
+       result: 'Today'
+     },
+     {
+       name: 'nextWeek',
+-      date: '2015-01-09T11:23:55.000Z',
++      date: '2015-01-09T11:23:55.000',
+       result: 'Thursday'
+     },
+     {
+       name: 'lastDay',
+-      date: '2015-01-16T11:23:55.000Z',
++      date: '2015-01-16T11:23:55.000',
+       result: 'Yesterday'
+     },
+     {
+       name: 'lastWeek',
+-      date: '2015-01-21T11:23:55.000Z',
++      date: '2015-01-21T11:23:55.000',
+       result: 'Last'
+     },
+     {
+       name: 'sameElse',
+-      date: '2015-01-01T11:23:55.000Z',
++      date: '2015-01-01T11:23:55.000',
+       result: '01/15/2015'
+     },
+     {
+       name: 'sameElse',
+-      date: '2015-02-21T11:23:55.000Z',
++      date: '2015-02-21T11:23:55.000',
+       result: '01/15/2015'
+     }
+   ]
+@@ -74,8 +74,8 @@ it('Custom format', () => {
+     sameElse: '[sameElse]'
+   }
+   expect(dayjs().calendar(null, format)).toEqual(moment().calendar(null, format))
+-  const now = '2015-01-15T14:21:22.000Z'
+-  const nextDayWithoutFormat = '2015-01-14T11:23:55.000Z'
++  const now = '2015-01-15T14:21:22.000'
++  const nextDayWithoutFormat = '2015-01-14T11:23:55.000'
+   expect(dayjs(now).calendar(nextDayWithoutFormat, format))
+     .toEqual(moment(now).calendar(nextDayWithoutFormat, format))
+ })
+@@ -85,8 +85,8 @@ it('Custom callback', () => {
+     sameDay: jest.fn(),
+     sameElse: jest.fn()
+   }
+-  const now = '2015-01-15T14:21:22.000Z'
+-  const nextDayWithoutFormat = '2015-01-14T11:23:55.000Z'
++  const now = '2015-01-15T14:21:22.000'
++  const nextDayWithoutFormat = '2015-01-14T11:23:55.000'
+   expect(dayjs(now).calendar(nextDayWithoutFormat, callbacks))
+     .toEqual(moment(now).calendar(nextDayWithoutFormat, callbacks))
+ })
+@@ -126,7 +126,7 @@ it('callback is a function and first argument a moment that depicts now', () =>
+ })
+ 
+ it('set global calendar in locale file', () => {
+-  const now = '2019-04-03T14:21:22.000Z'
++  const now = '2019-04-03T14:21:22.000'
+   zhCn.calendar = {
+     sameDay: '[今天]HH:mm',
+     nextDay: '[明天]HH:mm',
+diff --git a/test/plugin/dayOfYear.test.js b/test/plugin/dayOfYear.test.js
+index b69b1c3..e0c8c88 100644
+--- a/test/plugin/dayOfYear.test.js
++++ b/test/plugin/dayOfYear.test.js
+@@ -22,29 +22,33 @@ it('DayOfYear get', () => {
+   expect(dayjs('2015-12-31T00:00:00.000').dayOfYear()).toBe(365)
+ })
+ 
++// dayOfYear is a local-calendar operation, so the fixtures below are local wall
++// clock literals. A `...Z` literal names an instant that falls in a different
++// calendar year in any zone west of Greenwich, which made this test fail under
++// TZ=America/New_York even though the plugin agreed with moment exactly.
+ it('DayOfYear set', () => {
+   expect(dayjs().dayOfYear(4).dayOfYear()).toBe(moment().dayOfYear(4).dayOfYear())
+-  expect(dayjs('2015-01-01T00:00:00.000Z')
++  expect(dayjs('2015-01-01T00:00:00.000')
+     .dayOfYear(4)
+     .dayOfYear()).toBe(4)
+ 
+-  expect(dayjs('2015-01-01T00:00:00.000Z')
++  expect(dayjs('2015-01-01T00:00:00.000')
+     .dayOfYear(4)
+-    .toISOString()).toBe('2015-01-04T00:00:00.000Z')
++    .format('YYYY-MM-DDTHH:mm:ss.SSS')).toBe('2015-01-04T00:00:00.000')
+ 
+-  expect(dayjs('2015-01-01T00:00:00.000Z')
++  expect(dayjs('2015-01-01T00:00:00.000')
+     .dayOfYear(32)
+     .dayOfYear()).toBe(32)
+ 
+-  expect(dayjs('2015-01-01T00:00:00.000Z')
++  expect(dayjs('2015-01-01T00:00:00.000')
+     .dayOfYear(32)
+-    .toISOString()).toBe('2015-02-01T00:00:00.000Z')
++    .format('YYYY-MM-DDTHH:mm:ss.SSS')).toBe('2015-02-01T00:00:00.000')
+ 
+-  expect(dayjs('2015-01-01T00:00:00.000Z')
++  expect(dayjs('2015-01-01T00:00:00.000')
+     .dayOfYear(365)
+     .dayOfYear()).toBe(365)
+ 
+-  expect(dayjs('2015-01-01T00:00:00.000Z')
++  expect(dayjs('2015-01-01T00:00:00.000')
+     .dayOfYear(365)
+-    .toISOString()).toBe('2015-12-31T00:00:00.000Z')
++    .format('YYYY-MM-DDTHH:mm:ss.SSS')).toBe('2015-12-31T00:00:00.000')
+ })
+diff --git a/test/plugin/localizedFormat.test.js b/test/plugin/localizedFormat.test.js
+index da5b219..c860ad9 100644
+--- a/test/plugin/localizedFormat.test.js
++++ b/test/plugin/localizedFormat.test.js
+@@ -23,7 +23,7 @@ it('Declares English localized formats', () => {
+ })
+ 
+ it('Should not interpolate characters inside square brackets', () => {
+-  const date = new Date(0)
++  const date = new Date(1970, 0, 1)
+   const actualDate = dayjs(date)
+   const expectedDate = moment(date)
+ 
+diff --git a/test/plugin/pluralGetSet.test.js b/test/plugin/pluralGetSet.test.js
+index 173084b..dfb5e76 100644
+--- a/test/plugin/pluralGetSet.test.js
++++ b/test/plugin/pluralGetSet.test.js
+@@ -114,13 +114,13 @@ it('Set Milliseconds', () => {
+ 
+ it('Set Month and Year in last day of month', () => {
+   // 2011-07-31 -> 2011-02-28
+-  const origin = dayjs('2011-07-31T14:48:00.000Z')
++  const origin = dayjs('2011-07-31T14:48:00.000')
+   const setMonth = origin.set('month', 1)
+   expect(setMonth.months()).toBe(1)
+   expect(origin.dates()).toBe(31)
+   expect(setMonth.dates()).toBe(28)
+   // 2000-02-29 -> 2001-02-28
+-  const origin2 = dayjs('2000-02-29T14:48:00.000Z')
++  const origin2 = dayjs('2000-02-29T14:48:00.000')
+   const setYear = origin2.set('years', 2001)
+   expect(setYear.months()).toBe(1)
+   expect(origin2.dates()).toBe(29)
+diff --git a/test/plugin/timezone.test.js b/test/plugin/timezone.test.js
+index d83a03f..c7a3b7a 100644
+--- a/test/plugin/timezone.test.js
++++ b/test/plugin/timezone.test.js
+@@ -352,3 +352,51 @@ describe('UTC timezone', () => {
+     expect(dayjs2.format()).toBe(moment2.format())
+   })
+ })
++
++describe('Result does not depend on the machine the code runs on', () => {
++  // These fixtures fail before the fix under TZ=America/Whitehorse and
++  // TZ=Europe/London, two host zones whose own DST transition falls inside the
++  // offset shift that dayjs.tz performs. npm test runs the whole suite under
++  // Whitehorse and London, so this describe block is what pins that down.
++  const inputs = [
++    ['2012-03-11 02:00:00', NY, '2012-03-11T03:00:00-04:00', 1331449200000],
++    ['2012-03-11 02:59:59', NY, '2012-03-11T03:59:59-04:00', 1331452799000],
++    ['2012-10-28 00:30:00', NY, '2012-10-28T00:30:00-04:00', 1351398600000],
++    ['2012-11-04 02:00:00', NY, '2012-11-04T02:00:00-05:00', 1352012400000]
++  ]
++
++  it('dayjs.tz resolves to the documented instant', () => {
++    inputs.forEach(([input, zone, expected, ts]) => {
++      const d = dayjs.tz(input, zone)
++      expect(d.format()).toBe(expected)
++      expect(d.valueOf()).toBe(ts)
++      expect(d.valueOf()).toBe(moment.tz(input, zone).valueOf())
++    })
++  })
++
++  it('dayjs.tz keeps format() and valueOf() describing the same instant', () => {
++    inputs.forEach(([input, zone]) => {
++      const d = dayjs.tz(input, zone)
++      expect(new Date(d.format()).valueOf()).toBe(d.valueOf())
++    })
++  })
++})
++
++describe('Ambiguous and skipped local times resolve deterministically', () => {
++  it('does not depend on the current date', () => {
++    const inputs = [
++      ['2021-11-07 01:30:00', NY],
++      ['2021-03-14 02:30:00', NY],
++      ['2021-04-04 02:30:00', 'Pacific/Auckland'],
++      ['2021-10-31 01:30:00', 'Europe/London']
++    ]
++    inputs.forEach(([input, zone]) => {
++      MockDate.set(new Date('2021-01-15T12:00:00.000Z'))
++      const winter = dayjs.tz(input, zone).valueOf()
++      MockDate.set(new Date('2021-07-15T12:00:00.000Z'))
++      const summer = dayjs.tz(input, zone).valueOf()
++      MockDate.set(new Date())
++      expect(winter).toBe(summer)
++    })
++  })
++})
