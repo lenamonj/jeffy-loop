@@ -1,0 +1,720 @@
+diff --git a/.circleci/config.yml b/.circleci/config.yml
+index 8088a46..456301d 100644
+--- a/.circleci/config.yml
++++ b/.circleci/config.yml
+@@ -61,8 +61,9 @@ jobs:
+             coverage report -m
+       - run:
+           name: Publish coverage
++          # COVERALLS_REPO_TOKEN is read from the CircleCI project environment.
++          # Never commit it: this file is public.
+           command: |
+-            export COVERALLS_REPO_TOKEN=ec4rvBLjmegWPIejLkGXntb92iyWF7tnR
+             coveralls
+ 
+   doc:
+diff --git a/ta/trend.py b/ta/trend.py
+index 553afad..25a7dbc 100644
+--- a/ta/trend.py
++++ b/ta/trend.py
+@@ -270,9 +270,7 @@ class TRIXIndicator(IndicatorMixin):
+         ema1 = _ema(self._close, self._window, self._fillna)
+         ema2 = _ema(ema1, self._window, self._fillna)
+         ema3 = _ema(ema2, self._window, self._fillna)
+-        self._trix = (ema3 - ema3.shift(1, fill_value=ema3.mean())) / ema3.shift(
+-            1, fill_value=ema3.mean()
+-        )
++        self._trix = (ema3 - ema3.shift(1)) / ema3.shift(1)
+         self._trix *= 100
+ 
+     def trix(self) -> pd.Series:
+@@ -410,11 +408,7 @@ class IchimokuIndicator(IndicatorMixin):
+             pandas.Series: New feature generated.
+         """
+         spana = 0.5 * (self._conv + self._base)
+-        spana = (
+-            spana.shift(self._window2, fill_value=spana.mean())
+-            if self._visual
+-            else spana
+-        )
++        spana = spana.shift(self._window2) if self._visual else spana
+         spana = self._check_fillna(spana, value=-1)
+         return pd.Series(spana, name=f"ichimoku_a_{self._window1}_{self._window2}")
+ 
+@@ -428,11 +422,7 @@ class IchimokuIndicator(IndicatorMixin):
+             self._high.rolling(self._window3, min_periods=0).max()
+             + self._low.rolling(self._window3, min_periods=0).min()
+         )
+-        spanb = (
+-            spanb.shift(self._window2, fill_value=spanb.mean())
+-            if self._visual
+-            else spanb
+-        )
++        spanb = spanb.shift(self._window2) if self._visual else spanb
+         spanb = self._check_fillna(spanb, value=-1)
+         return pd.Series(spanb, name=f"ichimoku_b_{self._window1}_{self._window2}")
+ 
+@@ -494,46 +484,22 @@ class KSTIndicator(IndicatorMixin):
+         min_periods_n3 = 0 if self._fillna else self._window3
+         min_periods_n4 = 0 if self._fillna else self._window4
+         rocma1 = (
+-            (
+-                (
+-                    self._close
+-                    - self._close.shift(self._r1, fill_value=self._close.mean())
+-                )
+-                / self._close.shift(self._r1, fill_value=self._close.mean())
+-            )
++            ((self._close - self._close.shift(self._r1)) / self._close.shift(self._r1))
+             .rolling(self._window1, min_periods=min_periods_n1)
+             .mean()
+         )
+         rocma2 = (
+-            (
+-                (
+-                    self._close
+-                    - self._close.shift(self._r2, fill_value=self._close.mean())
+-                )
+-                / self._close.shift(self._r2, fill_value=self._close.mean())
+-            )
++            ((self._close - self._close.shift(self._r2)) / self._close.shift(self._r2))
+             .rolling(self._window2, min_periods=min_periods_n2)
+             .mean()
+         )
+         rocma3 = (
+-            (
+-                (
+-                    self._close
+-                    - self._close.shift(self._r3, fill_value=self._close.mean())
+-                )
+-                / self._close.shift(self._r3, fill_value=self._close.mean())
+-            )
++            ((self._close - self._close.shift(self._r3)) / self._close.shift(self._r3))
+             .rolling(self._window3, min_periods=min_periods_n3)
+             .mean()
+         )
+         rocma4 = (
+-            (
+-                (
+-                    self._close
+-                    - self._close.shift(self._r4, fill_value=self._close.mean())
+-                )
+-                / self._close.shift(self._r4, fill_value=self._close.mean())
+-            )
++            ((self._close - self._close.shift(self._r4)) / self._close.shift(self._r4))
+             .rolling(self._window4, min_periods=min_periods_n4)
+             .mean()
+         )
+@@ -596,9 +562,7 @@ class DPOIndicator(IndicatorMixin):
+     def _run(self):
+         min_periods = 0 if self._fillna else self._window
+         self._dpo = (
+-            self._close.shift(
+-                int((0.5 * self._window) + 1), fill_value=self._close.mean()
+-            )
++            self._close.shift(int((0.5 * self._window) + 1))
+             - self._close.rolling(self._window, min_periods=min_periods).mean()
+         )
+ 
+@@ -718,6 +682,11 @@ class ADXIndicator(IndicatorMixin):
+     def _run(self):
+         if self._window == 0:
+             raise ValueError("window may not be 0")
++        self._check_length(
++            self._close,
++            self._window + 1,
++            "window + 1, to seed the +DM / -DM / TR sums",
++        )
+ 
+         close_shift = self._close.shift(1)
+ 
+@@ -774,6 +743,12 @@ class ADXIndicator(IndicatorMixin):
+         Returns:
+             pandas.Series: New feature generated.tr
+         """
++        self._check_length(
++            self._close,
++            2 * self._window,
++            "2 * window, to seed Wilder's average and then score it",
++        )
++
+         dip = np.zeros(len(self._trs))
+ 
+         for idx, value in enumerate(self._trs):
+@@ -825,7 +800,7 @@ class ADXIndicator(IndicatorMixin):
+         """
+         dip = np.zeros(len(self._close))
+ 
+-        for i in range(1, len(self._trs) - 1):
++        for i in range(len(self._trs) - 1):
+             if self._trs[i] != 0:
+                 dip[i + self._window] = 100 * (self._dip[i] / self._trs[i])
+ 
+@@ -846,7 +821,7 @@ class ADXIndicator(IndicatorMixin):
+         """
+         din = np.zeros(len(self._close))
+ 
+-        for i in range(1, len(self._trs) - 1):
++        for i in range(len(self._trs) - 1):
+             if self._trs[i] != 0:
+                 din[i + self._window] = 100 * (self._din[i] / self._trs[i])
+ 
+@@ -893,7 +868,7 @@ class VortexIndicator(IndicatorMixin):
+         self._run()
+ 
+     def _run(self):
+-        close_shift = self._close.shift(1, fill_value=self._close.mean())
++        close_shift = self._close.shift(1)
+         true_range = self._true_range(self._high, self._low, close_shift)
+         min_periods = 0 if self._fillna else self._window
+         trn = true_range.rolling(self._window, min_periods=min_periods).sum()
+@@ -969,29 +944,36 @@ class PSARIndicator(IndicatorMixin):
+         self._run()
+ 
+     def _run(self):  # noqa
++        self._check_length(self._close, 1, "at least one bar to seed the SAR")
++
++        # The recursion is positional. Run it on numpy buffers so that no step can
++        # be reinterpreted as a label lookup on a non-RangeIndex frame, and build
++        # the pandas views once at the end.
++        high = self._high.to_numpy(dtype="float64")
++        low = self._low.to_numpy(dtype="float64")
++        psar = self._close.to_numpy(dtype="float64").copy()
++        psar_up = np.full(len(psar), np.nan)
++        psar_down = np.full(len(psar), np.nan)
++
+         up_trend = True
+         acceleration_factor = self._step
+-        up_trend_high = self._high.iloc[0]
+-        down_trend_low = self._low.iloc[0]
+-
+-        self._psar = self._close.copy()
+-        self._psar_up = pd.Series(index=self._psar.index, dtype="float64")
+-        self._psar_down = pd.Series(index=self._psar.index, dtype="float64")
++        up_trend_high = high[0]
++        down_trend_low = low[0]
+ 
+-        for i in range(2, len(self._close)):
++        for i in range(2, len(psar)):
+             reversal = False
+ 
+-            max_high = self._high.iloc[i]
+-            min_low = self._low.iloc[i]
++            max_high = high[i]
++            min_low = low[i]
+ 
+             if up_trend:
+-                self._psar.iloc[i] = self._psar.iloc[i - 1] + (
+-                    acceleration_factor * (up_trend_high - self._psar.iloc[i - 1])
++                psar[i] = psar[i - 1] + (
++                    acceleration_factor * (up_trend_high - psar[i - 1])
+                 )
+ 
+-                if min_low < self._psar.iloc[i]:
++                if min_low < psar[i]:
+                     reversal = True
+-                    self._psar.iloc[i] = up_trend_high
++                    psar[i] = up_trend_high
+                     down_trend_low = min_low
+                     acceleration_factor = self._step
+                 else:
+@@ -1001,20 +983,20 @@ class PSARIndicator(IndicatorMixin):
+                             acceleration_factor + self._step, self._max_step
+                         )
+ 
+-                    low1 = self._low.iloc[i - 1]
+-                    low2 = self._low.iloc[i - 2]
+-                    if low2 < self._psar.iloc[i]:
+-                        self._psar.iloc[i] = low2
+-                    elif low1 < self._psar.iloc[i]:
+-                        self._psar.iloc[i] = low1
++                    low1 = low[i - 1]
++                    low2 = low[i - 2]
++                    if low2 < psar[i]:
++                        psar[i] = low2
++                    elif low1 < psar[i]:
++                        psar[i] = low1
+             else:
+-                self._psar.iloc[i] = self._psar.iloc[i - 1] - (
+-                    acceleration_factor * (self._psar.iloc[i - 1] - down_trend_low)
++                psar[i] = psar[i - 1] - (
++                    acceleration_factor * (psar[i - 1] - down_trend_low)
+                 )
+ 
+-                if max_high > self._psar.iloc[i]:
++                if max_high > psar[i]:
+                     reversal = True
+-                    self._psar.iloc[i] = down_trend_low
++                    psar[i] = down_trend_low
+                     up_trend_high = max_high
+                     acceleration_factor = self._step
+                 else:
+@@ -1024,19 +1006,24 @@ class PSARIndicator(IndicatorMixin):
+                             acceleration_factor + self._step, self._max_step
+                         )
+ 
+-                    high1 = self._high.iloc[i - 1]
+-                    high2 = self._high.iloc[i - 2]
+-                    if high2 > self._psar.iloc[i]:
+-                        self._psar[i] = high2
+-                    elif high1 > self._psar.iloc[i]:
+-                        self._psar.iloc[i] = high1
++                    high1 = high[i - 1]
++                    high2 = high[i - 2]
++                    if high2 > psar[i]:
++                        psar[i] = high2
++                    elif high1 > psar[i]:
++                        psar[i] = high1
+ 
+             up_trend = up_trend != reversal  # XOR
+ 
+             if up_trend:
+-                self._psar_up.iloc[i] = self._psar.iloc[i]
++                psar_up[i] = psar[i]
+             else:
+-                self._psar_down.iloc[i] = self._psar.iloc[i]
++                psar_down[i] = psar[i]
++
++        index = self._close.index
++        self._psar = pd.Series(psar, index=index)
++        self._psar_up = pd.Series(psar_up, index=index)
++        self._psar_down = pd.Series(psar_down, index=index)
+ 
+     def psar(self) -> pd.Series:
+         """PSAR value
+@@ -1083,7 +1070,7 @@ class PSARIndicator(IndicatorMixin):
+         Returns:
+             pandas.Series: New feature generated.
+         """
+-        indicator = self._psar_up.where(
++        indicator = self._psar_down.where(
+             self._psar_down.notnull() & self._psar_down.shift(1).isnull(), 0
+         )
+         indicator = indicator.where(indicator == 0, 1)
+diff --git a/ta/utils.py b/ta/utils.py
+index 9f93bab..a64c44b 100644
+--- a/ta/utils.py
++++ b/ta/utils.py
+@@ -16,6 +16,23 @@ class IndicatorMixin:
+ 
+     _fillna = False
+ 
++    def _check_length(self, series: pd.Series, minimum: int, requirement: str) -> None:
++        """Reject inputs shorter than the indicator's warm-up period.
++
++        Indicators that size numpy buffers from `window` otherwise fail deep inside
++        numpy with a message that names neither the input nor the parameter.
++
++        Args:
++            series(pandas.Series): input series whose length is checked.
++            minimum(int): smallest number of rows the indicator can consume.
++            requirement(str): how `minimum` derives from the parameters.
++        """
++        if len(series) < minimum:
++            raise ValueError(
++                f"{type(self).__name__} requires at least {minimum} rows "
++                f"({requirement}); got {len(series)}"
++            )
++
+     def _check_fillna(self, series: pd.Series, value: int = 0) -> pd.Series:
+         """Check if fillna flag is True.
+ 
+diff --git a/ta/volatility.py b/ta/volatility.py
+index 3bbf57e..6da8660 100644
+--- a/ta/volatility.py
++++ b/ta/volatility.py
+@@ -44,6 +44,10 @@ class AverageTrueRange(IndicatorMixin):
+         self._run()
+ 
+     def _run(self):
++        self._check_length(
++            self._close, self._window, "window, to seed the first average"
++        )
++
+         close_shift = self._close.shift(1)
+         true_range = self._true_range(self._high, self._low, close_shift)
+         atr = np.zeros(len(self._close))
+@@ -69,6 +73,14 @@ class BollingerBands(IndicatorMixin):
+ 
+     https://school.stockcharts.com/doku.php?id=technical_indicators:bollinger_bands
+ 
++    The bands use the *population* standard deviation (``ddof=0``), not pandas'
++    default sample standard deviation (``ddof=1``). That is deliberate: it is the
++    convention in Bollinger's own definition and in the StockCharts worked example
++    this implementation is tested against (``test/data/cs-bbands.csv``). Switching
++    to ``ddof=1`` would widen every band by a factor ``sqrt(n / (n - 1))`` - 2.60
++    percent at the default ``window=20`` - and would no longer match that
++    reference. See issue #307.
++
+     Args:
+         close(pandas.Series): dataset 'Close' column.
+         window(int): n period.
+diff --git a/test/__init__.py b/test/__init__.py
+index 2c477a8..ee6a36e 100644
+--- a/test/__init__.py
++++ b/test/__init__.py
+@@ -1,4 +1,12 @@
+ from test.integration.wrapper import TestWrapper
++from test.unit.invariants import (
++    TestADXWarmUpBoundary,
++    TestBollingerUsesPopulationDeviation,
++    TestIndicatorsAreIndexAgnostic,
++    TestIndicatorsDoNotLookAhead,
++    TestPSARDownIndicator,
++    TestWarmUpPreconditions,
++)
+ from test.unit.momentum import (
+     TestKAMAIndicator,
+     TestPercentagePriceOscillator,
+@@ -41,6 +49,12 @@ from test.unit.volume import (
+ 
+ __all__ = [
+     "TestWrapper",
++    "TestADXWarmUpBoundary",
++    "TestBollingerUsesPopulationDeviation",
++    "TestIndicatorsAreIndexAgnostic",
++    "TestIndicatorsDoNotLookAhead",
++    "TestPSARDownIndicator",
++    "TestWarmUpPreconditions",
+     "TestKAMAIndicator",
+     "TestPercentagePriceOscillator",
+     "TestPercentageVolumeOscillator",
+diff --git a/test/unit/invariants.py b/test/unit/invariants.py
+new file mode 100644
+index 0000000..63c23ea
+--- /dev/null
++++ b/test/unit/invariants.py
+@@ -0,0 +1,311 @@
++"""Cross-cutting invariants that hold for every public indicator.
++
++The existing suite builds every fixture with ``pd.read_csv(...)``, which yields a
++default RangeIndex, and asserts only on ``.tail()``. Two whole classes of defect
++are invisible to it: indexing that only misbehaves on a non-RangeIndex frame, and
++warm-up rows fabricated from whole-series aggregates. These tests enumerate every
++public indicator function rather than sampling, so a new site cannot slip in.
++"""
++import inspect
++import unittest
++
++import numpy as np
++import pandas as pd
++
++import ta.momentum
++import ta.others
++import ta.trend
++import ta.volatility
++import ta.volume
++from ta.trend import ADXIndicator, adx, adx_neg, adx_pos
++from ta.volatility import AverageTrueRange, BollingerBands
++
++_N = 240
++_COLUMNS = {}
++
++
++def _synthetic_ohlcv(rows: int = _N, seed: int = 11) -> dict:
++    """Deterministic OHLCV, so the enumeration needs no data file."""
++    rng = np.random.default_rng(seed)
++    close = 100.0 * np.exp(np.cumsum(rng.normal(0.0, 0.012, rows)))
++    spread = np.abs(rng.normal(0.0, 0.006, rows)) * close
++    open_ = np.roll(close, 1)
++    open_[0] = close[0]
++    return {
++        "open": open_,
++        "high": close + spread,
++        "low": close - spread,
++        "close": close,
++        "volume": rng.uniform(1e5, 1e6, rows),
++    }
++
++
++def _public_indicators():
++    """Every module-level indicator function taking OHLCV series."""
++    found = []
++    for module in (ta.momentum, ta.others, ta.trend, ta.volatility, ta.volume):
++        for name, func in vars(module).items():
++            if name.startswith("_") or not inspect.isfunction(func):
++                continue
++            if func.__module__ != module.__name__:
++                continue
++            columns = [p for p in inspect.signature(func).parameters if p in _COLUMNS]
++            if columns:
++                found.append((f"{module.__name__}.{name}", func, columns))
++    return sorted(found)
++
++
++_COLUMNS.update(_synthetic_ohlcv())
++_INDICATORS = _public_indicators()
++
++
++def _call(func, columns, index, rows=_N):
++    kwargs = {c: pd.Series(_COLUMNS[c][:rows], index=index[:rows]) for c in columns}
++    return func(**kwargs)
++
++
++def _mismatch(left: np.ndarray, right: np.ndarray) -> np.ndarray:
++    return ~(
++        np.isclose(left, right, rtol=1e-12, atol=1e-12)
++        | (np.isnan(left) & np.isnan(right))
++    )
++
++
++class TestIndicatorsAreIndexAgnostic(unittest.TestCase):
++    """An indicator must depend on row order, never on the index labels.
++
++    Regression test for issue #354: PSARIndicator mixed ``self._psar[i]`` with
++    ``self._psar.iloc[i]``, so on a DatetimeIndex or a gapped integer index -
++    the latter being exactly what ``ta.utils.dropna`` leaves behind - the two
++    branches addressed different rows.
++    """
++
++    _indexes = {
++        "datetime": pd.date_range("2020-01-01", periods=_N, freq="B"),
++        # what ta.utils.dropna leaves: integer labels with gaps
++        "gapped_int": pd.Index([i * 3 + 7 for i in range(_N)]),
++        "reversed_int": pd.Index(list(range(_N - 1, -1, -1))),
++    }
++
++    def test_every_public_indicator(self):
++        self.assertGreater(len(_INDICATORS), 50)
++        baseline_index = pd.RangeIndex(_N)
++        failures = []
++        for name, func, columns in _INDICATORS:
++            expected = _call(func, columns, baseline_index)
++            for label, index in self._indexes.items():
++                got = _call(func, columns, index)
++                if len(got) != len(expected):
++                    failures.append(
++                        f"{name} [{label}]: length {len(got)} != {len(expected)}"
++                    )
++                    continue
++                bad = _mismatch(
++                    expected.to_numpy(dtype=float), got.to_numpy(dtype=float)
++                )
++                if bad.any():
++                    failures.append(
++                        f"{name} [{label}]: {int(bad.sum())} of {len(bad)} rows differ"
++                    )
++        self.assertEqual([], failures)
++
++
++class TestIndicatorsDoNotLookAhead(unittest.TestCase):
++    """Row k must not change when rows after k are appended.
++
++    Regression test for the ``fill_value=<whole-series aggregate>`` idiom: KST
++    substituted ``self._close.mean()`` for its missing warm-up history, so 30 of
++    its output rows were computed from prices that had not happened yet.
++    """
++
++    def test_every_public_indicator(self):
++        cut = 160
++        index = pd.RangeIndex(_N)
++        failures = []
++        for name, func, columns in _INDICATORS:
++            full = _call(func, columns, index).to_numpy(dtype=float)[:cut]
++            truncated = _call(func, columns, index, rows=cut).to_numpy(dtype=float)
++            bad = _mismatch(full, truncated)
++            if bad.any():
++                failures.append(
++                    f"{name}: {int(bad.sum())} of {cut} rows change when later "
++                    f"rows are appended, first at row {int(np.argmax(bad))}"
++                )
++        self.assertEqual([], failures)
++
++
++class TestADXWarmUpBoundary(unittest.TestCase):
++    """+DI and -DI must report their first defined bar, not a zero.
++
++    Regression test for issue #314: the smoothing loops started at index 1, so
++    the seed element of ``_trs``/``_dip``/``_din`` was never consumed and the bar
++    at ``window`` came back as 0.0 - indistinguishable from the zero padding.
++    """
++
++    _filename = "test/data/cs-adx.csv"
++
++    @classmethod
++    def setUpClass(cls):
++        cls._df = pd.read_csv(cls._filename, sep=",")
++        cls._params = {
++            "high": cls._df["High"],
++            "low": cls._df["Low"],
++            "close": cls._df["Close"],
++            "window": 14,
++            "fillna": False,
++        }
++
++    @classmethod
++    def tearDownClass(cls):
++        del cls._df
++
++    def test_adx_pos_head(self):
++        result = adx_pos(**self._params)
++        expected = self._df["+DI14"]
++        rows = expected.notna()
++        pd.testing.assert_series_equal(
++            expected[rows].head(20),
++            result[rows].head(20),
++            check_names=False,
++            rtol=1e-5,
++        )
++
++    def test_adx_neg_head(self):
++        result = adx_neg(**self._params)
++        expected = self._df["-DI14"]
++        rows = expected.notna()
++        pd.testing.assert_series_equal(
++            expected[rows].head(20),
++            result[rows].head(20),
++            check_names=False,
++            rtol=1e-5,
++        )
++
++    def test_adx_tail_unchanged(self):
++        pd.testing.assert_series_equal(
++            self._df["ADX"].tail(), adx(**self._params).tail(), check_names=False
++        )
++
++
++class TestWarmUpPreconditions(unittest.TestCase):
++    """Too-short input must be refused by name, not by a numpy IndexError."""
++
++    @staticmethod
++    def _frame(rows):
++        columns = _synthetic_ohlcv(rows)
++        return {k: pd.Series(v) for k, v in columns.items()}
++
++    def test_adx_construction_rejects_short_input(self):
++        for rows in (1, 10, 14):
++            data = self._frame(rows)
++            with self.assertRaises(ValueError) as ctx:
++                ADXIndicator(
++                    high=data["high"], low=data["low"], close=data["close"], window=14
++                )
++            self.assertIn("ADXIndicator requires at least 15 rows", str(ctx.exception))
++
++    def test_adx_series_rejects_input_shorter_than_two_windows(self):
++        data = self._frame(2 * 14 - 1)
++        indicator = ADXIndicator(
++            high=data["high"], low=data["low"], close=data["close"], window=14
++        )
++        with self.assertRaises(ValueError) as ctx:
++            indicator.adx()
++        self.assertIn("ADXIndicator requires at least 28 rows", str(ctx.exception))
++        # +DI / -DI need only window + 1 bars and stay available
++        self.assertEqual(2 * 14 - 1, len(indicator.adx_pos()))
++
++    def test_adx_accepts_exactly_two_windows(self):
++        data = self._frame(2 * 14)
++        indicator = ADXIndicator(
++            high=data["high"], low=data["low"], close=data["close"], window=14
++        )
++        self.assertEqual(2 * 14, len(indicator.adx()))
++
++    def test_average_true_range_rejects_short_input(self):
++        for rows in (1, 13):
++            data = self._frame(rows)
++            with self.assertRaises(ValueError) as ctx:
++                AverageTrueRange(
++                    high=data["high"], low=data["low"], close=data["close"], window=14
++                )
++            self.assertIn(
++                "AverageTrueRange requires at least 14 rows", str(ctx.exception)
++            )
++
++    def test_average_true_range_accepts_exactly_one_window(self):
++        data = self._frame(14)
++        indicator = AverageTrueRange(
++            high=data["high"], low=data["low"], close=data["close"], window=14
++        )
++        self.assertEqual(14, len(indicator.average_true_range()))
++
++
++class TestBollingerUsesPopulationDeviation(unittest.TestCase):
++    """ddof=0 is deliberate; pin it against StockCharts' published numbers.
++
++    Issue #307 reads the pandas default (ddof=1) as the standard. It is not: the
++    project's own reference file agrees with ddof=0 and disagrees with ddof=1.
++    """
++
++    _filename = "test/data/cs-bbands.csv"
++
++    @classmethod
++    def setUpClass(cls):
++        cls._df = pd.read_csv(cls._filename, sep=",")
++
++    @classmethod
++    def tearDownClass(cls):
++        del cls._df
++
++    def test_matches_population_deviation(self):
++        close = self._df["Close"]
++        expected = self._df["20-day Standard Deviation"]
++        rows = expected.notna()
++        self.assertGreater(int(rows.sum()), 10)
++        population = close.rolling(20, min_periods=20).std(ddof=0)
++        sample = close.rolling(20, min_periods=20).std(ddof=1)
++        self.assertLess(float((population[rows] - expected[rows]).abs().max()), 1e-5)
++        self.assertGreater(float((sample[rows] - expected[rows]).abs().max()), 1e-2)
++
++    def test_bands_match_reference(self):
++        indicator = BollingerBands(close=self._df["Close"], window=20, window_dev=2)
++        rows = self._df["HighBand"].notna()
++        self.assertLess(
++            float(
++                (indicator.bollinger_hband()[rows] - self._df["HighBand"][rows])
++                .abs()
++                .max()
++            ),
++            1e-5,
++        )
++        self.assertLess(
++            float(
++                (indicator.bollinger_lband()[rows] - self._df["LowBand"][rows])
++                .abs()
++                .max()
++            ),
++            1e-5,
++        )
++
++
++class TestPSARDownIndicator(unittest.TestCase):
++    """psar_down_indicator must be derived from the down series it reports on."""
++
++    def test_flags_every_down_reversal(self):
++        data = _synthetic_ohlcv(400, seed=3)
++        indicator = ta.trend.PSARIndicator(
++            high=pd.Series(data["high"]),
++            low=pd.Series(data["low"]),
++            close=pd.Series(data["close"]),
++        )
++        down = indicator.psar_down()
++        expected = (down.notnull() & down.shift(1).isnull()).astype(float)
++        self.assertGreater(float(expected.sum()), 0.0)
++        pd.testing.assert_series_equal(
++            expected, indicator.psar_down_indicator(), check_names=False
++        )
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/test/unit/momentum.py b/test/unit/momentum.py
+index 88edfbe..1475308 100644
+--- a/test/unit/momentum.py
++++ b/test/unit/momentum.py
+@@ -335,7 +335,7 @@ class TestTSIIndicator(unittest.TestCase):
+             self._df[target].tail(),
+             result.tail(),
+             check_names=False,
+-            check_less_precise=True,
++            rtol=1e-3,
+         )
+ 
+     def test_tsi2(self):
+@@ -345,7 +345,7 @@ class TestTSIIndicator(unittest.TestCase):
+             self._df[target].tail(),
+             result.tail(),
+             check_names=False,
+-            check_less_precise=True,
++            rtol=1e-3,
+         )
+ 
+ 
