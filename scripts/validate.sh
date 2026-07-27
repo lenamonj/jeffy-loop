@@ -451,10 +451,15 @@ fi
 #     re-feed, and a pending violation at budget exhaustion still ends the
 #     run with a stderr note; the mid-budget re-feed carries iteration
 #     hygiene notes when the finished iteration skipped its journal entry or
-#     left tracked changes uncommitted (untracked files never fire it); a
-#     foreign session's state file is left untouched; and a project with no
-#     state file is a silent no-op. Needs jq (the hook's own runtime
-#     dependency); skips cleanly without it.
+#     left tracked changes uncommitted (untracked files never fire it); the
+#     stall gate stays silent on progress (a commit or a ledger change),
+#     rides a STALL note on the first flat iteration, ends the run on the
+#     second consecutive one, resets the strike on progress, degrades to
+#     the ledger signal without git, and skips with a stderr note when no
+#     signal exists, while budget exhaustion and the promise path stay
+#     unaffected; a foreign session's state file is left untouched; and a
+#     project with no state file is a silent no-op. Needs jq (the hook's own
+#     runtime dependency); skips cleanly without it.
 if command -v jq >/dev/null 2>&1; then
   hb_tmp="$(mktemp -d)" || hb_tmp=""
   if [ -z "$hb_tmp" ]; then
