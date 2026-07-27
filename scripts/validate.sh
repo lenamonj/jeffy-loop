@@ -144,7 +144,8 @@ check_markers skills/jeffy/references/plan-default.md \
   "independent evaluator gate" \
   "the only sub-agent review this Method authorizes" \
   "strong enough to fail" \
-  "stops auditing for the rest of the run"
+  "stops auditing for the rest of the run" \
+  "a reduction is new code"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \

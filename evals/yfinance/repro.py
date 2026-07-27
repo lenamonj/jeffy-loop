@@ -72,6 +72,14 @@ def check(case, dimension, what, expected, actual, ok, info=False):
     print()
 
 
+def standardise_currency(ph, df, currency):
+    """_standardise_currency returns (df, currency) on 1.5.2 and
+    (df, currency, div_scaled, prices_scaled) on the dev branch. Index rather
+    than unpack so this file runs against both."""
+    r = ph._standardise_currency(df, currency)
+    return r[0], r[1]
+
+
 def make_ph(currency="USD", ticker="TEST", tz="America/New_York", meta=None):
     """A PriceHistory with no session and no network, built for direct calls."""
     ph = PriceHistory.__new__(PriceHistory)
@@ -199,7 +207,7 @@ def case_Y2():
 
     ph = make_ph(currency="GBp", ticker="TEST.L", tz=tz,
                  meta={"regularMarketPrice": pence["Close"].iloc[-1]})
-    d1, cur = ph._standardise_currency(pence.copy(), "GBp")
+    d1, cur = standardise_currency(ph, pence.copy(), "GBp")
     ph._history_metadata["currency"] = cur
     d2 = ph._fix_unit_switch(d1, "1d", tz)
 
@@ -413,7 +421,7 @@ def case_Y8():
     try:
         ph = make_ph(currency="GBp", ticker="XDEV.L", tz=tz,
                      meta={"regularMarketPrice": 6272.0})
-        out, _ = ph._standardise_currency(df.copy(), "GBp")
+        out, _ = standardise_currency(ph, df.copy(), "GBp")
     finally:
         logger.removeHandler(h)
         logger.setLevel(old_level)
@@ -439,7 +447,7 @@ def case_2866():
     tz = "Europe/London"
     df = xdev_frame(tz)
     ph = make_ph(currency="GBp", ticker="XDEV.L", tz=tz)
-    out, cur = ph._standardise_currency(df.copy(), "GBp")
+    out, cur = standardise_currency(ph, df.copy(), "GBp")
 
     # (a) the conversion itself - documented, not a defect
     converted = np.allclose(out["Close"].to_numpy(), df["Close"].to_numpy() / 100.0)
@@ -521,7 +529,7 @@ def case_guards():
         pounds[c] = pounds[c] / 100.0
     ph = make_ph(currency="GBp", ticker="XDEV.L", tz=tz,
                  meta={"regularMarketPrice": 6272.0})
-    out, cur = ph._standardise_currency(pounds.copy(), "GBp")
+    out, cur = standardise_currency(ph, pounds.copy(), "GBp")
     unchanged = np.allclose(out["Close"].to_numpy(), pounds["Close"].to_numpy())
     check(
         "GUARD-1", "correctness",
