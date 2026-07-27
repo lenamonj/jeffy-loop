@@ -1,0 +1,228 @@
+diff --git a/doc/source/advanced/price_repair.rst b/doc/source/advanced/price_repair.rst
+index 5fc3e0e..8a91849 100644
+--- a/doc/source/advanced/price_repair.rst
++++ b/doc/source/advanced/price_repair.rst
+@@ -8,6 +8,8 @@ The returned table will have a new column ``Repaired?`` that specifies if row wa
+ 
+ This can also repair currency mixups, so check ``Ticker.history_metadata['currency']`` after for true currency. Not ``Ticker.info``.
+ 
++Exchanges that quote in a subunit (LSE pence ``GBp``, JSE cents ``ZAc``, TASE agorot ``ILA``) are converted to the major unit, so every price changes by 100x and ``Repaired?`` is ``True`` on every row. ``Volume`` is deliberately left alone - a currency conversion does not change a share count. If the conversion cannot be checked against the live quote, a ``WARNING`` is logged naming the reason.
++
+ Price repair
+ ============
+ 
+diff --git a/yfinance/scrapers/history.py b/yfinance/scrapers/history.py
+index b493fc1..28a211f 100644
+--- a/yfinance/scrapers/history.py
++++ b/yfinance/scrapers/history.py
+@@ -1073,6 +1073,9 @@ class PriceHistory:
+             currency2 = 'ILS'
+             m = 0.01
+ 
++        logger = utils.get_yf_logger()
++        log_extras = {'yf_cat': 'price-repair-currency', 'yf_symbol': self.ticker}
++
+         # Use latest row with actual volume, because volume=0 rows can be 0.01x the other rows.
+         # _fix_unit_switch() will ensure all rows are on same scale.
+         f_volume = df['Volume']>0
+@@ -1080,22 +1083,37 @@ class PriceHistory:
+             return df, currency
+         last_row = df.iloc[np.where(f_volume)[0][-1]]
+         prices_in_subunits = True  # usually is true
+-        if last_row.name > (pd.Timestamp.now('UTC') - _datetime.timedelta(days=30)):
+-            try:
+-                ratio = self._history_metadata['regularMarketPrice'] / last_row['Close']
+-                if abs((ratio*m)-1) < 0.1:
+-                    # within 10% of 100x
+-                    prices_in_subunits = False
+-            except Exception:
+-                # Should never happen but just-in-case
+-                if not YfConfig.debug.hide_exceptions:
+-                    raise
+-                pass
++        # The live quote is the only evidence available for the assumption above.
++        # When it cannot be used, say so - do not assume silently.
++        if last_row.name <= (pd.Timestamp.now('UTC') - _datetime.timedelta(days=30)):
++            logger.warning(f"{self.ticker}: assuming prices are in {currency} and dividing by "
++                           f"{int(1/m)} - newest row is over 30 days old so cannot be checked "
++                           "against the live quote", extra=log_extras)
++        elif 'regularMarketPrice' not in self._history_metadata:
++            logger.warning(f"{self.ticker}: assuming prices are in {currency} and dividing by "
++                           f"{int(1/m)} - no 'regularMarketPrice' in metadata to check against",
++                           extra=log_extras)
++        elif not last_row['Close'] > 0:
++            logger.warning(f"{self.ticker}: assuming prices are in {currency} and dividing by "
++                           f"{int(1/m)} - newest close is not positive so cannot be checked "
++                           "against the live quote", extra=log_extras)
++        else:
++            ratio = self._history_metadata['regularMarketPrice'] / last_row['Close']
++            if abs((ratio*m)-1) < 0.1:
++                # within 10% of 100x
++                prices_in_subunits = False
+         if prices_in_subunits:
+             for c in _PRICE_COLNAMES_:
+                 df[c] *= m
++            # Every price in every row just changed, so the repair flag must say so.
++            if 'Repaired?' not in df.columns:
++                df['Repaired?'] = False
++            df['Repaired?'] = True
++            # Only claim a currency repair when one actually happened.
++            # _fix_prices_sudden_change() reads this flag to decide whether a later
++            # 100x correction would be a double-correction.
++            self._history_metadata["currencyRepaired"] = True
+         self._history_metadata["currency"] = currency2
+-        self._history_metadata["currencyRepaired"] = True
+ 
+         f_div = df['Dividends']!=0.0
+         if f_div.any():
+@@ -1236,57 +1254,61 @@ class PriceHistory:
+             c = data_cols[i]
+             df2.loc[fi, c] = tag
+ 
+-        n_before = (df2_data == tag).sum()
++        # Must count the tags after writing them - df2_data is a pre-tag snapshot.
++        n_before = (df2[data_cols].to_numpy() == tag).sum()
+         df2 = self._reconstruct_intervals_batch(df2, interval, prepost, tag)
+         df2_tagged = df2[data_cols].to_numpy() == tag
+         n_after = (df2[data_cols].to_numpy() == tag).sum()
+ 
+         if n_after > 0:
+-            # This second pass will *crudely* "fix" any remaining errors in High/Low
+-            # simply by ensuring they don't contradict e.g. Low = 100x High.
+-            f = (df2[data_cols].to_numpy() == tag) & f
+-            for i in range(f.shape[0]):
+-                fi = f[i, :]
+-                if not fi.any():
+-                    continue
+-                idx = df2.index[i]
+-
+-                for c in ['Open', 'Close']:
+-                    j = data_cols.index(c)
+-                    if fi[j]:
+-                        df2.loc[idx, c] = df.loc[idx, c] * 0.01
+-
+-                c = "High"
+-                j = data_cols.index(c)
+-                if fi[j]:
+-                    df2.loc[idx, c] = df2.loc[idx, ["Open", "Close"]].max()
+-
+-                c = "Low"
+-                j = data_cols.index(c)
+-                if fi[j]:
+-                    df2.loc[idx, c] = df2.loc[idx, ["Open", "Close"]].min()
+-
+-            f_rcp = (df2[data_cols].to_numpy() == tag) & f_rcp
+-            for i in range(f_rcp.shape[0]):
+-                fi = f_rcp[i, :]
+-                if not fi.any():
+-                    continue
+-                idx = df2.index[i]
+-
+-                for c in ['Open', 'Close']:
+-                    j = data_cols.index(c)
+-                    if fi[j]:
+-                        df2.loc[idx, c] = df.loc[idx, c] * 100.0
+-
+-                c = "High"
+-                j = data_cols.index(c)
+-                if fi[j]:
+-                    df2.loc[idx, c] = df2.loc[idx, ["Open", "Close"]].max()
+-
+-                c = "Low"
+-                j = data_cols.index(c)
+-                if fi[j]:
+-                    df2.loc[idx, c] = df2.loc[idx, ["Open", "Close"]].min()
++            # This second pass will *crudely* "fix" any remaining errors, by applying
++            # the unit factor that was detected. Every tagged column is off by that
++            # same factor, so all of them - including 'Adj Close' - are recoverable
++            # by it; High/Low only need clamping to keep a partially-repaired row
++            # self-consistent.
++            crude_rows = []
++
++            def _rescale_crudely(f_flags, factor):
++                for i in range(f_flags.shape[0]):
++                    fi = f_flags[i, :]
++                    if not fi.any():
++                        continue
++                    idx = df2.index[i]
++                    crude_rows.append(idx)
++
++                    # 'Adj Close' must be rescaled with the rest. Leaving it tagged
++                    # means it gets restored to the bad value below, and then
++                    # utils.auto_adjust() - on by default - reapplies the error to
++                    # every other column.
++                    for c in ['Open', 'Close', 'Adj Close']:
++                        if c not in data_cols:
++                            continue
++                        j = data_cols.index(c)
++                        if fi[j]:
++                            df2.loc[idx, c] = df.loc[idx, c] * factor
++
++                    c = "High"
++                    if c in data_cols:
++                        j = data_cols.index(c)
++                        if fi[j]:
++                            df2.loc[idx, c] = max(df.loc[idx, c] * factor,
++                                                  df2.loc[idx, ["Open", "Close"]].max())
++
++                    c = "Low"
++                    if c in data_cols:
++                        j = data_cols.index(c)
++                        if fi[j]:
++                            df2.loc[idx, c] = min(df.loc[idx, c] * factor,
++                                                  df2.loc[idx, ["Open", "Close"]].min())
++
++            _rescale_crudely((df2[data_cols].to_numpy() == tag) & f, 0.01)
++            _rescale_crudely((df2[data_cols].to_numpy() == tag) & f_rcp, 100.0)
++
++            if len(crude_rows) > 0:
++                # These rows were rewritten, so the repair flag must say so.
++                if "Repaired?" not in df2.columns:
++                    df2["Repaired?"] = False
++                df2.loc[crude_rows, "Repaired?"] = True
+ 
+             df2_tagged = df2[data_cols].to_numpy() == tag
+             n_after_crude = df2_tagged.sum()
+@@ -1539,7 +1561,14 @@ class PriceHistory:
+                     print(f"- diff_total = {diff_total:.4f}")
+                     print(f"- cg_is_double_counted = {cg_is_double_counted}")
+ 
+-        pct_double_counted = sum(dcs.values()) / len(dcs)
++        if len(dcs) == 0:
++            # No capital-gains row could be assessed, e.g. the only distribution is
++            # on the first row, or 'Dividends' does not include the capital gains
++            # (so there is nothing to un-double-count). Nothing to repair.
++            logger.debug("No assessable capital-gains distributions", extra=log_extras)
++            pct_double_counted = 0.0
++        else:
++            pct_double_counted = sum(dcs.values()) / len(dcs)
+         if debug:
+             print(f"- pct_double_counted = {pct_double_counted*100:.1f}%")
+ 
+@@ -1639,7 +1668,9 @@ class PriceHistory:
+             # is so bad that it overflows floating-point type into Infinity.
+             # So reduce those massive values.
+             f_ninf = ~f_inf
+-            adjClose = df2['Adj Close'].to_numpy()
++            # Must own this array - a to_numpy() view of a DataFrame column is
++            # read-only, so the in-place write below would raise.
++            adjClose = df2['Adj Close'].to_numpy(copy=True)
+             close = df2['Close'].to_numpy()
+             close10x = close*10
+             f_huge = f_ninf & (adjClose > close10x)
+@@ -3374,10 +3405,14 @@ class PriceHistory:
+                 msg = f"Corrected: {n_corrected}x"
+             logger.info(msg, extra=log_extras)
+ 
+-        if unit_switch and any_m_lt_1:
++        if unit_switch and any_m_lt_1 and sudden_change_repaired.all():
+             # m < 1 means thats the switch was repaired in favour of the major currency
+             # e.g. USD beat cents
+             # But check if _standardise_currency() already did that.
++            # Only a whole-table correction can be the double of _standardise_currency()'s
++            # whole-table conversion. If only part of the table was corrected then that is
++            # a genuine block error in Yahoo's data, and the revert below - which rescales
++            # every row and inverts every flag - would corrupt the whole table.
+             if 'currencyRepaired' in self._history_metadata and self._history_metadata['currencyRepaired']:
+                 # Yes it did, which means this repair did it again.
+                 # Revert the second.
