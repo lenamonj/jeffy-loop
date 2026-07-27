@@ -124,7 +124,7 @@ if ($null -ne $settings) {
             # on Windows PowerShell 5.1 would prepend one, and a BOM breaks
             # strict JSON parsers reading settings.json.
             [System.IO.File]::WriteAllText($settingsPath, (($settings | ConvertTo-Json -Depth 32) + "`n"))
-            Write-Host "[OK] Jeffy Stop hook registered in $settingsPath"
+            Write-Host "[OK] Jeffy Stop hook registered in $settingsPath (600s timeout)"
         } catch {
             Write-Host "[FAILED] could not update $settingsPath ($($_.Exception.Message)); add the Stop hook entry by hand (see README) and re-run to verify."
             $ok = $false
