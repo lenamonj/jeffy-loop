@@ -69,4 +69,4 @@ Diffstat: 7 files, +424/-82, of which `test/unit/invariants.py` is 311 new lines
 
 **Independently verified**: the red-green cycle was re-run from a clean clone at `a8904107` on Python 3.13 with pandas 3.0.5. The upstream suite at HEAD is `Ran 134 tests ... FAILED (errors=2)`; `repro.py` grades 2 of 12 checks passing. After `git apply fixes.patch` the suite is `Ran 147 tests ... OK` and the repro is 12 of 12. Note for anyone repeating this: the project's test files are not named `test_*`, so pytest collects nothing and reports "no tests ran"; use `python -m unittest discover -s test -p '*.py'`.
 
-**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Upstream disclosure pending review.
+**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Findings were not disclosed upstream: the project has been dormant since 2023-11-02 with no GitHub Actions run ever, CircleCI red on HEAD, and no merged pull request in over two years.

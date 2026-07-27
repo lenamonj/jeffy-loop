@@ -130,4 +130,4 @@ Verification of the fixes: upstream `pytest tests -q` is `125 passed` before and
 
 **Independently verified**: the red-green cycle was re-run from a clean clone at `fbd10dae` on Python 3.13. Unpatched, `repro.py` records 26 failing checks; after `git apply fixes.patch` it is 33 of 33 passing and the upstream suite is 125 passed under `MPLBACKEND=Agg`, matching the baseline, so no test was weakened to reach green.
 
-**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Upstream disclosure pending review.
+**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Findings were disclosed upstream with repros and a PR offer in [ranaroussi/quantstats#537](https://github.com/ranaroussi/quantstats/issues/537).

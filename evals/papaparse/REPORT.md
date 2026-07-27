@@ -75,4 +75,4 @@ None of these defects are new discoveries, and this receipt does not pretend oth
 
 **Independently verified**: the red-green cycle was re-run from a clean LF clone at `4eb7eaf0` on Node 22.18.0. Unpatched, `repro.js` reports 8 checks reproducing a defect; after `git apply fixes.patch` it reports all checks OK, and `npm run test-node` is 248 passing, 23 pending, 0 failing. Clone with `git -c core.autocrlf=false` or three unrelated tests redden on line endings alone.
 
-**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Upstream disclosure pending review.
+**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Findings were disclosed upstream with repros and a PR offer in [mholt/PapaParse#1132](https://github.com/mholt/PapaParse/issues/1132).

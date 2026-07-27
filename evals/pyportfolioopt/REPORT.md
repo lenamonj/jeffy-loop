@@ -64,4 +64,4 @@ Two further disclosures. Without `MPLBACKEND=Agg` this Windows box adds two `_tk
 
 **Independently verified**: the red-green cycle was re-run from a clean clone at `a6638d2e` on Python 3.13 with cvxpy 1.9.2 and scipy 1.18.0. `repro.py` scores 3 of 13 at HEAD and 13 of 13 after `git apply fixes.patch`. Note that `pip install -e .` does not pull in `packaging`, without which the repro aborts on import rather than grading.
 
-**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Upstream disclosure pending review.
+**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Findings were disclosed upstream with repros and a PR offer in [PyPortfolio/PyPortfolioOpt#750](https://github.com/PyPortfolio/PyPortfolioOpt/issues/750).

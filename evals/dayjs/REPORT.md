@@ -87,6 +87,6 @@ The patch adds three regression tests to `test/plugin/timezone.test.js`: the doc
 
 **Independently verified**: the red-green cycle was re-run from a clean clone at `98364bce` on Node 22.18.0. `repro.js` scores 1 of 5 at HEAD and 5 of 5 after `git apply fixes.patch` and a rebuild, with DAYJS-4 passing in both directions, which is the assertion that proves the reported "wrong year" was never a library defect. Two traps for anyone repeating this: `npm run build` fails on Node 22 with `error:0308010C digital envelope routines::unsupported` unless `NODE_OPTIONS=--openssl-legacy-provider` is set, and the build writes `dayjs.min.js` to the clone root rather than a `dayjs/` subdirectory, so pass the clone path to the repro as `node repro.js <clone-root>`.
 
-**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Upstream disclosure pending review.
+**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Findings were not disclosed upstream: against a 968-issue backlog the useful result here is a correction to an existing report rather than a new one, and the repro stands on its own.
 
 Full record: [journal.md](journal.md). Product diff: [fixes.patch](fixes.patch), 9 files, +107/-34. Reproduction: [repro.js](repro.js).

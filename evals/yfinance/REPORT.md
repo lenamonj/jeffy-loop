@@ -62,4 +62,4 @@ Reproduction is entirely offline. `repro.py` blocks `socket.connect`, `socket.cr
 
 **Independently verified**: the red-green cycle was re-run from a clean clone at `beac22d9` on Python 3.13, pandas 3.0.5, numpy 2.5.1, scipy 1.18.0. Unpatched, `repro.py` grades 3 of 16 cases passing; after `git apply fixes.patch`, 16 of 16. Reproduction note for anyone repeating this: `scipy` is an optional yfinance dependency that `pip install -e .` does not pull in, and without it six cases abort inside `_fix_unit_random_mixups` at `history.py:1218` rather than grading, which understates the failure count in both directions.
 
-**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Upstream disclosure pending review.
+**Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Findings were disclosed upstream with repros and a PR offer in [ranaroussi/yfinance#2924](https://github.com/ranaroussi/yfinance/issues/2924).
