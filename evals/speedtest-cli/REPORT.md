@@ -1,6 +1,6 @@
 # Jeffy eval: sivel/speedtest-cli
 
-**Target**: [sivel/speedtest-cli](https://github.com/sivel/speedtest-cli) (~13k stars) at HEAD `22210ca` (2021), Python 3.11 - run in a local clone; nothing was pushed upstream.
+**Target**: [sivel/speedtest-cli](https://github.com/sivel/speedtest-cli) (~14.1k stars) at HEAD `22210ca` (2021), Python 3.11 - run in a local clone; nothing was pushed upstream.
 
 A deliberately contrasting case to [records](../records/REPORT.md): a dormant but fundamentally sound codebase, where the honest outcome is *small findings and restraint* - the loop must not invent problems to look busy.
 

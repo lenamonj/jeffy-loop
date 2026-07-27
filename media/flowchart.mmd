@@ -36,12 +36,17 @@ flowchart TD
     end
     WRITE --> WORK
 
-    subgraph ENGINE ["<b>THE ENGINE</b> - a Stop hook at every turn end"]
+    subgraph ENGINE ["<b>THE ENGINE</b> - a Stop hook at every turn end, plain shell"]
         PROM{"Promise phrase in the<br/>last assistant message?"}
+        CHECKS{"The stop is machine-checked<br/>no open task left in the ledger, the Converged<br/>line certifies this tree, and the project's own<br/>verify command exits 0 when the hook re-runs it"}
         BUDGET{"Iterations left?"}
-        REFEED["Block the stop and re-feed<br/>the iteration prompt, with any<br/>focus directive appended"]
+        STALL{"Second flat iteration?<br/>no commit and no ledger change,<br/>twice in a row"}
+        REFEED["Block the stop and re-feed<br/>the iteration prompt, with any focus, the<br/>evidence of a rejected convergence, and<br/>hygiene notes when the finished iteration<br/>skipped its journal entry or its checkpoint"]
         PROM -->|"no"| BUDGET
-        BUDGET -->|"yes"| REFEED
+        PROM -->|"yes"| CHECKS
+        CHECKS -->|"a check failed"| REFEED
+        BUDGET -->|"yes"| STALL
+        STALL -->|"no"| REFEED
     end
 
     RECORD -->|"turn ends"| ENGINE
@@ -50,9 +55,10 @@ flowchart TD
 
     REPORT["Run report<br/>iterations spent, tasks closed with severities,<br/>the diffstat, blocked items, decisions waiting on you;<br/>JOURNAL.md and git log hold the full record"]
 
-    PROM -->|"yes - converged"| REPORT
+    CHECKS -->|"all three hold -<br/>converged"| REPORT
     BUDGET -->|"no - budget spent"| REPORT
-    RECORD -->|"stalled twice, or<br/>needs your decision"| REPORT
+    STALL -->|"yes - ended as stalled"| REPORT
+    RECORD -->|"needs your decision"| REPORT
 
     subgraph FILES ["<b>THE CONTROL PLANE</b> - files, not vibes"]
         SF[("jeffy-loop.local.md<br/>transient loop state, written at launch:<br/>owner session, iteration i of N;<br/>deleted when the run ends")]
@@ -75,7 +81,7 @@ flowchart TD
     class USER entry
     class PRE,WRITE launch
     class LOAD,OPEN,AUDIT,CLEAN,EXEC,GATE,REVERT,RECORD,EVAL work
-    class PROM,BUDGET,REFEED engine
+    class PROM,CHECKS,BUDGET,STALL,REFEED engine
     class SF,MEM,GIT file
     class REPORT,PROMISE good
 

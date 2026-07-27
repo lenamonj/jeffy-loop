@@ -33,4 +33,6 @@ Full iteration-by-iteration record: [journal.md](journal.md). Complete product d
 
 End state: 34/34 tests, 100 percent statement coverage, npm audit 0 vulnerabilities.
 
-**Status**: fixes live in this eval's artifacts. Nothing was pushed upstream. The correctness finding was disclosed upstream with a repro and a PR offer in [chalk/chalk#686](https://github.com/chalk/chalk/issues/686) (2026-07-23). Merging anything remains the maintainers' call.
+**Status**: fixes live in this eval's artifacts. Nothing was pushed upstream. The correctness finding was disclosed upstream with a repro and a PR offer in [chalk/chalk#686](https://github.com/chalk/chalk/issues/686) (2026-07-23).
+
+**Outcome: fixed upstream.** A chalk contributor reproduced the bug independently and confirmed the behavior was surprising, noting it was itself surprising that the issue had not surfaced earlier given how heavily chalk is used. The project owner then wrote and merged [chalk/chalk#687](https://github.com/chalk/chalk/pull/687), routing `ansi256()` and `bgAnsi256()` through `ansi256ToAnsi` at level 1, exactly the fix this eval proposed. It shipped in [chalk v6.0.0](https://github.com/chalk/chalk/releases/tag/v6.0.0) and the issue was closed as completed. Verified 2026-07-27 against `chalk/chalk@ff549c5` and `source/index.js`.
