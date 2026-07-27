@@ -920,8 +920,88 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook missed a flat iteration"
       fi
 
+      # Second strike: a flat iteration with the flag already armed ends
+      # the run the way budget exhaustion does.
+      hb_write_state_stall sess-1 2 6 "$hb_head" "$hb_ck" 1
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook ends the run on the second consecutive flat iteration (state deleted, stderr note)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook did not end a stalled run on the second flat iteration"
+      fi
+
+      # Progress with the flag armed clears it; a later flat iteration is
+      # strike 1 again, not strike 2 - proven on the hook's own state
+      # rewrites across two consecutive invocations.
+      hb_write_state_stall sess-1 1 3 stale-head "$hb_ck" 1
+      hb_out="$(hb_run sess-1 'still working' '')"
+      hb_out2=""
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q '^stall: 0$' "$hb_state"; then
+        hb_out2="$(hb_run sess-1 'still working' '')"
+      fi
+      if [ -n "$hb_out2" ] \
+        && [ "$(printf '%s' "$hb_out2" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out2" | jq -r '.reason' | grep -qF 'STALL:' \
+        && [ -f "$hb_state" ] \
+        && grep -q '^stall: 1$' "$hb_state"; then
+        pass "stop hook clears the stall flag on progress (later flat iteration is strike 1, not strike 2)"
+      else
+        printf '%s\n%s\n' "$hb_out" "$hb_out2"
+        fault "stop hook mishandled the stall flag across progress and a later flat iteration"
+      fi
+
       rm -f "$hb_state"
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
+    fi
+
+    # Stall gate degrades: a non-git project stalls out on the ledger
+    # signal alone; a project with neither signal skips the gate with a
+    # stderr note; the budget path ends the run normally even with the
+    # flag armed and both signals flat (the budget is the hard stop).
+    hb_write_backlog ''
+    hb_ck0="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
+    hb_write_state_stall sess-1 2 6 none "$hb_ck0" 1
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook stalls out a non-git project on the backlog signal alone"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook mishandled the stall gate in a non-git project"
+    fi
+
+    rm -f "$hb_proj/BACKLOG.md"
+    hb_write_state_stall sess-1 2 6 none none 1
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+      && grep -q 'skipping the stall check' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook skips the stall gate with a stderr note when neither signal exists"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook mishandled a project with no stall signals"
+    fi
+    hb_write_backlog ''
+
+    hb_write_state_stall sess-1 6 6 none "$hb_ck0" 1
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && ! grep -q 'stalled' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook budget exhaustion wins over the stall gate (normal run end, no stall note)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let the stall gate interfere with budget exhaustion"
+    fi
+
+    hb_write_state_stall sess-1 2 6 none "$hb_ck0" 1
+    hb_write_plan none
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && ! grep -q 'stalled' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook accepts a valid promise with the stall flag armed (promise path never evaluates the gate)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let the stall gate interfere with the promise-accept path"
     fi
 
     hb_write_state sess-other 1 3

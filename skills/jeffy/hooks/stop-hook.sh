@@ -197,6 +197,14 @@ if [ "$cur_head" = "none" ] && [ "$cur_backlog" = "none" ]; then
   echo "jeffy stop hook: no git HEAD and no BACKLOG.md; skipping the stall check." >&2
 elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
   if [ "$cur_head" = "$last_head" ] && [ "$cur_backlog" = "$last_backlog" ]; then
+    if [ "$stall_flag" = "1" ]; then
+      # Second strike: the prompted hard-blocker close-out did not happen,
+      # so the hook ends the stalled run itself, the way budget exhaustion
+      # does - state deleted, stop allowed, evidence on stderr.
+      echo "jeffy stop hook: two consecutive flat iterations (latest: iteration $iter) with HEAD and BACKLOG.md unchanged; ending the run as stalled." >&2
+      rm -f "$state"
+      exit 0
+    fi
     new_stall=1
     stall_note="iteration $iter made no progress (HEAD and BACKLOG.md unchanged since the previous turn end); a second consecutive flat iteration ends the run"
   fi
