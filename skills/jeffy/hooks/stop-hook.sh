@@ -155,7 +155,17 @@ fi
 # an infrastructure defect and fails open with a stderr note; a violation
 # rides the re-feed as evidence, and the budget bounds retries.
 hygiene=""
+# Run identity: the session prefix alone does not name a run. Relaunching
+# /jeffy in the same Claude Code session reuses the session id, so several
+# runs stamp identical headings and the journal cannot say where one ended -
+# observed across six runs and 64 iterations on one project. The started_at
+# time from the loop state, which is rewritten at every launch, separates
+# them. A state file without it predates this and falls back to the prefix.
 runid8="${fm_session:0:8}"
+run_tok="$(printf '%s' "$(fm started_at)" | sed -n 's/.*T\([0-9][0-9]\):\([0-9][0-9]\):\([0-9][0-9]\).*/\1\2\3/p')"
+if [ -n "$run_tok" ]; then
+  runid8="$runid8-$run_tok"
+fi
 if [ -f "$root/JOURNAL.md" ]; then
   if ! grep -qF -- "## iter $iter/$max | $runid8" "$root/JOURNAL.md"; then
     hygiene="iteration $iter wrote no JOURNAL.md entry with the heading ## iter $iter/$max | $runid8; record it before proceeding"
@@ -173,6 +183,30 @@ if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/de
     hygiene="$hygiene${hygiene:+; also }iteration $iter ended with uncommitted tracked changes ($dirty); checkpoint them"
   fi
 fi
+# Archive integrity: JOURNAL-archive.md is append-only across every rotation
+# and every run, so its entry count can never fall. A rotation that writes the
+# archive instead of appending to it destroys the run's own record, and nothing
+# else notices, because the live journal looks healthy afterwards. Only the
+# instruction guarded this before, and the instruction was not enough: a
+# 64-iteration run on a third-party project lost 18 entries this way. A run
+# with no recorded baseline - never rotated, or launched before this shipped -
+# never fires.
+cur_archive="none"
+if [ -f "$root/JOURNAL-archive.md" ]; then
+  cur_archive="$(grep -c '^## iter ' "$root/JOURNAL-archive.md" 2>/dev/null || true)"
+  case "$cur_archive" in '' | *[!0-9]*) cur_archive=0 ;; esac
+fi
+last_archive="$(fm last_archive)"
+case "$last_archive" in
+  '' | none | *[!0-9]*) ;;
+  *)
+    if [ "$cur_archive" = "none" ]; then
+      hygiene="$hygiene${hygiene:+; also }JOURNAL-archive.md held $last_archive entries at the previous turn end and is now missing; the archive is append-only, so restore it"
+    elif [ "$cur_archive" -lt "$last_archive" ]; then
+      hygiene="$hygiene${hygiene:+; also }JOURNAL-archive.md fell from $last_archive entries to $cur_archive; rotation must append to the archive and never overwrite it, so restore the lost entries"
+    fi
+    ;;
+esac
 
 # Stall gate: progress since the previous turn end means HEAD moved or
 # BACKLOG.md changed - an audit that files tasks is progress even without a
@@ -212,12 +246,13 @@ fi
 
 next=$((iter + 1))
 tmp="$state.tmp"
-if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" '
-  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf } print; next }
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v la="$cur_archive" '
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!sla) print "last_archive: " la } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
   fmc == 1 && /^last_head: / { print "last_head: " lh; slh = 1; next }
   fmc == 1 && /^last_backlog: / { print "last_backlog: " lb; slb = 1; next }
   fmc == 1 && /^stall: / { print "stall: " sf; ssf = 1; next }
+  fmc == 1 && /^last_archive: / { print "last_archive: " la; sla = 1; next }
   { print }
 ' "$state" > "$tmp"; then
   mv "$tmp" "$state"

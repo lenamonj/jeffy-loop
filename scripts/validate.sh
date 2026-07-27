@@ -142,11 +142,21 @@ check_markers skills/jeffy/references/plan-default.md \
   "leaves no open task behind" \
   "run report" \
   "independent evaluator gate" \
-  "the only sub-agent review this Method authorizes"
+  "the only sub-agent review this Method authorizes" \
+  "strong enough to fail"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
   "## Converged"
+# Rotation must append. "Move all but the last 10 entries to JOURNAL-archive.md"
+# reads as "write the archive" to a model that has never seen one, and the
+# second rotation of a long run then destroys everything the first preserved -
+# observed on bukosabino/ta, where 18 entries went and nothing noticed, because
+# the live journal looks healthy afterwards.
+check_markers skills/jeffy/references/journal-default.md \
+  "Append-only." \
+  "never overwriting it" \
+  "so two runs in one session are told apart"
 check_markers skills/jeffy/references/iteration-prompt.txt \
   "Salvage first:" \
   "Ratchet next:" \
@@ -161,7 +171,9 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "wrapped in promise XML tags" \
   "Evaluator gate:" \
   "Evaluator: PASS" \
-  "at most 2 evaluator invocations per run"
+  "at most 2 evaluator invocations per run" \
+  "never overwriting it" \
+  "so two runs in one session are told apart"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
@@ -505,8 +517,9 @@ if command -v jq >/dev/null 2>&1; then
         printf 'Jeffy loop state.\n'
       } > "$hb_state"
     }
-    hb_write_journal() { # $1 iteration, $2 max - heading for the harness session sess-1
-      printf '# Journal\n\n## iter %s/%s | sess-1 | 2026-01-01 | T1 | done\n\nTask: t.\n' "$1" "$2" > "$hb_proj/JOURNAL.md"
+    hb_write_journal() { # $1 iteration, $2 max - heading for harness session sess-1
+      # Run token 000000 comes from the harness started_at of 2026-01-01T00:00:00Z.
+      printf '# Journal\n\n## iter %s/%s | sess-1-000000 | 2026-01-01 | T1 | done\n\nTask: t.\n' "$1" "$2" > "$hb_proj/JOURNAL.md"
     }
     hb_write_backlog() { # $1 optional open task line, $2 optional Converged line
       {
@@ -568,6 +581,39 @@ if command -v jq >/dev/null 2>&1; then
       printf '%s\n' "$hb_out"
       fault "stop hook mishandled a missing JOURNAL.md at the re-feed"
     fi
+
+    # Run identity: the heading's run-id must name the RUN, not the session.
+    # Six /jeffy runs inside one Claude Code session all stamped the identical
+    # eight characters on bukosabino/ta, so the journal could not say where one
+    # run ended and the next began; reconstructing 64 iterations took the commit
+    # timeline instead, and three attempts to count them from the journal were
+    # wrong. The started_at time from the loop state disambiguates them.
+    hb_write_state sess-1 1 3
+    printf '# Journal\n\n## iter 1/3 | sess-1 | 2026-01-01 | T1 | done\n\nTask: t.\n' > "$hb_proj/JOURNAL.md"
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION HYGIENE' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'sess-1-000000'; then
+      pass "stop hook rejects a journal heading naming the session but not the run"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a session-only run-id (runs in one session are indistinguishable)"
+    fi
+
+    # A state file with no started_at (a run launched before the run token
+    # shipped) falls back to the session prefix rather than trapping the run.
+    hb_write_state sess-1 1 3
+    grep -v '^started_at: ' "$hb_state" > "$hb_state.tmp" && mv "$hb_state.tmp" "$hb_state"
+    printf '# Journal\n\n## iter 1/3 | sess-1 | 2026-01-01 | T1 | done\n\nTask: t.\n' > "$hb_proj/JOURNAL.md"
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION HYGIENE'; then
+      pass "stop hook falls back to the session prefix when the state has no started_at"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook trapped a legacy state file that carries no started_at"
+    fi
+
     hb_write_journal 1 3
 
     hb_write_state sess-1 3 3
@@ -956,6 +1002,97 @@ if command -v jq >/dev/null 2>&1; then
       else
         printf '%s\n%s\n' "$hb_out" "$hb_out2"
         fault "stop hook mishandled the stall flag across progress and a later flat iteration"
+      fi
+
+      # Archive integrity: JOURNAL-archive.md is append-only across every
+      # rotation and every run, so its entry count can never fall. A rotation
+      # that writes the archive instead of appending to it destroys the run's
+      # own record, and nothing else notices, because the live journal looks
+      # healthy afterwards. Observed on bukosabino/ta: the second rotation of
+      # a 64-iteration run destroyed all 18 entries the first had preserved.
+      hb_write_state_archive() { # $1 session_id, $2 iteration, $3 max, $4 last_archive
+        {
+          printf -- '---\n'
+          printf 'session_id: %s\n' "$1"
+          printf 'iteration: %s\n' "$2"
+          printf 'max_iterations: %s\n' "$3"
+          printf 'prompt_path: %s\n' "$hb_tmp/prompt.txt"
+          printf 'focus: speed\n'
+          printf 'completion_promise: JEFFY CONVERGED\n'
+          printf 'last_archive: %s\n' "$4"
+          printf 'started_at: 2026-01-01T00:00:00Z\n'
+          printf -- '---\n'
+          printf 'Jeffy loop state.\n'
+        } > "$hb_state"
+      }
+      hb_write_archive() { # $1 entry count
+        printf '# Journal archive\n\n' > "$hb_proj/JOURNAL-archive.md"
+        hb_i=1
+        while [ "$hb_i" -le "$1" ]; do
+          printf '## iter %s/9 | sess-1 | 2026-01-01 | T%s | done\n\nTask: t.\n\n' \
+            "$hb_i" "$hb_i" >> "$hb_proj/JOURNAL-archive.md"
+          hb_i=$((hb_i + 1))
+        done
+      }
+
+      hb_write_journal 1 3
+      hb_write_archive 3
+      hb_write_state_archive sess-1 1 3 12
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m archive-shrank >/dev/null 2>&1 || true
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'JOURNAL-archive.md fell from 12 entries to 3' \
+        && grep -q '^last_archive: 3$' "$hb_state"; then
+        pass "stop hook catches a rotation that overwrote JOURNAL-archive.md instead of appending"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook missed a shrinking JOURNAL-archive.md (silent journal loss)"
+      fi
+
+      hb_write_journal 1 3
+      hb_write_archive 7
+      hb_write_state_archive sess-1 1 3 3
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m archive-grew >/dev/null 2>&1 || true
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'JOURNAL-archive.md' \
+        && grep -q '^last_archive: 7$' "$hb_state"; then
+        pass "stop hook stays silent when a rotation appends to the archive (baseline advances)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook flagged a legitimate appending rotation"
+      fi
+
+      rm -f "$hb_proj/JOURNAL-archive.md"
+      hb_write_journal 1 3
+      hb_write_state_archive sess-1 1 3 4
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m archive-deleted >/dev/null 2>&1 || true
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'JOURNAL-archive.md held 4 entries at the previous turn end and is now missing'; then
+        pass "stop hook catches a deleted JOURNAL-archive.md"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook missed a deleted JOURNAL-archive.md"
+      fi
+
+      # A project that has never rotated must not trip the check, and the
+      # first re-feed of an upgraded run has no recorded baseline at all.
+      hb_write_journal 1 3
+      hb_write_state sess-1 1 3
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m archive-absent >/dev/null 2>&1 || true
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'JOURNAL-archive.md' \
+        && grep -q '^last_archive: none$' "$hb_state"; then
+        pass "stop hook ignores a project that has never rotated (no archive, no baseline)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook mishandled a project with no JOURNAL-archive.md"
       fi
 
       rm -f "$hb_state"
