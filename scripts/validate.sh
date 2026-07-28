@@ -148,7 +148,10 @@ check_markers skills/jeffy/references/plan-default.md \
   "a reduction is new code" \
   "## Surface inventory" \
   "silence, not cleanliness" \
-  "lists no unswept row"
+  "lists no unswept row" \
+  "a correctness check, not a liveness check" \
+  "a comparable amount of surface" \
+  "including underscore-private modules"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
@@ -182,7 +185,9 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Closeout:" \
   "Surface inventory" \
   "Change discipline:" \
-  "rows swept of rows total"
+  "rows swept of rows total" \
+  "never only run-without-crash probes" \
+  "newly exposed rather than introduced"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
