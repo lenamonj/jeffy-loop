@@ -1,121 +1,1368 @@
+diff --git a/.claude/2026-modernization-plan.md b/.claude/2026-modernization-plan.md
+index e677e5b..fef766a 100644
+--- a/.claude/2026-modernization-plan.md
++++ b/.claude/2026-modernization-plan.md
+@@ -144,7 +144,7 @@ quantstats/
+ 
+ ### Remove Compat Layers (if dropping old Python)
+ - [ ] Review `_compat.py` - may be removable
+-- [ ] Review `_numpy_compat.py` - may be removable
++- [x] Review `_numpy_compat.py` - removed, it had no importers
+ 
+ ---
+ 
+diff --git a/.claude/PROJECT.md b/.claude/PROJECT.md
+index 0f71032..585ec0d 100644
+--- a/.claude/PROJECT.md
++++ b/.claude/PROJECT.md
+@@ -19,7 +19,6 @@ Portfolio analytics library for quants - calculates 50+ performance metrics (Sha
+ ## Conventions
+ - `_prepare_returns()` normalizes all input data before calculations
+ - `_compat.py` handles pandas 1.5+/2.0+ specifics (freq aliases, timezone normalization)
+-- `_numpy_compat.py` handles numpy 1.24+ specifics (product deprecation)
+ - Stats functions return scalar for Series input, Series for DataFrame input
+ - `extend_pandas()` adds methods directly to DataFrame/Series objects
+ - Monte Carlo functions return `MonteCarloResult` dataclass with properties
+@@ -51,7 +50,6 @@ quantstats/
+ ├── reports.py           # Report generation (HTML, metrics tables)
+ ├── utils.py             # Utility functions (data prep, download)
+ ├── _compat.py           # Pandas version compatibility layer
+-├── _numpy_compat.py     # NumPy version compatibility layer
+ ├── _montecarlo.py       # Monte Carlo simulation module
+ ├── version.py           # Version string
+ └── report.html          # HTML template for reports
+@@ -82,7 +80,7 @@ pyright quantstats/                       # Type check
+ ### Updating Dependencies
+ 1. Edit `pyproject.toml` dependencies section
+ 2. Update README Requirements section to match
+-3. If pandas/numpy behavior changed, update `_compat.py` or `_numpy_compat.py`
++3. If pandas/numpy behavior changed, update `_compat.py`
+ 
+ ### Version Bump
+ 1. Update `quantstats/version.py`
+diff --git a/quantstats/_compat.py b/quantstats/_compat.py
+index 1b2270e..0f28b3f 100644
+--- a/quantstats/_compat.py
++++ b/quantstats/_compat.py
+@@ -59,9 +59,12 @@ def get_frequency_alias(freq: str) -> str:
+ def normalize_timezone(data: Union[pd.Series, pd.DataFrame]) -> Union[pd.Series, pd.DataFrame]:
+     """
+     Normalize timezone information for consistent comparisons.
+-    
+-    If data has timezone info, converts to UTC then removes timezone info.
+-    This ensures all data can be compared regardless of original timezone.
++
++    If data has timezone info, drops the zone while keeping the local
++    timestamp, so a bar keeps its own trading date. Converting to UTC first
++    would move markets east of Greenwich back a day; that alternative was
++    deliberately rejected package-wide (see the timezone convention in
++    tests/test_regressions.py).
+     
+     Parameters
+     ----------
+@@ -76,10 +79,10 @@ def normalize_timezone(data: Union[pd.Series, pd.DataFrame]) -> Union[pd.Series,
+     if not isinstance(data.index, pd.DatetimeIndex):
+         return data
+     
+-    # If timezone aware, convert to UTC then make naive
++    # If timezone aware, drop the zone but keep the local timestamp
+     if data.index.tz is not None:
+         result = data.copy()
+-        result.index = result.index.tz_convert('UTC').tz_localize(None)
++        result.index = result.index.tz_localize(None)
+         return result
+     
+     # Already timezone naive, return as is
+@@ -114,7 +117,7 @@ def safe_resample(data: Union[pd.Series, pd.DataFrame],
+     -------
+     pd.Series or pd.DataFrame
+         The resampled data with the specified frequency and aggregation,
+-        with timezone normalized to UTC if present, or naive if not
++        with any timezone dropped while keeping local timestamps
+ 
+     Examples
+     --------
+@@ -208,164 +211,6 @@ def safe_concat(objs: List[Union[pd.Series, pd.DataFrame]],
+     return pd.concat(objs, axis=axis, ignore_index=ignore_index, sort=sort, **kwargs)  # type: ignore[arg-type]
+ 
+ 
+-def safe_append(df: pd.DataFrame,
+-                other: Union[pd.DataFrame, pd.Series],
+-                ignore_index: bool = False,
+-                sort: bool = False) -> pd.DataFrame:
+-    """
+-    Safe append operation using pd.concat.
+-
+-    DataFrame.append() was removed in pandas 2.0.0. This function provides
+-    a unified interface using pd.concat.
+-
+-    Parameters
+-    ----------
+-    df : pd.DataFrame
+-        The DataFrame to append to (base DataFrame)
+-    other : pd.DataFrame or pd.Series
+-        The data to append to the base DataFrame
+-    ignore_index : bool, default False
+-        Whether to ignore the index and create a new default integer index
+-    sort : bool, default False
+-        Whether to sort the result by columns
+-
+-    Returns
+-    -------
+-    pd.DataFrame
+-        The result of the append operation
+-
+-    Examples
+-    --------
+-    >>> safe_append(df, new_row)  # Append a new row
+-    >>> safe_append(df, other_df, ignore_index=True)  # Append and reset index
+-    """
+-    # Use concat (append was removed in pandas 2.0)
+-    result = safe_concat([df, other], ignore_index=ignore_index, sort=sort)
+-    # Ensure we return a DataFrame
+-    if isinstance(result, pd.DataFrame):
+-        return result
+-    elif isinstance(result, pd.Series):
+-        return pd.DataFrame([result])
+-    else:
+-        return pd.DataFrame(result)
+-
+-
+-def safe_frequency_conversion(data: Union[pd.Series, pd.DataFrame],
+-                              freq: str) -> Union[pd.Series, pd.DataFrame]:
+-    """
+-    Safe frequency conversion for time series data.
+-
+-    This function converts time series data to a specified frequency using
+-    the most appropriate method available in the current pandas version.
+-
+-    Parameters
+-    ----------
+-    data : pd.Series or pd.DataFrame
+-        Time series data with a datetime index
+-    freq : str
+-        Target frequency (e.g., 'D', 'M', 'Q', 'A')
+-
+-    Returns
+-    -------
+-    pd.Series or pd.DataFrame
+-        Data with converted frequency
+-
+-    Examples
+-    --------
+-    >>> safe_frequency_conversion(data, 'M')  # Convert to monthly frequency
+-    >>> safe_frequency_conversion(data, 'D')  # Convert to daily frequency
+-    """
+-    # Get the appropriate frequency alias for current pandas version
+-    freq_alias = get_frequency_alias(freq)
+-
+-    # Handle different methods for frequency conversion
+-    if hasattr(data, "asfreq"):
+-        # Use asfreq if available (most direct method)
+-        return data.asfreq(freq_alias)
+-    else:
+-        # Fallback to resampling with 'last' aggregation
+-        # This preserves the last value in each period
+-        return safe_resample(data, freq_alias, "last")
+-
+-
+-def handle_pandas_warnings():
+-    """
+-    Context manager to handle pandas warnings appropriately.
+-
+-    This function returns a context manager that can be used to suppress
+-    or handle pandas warnings in a controlled manner. Useful for managing
+-    deprecation warnings when working with multiple pandas versions.
+-
+-    Returns
+-    -------
+-    warnings.catch_warnings
+-        A context manager for handling warnings
+-
+-    Examples
+-    --------
+-    >>> with handle_pandas_warnings():
+-    ...     # Code that might generate pandas warnings
+-    ...     pass
+-    """
+-    # Return the warnings context manager for flexible warning handling
+-    return warnings.catch_warnings()
+-
+-
+-# Pandas accessor compatibility functions
+-def get_datetime_accessor(series: pd.Series):
+-    """
+-    Get datetime accessor for pandas Series.
+-
+-    This function provides a consistent interface for accessing datetime
+-    properties of a pandas Series across different versions.
+-
+-    Parameters
+-    ----------
+-    series : pd.Series
+-        The series with datetime data to get the accessor for
+-
+-    Returns
+-    -------
+-    pd.Series.dt
+-        The datetime accessor for the series
+-
+-    Examples
+-    --------
+-    >>> dt_accessor = get_datetime_accessor(date_series)
+-    >>> dt_accessor.year  # Access year component
+-    >>> dt_accessor.month  # Access month component
+-    """
+-    # Return the datetime accessor - consistent across pandas versions
+-    return series.dt
+-
+-
+-def get_string_accessor(series: pd.Series):
+-    """
+-    Get string accessor for pandas Series.
+-
+-    This function provides a consistent interface for accessing string
+-    methods of a pandas Series across different versions.
+-
+-    Parameters
+-    ----------
+-    series : pd.Series
+-        The series with string data to get the accessor for
+-
+-    Returns
+-    -------
+-    pd.Series.str
+-        The string accessor for the series
+-
+-    Examples
+-    --------
+-    >>> str_accessor = get_string_accessor(string_series)
+-    >>> str_accessor.lower()  # Convert to lowercase
+-    >>> str_accessor.contains('pattern')  # Check for pattern
+-    """
+-    # Return the string accessor - consistent across pandas versions
+-    return series.str
+-
+-
+ def safe_yfinance_download(tickers: Union[str, List[str]],
+                            proxy: Optional[str] = None,
+                            **kwargs) -> pd.DataFrame:
+diff --git a/quantstats/_montecarlo.py b/quantstats/_montecarlo.py
+index 669eb2b..82ae7d7 100644
+--- a/quantstats/_montecarlo.py
++++ b/quantstats/_montecarlo.py
+@@ -71,6 +71,10 @@ class MonteCarloResult:
+         """
+         Terminal value statistics across all simulations.
+ 
++        Shuffling preserves the compound total, so terminal values are
++        identical across paths up to float noise; the distributional outputs
++        of this result are maxdd and the bust/goal probabilities.
++
+         Returns
+         -------
+         dict
+diff --git a/quantstats/_numpy_compat.py b/quantstats/_numpy_compat.py
+deleted file mode 100644
+index 344aacd..0000000
+--- a/quantstats/_numpy_compat.py
++++ /dev/null
+@@ -1,288 +0,0 @@
+-#!/usr/bin/env python
+-"""
+-Numpy compatibility layer
+-Handles numpy version differences and deprecated functionality
+-
+-This module provides a unified interface for working with different versions of numpy,
+-ensuring that quantstats functions work consistently across various numpy versions.
+-It handles deprecated functionality, version-specific changes, and provides fallback
+-mechanisms for functions that may not exist in older versions.
+-"""
+-
+-import numpy as np
+-import warnings
+-from packaging import version
+-from typing import Union, Optional, Any
+-
+-# Version detection - Parse numpy version string to enable version comparisons
+-NUMPY_VERSION = version.parse(np.__version__)
+-
+-# Handle deprecated numpy functions
+-# In numpy 1.25.0+, np.product was deprecated in favor of np.prod
+-if NUMPY_VERSION >= version.parse("1.25.0"):
+-    # Use np.prod instead of deprecated np.product for newer versions
+-    product = np.prod
+-else:
+-    # Use np.product if available, otherwise fallback to np.prod for older versions
+-    product = getattr(np, "product", np.prod)
+-
+-
+-def safe_numpy_operation(data, operation: str):
+-    """
+-    Safe numpy operations with deprecation handling.
+-
+-    This function provides a unified interface for numpy operations that may
+-    have been deprecated or changed behavior across different numpy versions.
+-    It handles the transition from deprecated functions to their replacements.
+-
+-    Parameters
+-    ----------
+-    data : array_like
+-        Input data to perform the operation on. Can be any array-like structure
+-        that numpy can process (list, tuple, numpy array, etc.)
+-    operation : str
+-        The numpy operation to perform. Supported operations include 'product',
+-        'prod', and any other numpy function name that exists in the current version
+-
+-    Returns
+-    -------
+-    ndarray
+-        Result of the numpy operation applied to the input data
+-
+-    Examples
+-    --------
+-    >>> safe_numpy_operation([1, 2, 3, 4], 'product')  # Returns 24
+-    >>> safe_numpy_operation([1, 2, 3, 4], 'sum')      # Returns 10
+-    """
+-    # Handle the deprecated 'product' operation specifically
+-    if operation == "product":
+-        # Use our version-aware product function
+-        return product(data)
+-    elif operation == "prod":
+-        # Use np.prod directly for 'prod' operation
+-        return np.prod(data)
+-    else:
+-        # For all other operations, dynamically get the function from numpy
+-        # This allows for flexible operation support across numpy versions
+-        return getattr(np, operation)(data)
+-
+-
+-def safe_array_function(func_name: str, *args, **kwargs) -> Any:
+-    """
+-    Safe wrapper for numpy array functions.
+-
+-    This function provides a safe way to call numpy functions that may not exist
+-    in all numpy versions or have been deprecated. It handles version-specific
+-    function availability and provides meaningful error messages.
+-
+-    Parameters
+-    ----------
+-    func_name : str
+-        Name of the numpy function to call (e.g., 'mean', 'std', 'product')
+-    *args
+-        Positional arguments to pass to the numpy function
+-    **kwargs
+-        Keyword arguments to pass to the numpy function
+-
+-    Returns
+-    -------
+-    Any
+-        Result of the numpy function call. Return type depends on the specific
+-        function being called and the input data.
+-
+-    Raises
+-    ------
+-    AttributeError
+-        If the requested function doesn't exist in the current numpy version
+-
+-    Examples
+-    --------
+-    >>> safe_array_function('mean', [1, 2, 3, 4])      # Returns 2.5
+-    >>> safe_array_function('product', [1, 2, 3, 4])   # Returns 24
+-    """
+-    # Handle deprecated functions with special cases
+-    if func_name == "product":
+-        # Use our version-aware product function
+-        return product(*args, **kwargs)
+-
+-    # Handle functions that might not exist in older numpy versions
+-    if hasattr(np, func_name):
+-        # Function exists in current numpy version, call it normally
+-        return getattr(np, func_name)(*args, **kwargs)
+-    else:
+-        # Function doesn't exist in current numpy version, raise informative error
+-        raise AttributeError(
+-            f"numpy has no attribute '{func_name}' in version {NUMPY_VERSION}"
+-        )
+-
+-
+-def handle_numpy_warnings():
+-    """
+-    Context manager to handle numpy warnings appropriately.
+-
+-    This function returns a context manager that can be used to suppress
+-    or handle numpy warnings in a controlled manner. Useful for managing
+-    deprecation warnings and other numpy-specific warnings when working
+-    with multiple numpy versions.
+-
+-    Returns
+-    -------
+-    warnings.catch_warnings
+-        A context manager for handling numpy warnings
+-
+-    Examples
+-    --------
+-    >>> with handle_numpy_warnings():
+-    ...     # Code that might generate numpy warnings
+-    ...     result = np.some_deprecated_function()
+-    """
+-    # Return the warnings context manager for flexible warning handling
+-    return warnings.catch_warnings()
+-
+-
+-def safe_percentile(data, percentile: Union[float, list], **kwargs):
+-    """
+-    Safe percentile calculation.
+-
+-    This function provides a wrapper around np.percentile with consistent parameters.
+-
+-    Parameters
+-    ----------
+-    data : array_like
+-        Input data to calculate percentiles from. Can be any array-like
+-        structure that numpy can process
+-    percentile : float or array_like
+-        Percentile(s) to compute. Values should be between 0 and 100.
+-        Can be a single value or an array of values
+-    **kwargs
+-        Additional arguments passed to np.percentile
+-
+-    Returns
+-    -------
+-    float or ndarray
+-        The computed percentile(s). Returns float for single percentile,
+-        ndarray for multiple percentiles
+-
+-    Examples
+-    --------
+-    >>> safe_percentile([1, 2, 3, 4, 5], 50)    # Returns 3.0 (median)
+-    >>> safe_percentile([1, 2, 3, 4, 5], [25, 75])  # Returns [2.0, 4.0]
+-    """
+-    # Numpy 1.24+ supports 'method' parameter for percentile calculation
+-    return np.percentile(data, percentile, **kwargs)
+-
+-
+-def safe_nanpercentile(data, percentile: Union[float, list], **kwargs):
+-    """
+-    Safe nanpercentile calculation that ignores NaN values.
+-
+-    This function provides a wrapper around np.nanpercentile with consistent parameters.
+-
+-    Parameters
+-    ----------
+-    data : array_like
+-        Input data to calculate percentiles from. NaN values are ignored.
+-        Can be any array-like structure that numpy can process
+-    percentile : float or array_like
+-        Percentile(s) to compute. Values should be between 0 and 100.
+-        Can be a single value or an array of values
+-    **kwargs
+-        Additional arguments passed to np.nanpercentile
+-
+-    Returns
+-    -------
+-    float or ndarray
+-        The computed percentile(s) ignoring NaN values. Returns float for
+-        single percentile, ndarray for multiple percentiles
+-
+-    Examples
+-    --------
+-    >>> safe_nanpercentile([1, 2, np.nan, 4, 5], 50)    # Returns 3.0
+-    >>> safe_nanpercentile([1, np.nan, 3, 4, 5], [25, 75])  # Returns [2.0, 4.5]
+-    """
+-    # Numpy 1.24+ supports 'method' parameter for nanpercentile calculation
+-    return np.nanpercentile(data, percentile, **kwargs)
+-
+-
+-def safe_quantile(data, quantile: Union[float, list], **kwargs):
+-    """
+-    Safe quantile calculation.
+-
+-    This function provides a wrapper around np.quantile with consistent parameters.
+-    Quantiles are similar to percentiles but use values between 0 and 1.
+-
+-    Parameters
+-    ----------
+-    data : array_like
+-        Input data to calculate quantiles from. Can be any array-like
+-        structure that numpy can process
+-    quantile : float or array_like
+-        Quantile(s) to compute. Values should be between 0 and 1.
+-        Can be a single value or an array of values
+-    **kwargs
+-        Additional arguments passed to np.quantile
+-
+-    Returns
+-    -------
+-    float or ndarray
+-        The computed quantile(s). Returns float for single quantile,
+-        ndarray for multiple quantiles
+-
+-    Examples
+-    --------
+-    >>> safe_quantile([1, 2, 3, 4, 5], 0.5)    # Returns 3.0 (median)
+-    >>> safe_quantile([1, 2, 3, 4, 5], [0.25, 0.75])  # Returns [2.0, 4.0]
+-    """
+-    # Numpy 1.24+ supports 'method' parameter for quantile calculation
+-    return np.quantile(data, quantile, **kwargs)
+-
+-
+-def safe_random_seed(seed: Optional[int]):
+-    """
+-    Safe random seed setting for numpy.
+-
+-    This function provides a unified interface for setting random seeds.
+-
+-    Parameters
+-    ----------
+-    seed : int or None
+-        Random seed value to set. If None, the random state is not modified.
+-        Setting the same seed ensures reproducible random number sequences
+-
+-    Examples
+-    --------
+-    >>> safe_random_seed(42)  # Sets seed for reproducible results
+-    >>> safe_random_seed(None)  # No seed set, random behavior continues
+-    """
+-    if seed is not None:
+-        # Use the modern random number generator (numpy 1.17.0+)
+-        np.random.default_rng(seed)
+-
+-
+-def safe_datetime64_unit(dt, unit: str):
+-    """
+-    Safe datetime64 unit conversion.
+-
+-    This function provides a safe way to convert numpy datetime64 objects
+-    to different time units.
+-
+-    Parameters
+-    ----------
+-    dt : np.datetime64
+-        Input datetime object to convert
+-    unit : str
+-        Target time unit (e.g., 'D' for days, 'H' for hours, 'M' for minutes,
+-        'S' for seconds, 'ms' for milliseconds)
+-
+-    Returns
+-    -------
+-    np.datetime64
+-        Converted datetime object with the specified unit
+-
+-    Examples
+-    --------
+-    >>> dt = np.datetime64('2023-01-01T12:00:00')
+-    >>> safe_datetime64_unit(dt, 'D')  # Convert to day precision
+-    >>> safe_datetime64_unit(dt, 'H')  # Convert to hour precision
+-    """
+-    return dt.astype(f"datetime64[{unit}]")
+diff --git a/quantstats/_plotting/wrappers.py b/quantstats/_plotting/wrappers.py
+index 19c822e..d77a3c5 100644
+--- a/quantstats/_plotting/wrappers.py
++++ b/quantstats/_plotting/wrappers.py
+@@ -33,6 +33,33 @@ import pandas as _pd
+ from .._compat import safe_resample
+ import seaborn as _sns
+ 
++# quantstats.plots re-exports this module with "import *", so without __all__
++# every bare import above lands in the public plotting namespace. Declared
++# rather than aliased because "from __future__ import annotations" cannot be
++# aliased, and because a list states the API once instead of relying on every
++# future import being written with a leading underscore.
++__all__ = [
++    "daily_returns",
++    "distribution",
++    "drawdown",
++    "drawdowns_periods",
++    "earnings",
++    "histogram",
++    "log_returns",
++    "montecarlo",
++    "montecarlo_distribution",
++    "monthly_heatmap",
++    "monthly_returns",
++    "returns",
++    "rolling_beta",
++    "rolling_sharpe",
++    "rolling_sortino",
++    "rolling_volatility",
++    "snapshot",
++    "to_plotly",
++    "yearly_returns",
++]
++
+ # Lazy imports to avoid circular dependency during package initialization
+ # These modules are imported when first accessed via _get_stats() and _get_utils()
+ _stats = None
+@@ -107,6 +134,41 @@ def to_plotly(fig: _Figure) -> _Figure:
+         return plotly.plotly.iplot(fig, filename="quantstats-plot", overwrite=True)  # type: ignore
+ 
+ 
++def _as_single_series(returns, title=None):
++    """
++    Reduce a returns object to the one series a single-series plot can draw.
++
++    Several plots here document DataFrame input while the core routine they call
++    takes one series: a box plot of return quantiles, a drawdown ranking and an
++    equity curve each describe a single strategy. This is the one place that
++    reconciles the two. A Series passes through untouched. A one-column frame is
++    unwrapped, because it already describes one strategy and must behave exactly
++    like the equivalent Series. A frame holding several strategies is reduced to
++    its equal-weighted mean, and the title records the aggregation so the chart
++    is not read as one strategy.
++
++    Parameters
++    ----------
++    returns : pandas.Series or pandas.DataFrame
++        Returns data as supplied by the caller
++    title : str or None, optional
++        Caller-supplied plot title, annotated only when strategies are merged
++
++    Returns
++    -------
++    tuple
++        (pandas.Series to plot, title to use)
++    """
++    if not isinstance(returns, _pd.DataFrame):
++        return returns, title
++    if len(returns.columns) == 1:
++        return returns[returns.columns[0]], title
++    merged = returns.mean(axis=1)
++    return merged, (
++        f"{title} (daily equal-weighted*)" if title else "Daily equal-weighted*"
++    )
++
++
+ def snapshot(
+     returns: Returns,
+     grayscale: bool = False,
+@@ -169,7 +231,8 @@ def snapshot(
+     # Handle multi-column DataFrame input
+     multi_column = False
+     if isinstance(returns, _pd.Series):
+-        returns.name = strategy_colname
++        # rename() rather than assigning .name, which would rename the caller's series
++        returns = returns.rename(strategy_colname)
+     elif isinstance(returns, _pd.DataFrame):
+         if len(returns.columns) > 1:
+             # Check if specific strategy column exists
+@@ -180,7 +243,11 @@ def snapshot(
+                 multi_column = True
+                 returns = returns.mean(axis=1)
+                 title = title + " (daily equal-weighted*)"
+-        returns.columns = strategy_colname
++        else:
++            # the rest of this function works on a single series, so a
++            # one-column frame is reduced rather than carried as a frame
++            returns = returns[returns.columns[0]]
++        returns = returns.rename(strategy_colname)
+ 
+     # Select color scheme based on grayscale preference
+     colors = _GRAYSCALE_COLORS if grayscale else _FLATUI_COLORS
+@@ -417,7 +484,8 @@ def earnings(
+     Parameters
+     ----------
+     returns : pandas.Series or pandas.DataFrame
+-        Daily returns data.
++        Daily returns data. A DataFrame holding several strategies is reduced to
++        its equal-weighted mean, and the title records that.
+     start_balance : float, optional
+         Starting portfolio balance in dollars (default: 100000).
+     mode : str, optional
+@@ -453,6 +521,8 @@ def earnings(
+     colors = _GRAYSCALE_COLORS if grayscale else _FLATUI_COLORS
+     alpha = 0.5 if grayscale else 0.8
+ 
++    returns, title = _as_single_series(returns, title)
++
+     # Convert returns to portfolio dollar values
+     returns = _get_utils().make_portfolio(returns, start_balance, mode)
+ 
+@@ -988,7 +1058,9 @@ def distribution(
+     Parameters
+     ----------
+     returns : pandas.Series or pandas.DataFrame
+-        Daily returns data.
++        Daily returns data. A DataFrame holding several strategies is reduced to
++        its equal-weighted mean, and the title records that, because a box plot
++        of return quantiles describes one series.
+     fontname : str, optional
+         Font family for text elements (default: "Arial").
+     grayscale : bool, optional
+@@ -1024,6 +1096,8 @@ def distribution(
+     if prepare_returns:
+         returns = _get_utils()._prepare_returns(returns)
+ 
++    returns, title = _as_single_series(returns, title)
++
+     # Use core plotting function for distribution
+     fig = _core.plot_distribution(
+         returns,
+@@ -1240,7 +1314,8 @@ def drawdowns_periods(
+     Parameters
+     ----------
+     returns : pandas.Series or pandas.DataFrame
+-        Daily returns data.
++        Daily returns data. A DataFrame holding several strategies is reduced to
++        its equal-weighted mean, and the title records that.
+     periods : int, optional
+         Number of longest drawdown periods to display (default: 5).
+     lw : float, optional
+@@ -1282,6 +1357,8 @@ def drawdowns_periods(
+     if prepare_returns:
+         returns = _get_utils()._prepare_returns(returns)
+ 
++    returns, title = _as_single_series(returns, title)
++
+     # Use core plotting function for longest drawdown periods
+     fig = _core.plot_longest_drawdowns(
+         returns,
 diff --git a/quantstats/reports.py b/quantstats/reports.py
-index f0d8a9a..10cbb24 100644
+index f0d8a9a..1911476 100644
 --- a/quantstats/reports.py
 +++ b/quantstats/reports.py
-@@ -1408,7 +1408,8 @@ def metrics(
-                     df["returns"], df["benchmark"], prepare_returns=False
-                 )
-                 metrics["Information Ratio"] = _get_stats().information_ratio(
--                    df["returns"], df["benchmark"], prepare_returns=False
-+                    df["returns"], df["benchmark"], win_year, True,
-+                    prepare_returns=False
-                 )
-             elif isinstance(returns, _pd.DataFrame):
-                 metrics["R^2"] = (
-@@ -1422,7 +1423,8 @@ def metrics(
-                 metrics["Information Ratio"] = (
-                     [
-                         _get_stats().information_ratio(
--                            df[strategy_col], df["benchmark"], prepare_returns=False
-+                            df[strategy_col], df["benchmark"], win_year, True,
-+                            prepare_returns=False
-                         ).round(2)
-                         for strategy_col in df_strategy_columns
-                     ]
-@@ -1441,7 +1443,7 @@ def metrics(
+@@ -57,6 +57,7 @@ def _get_plots():
+ from dateutil.relativedelta import relativedelta
+ from io import StringIO
+ from pathlib import Path
++import sys as _sys
+ import tempfile
+ import webbrowser
  
-         # Additional ratios
-         metrics["Ulcer Performance Index"] = _get_stats().ulcer_performance_index(df, rf)
--        metrics["Risk-Adjusted Return %"] = _get_stats().rar(df, rf) * pct
-+        metrics["Risk-Adjusted Return %"] = _get_stats().rar(df, rf, win_year) * pct
-         metrics["Risk-Return Ratio"] = _get_stats().risk_return_ratio(df, prepare_returns=False)
+@@ -66,6 +67,27 @@ except ImportError:
+     pass  # IPython not available, display functions won't be used
  
-         # Add separator
-@@ -1498,8 +1500,8 @@ def metrics(
-         metrics["Max Consecutive Losses *int"] = _get_stats().consecutive_losses(df)
  
-     # Pain-based metrics (Gain/Pain ratio)
--    metrics["Gain/Pain Ratio"] = _get_stats().gain_to_pain_ratio(df, rf)
--    metrics["Gain/Pain (1M)"] = _get_stats().gain_to_pain_ratio(df, rf, "ME")
-+    metrics["Gain/Pain Ratio"] = _get_stats().gain_to_pain_ratio(df, rf, "D", win_year)
-+    metrics["Gain/Pain (1M)"] = _get_stats().gain_to_pain_ratio(df, rf, "ME", win_year)
-     # if mode.lower() == 'full':
-     #     metrics['GPR (3M)'] = _get_stats().gain_to_pain_ratio(df, rf, "QE")
-     #     metrics['GPR (6M)'] = _get_stats().gain_to_pain_ratio(df, rf, "2Q")
-@@ -1555,7 +1557,7 @@ def metrics(
-         _get_stats().cagr(df[df.index >= d], 0.0, compounded, win_year) * pct
++def _print(text=""):
++    """
++    Write one line of report output, degrading characters the console cannot encode.
++
++    Every console print in this module goes through here. A Windows console
++    reports cp1252, which cannot encode a CJK or Greek strategy_title, nor the
++    glyphs report labels have historically used; a bare print() then raises
++    UnicodeEncodeError part way down the table and the caller gets a
++    half-written report and a traceback instead of their metrics. Replacing the
++    offending characters keeps the numbers readable, which is what the caller
++    asked for. The HTML path is unaffected: it writes its own file as utf-8.
++    """
++    text = str(text)
++    encoding = getattr(_sys.stdout, "encoding", None) or "utf-8"
++    try:
++        text.encode(encoding)
++    except (UnicodeEncodeError, LookupError):
++        text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
++    print(text)
++
++
+ def _get_trading_periods(periods_per_year=252):
+     """
+     Calculate trading periods for different time windows.
+@@ -121,18 +143,18 @@ def _print_parameters_table(
+         Whether dates are matched with benchmark
+     """
+     width = 40
+-    print("=" * width)
+-    print("                 Parameters")
+-    print("-" * width)
++    _print("=" * width)
++    _print("                 Parameters")
++    _print("-" * width)
+     if benchmark_title:
+-        print(f"{'Benchmark':<25}{benchmark_title.upper():>15}")
+-    print(f"{'Periods/Year':<25}{periods_per_year:>15}")
+-    print(f"{'Risk-Free Rate':<25}{rf:>14.1%}")
+-    print(f"{'Compounded':<25}{'Yes' if compounded else 'No':>15}")
++        _print(f"{'Benchmark':<25}{benchmark_title.upper():>15}")
++    _print(f"{'Periods/Year':<25}{periods_per_year:>15}")
++    _print(f"{'Risk-Free Rate':<25}{rf:>14.1%}")
++    _print(f"{'Compounded':<25}{'Yes' if compounded else 'No':>15}")
+     if benchmark_title:
+-        print(f"{'Match Dates':<25}{'Yes' if match_dates else 'No':>15}")
+-    print("=" * width)
+-    print()
++        _print(f"{'Match Dates':<25}{'Yes' if match_dates else 'No':>15}")
++    _print("=" * width)
++    _print()
+ 
+ 
+ def _match_dates(returns, benchmark):
+@@ -175,6 +197,36 @@ def _match_dates(returns, benchmark):
+     return returns, benchmark
+ 
+ 
++def _strategy_titles(returns, title):
++    """
++    Normalize a caller's strategy_title into the shape its consumers expect.
++
++    A Series keeps the plain string, because it is assigned to Series.name. A
++    DataFrame always gets one title per column, whatever the column count, so
++    every downstream `.columns = ...` assignment and every flatten() over the
++    title works without re-testing the column count at each site. A one-column
++    DataFrame used to keep the bare string here and broke each of those sites in
++    turn.
++
++    Parameters
++    ----------
++    returns : pd.Series or pd.DataFrame
++        The returns object the title describes
++    title : str or list
++        Caller-supplied title, defaulting to "Strategy"
++
++    Returns
++    -------
++    str or list
++        The string unchanged for Series input, otherwise one title per column
++    """
++    if not isinstance(returns, _pd.DataFrame):
++        return title
++    if isinstance(title, str):
++        return list(returns.columns) if len(returns.columns) > 1 else [title]
++    return list(title)
++
++
+ def html(
+     returns,
+     benchmark=None,
+@@ -278,10 +330,7 @@ def html(
+     returns = _get_utils()._prepare_returns(returns)
+ 
+     # Handle strategy title - can be single string or list for multiple columns
+-    strategy_title = kwargs.get("strategy_title", "Strategy")
+-    if isinstance(returns, _pd.DataFrame):
+-        if len(returns.columns) > 1 and isinstance(strategy_title, str):
+-            strategy_title = list(returns.columns)
++    strategy_title = _strategy_titles(returns, kwargs.get("strategy_title", "Strategy"))
+ 
+     # Process benchmark data if provided
+     if benchmark is not None:
+@@ -851,10 +900,7 @@ def full(
+     strategy_title = kwargs.get("strategy_title", "Strategy")
+     active = kwargs.get("active_returns", False)
+ 
+-    # Handle multiple strategy columns
+-    if isinstance(returns, _pd.DataFrame):
+-        if len(returns.columns) > 1 and isinstance(strategy_title, str):
+-            strategy_title = list(returns.columns)
++    strategy_title = _strategy_titles(returns, strategy_title)
+ 
+     # Set names for display purposes
+     if benchmark is not None:
+@@ -937,7 +983,7 @@ def full(
+             compounded=compounded,
+             match_dates=match_dates,
+         )
+-        print("[Performance Metrics]\n")
++        _print("[Performance Metrics]\n")
+         metrics(
+             returns=returns,
+             benchmark=benchmark,
+@@ -950,15 +996,15 @@ def full(
+             benchmark_title=benchmark_title,
+             strategy_title=strategy_title,
+         )
+-        print("\n\n")
+-        print("[Worst 5 Drawdowns]\n")
++        _print("\n\n")
++        _print("[Worst 5 Drawdowns]\n")
+ 
+         # Display drawdowns in tabular format
+         if isinstance(dd, _pd.Series):
+             if dd_info.empty:
+-                print("(no drawdowns)")
++                _print("(no drawdowns)")
+             else:
+-                print(
++                _print(
+                     _tabulate(
+                         dd_info, headers="keys", tablefmt="simple", floatfmt=".2f"
+                     )
+@@ -966,17 +1012,17 @@ def full(
+         elif isinstance(dd, _pd.DataFrame):
+             for ptf, dd_info in dd_info_dict.items():
+                 if dd_info.empty:
+-                    print("(no drawdowns)")
++                    _print("(no drawdowns)")
+                 else:
+-                    print(f"{ptf}\n")
+-                    print(
++                    _print(f"{ptf}\n")
++                    _print(
+                         _tabulate(
+                             dd_info, headers="keys", tablefmt="simple", floatfmt=".2f"
+                         )
+                     )
+ 
+-        print("\n\n")
+-        print("[Strategy Visualization]\nvia Matplotlib")
++        _print("\n\n")
++        _print("[Strategy Visualization]\nvia Matplotlib")
+ 
+     # Generate comprehensive plots
+     plots(
+@@ -1068,10 +1114,7 @@ def basic(
+     strategy_title = kwargs.get("strategy_title", "Strategy")
+     active = kwargs.get("active_returns", False)
+ 
+-    # Handle multiple strategy columns
+-    if isinstance(returns, _pd.DataFrame):
+-        if len(returns.columns) > 1 and isinstance(strategy_title, str):
+-            strategy_title = list(returns.columns)
++    strategy_title = _strategy_titles(returns, strategy_title)
+ 
+     # Display results based on environment (notebook vs console)
+     if _get_utils()._in_notebook():
+@@ -1099,7 +1142,7 @@ def basic(
+             compounded=compounded,
+             match_dates=match_dates,
+         )
+-        print("[Performance Metrics]\n")
++        _print("[Performance Metrics]\n")
+         metrics(
+             returns=returns,
+             benchmark=benchmark,
+@@ -1113,8 +1156,8 @@ def basic(
+             strategy_title=strategy_title,
+         )
+ 
+-        print("\n\n")
+-        print("[Strategy Visualization]\nvia Matplotlib")
++        _print("\n\n")
++        _print("[Strategy Visualization]\nvia Matplotlib")
+ 
+     # Generate basic plots
+     plots(
+@@ -1195,7 +1238,14 @@ def metrics(
+     # Clean returns data if date matching is enabled
+     if match_dates:
+         returns = returns.dropna()
+-    # Remove timezone information from index for consistent processing
++    else:
++        # dropna() above hands back a new object; without it this is still the
++        # caller's own series, and the index write below would reach through
++        returns = returns.copy()
++    # Drop the timezone while keeping the local timestamp, so a bar labelled
++    # 2020-01-01 in its own market stays on 2020-01-01. Converting to UTC first
++    # would move eastern-hemisphere bars back a day and change the yearly and
++    # monthly aggregations. _prepare_benchmark drops timezones the same way.
+     returns.index = returns.index.tz_localize(None)
+ 
+     # Get trading periods for annualization calculations
+@@ -1215,14 +1265,9 @@ def metrics(
+                 "but a multi-column DataFrame was passed"
+             )
+ 
+-    # Handle strategy column naming for multiple strategies
+-    if isinstance(returns, _pd.DataFrame):
+-        if len(returns.columns) > 1:
+-            blank = [""] * len(returns.columns)
+-            if isinstance(strategy_colname, str):
+-                strategy_colname = list(returns.columns)
+-    else:
+-        blank = [""]
++    strategy_colname = _strategy_titles(returns, strategy_colname)
++    # one blank cell per strategy column, and one per Series
++    blank = [""] * len(returns.columns) if isinstance(returns, _pd.DataFrame) else [""]
+ 
+     # if isinstance(returns, _pd.DataFrame):
+     #     if len(returns.columns) > 1:
+@@ -1230,9 +1275,12 @@ def metrics(
+     #                          "multi colums DataFrame was passed")
+     #     returns = returns[returns.columns[0]]
+ 
+-    # Prepare returns data if requested
++    # Prepare returns data if requested. Prepare the series itself, not a copy
++    # that the frame construction below would discard: every later use of
++    # returns, including the benchmark branch that writes it back into df, has to
++    # see the same prepared values.
+     if prepare_returns:
+-        df = _get_utils()._prepare_returns(returns)
++        returns = _get_utils()._prepare_returns(returns)
+ 
+     # Create main DataFrame for calculations
+     if isinstance(returns, _pd.Series):
+@@ -1311,7 +1359,7 @@ def metrics(
+         metrics["Total Return %"] = (df.sum() * pct).map("{:,.2f}".format)
+ 
+     # Calculate annualized return (CAGR)
+-    metrics["CAGR﹪%"] = _get_stats().cagr(df, rf, compounded, win_year) * pct
++    metrics["CAGR %"] = _get_stats().cagr(df, rf, compounded, win_year) * pct
+ 
+     # Add separator row
+     metrics["~~~~~~~~~~~~~~"] = blank
+@@ -1319,30 +1367,30 @@ def metrics(
+     # Calculate risk-adjusted return ratios
+     metrics["Sharpe"] = _get_stats().sharpe(df, rf, win_year, True)
+     metrics["Prob. Sharpe Ratio %"] = (
+-        _get_stats().probabilistic_sharpe_ratio(df, rf, win_year, False) * pct
++        _get_stats().probabilistic_sharpe_ratio(df, rf, win_year) * pct
      )
  
--    d = today - relativedelta(years=10)
-+    d = today - relativedelta(months=119)
-     metrics["10Y (ann.) %"] = (
-         _get_stats().cagr(df[df.index >= d], 0.0, compounded, win_year) * pct
-     )
-@@ -1608,7 +1610,7 @@ def metrics(
-         metrics[metric_name] = dd.loc[metric_name].values
+     # Add advanced Sharpe metrics for full mode
+     if mode.lower() == "full":
+         metrics["Smart Sharpe"] = _get_stats().smart_sharpe(df, rf, win_year, True)
+-        # metrics['Prob. Smart Sharpe Ratio %'] = _get_stats().probabilistic_sharpe_ratio(df, rf, win_year, False, True) * pct
++        # metrics['Prob. Smart Sharpe Ratio %'] = _get_stats().probabilistic_sharpe_ratio(df, rf, smart=True) * pct
  
-     # Additional drawdown-based metrics
--    metrics["Recovery Factor"] = _get_stats().recovery_factor(df)
-+    metrics["Recovery Factor"] = _get_stats().recovery_factor(df, compounded=compounded)
-     metrics["Ulcer Index"] = _get_stats().ulcer_index(df)
-     metrics["Serenity Index"] = _get_stats().serenity_index(df, rf)
+     # Calculate Sortino ratio (downside deviation-based)
+     metrics["Sortino"] = _get_stats().sortino(df, rf, win_year, True)
+     if mode.lower() == "full":
+-        # metrics['Prob. Sortino Ratio %'] = _get_stats().probabilistic_sortino_ratio(df, rf, win_year, False) * pct
++        # metrics['Prob. Sortino Ratio %'] = _get_stats().probabilistic_sortino_ratio(df, rf) * pct
+         metrics["Smart Sortino"] = _get_stats().smart_sortino(df, rf, win_year, True)
+         # metrics['Prob. Smart Sortino Ratio %'] = _get_stats().probabilistic_sortino_ratio(
+-        #     df, rf, win_year, False, True) * pct
++        #     df, rf, smart=True) * pct
  
+     # Calculate adjusted Sortino ratio
+-    metrics["Sortino/√2"] = metrics["Sortino"] / _sqrt(2)
++    metrics["Sortino/sqrt(2)"] = metrics["Sortino"] / _sqrt(2)
+     if mode.lower() == "full":
+-        # metrics['Prob. Sortino/√2 Ratio %'] = _get_stats().probabilistic_adjusted_sortino_ratio(
+-        #     df, rf, win_year, False) * pct
+-        metrics["Smart Sortino/√2"] = metrics["Smart Sortino"] / _sqrt(2)
+-        # metrics['Prob. Smart Sortino/√2 Ratio %'] = _get_stats().probabilistic_adjusted_sortino_ratio(
+-        #     df, rf, win_year, False, True) * pct
++        # metrics['Prob. Sortino/sqrt(2) Ratio %'] = _get_stats().probabilistic_adjusted_sortino_ratio(
++        #     df, rf) * pct
++        metrics["Smart Sortino/sqrt(2)"] = metrics["Smart Sortino"] / _sqrt(2)
++        # metrics['Prob. Smart Sortino/sqrt(2) Ratio %'] = _get_stats().probabilistic_adjusted_sortino_ratio(
++        #     df, rf, smart=True) * pct
+ 
+     # Calculate Omega ratio (probability-weighted ratio)
+     if isinstance(returns, _pd.Series):
+@@ -1435,7 +1483,7 @@ def metrics(
+                 metrics["Volatility (ann.) %"] = ret_vol
+ 
+         # Additional risk and return metrics
+-        metrics["Calmar"] = _get_stats().calmar(df, prepare_returns=False, periods=win_year)
++        metrics["Calmar"] = _get_stats().calmar(df, periods=win_year)
+         metrics["Skew"] = _get_stats().skew(df, prepare_returns=False)
+         metrics["Kurtosis"] = _get_stats().kurtosis(df, prepare_returns=False)
+ 
+@@ -1812,9 +1860,9 @@ def metrics(
+             params_data["Parameter"].insert(0, "Benchmark")
+             params_data["Value"].insert(0, benchmark_colname)
+         params_df = _pd.DataFrame(params_data)
+-        print("\n" + _tabulate(params_df, headers="keys", tablefmt="simple", showindex=False))
+-        print("\n")
+-        print(_tabulate(metrics, headers="keys", tablefmt="simple"))
++        _print("\n" + _tabulate(params_df, headers="keys", tablefmt="simple", showindex=False))
++        _print("\n")
++        _print(_tabulate(metrics, headers="keys", tablefmt="simple"))
+         return None
+ 
+     # Remove separator rows if not requested
+@@ -1892,11 +1940,7 @@ def plots(
+     strategy_colname = kwargs.get("strategy_title", "Strategy")
+     active = kwargs.get("active", False)
+ 
+-    # Handle multiple strategy columns
+-    if isinstance(returns, _pd.DataFrame):
+-        if len(returns.columns) > 1:
+-            if isinstance(strategy_colname, str):
+-                strategy_colname = list(returns.columns)
++    strategy_colname = _strategy_titles(returns, strategy_colname)
+ 
+     # Get trading periods for rolling window calculations
+     win_year, win_half_year = _get_trading_periods(periods_per_year)
+@@ -2239,6 +2283,15 @@ def _calc_dd(df, display=True, as_pct=False):
+     else:
+         ret_dd = dd_info
+ 
++    # A single strategy column still arrives with a MultiIndex ("returns_1", "max
++    # drawdown"); drop the strategy level so the single-strategy branch below can
++    # address the detail columns by name.
++    if (
++        isinstance(ret_dd.columns, _pd.MultiIndex)
++        and ret_dd.columns.get_level_values(0).nunique() == 1
++    ):
++        ret_dd = ret_dd.droplevel(0, axis=1)
++
+     # Calculate drawdown statistics based on data structure
+     if (
+         any(ret_dd.columns.get_level_values(0).str.contains("returns"))
 diff --git a/quantstats/stats.py b/quantstats/stats.py
-index 266f951..faee6c2 100644
+index 266f951..0a9cb20 100644
 --- a/quantstats/stats.py
 +++ b/quantstats/stats.py
-@@ -36,6 +36,7 @@ import numpy as _np
- from numpy.typing import NDArray
- from math import ceil as _ceil, sqrt as _sqrt
+@@ -38,7 +38,7 @@ from math import ceil as _ceil, sqrt as _sqrt
  from scipy.stats import norm as _norm, linregress as _linregress
-+from scipy.optimize import brentq as _brentq
  
  from . import utils as _utils
- from ._compat import safe_concat
-@@ -749,7 +750,9 @@ def rolling_volatility(
+-from ._compat import safe_concat
++from ._compat import safe_concat, safe_resample
+ from .utils import validate_input
+ 
+ # Type aliases for common types (Python 3.10+ syntax)
+@@ -749,7 +749,11 @@ def rolling_volatility(
          >>> print(rolling_vol)
      """
      if prepare_returns:
 -        returns = _utils._prepare_returns(returns, rolling_period)
-+        # rolling_period used to be passed into _prepare_returns' rf slot; it is
-+        # not a risk-free rate and volatility takes no rf.
++        # rolling_period must not be forwarded here: the second positional of
++        # _prepare_returns is rf, so passing the window fed a risk-free rate of
++        # 126. It was inert only because this function sat in the skip list
++        # that voided rf, and removing it from that list would have applied it.
 +        returns = _utils._prepare_returns(returns)
  
      # Calculate rolling standard deviation and annualize
      return returns.rolling(rolling_period).std() * _np.sqrt(periods_per_year)
-@@ -1248,9 +1251,15 @@ def probabilistic_ratio(
-     ratio = (base - rf) / sigma_sr
-     psr = _norm.cdf(ratio)
+@@ -967,7 +971,9 @@ def rolling_sharpe(
+         raise Exception("Must provide periods if rf != 0")
  
--    # Annualize if requested
-+    # A probabilistic ratio is a probability in [0, 1]. There is no meaningful
-+    # annualization of one; the previous `psr * sqrt(252)` returned values above
-+    # 1 (and ignored `periods`, hardcoding 252). The frequency already enters
-+    # through the base ratio, so the probability is returned unscaled.
-     if annualize:
--        return psr * (252**0.5)
-+        warn(
-+            "annualize has no effect on a probabilistic ratio: the result is a "
-+            "probability in [0, 1]. Pass a frequency via `periods` instead."
+     if prepare_returns:
+-        returns = _utils._prepare_returns(returns, rf, rolling_period)
++        # periods_per_year, not the window: rf is annualized, so the window
++        # length must not decide how much of it comes off each observation.
++        returns = _utils._prepare_returns(returns, rf, periods_per_year)
+ 
+     # Calculate rolling mean and standard deviation
+     res = returns.rolling(rolling_period).mean() / returns.rolling(rolling_period).std()
+@@ -1118,7 +1124,9 @@ def rolling_sortino(
+         raise Exception("Must provide periods if rf != 0")
+ 
+     if kwargs.get("prepare_returns", True):
+-        returns = _utils._prepare_returns(returns, rf, rolling_period)
++        # periods_per_year, not the window: rf is annualized, so the window
++        # length must not decide how much of it comes off each observation.
++        returns = _utils._prepare_returns(returns, rf, periods_per_year)
+ 
+     # Optimized downside calculation using vectorized operations
+     def calc_downside(x):
+@@ -1204,55 +1212,96 @@ def probabilistic_ratio(
+         series (pd.Series): Return series to analyze
+         rf (float): Risk-free rate (annualized, default: 0.0)
+         base (str): Base metric ('sharpe', 'sortino', 'adjusted_sortino')
+-        periods (int): Periods per year for annualization (default: 252)
+-        annualize (bool): Whether to annualize the result (default: False)
++        periods (int): Periods per year used to deannualize rf before it is
++            deducted from each observation (default: 252)
++        annualize (bool): Unsupported; must be False. A probability does not
++            annualize, and True raises ValueError
+         smart (bool): Whether to apply autocorrelation penalty (default: False)
+ 
+     Returns:
+-        float: Probabilistic ratio (0-1 scale representing probability)
++        float: Probabilistic ratio (0-1 scale representing probability), or
++            nan when the series holds fewer than two observations, because the
++            standard error cannot be estimated from a single point
+ 
+     Raises:
+         ValueError: If invalid base metric is provided
+ 
++    Note:
++        The result is the probability that the true base ratio of the excess
++        returns is above zero. periods only scales rf; it does not annualize
++        the result, because the standard error below is derived for the
++        per-observation ratio and a probability does not annualize.
++
+     Example:
+         >>> returns = pd.Series([0.01, -0.02, 0.03, -0.01, 0.02])
+         >>> prob_ratio = probabilistic_ratio(returns, base="sharpe")
+         >>> print(f"Probabilistic Sharpe ratio: {prob_ratio:.4f}")
+     """
+-    # Calculate the base ratio depending on the selected metric
+-    if base.lower() == "sharpe":
+-        base = sharpe(series, periods=periods, annualize=False, smart=smart)
+-    elif base.lower() == "sortino":
+-        base = sortino(series, periods=periods, annualize=False, smart=smart)
+-    elif base.lower() == "adjusted_sortino":
+-        base = adjusted_sortino(series, periods=periods, annualize=False, smart=smart)
+-    else:
++    # A probability does not annualize; the old branch multiplied the
++    # norm.cdf output by 252**0.5, breaking the documented 0-1 scale
++    if annualize:
++        raise ValueError(
++            "annualize=True is not supported: the probabilistic ratio is a "
++            "probability on a 0-1 scale and does not annualize"
 +        )
++
++    # Deduct the risk-free rate where every other ratio in this package deducts
++    # it, at the _prepare_returns boundary, so an annualized rf is deannualized
++    # to the observation frequency first. This function used to subtract rf from
++    # the finished ratio instead, which compared a yearly percentage against a
++    # per-observation ratio; every moment below is now taken from the same
++    # excess series the base ratio is built from.
++    series = _utils._prepare_returns(series, rf, periods)
++
++    # Calculate the base ratio depending on the selected metric. These are
++    # deliberately not annualized: the standard error below is derived for the
++    # per-observation ratio, so annualizing here would leave the two in
++    # different units and inflate the probability. The isinstance test comes
++    # first because base.lower() on a non-string raises AttributeError, a
++    # message naming neither the argument nor the values it accepts, where the
++    # docstring promises ValueError for any invalid base.
++    base_ratios = {
++        "sharpe": sharpe,
++        "sortino": sortino,
++        "adjusted_sortino": adjusted_sortino,
++    }
++    if not isinstance(base, str) or base.lower() not in base_ratios:
+         raise ValueError(
+             f"Invalid metric '{base}'. Must be one of: 'sharpe', 'sortino', or 'adjusted_sortino'"
+         )
++    base = base_ratios[base.lower()](series, annualize=False, smart=smart)
  
-     return psr
+     # Calculate higher moments for adjustment
+     skew_no = skew(series, prepare_returns=False)
+-    kurtosis_no = kurtosis(series, prepare_returns=False)
++    excess_kurtosis = kurtosis(series, prepare_returns=False)
  
-@@ -1387,8 +1396,11 @@ def treynor_ratio(returns, benchmark, periods=252.0, rf=0.0):
+     n = len(series)
+ 
+-    # Calculate standard error of the ratio incorporating higher moments
+-    # Formula accounts for skewness and kurtosis effects on ratio distribution
++    # The standard error below carries 1/(n - 1), so with a single observation
++    # there is no dispersion to estimate and the probability is undefined. Say
++    # so once here: without this the outcome depended only on whether the base
++    # ratio happened to arrive as a numpy scalar, where nan/0 is nan, or as a
++    # plain float, where the same expression raises ZeroDivisionError, so
++    # sharpe returned nan while sortino raised on identical input.
++    if n < 2:
++        return _np.nan
++
++    # Standard error of the ratio, Bailey and Lopez de Prado: with raw kurtosis
++    # g4 the variance is (1 - skew*SR + ((g4 - 1)/4) * SR**2) / (n - 1), which
++    # is the form written here once 0.5 * SR**2 is split out of that term.
++    # kurtosis() returns the pandas value, which is Fisher excess kurtosis and
++    # so already g4 - 3; this used to subtract 3 from it a second time, which
++    # removes a flat 0.75 * SR**2 from the variance and turns it negative for a
++    # large ratio, where the square root then yields nan instead of a number.
+     sigma_sr = _np.sqrt(
+-        (1 + (0.5 * base**2) - (skew_no * base) + (((kurtosis_no - 3) / 4) * base**2))
++        (1 + (0.5 * base**2) - (skew_no * base) + ((excess_kurtosis / 4) * base**2))
+         / (n - 1)
+     )
+ 
+-    # Calculate standardized ratio and convert to probability
+-    ratio = (base - rf) / sigma_sr
+-    psr = _norm.cdf(ratio)
+-
+-    # Annualize if requested
+-    if annualize:
+-        return psr * (252**0.5)
+-
+-    return psr
++    # Calculate standardized ratio and convert to probability. rf is already
++    # deducted from the series above, so subtracting it again here would charge
++    # the risk-free rate twice.
++    return _norm.cdf(base / sigma_sr)
+ 
+ 
+ def probabilistic_sharpe_ratio(
+@@ -1272,12 +1321,15 @@ def probabilistic_sharpe_ratio(
+     Args:
+         series (pd.Series): Return series to analyze
+         rf (float): Risk-free rate (annualized, default: 0.0)
+-        periods (int): Periods per year for annualization (default: 252)
+-        annualize (bool): Whether to annualize the result (default: False)
++        periods (int): Periods per year used to deannualize rf before it is
++            deducted from each observation (default: 252)
++        annualize (bool): Unsupported; must be False. A probability does not
++            annualize, and True raises ValueError
+         smart (bool): Whether to apply autocorrelation penalty (default: False)
+ 
+     Returns:
+-        float: Probabilistic Sharpe ratio (0-1 scale)
++        float: Probabilistic Sharpe ratio (0-1 scale), or nan for a series of
++            fewer than two observations
+ 
+     Example:
+         >>> returns = pd.Series([0.01, -0.02, 0.03, -0.01, 0.02])
+@@ -1289,9 +1341,7 @@ def probabilistic_sharpe_ratio(
+     )
+ 
+ 
+-def probabilistic_sortino_ratio(
+-    series, rf=0.0, periods=252, annualize=False, smart=False
+-):
++def probabilistic_sortino_ratio(series, rf=0.0, periods=252, annualize=False, smart=False):
+     """
+     Calculate the Probabilistic Sortino Ratio.
+ 
+@@ -1301,12 +1351,15 @@ def probabilistic_sortino_ratio(
+     Args:
+         series (pd.Series): Return series to analyze
+         rf (float): Risk-free rate (annualized, default: 0.0)
+-        periods (int): Periods per year for annualization (default: 252)
+-        annualize (bool): Whether to annualize the result (default: False)
++        periods (int): Periods per year used to deannualize rf before it is
++            deducted from each observation (default: 252)
++        annualize (bool): Unsupported; must be False. A probability does not
++            annualize, and True raises ValueError
+         smart (bool): Whether to apply autocorrelation penalty (default: False)
+ 
+     Returns:
+-        float: Probabilistic Sortino ratio (0-1 scale)
++        float: Probabilistic Sortino ratio (0-1 scale), or nan for a series of
++            fewer than two observations
+ 
+     Example:
+         >>> returns = pd.Series([0.01, -0.02, 0.03, -0.01, 0.02])
+@@ -1330,12 +1383,15 @@ def probabilistic_adjusted_sortino_ratio(
+     Args:
+         series (pd.Series): Return series to analyze
+         rf (float): Risk-free rate (annualized, default: 0.0)
+-        periods (int): Periods per year for annualization (default: 252)
+-        annualize (bool): Whether to annualize the result (default: False)
++        periods (int): Periods per year used to deannualize rf before it is
++            deducted from each observation (default: 252)
++        annualize (bool): Unsupported; must be False. A probability does not
++            annualize, and True raises ValueError
+         smart (bool): Whether to apply autocorrelation penalty (default: False)
+ 
+     Returns:
+-        float: Probabilistic adjusted Sortino ratio (0-1 scale)
++        float: Probabilistic adjusted Sortino ratio (0-1 scale), or nan for a
++            series of fewer than two observations
+ 
+     Example:
+         >>> returns = pd.Series([0.01, -0.02, 0.03, -0.01, 0.02])
+@@ -1357,13 +1413,15 @@ def treynor_ratio(returns, benchmark, periods=252.0, rf=0.0):
+     Calculate the Treynor ratio.
+ 
+     The Treynor ratio measures risk-adjusted returns relative to systematic risk
+-    (beta) rather than total risk (volatility). It's calculated as excess return
+-    divided by beta, useful for comparing portfolios with different market exposure.
++    (beta) rather than total risk (volatility). It is the annualized return less
++    the annualized risk-free rate, divided by beta, so the figure is comparable
++    across samples of different length.
+ 
+     Args:
+         returns (pd.Series): Return series to analyze
+         benchmark (pd.Series): Benchmark return series for beta calculation
+-        periods (float): Periods per year for annualization (default: 252.0)
++        periods (float): Periods per year, used to annualize the return
++            (default: 252.0)
+         rf (float): Risk-free rate (annualized, default: 0.0)
+ 
+     Returns:
+@@ -1379,16 +1437,20 @@ def treynor_ratio(returns, benchmark, periods=252.0, rf=0.0):
+     if isinstance(returns, _pd.DataFrame):
+         returns = returns[returns.columns[0]]
+ 
+-    # Calculate beta from the Greeks (alpha, beta analysis)
+-    beta = greeks(returns, benchmark, periods=periods).to_dict().get("beta", 0)
++    # Beta is a ratio of covariances and does not depend on the annualization,
++    # so periods is not forwarded here; it annualizes the return below, which is
++    # the only place it can change this figure.
++    beta = greeks(returns, benchmark).to_dict().get("beta", 0)
+ 
+     # Prevent division by zero
+     if beta == 0:
          warn("Beta is zero, cannot calculate Treynor ratio, returning 0")
          return 0
  
 -    # Calculate excess return over risk-free rate divided by beta
 -    return (comp(returns) - rf) / beta
-+    # Calculate annualized excess return over risk-free rate divided by beta.
-+    # The numerator must be annualized to match the annualized rf it is netted
-+    # against; comp(returns) is the whole-sample cumulative return, which grows
-+    # with the length of the backtest and is not comparable across horizons.
-+    return cagr(returns, rf, periods=int(periods)) / beta
++    # Annualized excess return over beta. Using the whole-period compounded
++    # return here instead, as this did, makes the figure grow with the length of
++    # the sample and deducts an annual rf from a multi-year return.
++    return (cagr(returns, periods=periods) - rf) / beta
  
  
  def omega(
-@@ -1463,7 +1475,7 @@ def omega(
+@@ -1463,7 +1525,7 @@ def omega(
          return _np.nan
  
  
@@ -124,417 +1371,569 @@ index 266f951..faee6c2 100644
      """
      Calculate Jack Schwager's Gain-to-Pain Ratio (GPR).
  
-@@ -1473,8 +1485,9 @@ def gain_to_pain_ratio(returns, rf=0, resolution="D"):
+@@ -1473,8 +1535,10 @@ def gain_to_pain_ratio(returns, rf=0, resolution="D"):
  
      Args:
          returns (pd.Series): Return series to analyze
 -        rf (float): Risk-free rate (default: 0)
-+        rf (float): Risk-free rate (annualized, default: 0)
++        rf (float): Risk-free rate, annualized (default: 0)
          resolution (str): Resampling frequency ('D', 'W', 'M', etc.)
-+        periods (int): Periods per year used to deannualize rf (default: 252)
++        periods (int): Periods per year used to deannualize rf before it is
++            deducted from each observation (default: 252)
  
      Returns:
          float: Gain-to-Pain ratio
-@@ -1487,8 +1500,10 @@ def gain_to_pain_ratio(returns, rf=0, resolution="D"):
+@@ -1487,8 +1551,15 @@ def gain_to_pain_ratio(returns, rf=0, resolution="D"):
      Note:
          See here for more info: https://archive.is/wip/2rwFW
      """
 -    # Prepare returns and resample to specified frequency
 -    returns = _utils._prepare_returns(returns, rf).resample(resolution).sum()
-+    # Prepare returns and resample to specified frequency.
-+    # periods is forwarded so an annualized rf is deannualized rather than
-+    # subtracted whole from every period (or, as before this fix, dropped).
-+    returns = _utils._prepare_returns(returns, rf, periods).resample(resolution).sum()
++    # Prepare returns and resample to specified frequency. periods is forwarded
++    # so rf is deannualized to the observation frequency before subtraction,
++    # which happens before the resample. safe_resample rather than a bare
++    # .resample: pandas 2.2 renamed M, Q, A and Y to ME, QE and YE, and this
++    # docstring names the old spellings, so calling pandas directly rejects the
++    # very values it tells the caller to pass.
++    returns = safe_resample(
++        _utils._prepare_returns(returns, rf, periods), resolution, "sum"
++    )
  
      # Calculate absolute sum of negative returns (pain)
      downside = abs(returns[returns < 0].sum())
-@@ -1533,8 +1548,10 @@ def cagr(
-     """
+@@ -1534,7 +1605,10 @@ def cagr(
      validate_input(returns)
  
--    # Prepare returns (subtract risk-free rate if applicable)
+     # Prepare returns (subtract risk-free rate if applicable)
 -    total = _utils._prepare_returns(returns, rf)
-+    # Prepare returns (subtract risk-free rate if applicable).
-+    # periods is forwarded so an annualized rf is deannualized to this series'
-+    # frequency, exactly as sharpe() and sortino() do.
++    # periods must be forwarded: _prepare_returns only deannualizes rf when it
++    # is given the period count, and without it the whole annual rate is
++    # deducted from every single observation.
 +    total = _utils._prepare_returns(returns, rf, periods)
  
      # Calculate total return
      if compounded:
-@@ -1558,7 +1575,7 @@ def cagr(
-     return res
+@@ -1641,7 +1715,6 @@ def kurtosis(returns, prepare_returns=True):
  
- 
--def rar(returns, rf=0.0):
-+def rar(returns, rf=0.0, periods=252):
+ def calmar(
+     returns: Returns,
+-    prepare_returns: bool = True,
+     periods: int = 252,
+ ) -> float:
      """
-     Calculate the Risk-Adjusted Return (RAR).
+@@ -1653,7 +1726,6 @@ def calmar(
  
-@@ -1569,6 +1586,7 @@ def rar(returns, rf=0.0):
      Args:
          returns (pd.Series): Return series to analyze
-         rf (float): Risk-free rate (annualized, default: 0.0)
-+        periods (int): Periods per year for annualization (default: 252)
+-        prepare_returns (bool): Whether to prepare returns first (default: True)
+         periods (int): Periods per year for annualization (default: 252)
  
      Returns:
-         float: Risk-adjusted return
-@@ -1578,11 +1596,10 @@ def rar(returns, rf=0.0):
-         >>> rar_value = rar(returns)
-         >>> print(f"Risk-adjusted return: {rar_value:.4f}")
+@@ -1666,8 +1738,9 @@ def calmar(
      """
--    # Prepare returns (subtract risk-free rate if applicable)
--    returns = _utils._prepare_returns(returns, rf)
--
--    # Calculate CAGR and divide by exposure time
--    return cagr(returns) / exposure(returns)
-+    # Calculate CAGR and divide by exposure time. periods must be forwarded:
-+    # without it a monthly series was annualized at 252 periods/year here while
-+    # the report's CAGR row used 12.
-+    return cagr(returns, rf, periods=periods) / exposure(returns)
+     validate_input(returns)
+ 
+-    if prepare_returns:
+-        returns = _utils._prepare_returns(returns)
++    # No preparation here: cagr and max_drawdown below each prepare their own
++    # input, so doing it first changed nothing except a rounding step. The
++    # prepare_returns flag that used to sit here was removed for that reason.
+ 
+     # Calculate CAGR and maximum drawdown
+     cagr_ratio = cagr(returns, periods=periods)
+@@ -1699,8 +1772,9 @@ def ulcer_index(returns):
+     # Convert returns to drawdown series
+     dd = to_drawdown_series(returns)
+ 
+-    # Calculate root mean square of drawdowns
+-    return _np.sqrt(_np.divide((dd**2).sum(), returns.shape[0] - 1))
++    # Root mean square of drawdowns: the documented mean form, dividing by n
++    # (the standard Ulcer Index); n-1 here inflated the index by sqrt(n/(n-1))
++    return _np.sqrt(_np.divide((dd**2).sum(), returns.shape[0]))
  
  
- def skew(returns, prepare_returns=True):
-@@ -2329,7 +2346,7 @@ def outlier_loss_ratio(returns, quantile=0.01, prepare_returns=True):
-         return quantile_val / negative_mean
- 
- 
--def recovery_factor(returns, rf=0.0, prepare_returns=True):
-+def recovery_factor(returns, rf=0.0, compounded=True, prepare_returns=True):
-     """
-     Calculate the recovery factor (total returns / maximum drawdown).
- 
-@@ -2340,6 +2357,7 @@ def recovery_factor(returns, rf=0.0, prepare_returns=True):
-     Args:
-         returns (pd.Series): Return series to analyze
-         rf (float): Risk-free rate (default: 0.0)
-+        compounded (bool): Compound the total return (default: True)
-         prepare_returns (bool): Whether to prepare returns first (default: True)
- 
+ def ulcer_performance_index(returns, rf=0):
+@@ -2594,14 +2668,21 @@ def r_squared(returns, benchmark, prepare_returns=True):
      Returns:
-@@ -2353,8 +2371,10 @@ def recovery_factor(returns, rf=0.0, prepare_returns=True):
+         float: R-squared value (0-1 scale)
+ 
++    Raises:
++        DataValidationError: If returns is a DataFrame instead of a Series
++
+     Example:
+         >>> returns = pd.Series([0.01, -0.02, 0.03, -0.01, 0.02])
+         >>> benchmark = pd.Series([0.005, -0.01, 0.02, -0.005, 0.015])
+         >>> r_sq = r_squared(returns, benchmark)
+         >>> print(f"R-squared: {r_sq:.4f}")
+     """
++    validate_input(returns, name="returns", require_series=True)
++
      if prepare_returns:
          returns = _utils._prepare_returns(returns)
- 
--    # Calculate total excess returns
--    total_returns = returns.sum() - rf
-+    # Calculate total excess returns. The denominator, max_drawdown, is computed
-+    # on a compounded equity curve, so the numerator compounds by default too;
-+    # summing simple returns here mixed the two conventions in one ratio.
-+    total_returns = (comp(returns) if compounded else returns.sum()) - rf
- 
-     # Calculate maximum drawdown
-     max_dd = max_drawdown(returns)
-@@ -2374,8 +2394,11 @@ def risk_return_ratio(returns, prepare_returns=True):
-     """
-     Calculate the risk-return ratio (mean return / standard deviation).
- 
--    This function calculates the Sharpe ratio without factoring in the
--    risk-free rate, providing a simple measure of return per unit of risk.
-+    This is the per-period ratio of mean return to standard deviation, with no
-+    risk-free rate and no annualization. It is *not* the Sharpe ratio this
-+    module reports: sharpe() annualizes by sqrt(periods), so on daily data
-+    sharpe(returns, rf=0) is sqrt(252) times this value. Compare it only with
-+    other per-period figures.
- 
-     Args:
-         returns (pd.Series): Return series to analyze
-@@ -2550,29 +2573,66 @@ def to_drawdown_series(returns):
-     return dd.replace([_np.inf, -_np.inf, -0], 0)  # type: ignore[attr-defined]
- 
- 
-+def _growth_optimal_fraction(returns: _np.ndarray) -> float:
-+    """
-+    Solve for the growth-optimal fraction of capital for one return series.
-+
-+    Maximises E[log(1 + f * r)] over f, i.e. finds the root of
-+    E[r / (1 + f * r)] = 0. The objective is strictly concave in f on
-+    (-1/max(r), 1/|min(r)|), so the root is unique and bracketed by 0.
-+    """
-+    r = _np.asarray(returns, dtype=float)
-+    r = r[_np.isfinite(r)]
-+    if len(r) == 0:
-+        return _np.nan
-+
-+    mean = r.mean()
-+    if mean == 0:
-+        return 0.0
-+
-+    def slope(f):
-+        return _np.mean(r / (1.0 + f * r))
-+
-+    if mean > 0:
-+        if r.min() >= 0:
-+            return _np.inf  # no downside: growth is unbounded in leverage
-+        lo, hi = 0.0, 1.0 / abs(r.min())
 +    else:
-+        if r.max() <= 0:
-+            return -_np.inf  # no upside: the optimal position is an unbounded short
-+        lo, hi = -1.0 / r.max(), 0.0
-+
-+    # Step just inside the open interval so the objective stays finite.
-+    eps = (hi - lo) * 1e-12
-+    return _brentq(slope, lo + eps, hi - eps, xtol=1e-14)
-+
-+
- def kelly_criterion(returns, prepare_returns=True):
-     """
-     Calculates the recommended maximum amount of capital that
-     should be allocated to the given strategy, based on the
-     Kelly Criterion (http://en.wikipedia.org/wiki/Kelly_criterion)
-+
-+    Returns the growth-optimal fraction of capital: the f that maximises
-+    E[log(1 + f * r)] over the supplied return series. A value of 1.0 means
-+    "hold the strategy unlevered", 2.0 means "hold it at 2x leverage".
-+
-+    Note that the textbook two-outcome form f = (b*p - q)/b assumes a losing
-+    bet forfeits the whole stake. Applied to a return series whose losing
-+    periods are a few percent, that form understates the growth-optimal
-+    fraction by roughly a factor of the average loss, and is invariant to the
-+    scale of the returns, so it is not used here.
-     """
-     if prepare_returns:
-         returns = _utils._prepare_returns(returns)
--    win_loss_ratio = payoff_ratio(returns)
--    win_prob = win_rate(returns)
--    lose_prob = 1 - win_prob
++        returns = _utils._normalize_date_index(returns)
  
-     # Handle both Series (DataFrame input) and scalar (Series input) cases
--    if isinstance(win_loss_ratio, _pd.Series):
--        # DataFrame input - element-wise operations with zero/nan protection
--        # Replace 0 and NaN values with NaN to avoid division issues
--        win_loss_ratio_safe = win_loss_ratio.replace(0, _np.nan)
--        return ((win_loss_ratio_safe * win_prob) - lose_prob) / win_loss_ratio_safe
--    else:
--        # Series input - scalar operations
--        if win_loss_ratio == 0 or _pd.isna(win_loss_ratio):
--            return _np.nan
--        return ((win_loss_ratio * win_prob) - lose_prob) / win_loss_ratio
-+    if isinstance(returns, _pd.DataFrame):
-+        return _pd.Series(
-+            {col: _growth_optimal_fraction(returns[col].dropna().values)
-+             for col in returns.columns}
-+        )
-+    return _growth_optimal_fraction(returns.dropna().values)
- 
- 
- # ==== VS. BENCHMARK ====
-@@ -2632,18 +2692,27 @@ def r2(returns, benchmark):
-     return r_squared(returns, benchmark)
- 
- 
--def information_ratio(returns, benchmark, prepare_returns=True):
-+def information_ratio(
-+    returns,
-+    benchmark,
-+    periods: int = 252,
-+    annualize: bool = True,
-+    prepare_returns: bool = True,
-+):
-     """
-     Calculate the Information Ratio.
- 
-     The Information Ratio measures the risk-adjusted excess return of a
-     portfolio relative to a benchmark. It's calculated as the active return
-     (return - benchmark) divided by the tracking error (standard deviation
--    of active returns).
-+    of active returns), then annualized by sqrt(periods) - the same
-+    annualization sharpe() applies, so the two are directly comparable.
- 
-     Args:
-         returns (pd.Series): Return series to analyze
-         benchmark (pd.Series): Benchmark return series for comparison
-+        periods (int): Periods per year for annualization (default: 252)
-+        annualize (bool): Whether to annualize the ratio (default: True)
-         prepare_returns (bool): Whether to prepare returns first (default: True)
- 
+     # Prepare benchmark to match returns index
+     benchmark = _utils._prepare_benchmark(benchmark, returns.index)
+@@ -2649,14 +2730,21 @@ def information_ratio(returns, benchmark, prepare_returns=True):
      Returns:
-@@ -2654,6 +2723,10 @@ def information_ratio(returns, benchmark, prepare_returns=True):
+         float: Information Ratio
+ 
++    Raises:
++        DataValidationError: If returns is a DataFrame instead of a Series
++
+     Example:
+         >>> returns = pd.Series([0.01, -0.02, 0.03, -0.01, 0.02])
          >>> benchmark = pd.Series([0.005, -0.01, 0.02, -0.005, 0.015])
          >>> info_ratio = information_ratio(returns, benchmark)
          >>> print(f"Information Ratio: {info_ratio:.4f}")
-+
-+    Note:
-+        The active return is the arithmetic difference returns - benchmark,
-+        the standard (Grinold-Kahn) convention.
      """
++    validate_input(returns, name="returns", require_series=True)
++
      if prepare_returns:
          returns = _utils._prepare_returns(returns)
-@@ -2662,15 +2735,21 @@ def information_ratio(returns, benchmark, prepare_returns=True):
++    else:
++        returns = _utils._normalize_date_index(returns)
+ 
+     # Prepare benchmark to match returns index
      benchmark = _utils._prepare_benchmark(benchmark, returns.index)
+@@ -2690,6 +2778,9 @@ def greeks(returns, benchmark, periods=252.0, prepare_returns=True):
+     Returns:
+         pd.Series: Series containing 'alpha' and 'beta' values
  
-     # Calculate active returns (returns - benchmark)
--    diff_rets = returns - _utils._prepare_benchmark(benchmark, returns.index)
-+    diff_rets = returns - benchmark
- 
-     # Calculate tracking error (standard deviation of active returns)
-     std = diff_rets.std()
- 
-     # Return Information Ratio (active return / tracking error)
--    if std != 0:
--        return diff_rets.mean() / diff_rets.std()
--    return 0
-+    if std == 0:
-+        return 0
++    Raises:
++        DataValidationError: If returns is a DataFrame instead of a Series
 +
-+    res = diff_rets.mean() / std
+     Example:
+         >>> returns = pd.Series([0.01, -0.02, 0.03, -0.01, 0.02])
+         >>> benchmark = pd.Series([0.005, -0.01, 0.02, -0.005, 0.015])
+@@ -2697,9 +2788,13 @@ def greeks(returns, benchmark, periods=252.0, prepare_returns=True):
+         >>> print(f"Alpha: {portfolio_greeks['alpha']:.4f}")
+         >>> print(f"Beta: {portfolio_greeks['beta']:.4f}")
+     """
++    validate_input(returns, name="returns", require_series=True)
 +
-+    if annualize:
-+        return res * _np.sqrt(1 if periods is None else periods)
+     # Data preparation
+     if prepare_returns:
+         returns = _utils._prepare_returns(returns)
++    else:
++        returns = _utils._normalize_date_index(returns)
+     benchmark = _utils._prepare_benchmark(benchmark, returns.index)
+     # ----------------------------
+ 
+@@ -2745,14 +2840,21 @@ def rolling_greeks(returns, benchmark, periods=252, prepare_returns=True):
+     Returns:
+         pd.DataFrame: DataFrame with 'alpha' and 'beta' columns over time
+ 
++    Raises:
++        DataValidationError: If returns is a DataFrame instead of a Series
 +
-+    return res
+     Example:
+         >>> returns = pd.Series([0.01, -0.02, 0.03, -0.01, 0.02])
+         >>> benchmark = pd.Series([0.005, -0.01, 0.02, -0.005, 0.015])
+         >>> rolling_greeks_df = rolling_greeks(returns, benchmark, periods=3)
+         >>> print(rolling_greeks_df)
+     """
++    validate_input(returns, name="returns", require_series=True)
++
+     if prepare_returns:
+         returns = _utils._prepare_returns(returns)
++    else:
++        returns = _utils._normalize_date_index(returns)
  
+     # Create combined DataFrame for rolling calculations
+     df = _pd.DataFrame(
+@@ -2816,22 +2918,20 @@ def compare(
+         >>> print(comparison)
+     """
+     # Normalize timezone for returns to ensure consistent comparisons
+-    # Convert to UTC if timezone-aware, then make naive
++    # Drop the zone, keep the local timestamp, so a bar keeps its trading date
+     # This must happen before prepare_returns to avoid issues
+     if hasattr(returns.index, 'tz') and returns.index.tz is not None:
+-        returns = returns.tz_convert('UTC').tz_localize(None)
++        returns = returns.tz_localize(None)
+     
+     if prepare_returns:
+         returns = _utils._prepare_returns(returns)
  
- def greeks(returns, benchmark, periods=252.0, prepare_returns=True):
-@@ -2772,8 +2851,12 @@ def rolling_greeks(returns, benchmark, periods=252, prepare_returns=True):
-     # Calculate rolling beta (protect against division by zero)
-     beta = corr * std["returns"] / std["benchmark"].replace(0, _np.nan)
+-    # Normalize benchmark timezone first if it's not a string
++    # Normalize benchmark timezone first if it's not a string. Normalize the whole
++    # object's index at once: assigning a naive-indexed column back into a frame
++    # whose index is still tz-aware aligns on the index and yields all NaN.
+     if benchmark is not None and not isinstance(benchmark, str):
+-        if hasattr(benchmark.index if isinstance(benchmark, _pd.Series) else benchmark[benchmark.columns[0]].index, 'tz'):
+-            if isinstance(benchmark, _pd.Series) and benchmark.index.tz is not None:
+-                benchmark = benchmark.tz_convert('UTC').tz_localize(None)
+-            elif isinstance(benchmark, _pd.DataFrame) and benchmark[benchmark.columns[0]].index.tz is not None:
+-                for col in benchmark.columns:
+-                    benchmark[col] = benchmark[col].tz_convert('UTC').tz_localize(None)
++        if getattr(benchmark.index, "tz", None) is not None:
++            benchmark = benchmark.tz_localize(None)
+     
+     # Store original benchmark for proper aggregation
+     # This preserves returns that may fall on non-trading days
+@@ -2844,7 +2944,7 @@ def compare(
+     
+     # Normalize timezone for benchmark_original as well (in case it was downloaded)
+     if benchmark_original is not None and hasattr(benchmark_original.index, 'tz') and benchmark_original.index.tz is not None:
+-        benchmark_original = benchmark_original.tz_convert('UTC').tz_localize(None)
++        benchmark_original = benchmark_original.tz_localize(None)
+     
+     # Prepare benchmark to match returns index for other calculations
+     benchmark = _utils._prepare_benchmark(benchmark, returns.index)
+@@ -3137,7 +3237,10 @@ def montecarlo(returns, sims=1000, bust=None, goal=None, seed=None):
+     Returns:
+         MonteCarloResult: Object containing simulation results with:
+             - .data: DataFrame of all simulation paths
+-            - .stats: Terminal value statistics (min, max, mean, median, std)
++            - .stats: Terminal value statistics (identical across paths by
++              construction: shuffling preserves the compound total, so the
++              distributional outputs are .maxdd and the bust/goal
++              probabilities)
+             - .maxdd: Max drawdown statistics across simulations
+             - .bust_probability: Probability of exceeding bust threshold
+             - .goal_probability: Probability of reaching goal threshold
+@@ -3189,32 +3292,38 @@ def montecarlo_sharpe(returns, sims=1000, rf=0, periods=252, seed=None):
+         dict: Statistics of Sharpe ratio distribution including
+             min, max, mean, median, std, percentile_5, percentile_95
  
--    # Calculate rolling alpha (not annualized for rolling version)
--    alpha = df["returns"].mean() - beta * df["benchmark"].mean()
-+    # Calculate rolling alpha (not annualized for rolling version).
-+    # The means must be rolling too: using df[...].mean() put the whole-sample
-+    # mean - future data included - into every point of the series, so alpha was
-+    # not a rolling statistic at all.
-+    roll_mean = df.rolling(int(periods)).mean()
-+    alpha = roll_mean["returns"] - beta * roll_mean["benchmark"]
++    Note:
++        Paths are resampled with replacement (bootstrap). A plain shuffle
++        preserves the mean and standard deviation exactly, so every shuffled
++        path has the same Sharpe ratio and the distribution collapses to a
++        point; only resampling with replacement produces a genuine sampling
++        distribution.
++
+     Example:
+         >>> sharpe_dist = qs.stats.montecarlo_sharpe(returns, sims=1000)
+         >>> print(f"Expected Sharpe: {sharpe_dist['mean']:.2f}")
+         >>> print(f"Sharpe range: {sharpe_dist['percentile_5']:.2f} to "
+         ...       f"{sharpe_dist['percentile_95']:.2f}")
+     """
+-    from ._montecarlo import run_montecarlo
+-
+     validate_input(returns)
+     returns = _utils._prepare_returns(returns)
  
-     # Return DataFrame with rolling Greeks
-     return _pd.DataFrame(index=returns.index, data={"beta": beta, "alpha": alpha})
+     if isinstance(returns, _pd.DataFrame):
+         returns = returns.iloc[:, 0]
+ 
+-    mc = run_montecarlo(returns, sims=sims, seed=seed)
++    values = returns.to_numpy(dtype=float)
++    values = values[~_np.isnan(values)]
++    n = len(values)
++    rng = _np.random.default_rng(seed)
+ 
+-    # Calculate Sharpe for each simulation path
++    # Bootstrap: Sharpe of each with-replacement resample
+     sharpe_values = []
+-    for col in mc.data.columns:
+-        # Convert cumulative returns back to simple returns
+-        cumret = mc.data[col] + 1
+-        sim_returns = cumret.pct_change().dropna()
+-        if len(sim_returns) > 0 and sim_returns.std() > 0:
+-            excess = sim_returns.mean() - rf / periods
+-            sharpe_val = excess / sim_returns.std() * _np.sqrt(periods)
+-            sharpe_values.append(sharpe_val)
++    for _ in range(int(sims)):
++        sample = values[rng.integers(0, n, n)]
++        std = sample.std(ddof=1)
++        if std > 0:
++            excess = sample.mean() - rf / periods
++            sharpe_values.append(excess / std * _np.sqrt(periods))
+ 
+     sharpe_series = _pd.Series(sharpe_values)
+     return {
+@@ -3269,31 +3378,36 @@ def montecarlo_cagr(returns, sims=1000, seed=None):
+         dict: Statistics of CAGR distribution including
+             min, max, mean, median, std, percentile_5, percentile_95
+ 
++    Note:
++        Paths are resampled with replacement (bootstrap); a plain shuffle
++        preserves the compound total exactly and yields a degenerate
++        distribution.
++
+     Example:
+         >>> cagr_dist = qs.stats.montecarlo_cagr(returns, sims=1000)
+         >>> print(f"Expected CAGR: {cagr_dist['mean']:.1%}")
+     """
+-    from ._montecarlo import run_montecarlo
+-
+     validate_input(returns)
+     returns = _utils._prepare_returns(returns)
+ 
+     if isinstance(returns, _pd.DataFrame):
+         returns = returns.iloc[:, 0]
+ 
+-    mc = run_montecarlo(returns, sims=sims, seed=seed)
+-
+-    # Calculate CAGR for each simulation path
+-    n_periods = len(mc.data)
+-    years = n_periods / 252  # Assume daily data
++    values = returns.to_numpy(dtype=float)
++    values = values[~_np.isnan(values)]
++    n = len(values)
++    years = n / 252  # Assume daily data
++    rng = _np.random.default_rng(seed)
+ 
++    # Bootstrap: CAGR of each with-replacement resample. A plain shuffle
++    # preserves the compound total exactly, so every shuffled path has the
++    # same CAGR and the distribution collapses to a point.
+     cagr_values = []
+-    for col in mc.data.columns:
+-        terminal = mc.data[col].iloc[-1]
+-        # CAGR = (1 + total_return)^(1/years) - 1
++    for _ in range(int(sims)):
++        sample = values[rng.integers(0, n, n)]
++        terminal = _np.prod(1.0 + sample) - 1
+         if terminal > -1:  # Avoid invalid values
+-            cagr_val = (1 + terminal) ** (1 / years) - 1
+-            cagr_values.append(cagr_val)
++            cagr_values.append((1 + terminal) ** (1 / years) - 1)
+ 
+     cagr_series = _pd.Series(cagr_values)
+     return {
 diff --git a/quantstats/utils.py b/quantstats/utils.py
-index 14c235d..5e00422 100644
+index 14c235d..1ec5557 100644
 --- a/quantstats/utils.py
 +++ b/quantstats/utils.py
-@@ -22,7 +22,6 @@ import pandas as _pd
+@@ -21,9 +21,8 @@ import datetime as _dt
+ import pandas as _pd
  import numpy as _np
  from ._compat import safe_yfinance_download
- from ._compat import safe_concat, safe_resample
--import inspect
- import threading
+-from ._compat import safe_concat, safe_resample
++from ._compat import safe_concat, safe_resample, get_frequency_alias
+ import inspect
+-import threading
  
  # Type alias for return data
-@@ -107,7 +106,7 @@ _CACHE_MAX_SIZE = 100
- _cache_lock = threading.Lock()
+ Returns = _pd.Series | _pd.DataFrame
+@@ -61,7 +60,7 @@ class BenchmarkError(QuantStatsError):
+     pass
  
  
+-def validate_input(data, allow_empty=False):
++def validate_input(data, allow_empty=False, name="Input data", require_series=False):
+     """
+     Validate input data for QuantStats functions
+ 
+@@ -71,6 +70,10 @@ def validate_input(data, allow_empty=False):
+         Input data to validate
+     allow_empty : bool, default False
+         Whether to allow empty datasets
++    name : str, default "Input data"
++        Argument name used in error messages
++    require_series : bool, default False
++        Reject DataFrame input, for functions that only support a single series
+ 
+     Raises
+     ------
+@@ -78,83 +81,57 @@ def validate_input(data, allow_empty=False):
+         If data validation fails
+     """
+     if data is None:
+-        raise DataValidationError("Input data cannot be None")
++        raise DataValidationError(f"{name} cannot be None")
+ 
+     if not isinstance(data, (_pd.Series, _pd.DataFrame)):
+         raise DataValidationError(
+-            f"Input data must be pandas Series or DataFrame, got {type(data)}"
++            f"{name} must be pandas Series or DataFrame, got {type(data)}"
++        )
++
++    if require_series and isinstance(data, _pd.DataFrame):
++        raise DataValidationError(
++            f"{name} must be a pandas Series, got a DataFrame with "
++            f"{data.shape[1]} column(s); select a single column first, "
++            f"e.g. df[df.columns[0]]"
+         )
+ 
+     if not allow_empty and len(data) == 0:
+-        raise DataValidationError("Input data cannot be empty")
++        raise DataValidationError(f"{name} cannot be empty")
+ 
+     if not allow_empty and data.dropna().empty:
+-        raise DataValidationError("Input data contains only NaN values")
++        raise DataValidationError(f"{name} contains only NaN values")
+ 
+-    # Check for valid date index
++    # Check for valid date index. Convertibility is checked without writing the
++    # result back: this is a validator, and assigning to data.index would mutate
++    # the caller's object. Normalization happens in the _prepare_* boundaries,
++    # which already work on their own copy.
+     if not isinstance(data.index, (_pd.DatetimeIndex, _pd.RangeIndex)):
+         try:
+-            data.index = _pd.to_datetime(data.index)
++            _pd.to_datetime(data.index)
+         except Exception:
+-            raise DataValidationError("Input data must have a valid datetime index")
++            raise DataValidationError(f"{name} must have a valid datetime index")
+ 
+     return True
+ 
+ 
+-# Cache for _prepare_returns function with thread safety
+-_PREPARE_RETURNS_CACHE = {}
+-_CACHE_MAX_SIZE = 100
+-_cache_lock = threading.Lock()
+-
+-
 -def _generate_cache_key(data, rf, nperiods):
-+def _generate_cache_key(data, rf, nperiods, apply_rf):
++def _normalize_date_index(data):
      """
-     Generate a cache key for the _prepare_returns function
+-    Generate a cache key for the _prepare_returns function
++    Return data with a datetime index, converting a convertible one if needed
  
-@@ -119,6 +118,8 @@ def _generate_cache_key(data, rf, nperiods):
-         Risk-free rate parameter
-     nperiods : int
-         Number of periods parameter
-+    apply_rf : bool
-+        Whether the risk-free rate is subtracted
- 
-     Returns
-     -------
-@@ -135,7 +136,7 @@ def _generate_cache_key(data, rf, nperiods):
-             data_hash = hash(str(data))
- 
-         # Include parameters in the key
+-    Parameters
+-    ----------
+-    data : pd.Series or pd.DataFrame
+-        Input data to generate hash from
+-    rf : float
+-        Risk-free rate parameter
+-    nperiods : int
+-        Number of periods parameter
+-
+-    Returns
+-    -------
+-    str or None
+-        Cache key string or None if hashing fails
++    Copy-on-write: the input is returned untouched when its index is already a
++    DatetimeIndex or RangeIndex, or when conversion fails; a conversion is
++    applied to a copy, never to the caller's object. Safe to call on data this
++    process does not own.
+     """
++    if isinstance(data.index, (_pd.DatetimeIndex, _pd.RangeIndex)):
++        return data
+     try:
+-        # Create a hash from the data
+-        if isinstance(data, _pd.Series):
+-            data_hash = _pd.util.hash_pandas_object(data).sum()
+-        elif isinstance(data, _pd.DataFrame):
+-            data_hash = _pd.util.hash_pandas_object(data).sum()
+-        else:
+-            data_hash = hash(str(data))
+-
+-        # Include parameters in the key
 -        key = f"{data_hash}_{rf}_{nperiods}"
-+        key = f"{data_hash}_{rf}_{nperiods}_{apply_rf}"
-         return key
-     except (ValueError, TypeError, AttributeError, MemoryError):
-         # If hashing fails, return None to skip caching
-@@ -440,6 +441,35 @@ def group_returns(returns: Returns, groupby, compounded: bool = False) -> Return
-     return returns.groupby(groupby).sum()
+-        return key
+-    except (ValueError, TypeError, AttributeError, MemoryError):
+-        # If hashing fails, return None to skip caching
+-        return None
+-
+-
+-def _clear_cache_if_full():
+-    """
+-    Clear cache if it exceeds maximum size
+-
+-    Uses a simple FIFO strategy, keeping the most recent half of entries
+-    when cache size limit is exceeded.
+-    """
+-    with _cache_lock:
+-        if len(_PREPARE_RETURNS_CACHE) >= _CACHE_MAX_SIZE:
+-            # Remove oldest entries (simple FIFO) - keep the most recent half
+-            keys_to_remove = list(_PREPARE_RETURNS_CACHE.keys())[:-(_CACHE_MAX_SIZE // 2)]
+-            for key in keys_to_remove:
+-                del _PREPARE_RETURNS_CACHE[key]
++        converted = _pd.to_datetime(data.index)
++    except Exception:
++        return data
++    data = data.copy()
++    data.index = converted
++    return data
  
  
-+# Single-letter pandas offset aliases documented across the public API, mapped
-+# onto the calendar-period codes this module actually implements. Without this
-+# 'M', 'Q' and 'Y' fell through every branch below and returned the unaggregated
-+# series, so e.g. best(returns, aggregate='M') silently reported the best *day*.
-+_PERIOD_ALIASES = {
-+    "d": "day",
-+    "b": "day",
-+    "w": "eow",
-+    "m": "eom",
-+    "q": "eoq",
-+    "y": "eoy",
-+    "a": "eoy",
-+}
-+
-+
-+def _normalize_period(period):
-+    """
-+    Map a pandas-style offset alias onto this module's calendar-period codes.
-+
-+    Bare aliases ('M', 'W', 'Y', 'ME', 'YE', ...) become the end-of-period code
-+    the grouping branches below understand. Anything already spelled out
-+    ('month', 'eoy', ...) or not a string is returned unchanged.
-+    """
-+    if not isinstance(period, str):
-+        return period
-+    head = period.split("-")[0].rstrip("EeSs").lower()
-+    return _PERIOD_ALIASES.get(head, period.lower())
-+
-+
- def aggregate_returns(returns: Returns, period: str | None = None, compounded: bool = True) -> Returns:
-     """
-     Aggregate returns based on specified time periods
-@@ -449,7 +479,12 @@ def aggregate_returns(returns: Returns, period: str | None = None, compounded: b
+ def _mtd(df):
+@@ -448,8 +425,12 @@ def aggregate_returns(returns: Returns, period: str | None = None, compounded: b
+     ----------
      returns : pd.Series or pd.DataFrame
          Returns data
-     period : str, optional
+-    period : str, optional
 -        Time period for aggregation ('month', 'quarter', 'year', etc.)
-+        Time period for aggregation. Accepts the pandas offset aliases
-+        'D', 'W', 'M'/'ME', 'Q'/'QE', 'Y'/'YE' as well as the spelled-out
-+        codes 'day', 'week'/'eow', 'month'/'eom', 'quarter'/'eoq',
-+        'year'/'eoy'. 'month', 'quarter' and 'week' pool the same calendar
-+        period across every year; the 'eom'/'eoq'/'eow' forms (and the
-+        pandas aliases, which map onto them) keep years distinct.
++    period : str or grouper, optional
++        Aggregation period. Letter codes 'W', 'M', 'Q', 'Y'/'A' (and
++        'ME'/'QE'/'YE', 'eow'/'eom'/'eoq'/'eoy') group per calendar year;
++        word tokens 'month', 'quarter', 'week' build seasonal buckets across
++        years; None, 'D' or 'day' return the data unchanged; any non-string
++        is passed to group_returns as a custom grouper
      compounded : bool, default True
          Whether to compound returns
  
-@@ -462,7 +497,13 @@ def aggregate_returns(returns: Returns, period: str | None = None, compounded: b
-     # Convert to UTC if timezone-aware, then make naive
-     if hasattr(returns.index, 'tz') and returns.index.tz is not None:
-         returns = returns.tz_convert('UTC').tz_localize(None)
--    
+@@ -457,54 +438,69 @@ def aggregate_returns(returns: Returns, period: str | None = None, compounded: b
+     -------
+     pd.Series or pd.DataFrame
+         Aggregated returns for specified period
 +
-+    # Custom period grouping (non-string) - pass straight through
++    Raises
++    ------
++    ValueError
++        If period is an unrecognized string token
+     """
+     # Normalize timezone for consistency before aggregation
+-    # Convert to UTC if timezone-aware, then make naive
++    # Drop the zone, keep the local timestamp, so a bar keeps its trading date
+     if hasattr(returns.index, 'tz') and returns.index.tz is not None:
+-        returns = returns.tz_convert('UTC').tz_localize(None)
++        returns = returns.tz_localize(None)
+     
+-    # Return original data if no period specified or daily period
+-    if period is None or "day" in period:
++    # Custom grouper (anything non-string): hand it straight to group_returns.
++    # Checked first, because the string matching below raises an
++    # ambiguous-truth ValueError on array-likes before reaching it.
 +    if period is not None and not isinstance(period, str):
 +        return group_returns(returns, period, compounded)
 +
-+    period = _normalize_period(period)
-+
-     # Return original data if no period specified or daily period
-     if period is None or "day" in period:
++    # No aggregation for absent or daily periods
++    if period is None or period == "D" or "day" in period:
          return returns
-@@ -478,33 +519,38 @@ def aggregate_returns(returns: Returns, period: str | None = None, compounded: b
+ 
+     index = returns.index
+ 
+-    # Group by month
++    # Seasonal buckets across years (word tokens, historical semantics):
++    # 'month' merges Jan-2023 with Jan-2024. Per-year calendar groupings are
++    # the letter codes below.
+     if "month" in period:
+         return group_returns(returns, index.month, compounded=compounded)
+ 
+-    # Group by quarter
+     if "quarter" in period:
          return group_returns(returns, index.quarter, compounded=compounded)
  
-     # Group by year (multiple possible period strings)
+-    # Group by year (multiple possible period strings)
 -    if period == "YE" or any(x in period for x in ["year", "eoy", "yoy"]):
-+    if any(x in period for x in ["year", "eoy", "yoy"]):
++    if period in ("Y", "A", "YE") or any(x in period for x in ["year", "eoy", "yoy"]):
          return group_returns(returns, index.year, compounded=compounded)
  
-+    # ISO week number: DatetimeIndex.week was removed in pandas 2.0, which made
-+    # every weekly aggregation path raise AttributeError.
-+    isoweek = index.isocalendar().week.values
-+
-     # Group by week
-     if "week" in period:
+-    # Group by week
+-    if "week" in period:
 -        return group_returns(returns, index.week, compounded=compounded)
-+        return group_returns(returns, isoweek, compounded=compounded)
- 
-     # End of week grouping
--    if "eow" in period or period == "W":
+-
+-    # End of week grouping
++    # Weekly groupings; DatetimeIndex.week no longer exists, so week numbers
++    # come from isocalendar()
+     if "eow" in period or period == "W":
 -        return group_returns(returns, [index.year, index.week], compounded=compounded)
-+    if "eow" in period:
-+        return group_returns(returns, [index.year, isoweek], compounded=compounded)
++        return group_returns(
++            returns,
++            [index.year, index.isocalendar().week.values],
++            compounded=compounded,
++        )
  
-     # End of month grouping
+-    # End of month grouping
 -    if "eom" in period or period == "ME":
-+    if "eom" in period:
++    if "week" in period:
++        return group_returns(
++            returns, index.isocalendar().week.values, compounded=compounded
++        )
++
++    if "eom" in period or period in ("M", "ME"):
          return group_returns(returns, [index.year, index.month], compounded=compounded)
  
-     # End of quarter grouping
+-    # End of quarter grouping
 -    if "eoq" in period or period == "QE":
-+    if "eoq" in period:
++    if "eoq" in period or period in ("Q", "QE"):
          return group_returns(
              returns, [index.year, index.quarter], compounded=compounded
          )
@@ -545,53 +1944,73 @@ index 14c235d..5e00422 100644
 -
 -    # Default: return original data
 -    return returns
-+    # Unrecognised period code - fail loudly rather than silently returning
-+    # the unaggregated series.
++    # A silent fallthrough here once returned daily data labeled as aggregated
 +    raise ValueError(
-+        f"Unrecognised aggregation period {period!r}. Use one of "
-+        "'D', 'W', 'M'/'ME', 'Q'/'QE', 'Y'/'YE', or the spelled-out forms "
-+        "'day', 'week'/'eow', 'month'/'eom', 'quarter'/'eoq', 'year'/'eoy'."
++        f"Unrecognized aggregation period {period!r}: expected 'D', 'W', 'M', "
++        "'Q', 'Y'/'A' (or 'ME'/'QE'/'YE', 'month'/'quarter'/'year'/'week', "
++        "'eow'/'eom'/'eoq'/'eoy'), or a non-string grouper"
 +    )
  
  
  def to_excess_returns(returns: Returns, rf: float, nperiods: int | None = None) -> Returns:
-@@ -580,7 +626,7 @@ def _prepare_prices(data, base=1.0):
+@@ -555,7 +551,7 @@ def _prepare_prices(data, base=1.0):
+     pd.Series or pd.DataFrame
+         Cleaned price data
+     """
+-    data = data.copy()
++    data = _normalize_date_index(data).copy()
+     if isinstance(data, _pd.DataFrame):
+         for col in data.columns:
+             # Cache dropna operation to avoid repeated computation
+@@ -574,9 +570,9 @@ def _prepare_prices(data, base=1.0):
+         data = data.fillna(0).replace([_np.inf, -_np.inf], float("NaN"))
+ 
+     # Normalize timezone information for consistency
+-    # Convert to UTC if timezone-aware, then make naive
++    # Drop the zone, keep the local timestamp, so a bar keeps its trading date
+     if hasattr(data.index, 'tz') and data.index.tz is not None:
+-        data = data.tz_convert('UTC').tz_localize(None)
++        data = data.tz_localize(None)
      return data
  
  
--def _prepare_returns(data, rf=0.0, nperiods=None):
-+def _prepare_returns(data, rf=0.0, nperiods=None, apply_rf=True):
-     """
-     Convert price data into returns and perform cleanup
- 
-@@ -592,6 +638,9 @@ def _prepare_returns(data, rf=0.0, nperiods=None):
-         Risk-free rate
+@@ -589,25 +585,23 @@ def _prepare_returns(data, rf=0.0, nperiods=None):
+     data : pd.Series or pd.DataFrame
+         Input data (prices or returns)
+     rf : float, default 0.0
+-        Risk-free rate
++        Risk-free rate, annualized
      nperiods : int, optional
-         Number of periods for risk-free rate conversion
-+    apply_rf : bool, default True
-+        Whether to subtract the risk-free rate. Callers that handle rf
-+        themselves, or that must not double-subtract it, pass False.
+-        Number of periods for risk-free rate conversion
++        Periods per year used to deannualize rf. Defaults to 252 when rf is
++        non-zero and none is given, because every caller of this function
++        passes an annualized rate and deducting it whole from each observation
++        is never the intent.
  
      Returns
      -------
-@@ -599,15 +648,13 @@ def _prepare_returns(data, rf=0.0, nperiods=None):
+     pd.Series or pd.DataFrame
          Cleaned returns data
      """
-     # Try to get from cache first
+-    # Try to get from cache first
 -    cache_key = _generate_cache_key(data, rf, nperiods)
-+    cache_key = _generate_cache_key(data, rf, nperiods, apply_rf)
-     if cache_key:
-         with _cache_lock:
-             if cache_key in _PREPARE_RETURNS_CACHE:
-                 return _PREPARE_RETURNS_CACHE[cache_key].copy()
- 
-     data = data.copy()
+-    if cache_key:
+-        with _cache_lock:
+-            if cache_key in _PREPARE_RETURNS_CACHE:
+-                return _PREPARE_RETURNS_CACHE[cache_key].copy()
+-
+-    data = data.copy()
 -    # Get calling function name for conditional processing
 -    function = inspect.stack()[1][3]
++    data = _normalize_date_index(data).copy()
++    # Get calling function name for conditional processing. f_back reads only the
++    # immediate caller's frame; inspect.stack() builds the whole stack with source
++    # context and costs about 4ms per call.
++    function = inspect.currentframe().f_back.f_code.co_name
  
      # Process DataFrame columns
      if isinstance(data, _pd.DataFrame):
-@@ -628,24 +675,17 @@ def _prepare_returns(data, rf=0.0, nperiods=None):
+@@ -628,35 +622,27 @@ def _prepare_returns(data, rf=0.0, nperiods=None):
      if isinstance(data, (_pd.DataFrame, _pd.Series)):
          data = data.fillna(0).replace([_np.inf, -_np.inf], float("NaN"))
  
@@ -604,8 +2023,21 @@ index 14c235d..5e00422 100644
 -    ]
 -
 -    # Calculate excess returns if rf > 0 and function needs it
--    if function not in unnecessary_function_calls:
--        if rf > 0:
++    # Functions that must not have excess returns applied here. Only
++    # _prepare_benchmark qualifies: its callers pass rf so the benchmark lines
++    # up with the strategy, but the ratio functions downstream subtract rf
++    # themselves, so converting here as well would deduct it twice. cagr and
++    # gain_to_pain_ratio were listed too, which silently voided the rf argument
++    # both of them document.
++    unnecessary_function_calls = ["_prepare_benchmark"]
++
++    # Calculate excess returns if rf > 0 and function needs it. nperiods falls
++    # back to 252 rather than to no conversion at all: to_excess_returns leaves
++    # rf annualized when it is None, so a caller that omits it deducts a whole
++    # year of risk-free return from every observation and gets a plausible
++    # looking negative instead of an error.
+     if function not in unnecessary_function_calls:
+         if rf > 0:
 -            result = to_excess_returns(data, rf, nperiods)
 -            # Cache the result
 -            if cache_key:
@@ -613,32 +2045,1858 @@ index 14c235d..5e00422 100644
 -                with _cache_lock:
 -                    _PREPARE_RETURNS_CACHE[cache_key] = result.copy()
 -            return result
-+    # Calculate excess returns when the caller asked for them.
-+    # rf != 0 rather than rf > 0: negative policy rates are real and a
-+    # negative rf must raise the excess return, not be silently dropped.
-+    if apply_rf and rf != 0:
-+        result = to_excess_returns(data, rf, nperiods)
-+        # Cache the result
-+        if cache_key:
-+            _clear_cache_if_full()
-+            with _cache_lock:
-+                _PREPARE_RETURNS_CACHE[cache_key] = result.copy()
-+        return result
++            return to_excess_returns(data, rf, nperiods if nperiods else 252)
  
      # Normalize timezone information for consistency
-     # Convert to UTC if timezone-aware, then make naive
-@@ -737,9 +777,12 @@ def _prepare_benchmark(benchmark=None, period="max", rf=0.0, prepare_returns=Tru
-         benchmark = benchmark.tz_convert('UTC').tz_localize(None)
+-    # Convert to UTC if timezone-aware, then make naive
++    # Drop the zone, keep the local timestamp, so a bar keeps its trading date
+     if hasattr(data.index, 'tz') and data.index.tz is not None:
+-        data = data.tz_convert('UTC').tz_localize(None)
+-
+-    # Cache the result
+-    if cache_key:
+-        _clear_cache_if_full()
+-        with _cache_lock:
+-            _PREPARE_RETURNS_CACHE[cache_key] = data.copy()
++        data = data.tz_localize(None)
+ 
+     return data
+ 
+@@ -717,6 +703,16 @@ def _prepare_benchmark(benchmark=None, period="max", rf=0.0, prepare_returns=Tru
+     elif isinstance(benchmark, _pd.DataFrame):
+         benchmark = benchmark[benchmark.columns[0]].copy()
+ 
++    # Normalize timezones before any alignment below, which reindexes the
++    # benchmark onto the strategy's period and raises outright when one index
++    # carries a timezone and the other does not. Drop the zone while keeping the
++    # local timestamp, matching reports.metrics, so a bar keeps its own trading
++    # date instead of moving a day for markets east of UTC.
++    if getattr(benchmark.index, "tz", None) is not None:
++        benchmark = benchmark.tz_localize(None)
++    if isinstance(period, _pd.DatetimeIndex) and period.tz is not None:
++        period = period.tz_localize(None)
++
+     # Align benchmark with strategy period if needed
+     if isinstance(period, _pd.DatetimeIndex) and set(period) != set(benchmark.index):
+ 
+@@ -732,9 +728,9 @@ def _prepare_benchmark(benchmark=None, period="max", rf=0.0, prepare_returns=Tru
+         benchmark = benchmark[benchmark.index.isin(period)]
+ 
+     # Normalize timezone information for consistent comparisons
+-    # Convert to UTC if timezone-aware, then make naive
++    # Drop the zone, keep the local timestamp, so a bar keeps its trading date
+     if hasattr(benchmark.index, 'tz') and benchmark.index.tz is not None:
+-        benchmark = benchmark.tz_convert('UTC').tz_localize(None)
++        benchmark = benchmark.tz_localize(None)
      # If already timezone-naive, no action needed
  
--    # Prepare returns or return raw data
-+    # Prepare returns or return raw data.
-+    # apply_rf=False: every caller that passes rf here also passes the same rf
-+    # to the metric it feeds (sharpe, sortino, ...), which subtracts it itself.
-+    # Subtracting here as well would double-count the risk-free rate.
-     if prepare_returns:
--        return _prepare_returns(benchmark.dropna(), rf=rf)
-+        return _prepare_returns(benchmark.dropna(), rf=rf, apply_rf=False)
-     return benchmark.dropna()
+     # Prepare returns or return raw data
+@@ -867,7 +863,10 @@ def make_index(
+     Args:
+         * ticker_weights (Dict): A python dict with tickers as keys
+             and weights as values
+-        * rebalance: Pandas resample interval or None for never
++        * rebalance: Pandas resample interval, or None for never. Weights are
++            reset to the given targets at the start of each interval and drift
++            with performance in between; None holds the initial weights for the
++            whole span, so a strong member grows into a larger share of it
+         * period: time period of the returns to be downloaded
+         * returns (Series, DataFrame): Optional. Returns If provided,
+             it will fist check if returns for the given ticker are in
+@@ -897,25 +896,32 @@ def make_index(
+     if match_dates:
+         index = index[max(index.ne(0).idxmax()):]
+ 
+-    # Handle case with no rebalancing
+-    if rebalance is None:
+-        # Apply weights directly to returns
+-        for ticker, weight in ticker_weights.items():
+-            index[ticker] = weight * index[ticker]
+-        return index.sum(axis=1)
+-
+     last_day = index.index[-1]
++    weights = _pd.Series(ticker_weights, dtype=float).reindex(index.columns)
++
++    # One holding period per rebalance interval, the whole span when never.
++    # Inside a period the target weights are applied once and then left to
++    # drift, which is what distinguishes a rebalanced index from a held one;
++    # summing weight * return every day, as this did before, silently rebalances
++    # daily whatever interval the caller asked for.
++    if rebalance is None:
++        blocks = [index]
++    else:
++        freq = get_frequency_alias(rebalance)
++        blocks = [block for _, block in index.groupby(_pd.Grouper(freq=freq)) if not block.empty]
+ 
+-    # Apply weights to each ticker's returns
+-    # For a weighted portfolio, each day's portfolio return is sum of (weight * asset_return)
+-    for ticker, weight in ticker_weights.items():
+-        index[ticker] = weight * index[ticker]
++    # Weights need not sum to 1; the remainder is cash that neither grows nor
++    # shrinks, which keeps a partly invested book scaling the way the old
++    # weighted sum did instead of booking the uninvested part as a loss.
++    cash = 1.0 - float(weights.sum())
+ 
+-    # Calculate daily portfolio returns as sum of weighted asset returns
+-    portfolio_returns = index.sum(axis=1)
++    pieces = []
++    for block in blocks:
++        # value of one unit held at the target weights from the period start
++        value = ((1 + block).cumprod() * weights).sum(axis=1) + cash
++        pieces.append(value / value.shift(1).fillna(1.0) - 1.0)
+ 
+-    # Remove rows where all values are NaN
+-    portfolio_returns = portfolio_returns.dropna()
++    portfolio_returns = _pd.concat(pieces).sort_index().dropna()
+     return portfolio_returns[portfolio_returns.index <= last_day]
  
  
+diff --git a/tests/test_compat.py b/tests/test_compat.py
+index 7ec809b..25b3694 100644
+--- a/tests/test_compat.py
++++ b/tests/test_compat.py
+@@ -11,7 +11,6 @@ from quantstats._compat import (
+     normalize_timezone,
+     safe_resample,
+     safe_concat,
+-    safe_append,
+ )
+ 
+ 
+@@ -113,21 +112,3 @@ class TestSafeConcat:
+         s2.name = "B"
+         result = safe_concat([s1, s2], axis=1)
+         assert result.shape[1] == 2
+-
+-
+-class TestSafeAppend:
+-    """Test safe append function."""
+-
+-    def test_append_dataframes(self, sample_series):
+-        """Test appending DataFrames."""
+-        df1 = pd.DataFrame({"A": sample_series[:50]})
+-        df2 = pd.DataFrame({"A": sample_series[50:]})
+-        result = safe_append(df1, df2)
+-        assert len(result) == len(sample_series)
+-
+-    def test_append_ignore_index(self, sample_series):
+-        """Test append with ignore_index."""
+-        df1 = pd.DataFrame({"A": [1, 2, 3]})
+-        df2 = pd.DataFrame({"A": [4, 5, 6]})
+-        result = safe_append(df1, df2, ignore_index=True)
+-        assert list(result.index) == [0, 1, 2, 3, 4, 5]
+diff --git a/tests/test_regressions.py b/tests/test_regressions.py
+new file mode 100644
+index 0000000..0c51787
+--- /dev/null
++++ b/tests/test_regressions.py
+@@ -0,0 +1,1666 @@
++"""
++Regression tests for defects found by audit.
++
++Each test pins one reported bug and is written to fail against the unfixed code.
++"""
++
++import matplotlib
++
++matplotlib.use("Agg")
++
++import matplotlib.pyplot as plt
++
++import ast
++import contextlib
++import inspect
++import io
++from pathlib import Path
++
++import numpy as np
++import pandas as pd
++import pytest
++
++import quantstats as qs
++from quantstats import utils
++
++
++@pytest.fixture
++def returns():
++    """Daily returns with a seed unique to this module, so no other test primes
++    any value-keyed state with the same data."""
++    idx = pd.date_range("2021-03-01", periods=400, freq="B")
++    values = np.random.default_rng(20260728).normal(0.0006, 0.011, len(idx))
++    return pd.Series(values, index=idx, name="Strategy")
++
++
++@pytest.fixture
++def benchmark():
++    idx = pd.date_range("2021-03-01", periods=400, freq="B")
++    values = np.random.default_rng(20260729).normal(0.0004, 0.009, len(idx))
++    return pd.Series(values, index=idx, name="Benchmark")
++
++
++class TestPrepareReturnsContainerType:
++    """QS-1: _prepare_returns must return the container type it was given.
++
++    A Series and a one-column DataFrame holding identical values produce the same
++    pandas value hash, so any value-keyed reuse must still distinguish them.
++    """
++
++    def test_series_and_single_column_frame_keep_their_own_type(self, returns):
++        prepared_frame = utils._prepare_returns(returns.to_frame())
++        prepared_series = utils._prepare_returns(returns)
++        assert isinstance(prepared_frame, pd.DataFrame)
++        assert isinstance(prepared_series, pd.Series)
++
++    def test_series_and_single_column_frame_hold_the_same_values(self, returns):
++        prepared_frame = utils._prepare_returns(returns.to_frame())
++        prepared_series = utils._prepare_returns(returns)
++        pd.testing.assert_series_equal(
++            prepared_frame[returns.name], prepared_series, check_names=False
++        )
++
++    def test_repeated_calls_agree(self, returns):
++        pd.testing.assert_series_equal(
++            utils._prepare_returns(returns), utils._prepare_returns(returns)
++        )
++
++
++class TestSingleColumnDataFrame:
++    """QS-2: a one-column DataFrame is a documented input shape and must behave
++    like the equivalent Series."""
++
++    def test_metrics_accepts_a_single_column_frame(self, returns):
++        out = qs.reports.metrics(returns.to_frame(), display=False)
++        assert isinstance(out, pd.DataFrame)
++        assert out.shape[1] == 1
++
++    def test_metrics_matches_the_equivalent_series(self, returns):
++        from_frame = qs.reports.metrics(returns.to_frame(), display=False)
++        from_series = qs.reports.metrics(returns, display=False)
++        pd.testing.assert_frame_equal(
++            from_frame, from_series, check_names=False, check_like=False
++        )
++
++    def test_metrics_accepts_a_single_column_frame_with_benchmark(
++        self, returns, benchmark
++    ):
++        out = qs.reports.metrics(returns.to_frame(), benchmark, display=False)
++        assert out.shape[1] == 2
++
++    @pytest.mark.parametrize(
++        "entry_point",
++        ["metrics", "basic", "plots", "html", "snapshot"],
++    )
++    def test_every_entry_point_accepts_a_single_column_frame(
++        self, returns, benchmark, tmp_path, entry_point
++    ):
++        """Class check for QS-2: the one-column DataFrame shape reached each of
++        these entry points through a different code path, and each had its own
++        way of failing."""
++        one = returns.to_frame()
++        if entry_point == "metrics":
++            qs.reports.metrics(one, benchmark, display=False)
++        elif entry_point == "basic":
++            qs.reports.basic(one, benchmark, display=False)
++        elif entry_point == "plots":
++            qs.reports.plots(one, show=False)
++        elif entry_point == "html":
++            qs.reports.html(one, output=str(tmp_path / "report.html"))
++        elif entry_point == "snapshot":
++            qs.plots.snapshot(one, show=False)
++
++
++def _fingerprint(obj):
++    """Everything about a pandas object a caller would notice being changed."""
++    return (
++        obj.values.tobytes(),
++        str(getattr(obj.index, "tz", None)),
++        # Rendered, not raw bytes: a string index is backed by a StringArray,
++        # which has no tobytes, and NaT compares unequal to itself while its
++        # rendering does not. Carries the dtype so a converted index is caught.
++        str(obj.index.dtype),
++        tuple(obj.index.astype(str)),
++        str(getattr(obj, "name", None)),
++        tuple(obj.columns) if isinstance(obj, pd.DataFrame) else None,
++    )
++
++
++class TestCallerDataIsNotMutated:
++    """QS-4: reading a report or drawing a plot must leave the caller's own
++    objects untouched. Both known offenders wrote through to the argument: one
++    stripped the timezone from the index, the other renamed the series."""
++
++    @pytest.fixture
++    def tz_returns(self):
++        idx = pd.date_range("2020-01-01", periods=300, freq="B", tz="America/New_York")
++        values = np.random.default_rng(31).normal(0.0005, 0.012, len(idx))
++        return pd.Series(values, index=idx, name="MyStrategy")
++
++    def test_metrics_without_date_matching_leaves_the_index_alone(self, tz_returns):
++        before = _fingerprint(tz_returns)
++        qs.reports.metrics(tz_returns, match_dates=False, display=False)
++        assert _fingerprint(tz_returns) == before
++
++    def test_snapshot_leaves_the_series_name_alone(self, returns):
++        # a name snapshot() would not have chosen itself, so the check can fail
++        series = returns.rename("MyStrategy")
++        before = _fingerprint(series)
++        fig = qs.plots.snapshot(series, show=False)
++        plt.close(fig)
++        assert _fingerprint(series) == before
++
++    @pytest.mark.parametrize(
++        "call",
++        [
++            "metrics",
++            "metrics_match_dates_off",
++            "plots",
++            "snapshot",
++            "monthly_returns",
++            "make_portfolio",
++        ],
++    )
++    def test_entry_points_leave_their_arguments_alone(self, returns, call):
++        """Class check: every one of these takes the caller's object and must
++        treat it as read-only."""
++        returns = returns.rename("MyStrategy")
++        before = _fingerprint(returns)
++        if call == "metrics":
++            qs.reports.metrics(returns, display=False)
++        elif call == "metrics_match_dates_off":
++            qs.reports.metrics(returns, match_dates=False, display=False)
++        elif call == "plots":
++            qs.reports.plots(returns, show=False)
++        elif call == "snapshot":
++            qs.plots.snapshot(returns, show=False)
++        elif call == "monthly_returns":
++            qs.stats.monthly_returns(returns)
++        elif call == "make_portfolio":
++            qs.utils.make_portfolio(returns, 1e5)
++        plt.close("all")
++        assert _fingerprint(returns) == before
++
++
++class TestTimezoneAwareInput:
++    """QS-8: returns and benchmark that both carry a timezone must report, and
++    report the same numbers as the equivalent naive data."""
++
++    @pytest.fixture
++    def aware(self):
++        idx = pd.date_range("2020-01-01", periods=400, freq="B", tz="US/Eastern")
++        rng = np.random.default_rng(41)
++        return (
++            pd.Series(rng.normal(0.0005, 0.012, len(idx)), index=idx, name="Strategy"),
++            pd.Series(rng.normal(0.0004, 0.010, len(idx)), index=idx, name="Benchmark"),
++        )
++
++    @staticmethod
++    def _naive(series):
++        # the zone is dropped, the local timestamp kept, so the trading date holds
++        return series.tz_localize(None)
++
++    def test_metrics_accepts_a_tz_aware_benchmark(self, aware):
++        returns, benchmark = aware
++        out = qs.reports.metrics(returns, benchmark, display=False)
++        assert out.shape[1] == 2
++
++    def test_metrics_matches_the_naive_equivalent(self, aware):
++        returns, benchmark = aware
++        from_aware = qs.reports.metrics(returns, benchmark, display=False)
++        from_naive = qs.reports.metrics(
++            self._naive(returns), self._naive(benchmark), display=False
++        )
++        pd.testing.assert_frame_equal(from_aware, from_naive)
++
++    def test_benchmark_column_holds_real_numbers(self, aware):
++        """A fix that stops the crash but misaligns the indexes would leave the
++        benchmark column filled with the "-" placeholder."""
++        returns, benchmark = aware
++        out = qs.reports.metrics(returns, benchmark, display=False)
++        benchmark_column = out.iloc[:, 0]
++        placeholders = (benchmark_column.astype(str) == "-").sum()
++        assert placeholders < len(benchmark_column) / 2
++
++    def test_html_accepts_tz_aware_inputs(self, aware, tmp_path):
++        returns, benchmark = aware
++        output = tmp_path / "tz.html"
++        qs.reports.html(returns, benchmark, output=str(output))
++        assert output.exists()
++
++
++class TestTimezoneConventionIsUniform:
++    """QS-9: the package must drop timezones one way everywhere. Dropping the
++    zone keeps the local timestamp, so a bar keeps its own trading date; the
++    result must therefore match the wall-clock-naive equivalent exactly."""
++
++    @staticmethod
++    def _pair(zone):
++        idx = pd.date_range("2020-01-01", periods=400, freq="B", tz=zone)
++        values = np.random.default_rng(53).normal(0.0005, 0.012, len(idx))
++        aware = pd.Series(values, index=idx, name="Strategy")
++        return aware, aware.tz_localize(None)
++
++    @pytest.mark.parametrize("zone", ["Asia/Tokyo", "Europe/London", "US/Eastern"])
++    def test_stats_match_the_wall_clock_naive_equivalent(self, zone):
++        aware, naive = self._pair(zone)
++        pd.testing.assert_frame_equal(
++            qs.stats.monthly_returns(aware), qs.stats.monthly_returns(naive)
++        )
++
++    @pytest.mark.parametrize("zone", ["Asia/Tokyo", "Europe/London", "US/Eastern"])
++    def test_reports_match_the_wall_clock_naive_equivalent(self, zone):
++        aware, naive = self._pair(zone)
++        pd.testing.assert_frame_equal(
++            qs.reports.metrics(aware, display=False),
++            qs.reports.metrics(naive, display=False),
++        )
++
++    @pytest.mark.parametrize("zone", ["Asia/Tokyo", "Europe/London"])
++    def test_no_year_appears_before_the_data_starts(self, zone):
++        """A series whose first bar is 2020-01-01 in its own market must not
++        report a 2019 row; UTC conversion moved eastern bars back a day."""
++        aware, _ = self._pair(zone)
++        assert "2019" not in [str(year) for year in qs.stats.monthly_returns(aware).index]
++
++    @pytest.mark.parametrize("zone", ["Asia/Tokyo", "US/Eastern"])
++    def test_aggregate_returns_matches_too(self, zone):
++        aware, naive = self._pair(zone)
++        pd.testing.assert_series_equal(
++            qs.utils.aggregate_returns(aware, "YE"),
++            qs.utils.aggregate_returns(naive, "YE"),
++        )
++
++
++class TestPrepareReturnsFlagIsHonoured:
++    """QS-6: reports.metrics documents prepare_returns, so it must do something.
++    The prepared frame used to be built and then overwritten one line later."""
++
++    def test_price_input_is_converted_to_returns(self, returns):
++        prices = qs.utils.to_prices(returns, base=100)
++        from_prices = qs.reports.metrics(prices, display=False)
++        from_returns = qs.reports.metrics(qs.utils.to_returns(prices), display=False)
++        pd.testing.assert_frame_equal(from_prices, from_returns)
++
++    def test_the_flag_changes_the_result(self, returns):
++        prices = qs.utils.to_prices(returns, base=100)
++        honoured = qs.reports.metrics(prices, prepare_returns=True, display=False)
++        skipped = qs.reports.metrics(prices, prepare_returns=False, display=False)
++        assert not honoured.equals(skipped)
++
++    def test_returns_input_is_unaffected_by_the_flag(self, returns):
++        """Already-prepared returns are near a fixed point of the preparation,
++        so the flag must not move them."""
++        pd.testing.assert_frame_equal(
++            qs.reports.metrics(returns, prepare_returns=True, display=False),
++            qs.reports.metrics(returns, prepare_returns=False, display=False),
++        )
++
++
++def _line_values(fig):
++    """Every y-value drawn on a figure's first axes, as one array."""
++    values = [line.get_ydata() for line in fig.axes[0].get_lines()]
++    return np.concatenate(values) if values else np.array([])
++
++
++def _drawn(plot_fn, data):
++    fig = plot_fn(data, show=False)
++    values = _line_values(fig)
++    plt.close(fig)
++    return values
++
++
++def _same(a, b):
++    # equity curves start with NaN, and allclose is False for any NaN unless told
++    return a.shape == b.shape and np.allclose(a, b, equal_nan=True)
++
++
++SINGLE_SERIES_PLOTS = ["distribution", "drawdowns_periods", "earnings"]
++
++
++class TestSingleSeriesPlotsWithFrames:
++    """QS-7: these wrappers document DataFrame input while the core routine they
++    call draws one series. Each must reduce, and reduce the same way."""
++
++    @pytest.mark.parametrize("plot_name", SINGLE_SERIES_PLOTS)
++    def test_one_column_frame_matches_the_equivalent_series(self, returns, plot_name):
++        plot_fn = getattr(qs.plots, plot_name)
++        assert _same(_drawn(plot_fn, returns.to_frame()), _drawn(plot_fn, returns))
++
++    @pytest.mark.parametrize("plot_name", SINGLE_SERIES_PLOTS)
++    def test_multi_strategy_frame_uses_the_equal_weighted_mean(
++        self, returns, plot_name
++    ):
++        frame = pd.DataFrame({"A": returns, "B": returns * 0.8 + 0.0001})
++        plot_fn = getattr(qs.plots, plot_name)
++        from_frame = _drawn(plot_fn, frame)
++        assert _same(from_frame, _drawn(plot_fn, frame.mean(axis=1)))
++        assert not _same(from_frame, _drawn(plot_fn, frame["A"]))
++
++
++class TestDistributionWithMultipleStrategies:
++    """QS-3: plots.distribution documents DataFrame input but assumed one series."""
++
++    def test_multi_column_frame_renders(self, returns):
++        frame = pd.DataFrame({"A": returns, "B": returns * 0.8 + 0.0001})
++        fig = qs.plots.distribution(frame, show=False)
++        assert fig is not None
++
++    def test_multi_column_frame_plots_the_equal_weighted_mean(self, returns):
++        """The reduction must be the equal-weighted mean, not the first column:
++        every plotted line matches the mean series exactly and none of them
++        matches column A, which differs from the mean."""
++        frame = pd.DataFrame({"A": returns, "B": returns * 0.8 + 0.0001})
++
++        def plotted(data):
++            fig = qs.plots.distribution(data, show=False)
++            values = np.concatenate([line.get_ydata() for line in fig.axes[0].get_lines()])
++            plt.close(fig)
++            return values
++
++        from_frame = plotted(frame)
++        from_mean = plotted(frame.mean(axis=1))
++        from_first = plotted(frame["A"])
++        np.testing.assert_allclose(from_frame, from_mean)
++        assert not np.allclose(from_frame, from_first)
++
++    def test_multi_column_title_marks_the_aggregation(self, returns):
++        frame = pd.DataFrame({"A": returns, "B": returns * 0.8 + 0.0001})
++        fig = qs.plots.distribution(frame, show=False)
++        assert "equal-weighted" in fig._suptitle.get_text()
++        single = qs.plots.distribution(returns, show=False)
++        assert "equal-weighted" not in single._suptitle.get_text()
++
++
++class TestMetricsCallHistory:
++    """QS-1: a report's result must not depend on what was reported before it."""
++
++    def test_benchmark_report_survives_a_benchmark_free_report(
++        self, returns, benchmark
++    ):
++        qs.reports.metrics(returns, display=False)
++        out = qs.reports.metrics(returns, benchmark, display=False)
++        assert out.shape[1] == 2
++
++    def test_benchmark_report_is_independent_of_call_history(
++        self, returns, benchmark
++    ):
++        expected = qs.reports.metrics(returns, benchmark, display=False)
++        qs.reports.metrics(returns, display=False)
++        actual = qs.reports.metrics(returns, benchmark, display=False)
++        pd.testing.assert_frame_equal(actual, expected)
++
++
++class TestAggregateTokens:
++    """QS-13: utils.aggregate_returns silently returned unaggregated data for
++    the letter codes stats.compare documents ('M', 'Q', 'Y', 'A'), crashed on
++    the week tokens under installed pandas (DatetimeIndex.week is gone), made
++    the documented non-string custom-grouper branch unreachable, and fell
++    through silently on unknown tokens."""
++
++    @pytest.fixture
++    def multi_year(self):
++        idx = pd.DatetimeIndex(
++            ["2023-01-20", "2023-07-05", "2023-11-10", "2023-12-15",
++             "2024-01-02", "2024-01-15", "2024-02-05"]
++        )
++        return pd.Series([0.04, 0.05, 0.01, 0.02, 0.03, 0.10, 0.20], index=idx)
++
++    def test_monthly_letter_code_groups_per_year_month(self, multi_year):
++        got = utils.aggregate_returns(multi_year, "M")
++        assert len(got) == 6
++        assert np.allclose(got.values, utils.aggregate_returns(multi_year, "ME").values)
++        assert np.isclose(got.values[4], 1.03 * 1.10 - 1)
++
++    def test_quarterly_letter_code(self, multi_year):
++        got = utils.aggregate_returns(multi_year, "Q")
++        assert len(got) == 4
++        assert np.isclose(got.values[-1], 1.03 * 1.10 * 1.20 - 1)
++
++    @pytest.mark.parametrize("token", ["Y", "A"])
++    def test_yearly_letter_codes(self, multi_year, token):
++        got = utils.aggregate_returns(multi_year, token)
++        assert len(got) == 2
++        assert np.isclose(got.values[0], 1.04 * 1.05 * 1.01 * 1.02 - 1)
++        assert np.isclose(got.values[1], 1.03 * 1.10 * 1.20 - 1)
++
++    def test_week_tokens_work_on_installed_pandas(self, multi_year):
++        per_year_week = utils.aggregate_returns(multi_year, "W")
++        iso = multi_year.index.isocalendar()
++        assert len(per_year_week) == len(set(zip(multi_year.index.year, iso.week)))
++        seasonal_week = utils.aggregate_returns(multi_year, "week")
++        assert len(seasonal_week) == len(set(iso.week))
++
++    def test_seasonal_word_tokens_keep_cross_year_semantics(self, multi_year):
++        seasonal = utils.aggregate_returns(multi_year, "month")
++        assert len(seasonal) == 5
++        assert np.isclose(seasonal.loc[1], 1.04 * 1.03 * 1.10 - 1)
++
++    def test_nonstring_grouper_reaches_custom_branch(self, multi_year):
++        got = utils.aggregate_returns(multi_year, multi_year.index.year)
++        assert np.allclose(got.values, utils.aggregate_returns(multi_year, "Y").values)
++
++    def test_unknown_token_raises_naming_token(self, multi_year):
++        with pytest.raises(ValueError, match="fortnight"):
++            utils.aggregate_returns(multi_year, "fortnight")
++
++    def test_compare_letter_code_aggregates(self, multi_year):
++        cmp_m = qs.stats.compare(multi_year, multi_year, aggregate="M")
++        assert len(cmp_m) == 6
++        assert np.allclose(cmp_m["Multiplier"].values, 1.0)
++        cmp_w = qs.stats.compare(multi_year, multi_year, aggregate="W")
++        assert len(cmp_w) < len(multi_year) + 1
++
++
++class TestUlcerDenominator:
++    """QS-14: ulcer_index must implement its documented formula, the square
++    root of the mean of squared drawdowns; the code divided the sum by n-1,
++    inflating the index by sqrt(n/(n-1)) and dragging UPI and the Serenity
++    Index with it."""
++
++    @pytest.fixture
++    def fixture4(self):
++        idx = pd.to_datetime(
++            ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]
++        )
++        return pd.Series([0.10, -0.05, 0.20, -0.10], index=idx)
++
++    def test_ulcer_index_mean_form(self, fixture4):
++        dd = np.array([0.0, -0.05, 0.0, -0.10])
++        assert np.isclose(qs.stats.ulcer_index(fixture4), np.sqrt((dd**2).mean()))
++
++    def test_upi_flows_through_corrected_denominator(self, fixture4):
++        assert np.isclose(
++            qs.stats.ulcer_performance_index(fixture4),
++            qs.stats.comp(fixture4) / qs.stats.ulcer_index(fixture4),
++        )
++
++    def test_serenity_flows_through_corrected_denominator(self, fixture4):
++        dd = qs.stats.to_drawdown_series(fixture4)
++        pitfall = -qs.stats.cvar(dd) / fixture4.std()
++        expected = fixture4.sum() / (qs.stats.ulcer_index(fixture4) * pitfall)
++        assert np.isclose(qs.stats.serenity_index(fixture4), expected)
++
++
++class TestMontecarloDistributions:
++    """QS-15: montecarlo_sharpe and montecarlo_cagr must report genuine
++    sampling distributions. Shuffling preserves the statistics they simulate,
++    so the old outputs were a point mass (cagr, std ~1e-15) and a
++    leave-one-out artifact (sharpe, std ~18x below sampling uncertainty)."""
++
++    @pytest.fixture
++    def long_returns(self):
++        idx = pd.date_range("2023-01-02", periods=252, freq="B")
++        vals = np.random.default_rng(11).normal(0.0005, 0.01, 252)
++        return pd.Series(vals, index=idx, name="R")
++
++    def test_montecarlo_cagr_has_genuine_spread(self, long_returns):
++        dist = qs.stats.montecarlo_cagr(long_returns, sims=200, seed=5)
++        assert dist["std"] > 1e-9
++        assert dist["percentile_95"] - dist["percentile_5"] > 1e-6
++
++    def test_montecarlo_sharpe_spread_matches_sampling_uncertainty(self, long_returns):
++        dist = qs.stats.montecarlo_sharpe(long_returns, sims=500, seed=5)
++        vals = long_returns.values
++        sr_daily = vals.mean() / vals.std(ddof=1)
++        se_annual = np.sqrt((1 + 0.5 * sr_daily**2) / len(vals)) * np.sqrt(252)
++        assert 0.5 * se_annual < dist["std"] < 2.0 * se_annual
++        assert abs(dist["mean"] - qs.stats.sharpe(long_returns)) < 2 * dist["std"]
++
++    def test_seeded_reproducibility(self, long_returns):
++        a = qs.stats.montecarlo_sharpe(long_returns, sims=50, seed=9)
++        b = qs.stats.montecarlo_sharpe(long_returns, sims=50, seed=9)
++        assert a == b
++        c = qs.stats.montecarlo_cagr(long_returns, sims=50, seed=9)
++        d = qs.stats.montecarlo_cagr(long_returns, sims=50, seed=9)
++        assert c == d
++
++    def test_montecarlo_core_still_permutation(self, long_returns):
++        mc = qs.stats.montecarlo(long_returns, sims=20, seed=3)
++        terminals = mc.data.iloc[-1].values
++        original = (1 + long_returns).prod() - 1
++        assert np.allclose(terminals, original, rtol=1e-9)
++
++
++class TestProbabilisticRatioScale:
++    """QS-16: probabilistic_ratio(annualize=True) multiplied the norm.cdf
++    probability by 252**0.5, returning ~13.7 on a documented 0-1 scale; a
++    probability does not annualize, so True must raise instead."""
++
++    @pytest.fixture
++    def long_returns(self):
++        idx = pd.date_range("2023-01-02", periods=252, freq="B")
++        vals = np.random.default_rng(11).normal(0.0005, 0.01, 252)
++        return pd.Series(vals, index=idx, name="R")
++
++    def test_annualize_true_raises(self, long_returns):
++        with pytest.raises(ValueError, match="annualize"):
++            qs.stats.probabilistic_ratio(long_returns, base="sharpe", annualize=True)
++        with pytest.raises(ValueError, match="annualize"):
++            qs.stats.probabilistic_sharpe_ratio(long_returns, annualize=True)
++        with pytest.raises(ValueError, match="annualize"):
++            qs.stats.probabilistic_sortino_ratio(long_returns, annualize=True)
++        with pytest.raises(ValueError, match="annualize"):
++            qs.stats.probabilistic_adjusted_sortino_ratio(long_returns, annualize=True)
++
++    def test_default_path_stays_probability(self, long_returns):
++        for fn in [
++            qs.stats.probabilistic_sharpe_ratio,
++            qs.stats.probabilistic_sortino_ratio,
++            qs.stats.probabilistic_adjusted_sortino_ratio,
++        ]:
++            v = fn(long_returns)
++            assert 0.0 <= v <= 1.0
++
++
++def _canonical(value):
++    """Comparable numeric form for the result shapes these entry points return:
++    float, Series, DataFrame, dict, or MonteCarloResult."""
++    if isinstance(value, (pd.Series, pd.DataFrame)):
++        return np.asarray(value, dtype=float).ravel()
++    if isinstance(value, dict):
++        return np.array([float(value[k]) for k in sorted(value)])
++    if hasattr(value, "stats"):
++        return _canonical(value.stats)
++    return np.array([float(value)])
++
++
++_STRING_INDEX_CALLS = {
++    "volatility": lambda r, b: qs.stats.volatility(r),
++    "volatility_unprepared": lambda r, b: qs.stats.volatility(r, prepare_returns=False),
++    "sharpe": lambda r, b: qs.stats.sharpe(r),
++    "sortino": lambda r, b: qs.stats.sortino(r),
++    "omega": lambda r, b: qs.stats.omega(r),
++    "cagr": lambda r, b: qs.stats.cagr(r),
++    "calmar": lambda r, b: qs.stats.calmar(r),
++    "max_drawdown": lambda r, b: qs.stats.max_drawdown(r),
++    "to_drawdown_series": lambda r, b: qs.stats.to_drawdown_series(r),
++    "r_squared": lambda r, b: qs.stats.r_squared(r, b),
++    "r_squared_unprepared": lambda r, b: qs.stats.r_squared(r, b, prepare_returns=False),
++    "information_ratio": lambda r, b: qs.stats.information_ratio(r, b),
++    "information_ratio_unprepared": lambda r, b: qs.stats.information_ratio(
++        r, b, prepare_returns=False
++    ),
++    "greeks": lambda r, b: qs.stats.greeks(r, b),
++    "greeks_unprepared": lambda r, b: qs.stats.greeks(r, b, prepare_returns=False),
++    "rolling_greeks": lambda r, b: qs.stats.rolling_greeks(r, b),
++    "rolling_greeks_unprepared": lambda r, b: qs.stats.rolling_greeks(
++        r, b, prepare_returns=False
++    ),
++    "montecarlo": lambda r, b: qs.stats.montecarlo(r, sims=20, seed=3),
++    "montecarlo_sharpe": lambda r, b: qs.stats.montecarlo_sharpe(r, sims=20, seed=3),
++    "montecarlo_cagr": lambda r, b: qs.stats.montecarlo_cagr(r, sims=20, seed=3),
++}
++
++
++class TestStatsEntryPointsDoNotMutateCallerIndex:
++    """QS-10: utils.validate_input converted a non-datetime index in place
++    (data.index = pd.to_datetime(data.index)), so every one of the 15 call sites
++    in stats.py wrote through to the caller's object. The conversion moved to
++    the _prepare_* boundaries, which already work on their own copy."""
++
++    @pytest.fixture
++    def string_returns(self, returns):
++        """The caller's own object, indexed by date strings - the shape the
++        validator used to convert underneath them."""
++        return pd.Series(
++            returns.values.copy(),
++            index=[d.strftime("%Y-%m-%d") for d in returns.index],
++            name="MyStrategy",
++        )
++
++    @pytest.fixture
++    def offset_benchmark(self):
++        """A benchmark on its own span, so _prepare_benchmark's alignment branch
++        actually runs. With an identically indexed benchmark set(period) equals
++        set(benchmark.index), the branch is skipped, and the unprepared paths
++        then pass while the index they align on is still a string index."""
++        idx = pd.date_range("2021-01-01", periods=460, freq="B")
++        values = np.random.default_rng(20260730).normal(0.0004, 0.009, len(idx))
++        return pd.Series(values, index=idx, name="Benchmark")
++
++    def test_validate_input_leaves_the_caller_index_alone(self, string_returns):
++        before = list(string_returns.index)
++        assert utils.validate_input(string_returns) is True
++        assert list(string_returns.index) == before
++        assert not isinstance(string_returns.index, pd.DatetimeIndex)
++
++    def test_validate_input_still_rejects_an_unparseable_index(self):
++        bad = pd.Series([1.0, 2.0, 3.0], index=["not", "a", "date"])
++        with pytest.raises(utils.DataValidationError, match="datetime index"):
++            utils.validate_input(bad)
++
++    @pytest.mark.parametrize("call", sorted(_STRING_INDEX_CALLS))
++    def test_entry_points_leave_a_string_indexed_caller_alone(
++        self, string_returns, offset_benchmark, call
++    ):
++        """Class check over every stats.py validate_input call site."""
++        before = _fingerprint(string_returns)
++        bench_before = _fingerprint(offset_benchmark)
++        _STRING_INDEX_CALLS[call](string_returns, offset_benchmark)
++        assert _fingerprint(string_returns) == before
++        assert not isinstance(string_returns.index, pd.DatetimeIndex)
++        assert _fingerprint(offset_benchmark) == bench_before
++
++    @pytest.mark.parametrize("call", sorted(_STRING_INDEX_CALLS))
++    def test_string_index_still_computes_the_datetime_answer(
++        self, returns, string_returns, offset_benchmark, call
++    ):
++        """Not mutating must not mean not normalizing: a string-indexed caller
++        still gets the answer its datetime-indexed twin gets. Deleting the
++        conversion outright fails here even though it passes the probe above."""
++        from_strings = _canonical(
++            _STRING_INDEX_CALLS[call](string_returns, offset_benchmark)
++        )
++        from_dates = _canonical(
++            _STRING_INDEX_CALLS[call](returns.rename("MyStrategy"), offset_benchmark)
++        )
++        assert from_strings.shape == from_dates.shape
++        assert np.allclose(from_strings, from_dates, equal_nan=True)
++
++
++class TestPlotsNamespaceIsOnlyPlots:
++    """QS-17: quantstats/plots.py re-exports _plotting.wrappers with "import *",
++    the package's only star re-export, so before __all__ existed every bare
++    import in that module - typing.Any, TYPE_CHECKING, warnings,
++    _compat.safe_resample, the __future__ annotations flag and the local Returns
++    alias - arrived as public plotting API."""
++
++    @staticmethod
++    def _wrappers_source():
++        from quantstats._plotting import wrappers
++
++        with open(wrappers.__file__, encoding="utf-8") as fh:
++            return wrappers, fh.read()
++
++    def test_public_namespace_is_exactly_the_plot_entry_points(self):
++        import ast
++
++        wrappers, source = self._wrappers_source()
++        defined = {
++            node.name
++            for node in ast.parse(source).body
++            if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
++        }
++        public = {name for name in dir(qs.plots) if not name.startswith("_")}
++        assert public == defined
++        # __all__ tracks the file, so a new wrapper that forgets it fails here.
++        assert set(wrappers.__all__) == defined
++
++    def test_no_name_bound_by_an_import_line_is_public(self):
++        """The enumeration named in the finding: every name the import lines of
++        wrappers.py and plots.py bind, none of which may reach the namespace."""
++        import ast
++
++        _, source = self._wrappers_source()
++        sources = [source]
++        with open(qs.plots.__file__, encoding="utf-8") as fh:
++            sources.append(fh.read())
++
++        bound = set()
++        for src in sources:
++            for node in ast.walk(ast.parse(src)):
++                if isinstance(node, (ast.Import, ast.ImportFrom)):
++                    for alias in node.names:
++                        if alias.name != "*":
++                            bound.add(alias.asname or alias.name.split(".")[0])
++
++        public = {name for name in dir(qs.plots) if not name.startswith("_")}
++        assert bound, "enumeration found no import lines, so it proves nothing"
++        assert bound & public == set()
++
++
++class TestRiskFreeRateIsHonoured:
++    """QS-18: utils._prepare_returns read its caller's frame name and skipped the
++    excess-return conversion for cagr and gain_to_pain_ratio, so both documented
++    an rf parameter and ignored it, while reports passed rf straight into them.
++    Removing them from that list also required forwarding the period count,
++    because _prepare_returns only deannualizes rf when it is given one."""
++
++    @pytest.fixture
++    def long_returns(self):
++        idx = pd.date_range("2021-01-01", periods=756, freq="B")
++        vals = np.random.default_rng(2026).normal(0.0006, 0.011, 756)
++        return pd.Series(vals, index=idx, name="Strategy")
++
++    @staticmethod
++    def _excess(returns, rf, periods=252):
++        """rf deannualized the way to_excess_returns does it."""
++        return returns - ((1 + rf) ** (1.0 / periods) - 1.0)
++
++    @pytest.mark.parametrize("rf", [0.02, 0.05])
++    def test_cagr_honours_rf(self, long_returns, rf):
++        base = qs.stats.cagr(long_returns)
++        with_rf = qs.stats.cagr(long_returns, rf=rf)
++        assert with_rf != base
++        assert with_rf < base
++        # known answer: identical to running cagr on the deannualized excess series
++        assert np.isclose(with_rf, qs.stats.cagr(self._excess(long_returns, rf)), rtol=1e-12)
++
++    @pytest.mark.parametrize("rf", [0.02, 0.05])
++    def test_gain_to_pain_ratio_honours_rf(self, long_returns, rf):
++        base = qs.stats.gain_to_pain_ratio(long_returns)
++        with_rf = qs.stats.gain_to_pain_ratio(long_returns, rf=rf)
++        assert with_rf != base
++        assert np.isclose(
++            with_rf, qs.stats.gain_to_pain_ratio(self._excess(long_returns, rf)), rtol=1e-12
++        )
++
++    def test_rf_is_deannualized_not_deducted_whole(self, long_returns):
++        """The failure mode when the skip list was removed without forwarding
++        periods: the whole annual rate came off every observation and cagr
++        collapsed to -1."""
++        assert qs.stats.cagr(long_returns, rf=0.05) > 0.15
++        assert qs.stats.gain_to_pain_ratio(long_returns, rf=0.05) > 0.15
++
++    def test_gain_to_pain_ratio_periods_parameter_moves_the_result(self, long_returns):
++        daily = qs.stats.gain_to_pain_ratio(long_returns, rf=0.05, periods=252)
++        weekly = qs.stats.gain_to_pain_ratio(long_returns, rf=0.05, periods=52)
++        assert daily != weekly
++
++    def test_default_rf_path_is_unchanged(self, long_returns):
++        """rf=0 must not move: the excess branch is gated on rf > 0."""
++        v = long_returns.to_numpy()
++        years = len(v) / 252
++        assert np.isclose(qs.stats.cagr(long_returns),
++                          (np.prod(1 + v)) ** (1 / years) - 1, rtol=1e-9)
++        assert np.isclose(qs.stats.gain_to_pain_ratio(long_returns),
++                          v.sum() / abs(v[v < 0].sum()), rtol=1e-9)
++
++    def test_rolling_volatility_does_not_feed_its_window_to_rf(self, long_returns):
++        """rolling_volatility passed rolling_period into the rf slot; it was
++        inert only while the skip list voided rf for this function."""
++        v = long_returns.to_numpy()
++        got = qs.stats.rolling_volatility(long_returns, rolling_period=60)
++        assert np.isclose(got.dropna().iloc[-1], v[-60:].std(ddof=1) * np.sqrt(252), rtol=1e-9)
++
++    def test_metrics_table_applies_rf_consistently(self, long_returns):
++        """The user-visible harm: one table where Sharpe was excess of rf and
++        CAGR was not."""
++        m0 = qs.reports.metrics(long_returns, rf=0.0, display=False, mode="full")
++        m5 = qs.reports.metrics(long_returns, rf=0.05, display=False, mode="full")
++        col = m0.columns[0]
++        cagr_row = [r for r in m0.index if "CAGR" in r][0]
++        gpr_row = [r for r in m0.index if r.startswith("Gain/Pain Ratio")][0]
++        assert m0.loc[cagr_row, col] != m5.loc[cagr_row, col]
++        assert m0.loc[gpr_row, col] != m5.loc[gpr_row, col]
++        assert m0.loc["Sharpe", col] != m5.loc["Sharpe", col]
++
++
++class TestAnnualisedRiskFreeRateIsDeannualised:
++    """QS-22: _prepare_returns hands rf to to_excess_returns, which leaves it
++    annualized when nperiods is None, so a caller that omitted it deducted a
++    whole year of risk-free return from every observation. rar and to_returns
++    omitted it; rolling_sharpe and rolling_sortino passed the rolling window
++    instead of the periods-per-year, making the deduction depend on the window."""
++
++    @pytest.fixture
++    def long_returns(self):
++        idx = pd.date_range("2021-01-01", periods=756, freq="B")
++        vals = np.random.default_rng(2026).normal(0.0006, 0.011, 756)
++        return pd.Series(vals, index=idx, name="Strategy")
++
++    @staticmethod
++    def _daily_rf(rf, periods=252):
++        return (1 + rf) ** (1.0 / periods) - 1.0
++
++    @pytest.mark.parametrize("rf", [0.01, 0.05])
++    def test_rar_stays_in_a_sane_band(self, long_returns, rf):
++        """It returned -0.899874 at rf=1 percent and exactly -1.0 at 5 percent."""
++        base = qs.stats.rar(long_returns)
++        got = qs.stats.rar(long_returns, rf=rf)
++        assert got < base
++        assert got > base - 2 * rf
++        excess = long_returns - self._daily_rf(rf)
++        assert np.isclose(got, qs.stats.cagr(excess) / qs.stats.exposure(excess), rtol=1e-9)
++
++    def test_to_returns_deducts_a_deannualised_rate(self, long_returns):
++        prices = (1 + long_returns).cumprod() * 100
++        plain = qs.utils.to_returns(prices)
++        with_rf = qs.utils.to_returns(prices, rf=0.05)
++        shift = float((plain - with_rf).dropna().mean())
++        assert np.isclose(shift, self._daily_rf(0.05), rtol=1e-9)
++
++    @pytest.mark.parametrize("rolling_period", [30, 60, 126, 252])
++    def test_rolling_ratios_deduct_rf_independently_of_the_window(
++        self, long_returns, rolling_period
++    ):
++        """The tell for the old defect: the rf deduction scaled with the window,
++        so a 30-day window removed eight times what a 252-day window removed."""
++        excess = long_returns - self._daily_rf(0.05)
++        for fn in (qs.stats.rolling_sharpe, qs.stats.rolling_sortino):
++            got = fn(long_returns, rf=0.05, rolling_period=rolling_period).dropna()
++            ref = fn(excess, rf=0.0, rolling_period=rolling_period).dropna()
++            assert np.allclose(got.to_numpy(), ref.to_numpy(), equal_nan=True)
++
++    @pytest.mark.parametrize(
++        "name", ["sharpe", "sortino", "omega", "cagr", "gain_to_pain_ratio", "rar"]
++    )
++    def test_every_rf_taking_function_moves_sanely(self, long_returns, name):
++        """Class check: rf must lower the figure without collapsing it."""
++        fn = getattr(qs.stats, name)
++        base = float(fn(long_returns))
++        got = float(fn(long_returns, rf=0.05))
++        assert np.isfinite(got)
++        assert got < base
++        assert got > base - 2.0
++
++    def test_rf_zero_is_untouched_by_the_fallback(self, long_returns):
++        """The fallback is gated on rf > 0, so nothing moves at the default."""
++        prices = (1 + long_returns).cumprod() * 100
++        assert qs.stats.rar(long_returns, rf=0.0) == qs.stats.rar(long_returns)
++        pd.testing.assert_series_equal(
++            qs.utils.to_returns(prices, rf=0.0), qs.utils.to_returns(prices)
++        )
++
++    def test_no_call_site_hands_rf_a_window_instead_of_a_year(self):
++        """Enumeration: every _prepare_returns call that passes rf passes either
++        a periods-per-year name or nothing, never a rolling window."""
++        import ast
++        import quantstats.stats as stats_mod
++        import quantstats.utils as utils_mod
++
++        offenders = []
++        for mod in (stats_mod, utils_mod):
++            with open(mod.__file__, encoding="utf-8") as fh:
++                tree = ast.parse(fh.read())
++            for node in ast.walk(tree):
++                if not isinstance(node, ast.Call):
++                    continue
++                fname = getattr(node.func, "attr", getattr(node.func, "id", ""))
++                if fname != "_prepare_returns" or len(node.args) < 3:
++                    continue
++                third = node.args[2]
++                if isinstance(third, ast.Name) and "rolling" in third.id:
++                    offenders.append(f"{mod.__name__}:{node.lineno} passes {third.id}")
++        assert not offenders, offenders
++
++
++class TestMakeIndexRebalances:
++    """QS-19: utils.make_index never used the value of its rebalance argument.
++    The function held no .resample( call and both branches summed weight times
++    return every day, so rebalance=None, "1ME" and "1QE" returned one identical
++    daily-rebalanced series and the documented buy-and-hold case was wrong."""
++
++    @pytest.fixture
++    def members(self):
++        idx = pd.date_range("2019-01-01", periods=1260, freq="B")
++        rng = np.random.default_rng(7)
++        return pd.DataFrame(
++            {"A": rng.normal(0.0009, 0.013, 1260), "B": rng.normal(0.0001, 0.006, 1260)},
++            index=idx,
++        )
++
++    WEIGHTS = {"A": 0.5, "B": 0.5}
++
++    def test_never_rebalancing_is_buy_and_hold(self, members):
++        """Known answer: the value of one unit split at the target weights and
++        left alone, so the members' weights drift with their performance."""
++        wealth = (1 + members).cumprod()
++        value = (wealth * pd.Series(self.WEIGHTS)).sum(axis=1)
++        expected = value / value.shift(1).fillna(1.0) - 1.0
++        got = qs.utils.make_index(self.WEIGHTS, returns=members, rebalance=None)
++        assert np.allclose(got.to_numpy(), expected.to_numpy(), equal_nan=True)
++
++    def test_daily_rebalancing_is_the_weighted_sum(self, members):
++        """The old behaviour is still reachable, but only when asked for."""
++        expected = (members * pd.Series(self.WEIGHTS)).sum(axis=1)
++        got = qs.utils.make_index(self.WEIGHTS, returns=members, rebalance="1D")
++        assert np.allclose(got.to_numpy(), expected.to_numpy(), equal_nan=True)
++
++    def test_each_interval_gives_a_different_index(self, members):
++        totals = {
++            str(rb): float(
++                np.prod(1 + qs.utils.make_index(self.WEIGHTS, returns=members, rebalance=rb).to_numpy()) - 1
++            )
++            for rb in (None, "1D", "1ME", "1QE")
++        }
++        assert len({round(v, 10) for v in totals.values()}) == 4, totals
++
++    @pytest.mark.parametrize("rebalance", [None, "1D", "1ME", "1QE"])
++    def test_a_single_member_reproduces_that_member(self, members, rebalance):
++        """Invariant a wrong weighting scheme breaks: 100 percent of one asset
++        is that asset, whatever the rebalance interval."""
++        got = qs.utils.make_index({"A": 1.0, "B": 0.0}, returns=members, rebalance=rebalance)
++        assert np.allclose(got.to_numpy(), members["A"].to_numpy(), equal_nan=True)
++
++    def test_uninvested_weight_is_held_as_cash(self, members):
++        """Weights need not sum to 1; the remainder must not be booked as loss."""
++        half = qs.utils.make_index({"A": 0.25, "B": 0.25}, returns=members, rebalance="1ME")
++        assert np.isclose(
++            half.iloc[0], 0.25 * members["A"].iloc[0] + 0.25 * members["B"].iloc[0]
++        )
++
++    def test_legacy_frequency_alias_is_accepted(self, members):
++        monthly = qs.utils.make_index(self.WEIGHTS, returns=members, rebalance="1ME")
++        legacy = qs.utils.make_index(self.WEIGHTS, returns=members, rebalance="M")
++        assert np.allclose(legacy.to_numpy(), monthly.to_numpy(), equal_nan=True)
++
++    def test_index_length_is_preserved(self, members):
++        for rb in (None, "1ME", "1QE"):
++            got = qs.utils.make_index(self.WEIGHTS, returns=members, rebalance=rb)
++            assert len(got) == len(members)
++
++
++class TestTreynorRatioIsAnnualised:
++    """QS-20: treynor_ratio documented periods as annualization but forwarded it
++    only to greeks, which spends it on alpha while treynor reads beta, so the
++    argument was inert. It returned the whole-period compounded return less an
++    annual rf over beta, which grows with the length of the sample."""
++
++    @staticmethod
++    def _pair(n, seed=5):
++        idx = pd.date_range("2019-01-01", periods=n, freq="B")
++        rng = np.random.default_rng(seed)
++        bench = pd.Series(rng.normal(0.0004, 0.009, n), index=idx, name="B")
++        rets = pd.Series(
++            1.2 * bench.to_numpy() + rng.normal(0.0002, 0.005, n), index=idx, name="S"
++        )
++        return rets, bench
++
++    def test_periods_changes_the_result(self):
++        rets, bench = self._pair(1008)
++        values = {p: qs.stats.treynor_ratio(rets, bench, periods=p) for p in (252, 52, 12)}
++        assert len({round(v, 12) for v in values.values()}) == 3, values
++
++    @pytest.mark.parametrize("periods", [252, 52])
++    @pytest.mark.parametrize("rf", [0.0, 0.03])
++    def test_equals_annualised_return_over_beta(self, periods, rf):
++        """Known answer: the textbook definition, not the whole-period return."""
++        rets, bench = self._pair(1008)
++        beta = float(qs.stats.greeks(rets, bench)["beta"])
++        expected = (qs.stats.cagr(rets, periods=periods) - rf) / beta
++        got = qs.stats.treynor_ratio(rets, bench, periods=periods, rf=rf)
++        assert np.isclose(got, expected, rtol=1e-12)
++
++    def test_does_not_grow_with_the_length_of_the_sample(self):
++        """One realization, increasing prefixes of it. An annualized figure stays
++        the size of a yearly return; the whole-period form this replaced ran
++        -0.0022, 0.2323, 0.8123, 6.5909 over these same four prefixes."""
++        rets, bench = self._pair(2016)
++        for n in (252, 504, 1008, 2016):
++            rr, bb = rets.iloc[:n], bench.iloc[:n]
++            beta = float(qs.stats.greeks(rr, bb)["beta"])
++            got = float(qs.stats.treynor_ratio(rr, bb))
++            assert abs(got) < 1.0, (n, got)
++            assert np.isclose(got, qs.stats.cagr(rr) / beta, rtol=1e-12)
++
++    def test_beta_is_not_rescaled_by_periods(self):
++        """periods must not reach beta, which is a covariance ratio."""
++        rets, bench = self._pair(1008)
++        betas = {p: float(qs.stats.greeks(rets, bench, periods=p)["beta"]) for p in (252, 52, 12)}
++        assert len({round(v, 12) for v in betas.values()}) == 1, betas
++
++    def test_rf_is_deducted_as_an_annual_rate(self):
++        rets, bench = self._pair(1008)
++        beta = float(qs.stats.greeks(rets, bench)["beta"])
++        base = qs.stats.treynor_ratio(rets, bench)
++        with_rf = qs.stats.treynor_ratio(rets, bench, rf=0.03)
++        assert np.isclose(base - with_rf, 0.03 / beta, rtol=1e-9)
++
++    def test_docstring_states_the_convention_the_code_implements(self):
++        doc = qs.stats.treynor_ratio.__doc__
++        assert "annualized return" in doc
++        assert "used to annualize the return" in doc
++
++
++class TestCalmarHasNoInertFlag:
++    """QS-21: calmar documented a prepare_returns flag that could not change its
++    result, because cagr and max_drawdown each prepare their own input, so the
++    pre-preparation only added a rounding step. The flag was removed rather than
++    plumbed through, since making it real would have meant adding the same flag
++    to two more signatures."""
++
++    @pytest.fixture
++    def long_returns(self):
++        idx = pd.date_range("2021-01-01", periods=756, freq="B")
++        return pd.Series(
++            np.random.default_rng(2026).normal(0.0006, 0.011, 756), index=idx, name="S"
++        )
++
++    def test_the_flag_is_gone_from_the_signature_and_the_docstring(self):
++        import inspect
++
++        assert "prepare_returns" not in inspect.signature(qs.stats.calmar).parameters
++        assert "prepare_returns" not in (qs.stats.calmar.__doc__ or "")
++
++    def test_passing_the_removed_flag_fails_loudly(self, long_returns):
++        """A removed keyword must raise, not be silently swallowed by kwargs."""
++        with pytest.raises(TypeError):
++            qs.stats.calmar(long_returns, prepare_returns=False)
++
++    def test_periods_still_moves_the_result(self, long_returns):
++        values = {p: qs.stats.calmar(long_returns, periods=p) for p in (252, 52, 12)}
++        assert len({round(v, 12) for v in values.values()}) == 3, values
++
++    def test_calmar_is_still_cagr_over_max_drawdown(self, long_returns):
++        expected = qs.stats.cagr(long_returns) / abs(qs.stats.max_drawdown(long_returns))
++        assert np.isclose(qs.stats.calmar(long_returns), expected, rtol=1e-12)
++
++    @pytest.mark.parametrize("shape", ["series", "prices", "one_col", "two_col"])
++    def test_value_is_unchanged_for_every_input_shape(self, long_returns, shape):
++        """The removal must not move the number: the two branches agreed to
++        within 8e-16, and only on price-like input."""
++        data = {
++            "series": long_returns,
++            "prices": (1 + long_returns).cumprod() * 100,
++            "one_col": long_returns.to_frame(),
++            "two_col": pd.DataFrame(
++                {"A": long_returns.to_numpy(), "B": long_returns.to_numpy() * 0.5},
++                index=long_returns.index,
++            ),
++        }[shape]
++        got = np.asarray(qs.stats.calmar(data), dtype=float).ravel()
++        ref = np.asarray(
++            qs.stats.cagr(data) / abs(qs.stats.max_drawdown(data)), dtype=float
++        ).ravel()
++        assert np.allclose(got, ref, rtol=1e-12, equal_nan=True)
++
++    def test_reports_still_produces_a_calmar_row(self, long_returns):
++        table = qs.reports.metrics(long_returns, display=False, mode="full")
++        assert "Calmar" in table.index
++        assert np.isfinite(float(table.loc["Calmar", table.columns[0]]))
++
++
++class TestReportOutputSurvivesANarrowConsoleEncoding:
++    """QS-23: reports.metrics/basic/full died with UnicodeEncodeError on a
++    cp1252 console. Three metric labels carried U+FE6A and U+221A, and every
++    print in reports.py went straight to stdout, so a caller-supplied CJK or
++    Greek strategy_title crashed the report too."""
++
++    @staticmethod
++    def _cp1252_stdout():
++        """A text stream with the encoding a stock Windows console reports."""
++        return io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="")
++
++    def test_no_source_line_is_unencodable_in_cp1252(self):
++        """Enumeration for the label half of the class: every source line in the
++        package must survive the narrowest encoding its console may report."""
++        root = Path(qs.__file__).parent
++        offenders = []
++        for path in sorted(root.rglob("*.py")):
++            for lineno, line in enumerate(
++                path.read_text(encoding="utf-8").splitlines(), 1
++            ):
++                try:
++                    line.encode("cp1252")
++                except UnicodeEncodeError:
++                    offenders.append(f"{path.name}:{lineno}")
++        assert offenders == []
++
++    def test_every_console_write_goes_through_the_one_boundary(self):
++        """Enumeration for the caller-text half: reports.py must hold no bare
++        print() outside the _print helper, or the next label or title added
++        reopens the class."""
++        source = Path(qs.reports.__file__).read_text(encoding="utf-8")
++        tree = ast.parse(source)
++        helper = next(
++            n
++            for n in ast.walk(tree)
++            if isinstance(n, ast.FunctionDef) and n.name == "_print"
++        )
++        bare = [
++            n.func.lineno
++            for n in ast.walk(tree)
++            if isinstance(n, ast.Call)
++            and isinstance(n.func, ast.Name)
++            and n.func.id == "print"
++            and not (helper.lineno <= n.func.lineno <= helper.end_lineno)
++        ]
++        assert bare == []
++
++    @pytest.mark.parametrize("entry", ["metrics", "basic", "full"])
++    def test_display_entry_points_do_not_raise_on_a_cp1252_console(
++        self, entry, returns
++    ):
++        stream = self._cp1252_stdout()
++        with contextlib.redirect_stdout(stream):
++            getattr(qs.reports, entry)(returns)
++        stream.seek(0)
++        assert "CAGR" in stream.buffer.getvalue().decode("cp1252")
++        plt.close("all")
++
++    @pytest.mark.parametrize(
++        "title",
++        ["\u65e5\u672c\u682a\u6226\u7565", "\u03a9mega", "Fonds Europ\u00e9en"],
++        ids=["cjk", "greek", "latin1"],
++    )
++    def test_caller_titles_outside_the_console_encoding_do_not_raise(
++        self, title, returns
++    ):
++        """The titles are hand-authored by the caller and a non-latin name is
++        ordinary data, not a wrong value, so it must not abort the report."""
++        stream = self._cp1252_stdout()
++        with contextlib.redirect_stdout(stream):
++            qs.reports.metrics(returns, strategy_title=title)
++        stream.flush()
++        assert b"CAGR" in stream.buffer.getvalue()
++
++    def test_benchmark_title_outside_the_console_encoding_does_not_raise(
++        self, returns, benchmark
++    ):
++        stream = self._cp1252_stdout()
++        with contextlib.redirect_stdout(stream):
++            qs.reports.metrics(
++                returns, benchmark=benchmark, benchmark_title="\u65e5\u7d4c\u5e73\u5747"
++            )
++        stream.flush()
++        assert b"CAGR" in stream.buffer.getvalue()
++
++    def test_renamed_labels_keep_their_percent_marker(self, returns):
++        """The trailing "%" in the stored column name drives value formatting.
++        Renaming CAGR must not strip it, or the row loses its percent sign."""
++        table = qs.reports.metrics(returns, display=False, mode="full", internal="True")
++        row = {str(k).strip(): v for k, v in table.iloc[:, 0].items()}
++        assert row["CAGR"].endswith("%")
++        assert row["Cumulative Return"].endswith("%")
++
++    def test_the_adjusted_sortino_rows_are_still_present(self, returns):
++        table = qs.reports.metrics(returns, display=False, mode="full")
++        labels = [str(x) for x in table.index]
++        assert "Sortino/sqrt(2)" in labels
++        assert "Smart Sortino/sqrt(2)" in labels
++        assert [x for x in labels if any(ord(c) > 127 for c in x)] == []
++
++
++class TestGainToPainAcceptsItsDocumentedFrequencies:
++    """QS-24: gain_to_pain_ratio called pandas .resample directly with the
++    caller's resolution, so the legacy aliases its own docstring names - M, and
++    likewise Q, A and Y - raised ValueError on pandas 2.2+. reports.py:1528
++    already passed "ME" to route around it."""
++
++    @pytest.fixture
++    def long_returns(self):
++        """Four years, so even a yearly bucket holds losing periods and the
++        ratio is finite rather than a division by zero."""
++        idx = pd.date_range("2019-01-01", periods=1512, freq="D")
++        values = np.random.default_rng(20260731).normal(0.0004, 0.011, len(idx))
++        return pd.Series(values, index=idx, name="Strategy")
++
++    @pytest.mark.parametrize(
++        "resolution", ["D", "W", "M", "ME", "Q", "QE", "A", "Y", "YE"]
++    )
++    def test_every_documented_resolution_is_accepted(self, resolution, long_returns):
++        got = qs.stats.gain_to_pain_ratio(long_returns, resolution=resolution)
++        assert np.isfinite(got)
++
++    @pytest.mark.parametrize(
++        "legacy,modern", [("M", "ME"), ("Q", "QE"), ("A", "YE"), ("Y", "YE")]
++    )
++    def test_legacy_alias_equals_its_modern_spelling(
++        self, legacy, modern, long_returns
++    ):
++        """The shim must map, not merely accept: a legacy spelling has to give
++        the same number as the modern one, not silently resample differently."""
++        a = qs.stats.gain_to_pain_ratio(long_returns, resolution=legacy)
++        b = qs.stats.gain_to_pain_ratio(long_returns, resolution=modern)
++        assert np.allclose(a, b, rtol=0, atol=0, equal_nan=True)
++
++    def test_resolution_actually_moves_the_result(self, long_returns):
++        """Accepting every value proves nothing if they all resample the same."""
++        values = [
++            float(qs.stats.gain_to_pain_ratio(long_returns, resolution=r))
++            for r in ["D", "W", "M", "Q", "Y"]
++        ]
++        assert len({round(v, 10) for v in values}) == len(values)
++
++    def test_daily_resolution_matches_the_hand_computed_ratio(self, long_returns):
++        """Known answer for the default path, so the reroute cannot quietly
++        change what the statistic means."""
++        expected = long_returns.sum() / abs(long_returns[long_returns < 0].sum())
++        got = qs.stats.gain_to_pain_ratio(long_returns, resolution="D")
++        assert np.isclose(got, expected, rtol=1e-12)
++
++    def test_no_call_site_resamples_on_a_caller_supplied_frequency(self):
++        """Class enumeration: every .resample in the package must be the shim
++        itself or a hardcoded modern alias, or the next function taking a
++        frequency from the caller reopens this defect."""
++        literal_ok = {"W-MON", "ME", "QE", "YE", "D", "W"}
++        root = Path(qs.__file__).parent
++        offenders = []
++        for path in sorted(root.rglob("*.py")):
++            tree = ast.parse(path.read_text(encoding="utf-8"))
++            for node in ast.walk(tree):
++                if not (
++                    isinstance(node, ast.Call)
++                    and isinstance(node.func, ast.Attribute)
++                    and node.func.attr == "resample"
++                ):
++                    continue
++                if path.name == "_compat.py":
++                    continue
++                arg = node.args[0] if node.args else None
++                if isinstance(arg, ast.Constant) and arg.value in literal_ok:
++                    continue
++                offenders.append(f"{path.name}:{node.lineno}")
++        assert offenders == []
++
++    def test_reports_gain_pain_rows_still_agree_with_stats(self, long_returns):
++        """reports.py passes "ME" positionally; the reroute must leave that row
++        reading exactly what the stats function returns."""
++        table = qs.reports.metrics(long_returns, display=False, mode="full")
++        row = {str(k).strip(): v for k, v in table.iloc[:, 0].items()}
++        assert np.isclose(
++            float(row["Gain/Pain Ratio"]),
++            qs.stats.gain_to_pain_ratio(long_returns, 0),
++            atol=0.01,
++        )
++        assert np.isclose(
++            float(row["Gain/Pain (1M)"]),
++            qs.stats.gain_to_pain_ratio(long_returns, 0, "ME"),
++            atol=0.01,
++        )
++
++
++class TestProbabilisticRatioHasNoInertPeriods:
++    """QS-25 then QS-27. QS-25 removed periods, which was inert while rf was
++    subtracted from the finished ratio, and deleted the unreachable annualize
++    branch. QS-27 then made rf a genuine risk-free rate deducted at the
++    _prepare_returns boundary, which gives periods a real job - deannualizing
++    rf - so it is back in the signature and must now move the result whenever
++    rf is non-zero, and only then."""
++
++    ENTRY_POINTS = [
++        "probabilistic_ratio",
++        "probabilistic_sharpe_ratio",
++        "probabilistic_sortino_ratio",
++        "probabilistic_adjusted_sortino_ratio",
++    ]
++
++    @pytest.fixture
++    def long_returns(self):
++        idx = pd.date_range("2022-01-03", periods=504, freq="B")
++        vals = np.random.default_rng(20260801).normal(0.0005, 0.010, len(idx))
++        return pd.Series(vals, index=idx, name="R")
++
++    @pytest.mark.parametrize("name", ENTRY_POINTS)
++    def test_periods_moves_the_result_when_rf_is_non_zero(self, name, long_returns):
++        """The argument is only legitimate because it scales rf. If it stopped
++        doing that it would be inert again, which is what QS-25 removed."""
++        fn = getattr(qs.stats, name)
++        assert "periods" in inspect.signature(fn).parameters
++        values = {fn(long_returns, 0.05, periods=p) for p in (252, 52, 12)}
++        assert len(values) == 3
++
++    @pytest.mark.parametrize("name", ENTRY_POINTS)
++    def test_periods_is_inert_at_rf_zero_which_is_correct(self, name, long_returns):
++        """With no risk-free rate there is nothing to deannualize, so periods
++        must not touch the result; the statistic is per-observation."""
++        fn = getattr(qs.stats, name)
++        values = {fn(long_returns, 0.0, periods=p) for p in (252, 52, 12)}
++        assert len(values) == 1
++
++    @pytest.mark.parametrize("name", ENTRY_POINTS)
++    def test_docstring_describes_periods_as_scaling_rf(self, name):
++        doc = getattr(qs.stats, name).__doc__ or ""
++        assert "deannualize rf" in doc
++        assert "for annualization" not in doc
++
++    def test_no_unreachable_annualize_branch_remains(self):
++        """The guard raises, so any later branch on annualize is dead code."""
++        source = Path(qs.stats.__file__).read_text(encoding="utf-8")
++        tree = ast.parse(source)
++        fn = next(
++            n
++            for n in ast.walk(tree)
++            if isinstance(n, ast.FunctionDef) and n.name == "probabilistic_ratio"
++        )
++        branches = [
++            n
++            for n in ast.walk(fn)
++            if isinstance(n, ast.If)
++            and isinstance(n.test, ast.Name)
++            and n.test.id == "annualize"
++        ]
++        assert len(branches) == 1
++        assert all(isinstance(stmt, ast.Raise) for stmt in branches[0].body)
++        # the dead tail multiplied the probability by 252**0.5; no such
++        # expression may survive in the body (the explanatory comment may)
++        scaling = [
++            n
++            for n in ast.walk(fn)
++            if isinstance(n, ast.BinOp)
++            and isinstance(n.op, ast.Pow)
++            and isinstance(n.left, ast.Constant)
++            and n.left.value == 252
++        ]
++        assert scaling == []
++
++    def test_value_matches_the_probabilistic_sharpe_definition(self, long_returns):
++        """Known answer for the rf=0 path: the statistic is the normal CDF of
++        the per-observation ratio over its standard error. kurt is the pandas
++        excess kurtosis, so the adjustment term is kurt/4; it read (kurt-3)/4
++        here until QS-28 corrected the double subtraction in the package."""
++        from scipy.stats import norm
++
++        sr = qs.stats.sharpe(long_returns, annualize=False)
++        skew = qs.stats.skew(long_returns, prepare_returns=False)
++        kurt = qs.stats.kurtosis(long_returns, prepare_returns=False)
++        n = len(long_returns)
++        sigma = np.sqrt(
++            (1 + (0.5 * sr**2) - (skew * sr) + ((kurt / 4) * sr**2)) / (n - 1)
++        )
++        expected = norm.cdf(sr / sigma)
++        assert np.isclose(
++            qs.stats.probabilistic_sharpe_ratio(long_returns), expected, rtol=1e-12
++        )
++
++    def test_annualize_true_still_raises(self, long_returns):
++        for name in self.ENTRY_POINTS:
++            with pytest.raises(ValueError, match="annualize"):
++                getattr(qs.stats, name)(long_returns, annualize=True)
++
++    def test_reports_prob_sharpe_row_tracks_periods_per_year_only_with_rf(
++        self, long_returns
++    ):
++        """At rf=0 there is nothing to deannualize, so the row must not move;
++        with a risk-free rate it must, because periods now scales it."""
++        label = "Prob. Sharpe Ratio"
++
++        def row(**kw):
++            table = qs.reports.metrics(long_returns, display=False, mode="full", **kw)
++            return float({str(k).strip(): v for k, v in table.iloc[:, 0].items()}[label])
++
++        assert np.isclose(row(), row(periods_per_year=52), rtol=1e-12)
++        assert not np.isclose(
++            row(rf=0.05), row(rf=0.05, periods_per_year=52), rtol=1e-9
++        )
++        assert 0.0 <= row() <= 100.0
++
++
++class TestProbabilisticRatioDeductsARealRiskFreeRate:
++    """QS-27: probabilistic_ratio never handed rf to sharpe or sortino. It
++    subtracted rf straight from the per-observation base ratio, so an annual
++    percentage was compared against a daily ratio, and reports.py fed the
++    report's own rf into that slot."""
++
++    ENTRY_POINTS = [
++        "probabilistic_ratio",
++        "probabilistic_sharpe_ratio",
++        "probabilistic_sortino_ratio",
++        "probabilistic_adjusted_sortino_ratio",
++    ]
++
++    @pytest.fixture
++    def long_returns(self):
++        idx = pd.date_range("2022-01-03", periods=504, freq="B")
++        vals = np.random.default_rng(20260801).normal(0.0005, 0.010, len(idx))
++        return pd.Series(vals, index=idx, name="R")
++
++    @pytest.mark.parametrize("name", ENTRY_POINTS)
++    @pytest.mark.parametrize("rf,periods", [(0.05, 252), (0.05, 52), (0.02, 12)])
++    def test_rf_equals_passing_the_excess_series_directly(
++        self, name, rf, periods, long_returns
++    ):
++        """The defining invariant, and one that does not depend on how the
++        standard error treats kurtosis: charging rf must be the same as handing
++        the function returns that already had rf taken out."""
++        fn = getattr(qs.stats, name)
++        excess = qs.utils.to_excess_returns(long_returns, rf, periods)
++        # keyword, not positional: probabilistic_ratio takes base= third
++        assert np.isclose(
++            fn(long_returns, rf, periods=periods),
++            fn(excess, 0.0),
++            rtol=1e-12,
++            equal_nan=True,
++        )
++
++    def test_a_positive_rf_lowers_the_probability(self, long_returns):
++        """Charging a risk-free rate can only make it harder to beat zero."""
++        base = qs.stats.probabilistic_sharpe_ratio(long_returns, 0.0)
++        for rf in [0.01, 0.05, 0.10]:
++            assert qs.stats.probabilistic_sharpe_ratio(long_returns, rf, 252) < base
++
++    def test_rf_is_deannualized_geometrically(self, long_returns):
++        """Pins the conversion itself: the daily charge is the geometric
++        deannualization of the annual rate, not the annual rate whole and not a
++        simple division."""
++        rf, periods = 0.05, 252
++        daily = (1 + rf) ** (1 / periods) - 1
++        assert np.isclose(
++            qs.stats.probabilistic_sharpe_ratio(long_returns, rf, periods),
++            qs.stats.probabilistic_sharpe_ratio(long_returns - daily, 0.0),
++            rtol=1e-12,
++        )
++        # a whole-rate deduction is a different number entirely
++        assert not np.isclose(
++            qs.stats.probabilistic_sharpe_ratio(long_returns, rf, periods),
++            qs.stats.probabilistic_sharpe_ratio(long_returns - rf / periods, 0.0),
++            rtol=1e-9,
++        )
++
++    def test_rf_is_no_longer_a_threshold_on_the_ratio(self, long_returns):
++        """Pins the actual defect: the old code returned norm.cdf((SR - rf)/s),
++        which on this fixture gave 0.0613 where charging a real 5 percent gives
++        0.1962."""
++        from scipy.stats import norm
++
++        sr = qs.stats.sharpe(long_returns, annualize=False)
++        skew = qs.stats.skew(long_returns, prepare_returns=False)
++        kurt = qs.stats.kurtosis(long_returns, prepare_returns=False)
++        n = len(long_returns)
++        sigma = np.sqrt(
++            (1 + (0.5 * sr**2) - (skew * sr) + ((kurt / 4) * sr**2)) / (n - 1)
++        )
++        old_behaviour = norm.cdf((sr - 0.05) / sigma)
++        assert not np.isclose(
++            qs.stats.probabilistic_sharpe_ratio(long_returns, 0.05, 252),
++            old_behaviour,
++            rtol=1e-6,
++        )
++
++    def test_rf_zero_default_path_is_untouched(self, long_returns):
++        """The repair must land only on the broken case."""
++        from scipy.stats import norm
++
++        sr = qs.stats.sharpe(long_returns, annualize=False)
++        skew = qs.stats.skew(long_returns, prepare_returns=False)
++        kurt = qs.stats.kurtosis(long_returns, prepare_returns=False)
++        n = len(long_returns)
++        sigma = np.sqrt(
++            (1 + (0.5 * sr**2) - (skew * sr) + ((kurt / 4) * sr**2)) / (n - 1)
++        )
++        assert np.isclose(
++            qs.stats.probabilistic_sharpe_ratio(long_returns, 0.0),
++            norm.cdf(sr / sigma),
++            rtol=1e-12,
++        )
++
++
++class TestProbabilisticRatioUsesKurtosisConsistently:
++    """QS-28: the standard error computed ((kurtosis_no - 3) / 4) * base**2
++    while stats.kurtosis returns the pandas value, which is Fisher excess
++    kurtosis and already g4 - 3. Subtracting 3 twice removes a flat
++    0.75 * base**2 from the variance, which biases every result and turns the
++    variance negative once the per-observation ratio passes 2 in absolute
++    value, where the square root produced nan instead of a probability."""
++
++    @pytest.fixture
++    def long_returns(self):
++        idx = pd.date_range("2022-01-03", periods=504, freq="B")
++        vals = np.random.default_rng(20260801).normal(0.0005, 0.010, len(idx))
++        return pd.Series(vals, index=idx, name="R")
++
++    @staticmethod
++    def _reference(series, base_ratio):
++        """Canonical Bailey and Lopez de Prado standard error, written from the
++        definition with RAW kurtosis, independent of the implementation."""
++        from scipy.stats import norm
++
++        g3 = series.skew()
++        g4 = series.kurtosis() + 3.0
++        n = len(series)
++        variance = (1 - g3 * base_ratio + ((g4 - 1) / 4) * base_ratio**2) / (n - 1)
++        return norm.cdf(base_ratio / np.sqrt(variance))
++
++    def test_sharpe_base_matches_the_canonical_standard_error(self, long_returns):
++        sr = qs.stats.sharpe(long_returns, annualize=False)
++        assert np.isclose(
++            qs.stats.probabilistic_sharpe_ratio(long_returns),
++            self._reference(long_returns, sr),
++            rtol=1e-12,
++        )
++
++    def test_adjustment_term_vanishes_on_a_normal_sample(self):
++        """The excess-kurtosis term is what the double subtraction broke: on a
++        normal sample it must be about zero, not about -0.75."""
++        sample = pd.Series(np.random.default_rng(5).normal(0.001, 0.01, 200_000))
++        term = qs.stats.kurtosis(sample, prepare_returns=False) / 4
++        assert abs(term) < 1e-2
++
++    @pytest.mark.parametrize("target_ratio", [2.5, 3.0, 5.0, -2.5, -5.0])
++    def test_a_large_per_observation_ratio_still_returns_a_probability(
++        self, target_ratio
++    ):
++        """Above |SR| = 2 the old variance numerator 1 - 0.25 * SR**2 went
++        negative on near-normal data and the result was nan."""
++        rng = np.random.default_rng(77)
++        raw = rng.normal(0.0, 1.0, 400)
++        scaled = (raw - raw.mean()) / raw.std(ddof=1)
++        series = pd.Series(
++            scaled * 0.01 + target_ratio * 0.01,
++            index=pd.date_range("2022-01-03", periods=400, freq="B"),
++        )
++        got = qs.stats.probabilistic_sharpe_ratio(series)
++        assert np.isfinite(got)
++        assert 0.0 <= got <= 1.0
++
++    def test_the_old_form_would_have_gone_negative_there(self):
++        """Pins the mechanism rather than the symptom, so the test states why
++        |SR| = 2 is the threshold."""
++        for sr in [2.5, 3.0, 5.0]:
++            old_numerator = 1 + 0.5 * sr**2 - 0.0 * sr + ((0.0 - 3) / 4) * sr**2
++            new_numerator = 1 + 0.5 * sr**2 - 0.0 * sr + (0.0 / 4) * sr**2
++            assert old_numerator < 0
++            assert new_numerator > 0
++
++    @pytest.mark.parametrize("base", ["sharpe", "sortino", "adjusted_sortino"])
++    def test_every_base_uses_the_same_corrected_standard_error(
++        self, base, long_returns
++    ):
++        ratio = {
++            "sharpe": qs.stats.sharpe,
++            "sortino": qs.stats.sortino,
++            "adjusted_sortino": qs.stats.adjusted_sortino,
++        }[base](long_returns, annualize=False)
++        assert np.isclose(
++            qs.stats.probabilistic_ratio(long_returns, base=base),
++            self._reference(long_returns, ratio),
++            rtol=1e-12,
++        )
++
++    def test_rf_invariant_from_qs27_is_preserved(self, long_returns):
++        """The earlier fix must survive this one."""
++        for rf, periods in [(0.05, 252), (0.02, 12)]:
++            excess = qs.utils.to_excess_returns(long_returns, rf, periods)
++            assert np.isclose(
++                qs.stats.probabilistic_sharpe_ratio(long_returns, rf, periods),
++                qs.stats.probabilistic_sharpe_ratio(excess, 0.0),
++                rtol=1e-12,
++            )
++
++
++class TestProbabilisticRatioOnTinySamples:
++    """QS-26: probabilistic_sortino_ratio and probabilistic_adjusted_sortino_ratio
++    raised ZeroDivisionError on a one-row series while probabilistic_sharpe_ratio
++    returned nan on the same input. The standard error divides by n - 1, and the
++    outcome turned only on whether the base ratio arrived as a numpy scalar,
++    where nan/0 is nan, or as a plain float, where it raises."""
++
++    ENTRY_POINTS = [
++        "probabilistic_ratio",
++        "probabilistic_sharpe_ratio",
++        "probabilistic_sortino_ratio",
++        "probabilistic_adjusted_sortino_ratio",
++    ]
++
++    @staticmethod
++    def _series(n):
++        idx = pd.date_range("2020-01-01", periods=n, freq="D")
++        vals = np.random.default_rng(404).normal(0.001, 0.01, n)
++        return pd.Series(vals, index=idx, name="R")
++
++    @pytest.mark.parametrize("name", ENTRY_POINTS)
++    def test_one_observation_returns_nan_rather_than_raising(self, name):
++        got = getattr(qs.stats, name)(self._series(1))
++        assert np.isnan(got)
++
++    @pytest.mark.parametrize("name", ENTRY_POINTS)
++    def test_all_entry_points_agree_on_one_observation(self, name):
++        """The defect was disagreement between siblings on identical input."""
++        reference = qs.stats.probabilistic_sharpe_ratio(self._series(1))
++        got = getattr(qs.stats, name)(self._series(1))
++        assert np.isnan(got) and np.isnan(reference)
++
++    @pytest.mark.parametrize("n", [2, 3])
++    def test_samples_too_small_for_the_moments_are_nan_not_errors(self, n):
++        """Documented behavior rather than a defect: pandas needs three points
++        for skew and four for kurtosis, so the moment-adjusted standard error
++        is genuinely undefined here."""
++        assert np.isnan(qs.stats.probabilistic_sharpe_ratio(self._series(n)))
++
++    @pytest.mark.parametrize("n", [5, 30, 250])
++    def test_samples_large_enough_still_produce_a_probability(self, n):
++        """The guard must not swallow the working range."""
++        got = qs.stats.probabilistic_sharpe_ratio(self._series(n))
++        assert np.isfinite(got)
++        assert 0.0 <= got <= 1.0
++
++    def test_an_empty_series_still_reports_a_validation_error(self):
++        """Unchanged by the guard: nothing to compute is a caller mistake and
++        keeps its loud failure, rather than being folded into a quiet nan."""
++        empty = pd.Series([], index=pd.DatetimeIndex([]), dtype=float)
++        with pytest.raises(Exception):
++            qs.stats.probabilistic_sharpe_ratio(empty)
++
++
++class TestProbabilisticRatioRejectsABadBaseClearly:
++    """QS-29: probabilistic_ratio documents ValueError for an invalid base
++    metric and delivered it for a wrong string, but a non-string reached
++    base.lower() first and raised AttributeError instead, with a message naming
++    neither the argument nor the values it accepts."""
++
++    @pytest.fixture
++    def long_returns(self):
++        idx = pd.date_range("2022-01-03", periods=252, freq="B")
++        vals = np.random.default_rng(20260802).normal(0.0005, 0.010, len(idx))
++        return pd.Series(vals, index=idx, name="R")
++
++    @pytest.mark.parametrize(
++        "bad", [None, 100, 3.5, ["sharpe"], b"sharpe", object()],
++        ids=["none", "int", "float", "list", "bytes", "object"],
++    )
++    def test_a_non_string_base_raises_the_documented_error(self, bad, long_returns):
++        with pytest.raises(ValueError) as excinfo:
++            qs.stats.probabilistic_ratio(long_returns, base=bad)
++        message = str(excinfo.value)
++        assert "sharpe" in message
++        assert "sortino" in message
++        assert "adjusted_sortino" in message
++
++    def test_a_wrong_string_still_raises_the_same_error(self, long_returns):
++        """The string path must not regress while the non-string path is fixed."""
++        with pytest.raises(ValueError, match="Invalid metric"):
++            qs.stats.probabilistic_ratio(long_returns, base="bogus")
++
++    @pytest.mark.parametrize(
++        "good", ["sharpe", "SHARPE", "Sortino", "sortino", "adjusted_sortino"]
++    )
++    def test_valid_bases_keep_working_case_insensitively(self, good, long_returns):
++        got = qs.stats.probabilistic_ratio(long_returns, base=good)
++        assert np.isfinite(got)
++        assert 0.0 <= got <= 1.0
++
++    def test_each_base_still_selects_its_own_ratio(self, long_returns):
++        """A dispatch table must not collapse the three metrics onto one."""
++        values = {
++            base: qs.stats.probabilistic_ratio(long_returns, base=base)
++            for base in ("sharpe", "sortino", "adjusted_sortino")
++        }
++        assert len({round(v, 12) for v in values.values()}) == 3
++        for base, wrapper in [
++            ("sharpe", qs.stats.probabilistic_sharpe_ratio),
++            ("sortino", qs.stats.probabilistic_sortino_ratio),
++            ("adjusted_sortino", qs.stats.probabilistic_adjusted_sortino_ratio),
++        ]:
++            assert np.isclose(values[base], wrapper(long_returns), rtol=1e-12)
+diff --git a/tests/test_stats.py b/tests/test_stats.py
+index 5a22f85..5083cd1 100644
+--- a/tests/test_stats.py
++++ b/tests/test_stats.py
+@@ -9,6 +9,7 @@ from datetime import datetime
+ 
+ import quantstats as qs
+ from quantstats import stats
++from quantstats.utils import DataValidationError
+ 
+ 
+ @pytest.fixture
+@@ -271,3 +272,30 @@ class TestEdgeCases:
+         result = stats.sharpe(df)
+         assert isinstance(result, pd.Series)
+         assert len(result) == 2
++
++
++class TestBenchmarkArgValidation:
++    """Benchmark-relative functions document returns as pd.Series; DataFrame
++    input must fail with a DataValidationError naming the argument, not an
++    opaque numpy/pandas error (or, for one-column frames into r_squared, a
++    silently wrong ndarray return)."""
++
++    @pytest.mark.parametrize(
++        "func",
++        [
++            stats.r_squared,
++            stats.r2,
++            stats.information_ratio,
++            stats.greeks,
++            stats.rolling_greeks,
++        ],
++    )
++    @pytest.mark.parametrize("n_cols", [1, 2])
++    def test_dataframe_returns_rejected(
++        self, func, n_cols, sample_returns, sample_benchmark
++    ):
++        frame = pd.DataFrame(
++            {f"S{i}": sample_returns * (1.0 + i) for i in range(n_cols)}
++        )
++        with pytest.raises(DataValidationError, match="returns"):
++            func(frame, sample_benchmark)
