@@ -151,7 +151,8 @@ check_markers skills/jeffy/references/plan-default.md \
   "lists no unswept row" \
   "a correctness check, not a liveness check" \
   "a comparable amount of surface" \
-  "including underscore-private modules"
+  "including underscore-private modules" \
+  "every documented parameter"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
@@ -187,7 +188,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Change discipline:" \
   "rows swept of rows total" \
   "never only run-without-crash probes" \
-  "newly exposed rather than introduced"
+  "newly exposed rather than introduced" \
+  "whose value changes nothing"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
