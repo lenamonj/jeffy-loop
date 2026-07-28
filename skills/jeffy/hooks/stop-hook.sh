@@ -93,6 +93,22 @@ if [ -n "$promise" ]; then
           fi
         fi
       fi
+      # Surface-inventory check: a convergence claim covers the whole mapped
+      # surface. Dimension scores claim only what an audit examined, so an
+      # unswept row is unexamined code behind a clean-looking score - a
+      # None on a dimension whose surface was never opened is silence, not
+      # cleanliness. A PLAN.md without the section predates this check and
+      # fails open with a stderr note.
+      if [ -z "$violation" ] && [ -f "$root/PLAN.md" ]; then
+        if grep -q '^## Surface inventory' "$root/PLAN.md"; then
+          unswept="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { print; exit }' "$root/PLAN.md")"
+          if [ -n "$unswept" ]; then
+            violation="the Surface inventory in PLAN.md still lists an unswept row, first: $unswept; sweep it and record the commit, or record why it is out of scope, then re-declare convergence"
+          fi
+        else
+          echo "jeffy stop hook: PLAN.md has no Surface inventory section; skipping the inventory check." >&2
+        fi
+      fi
       if [ -z "$violation" ]; then
         # Verify-command check: the project's own gate must be green at the
         # converged stop. A missing PLAN.md or an absent timeout binary is

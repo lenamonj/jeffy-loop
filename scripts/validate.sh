@@ -145,7 +145,10 @@ check_markers skills/jeffy/references/plan-default.md \
   "the only sub-agent review this Method authorizes" \
   "strong enough to fail" \
   "stops auditing for the rest of the run" \
-  "a reduction is new code"
+  "a reduction is new code" \
+  "## Surface inventory" \
+  "silence, not cleanliness" \
+  "lists no unswept row"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
@@ -176,7 +179,10 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "at most 2 evaluator invocations per run" \
   "never overwriting it" \
   "so two runs in one session are told apart" \
-  "Closeout:"
+  "Closeout:" \
+  "Surface inventory" \
+  "Change discipline:" \
+  "rows swept of rows total"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
@@ -675,6 +681,45 @@ if command -v jq >/dev/null 2>&1; then
       pass "stop hook accepts the promise once Now, Next, and Later are empty"
     else
       fault "stop hook rejected a legitimate convergence promise"
+    fi
+
+    # Surface-inventory check: a convergence claim covers the whole mapped
+    # surface. Dimension scores claim only what an audit examined, so an
+    # unswept row is unexamined code behind a clean-looking score -
+    # quantstats scored correctness None while its montecarlo module had
+    # never been opened. A PLAN.md without the section predates the check
+    # and fails open.
+    hb_write_state sess-1 1 3
+    printf '# Plan\n\n## Surface inventory\n\n- [x] core: swept at abc1234 - all entry points probed\n- [ ] plots: unswept\n\n## Verify command\nnone\n' > "$hb_proj/PLAN.md"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Surface inventory' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'plots: unswept' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook rejects the promise while the Surface inventory lists an unswept row"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted convergence over unswept surface rows (None can mean unexamined)"
+    fi
+
+    hb_write_state sess-1 1 3
+    printf '# Plan\n\n## Surface inventory\n\n- [x] core: swept at abc1234 - all entry points probed\n- [x] plots: swept at abc1234 - all 20 functions probed\n\n## Verify command\nnone\n' > "$hb_proj/PLAN.md"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook accepts the promise once every Surface inventory row is swept"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook rejected convergence with a fully swept Surface inventory"
+    fi
+
+    hb_write_state sess-1 1 3
+    hb_write_plan none
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'no Surface inventory' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook fails open on a PLAN.md without a Surface inventory section (stderr note)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook mishandled a pre-inventory PLAN.md at the converged stop"
     fi
 
     hb_write_state sess-1 3 3
