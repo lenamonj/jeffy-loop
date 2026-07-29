@@ -1,0 +1,351 @@
+diff --git a/src/bin/bat/app.rs b/src/bin/bat/app.rs
+index cc37075c..d25c5fb1 100644
+--- a/src/bin/bat/app.rs
++++ b/src/bin/bat/app.rs
+@@ -380,6 +380,24 @@ impl App {
+                 }
+             });
+ 
++        let sanitize_mode = parse_strip_ansi_value(
++            self.matches
++                .get_one::<String>("sanitize")
++                .map(|s| s.as_str()),
++            "--sanitize",
++        );
++        // --sanitize implies --strip-ansi to the same value.
++        let strip_ansi_mode = if sanitize_mode != StripAnsiMode::Never {
++            sanitize_mode
++        } else {
++            parse_strip_ansi_value(
++                self.matches
++                    .get_one::<String>("strip-ansi")
++                    .map(|s| s.as_str()),
++                "--strip-ansi",
++            )
++        };
++
+         Ok(Config {
+             true_color: is_truecolor_terminal(),
+             language: self
+@@ -467,32 +485,8 @@ impl App {
+                         4
+                     },
+                 ),
+-            strip_ansi: {
+-                let sanitize = parse_strip_ansi_value(
+-                    self.matches
+-                        .get_one::<String>("sanitize")
+-                        .map(|s| s.as_str()),
+-                    "--sanitize",
+-                );
+-                let strip_ansi = parse_strip_ansi_value(
+-                    self.matches
+-                        .get_one::<String>("strip-ansi")
+-                        .map(|s| s.as_str()),
+-                    "--strip-ansi",
+-                );
+-                // --sanitize implies --strip-ansi to the same value.
+-                if sanitize != StripAnsiMode::Never {
+-                    sanitize
+-                } else {
+-                    strip_ansi
+-                }
+-            },
+-            sanitize: parse_strip_ansi_value(
+-                self.matches
+-                    .get_one::<String>("sanitize")
+-                    .map(|s| s.as_str()),
+-                "--sanitize",
+-            ),
++            strip_ansi: strip_ansi_mode,
++            sanitize: sanitize_mode,
+             quiet_empty: self.matches.get_flag("quiet-empty"),
+             unbuffered: self.matches.get_flag("unbuffered"),
+             theme: theme(self.theme_options()).to_string(),
+diff --git a/src/controller.rs b/src/controller.rs
+index 8f64e8c5..72e48630 100644
+--- a/src/controller.rs
++++ b/src/controller.rs
+@@ -50,6 +50,20 @@ impl Controller<'_> {
+         output_handle: Option<&mut OutputHandle<'_>>,
+         mut handle_error: impl FnMut(&Error, &mut dyn Write),
+     ) -> Result<bool> {
++        // An unresolvable --language is a user error and must be reported even
++        // when nothing would have looked it up: without highlighting, syntax
++        // resolution never runs, so the typo would otherwise pass silently.
++        if let Some(language) = self.config.language {
++            if self
++                .assets
++                .get_syntax_set()?
++                .find_syntax_by_token(language)
++                .is_none()
++            {
++                return Err(Error::UnknownSyntax(language.to_owned()));
++            }
++        }
++
+         // only create our own OutputType if no output handle was provided.
+         #[allow(unused_mut)]
+         let mut output_type_opt: Option<OutputType> = None;
+diff --git a/src/preprocessor.rs b/src/preprocessor.rs
+index 971ae3d4..a9b8e712 100644
+--- a/src/preprocessor.rs
++++ b/src/preprocessor.rs
+@@ -168,7 +168,7 @@ pub fn sanitize(line: &str) -> String {
+ #[inline]
+ fn is_sanitize_trigger(b: u8) -> bool {
+     // C0 controls minus \t \n \f; DEL; UTF-8 leads with dangerous codepoints.
+-    matches!(b, 0x00..=0x08 | 0x0B | 0x0D..=0x1F | 0x7F | 0xC2 | 0xE2 | 0xEF)
++    matches!(b, 0x00..=0x08 | 0x0B | 0x0D..=0x1F | 0x7F | 0xC2 | 0xD8 | 0xE2 | 0xEF)
+ }
+ 
+ /// Substitutes the byte/sequence at `bytes[i]` (or passes it through on
+@@ -200,8 +200,14 @@ fn sanitize_at(
+             buffer.push('\u{FFFD}');
+             3
+         }
++        // 0xD8 0x9C = U+061C (Arabic letter mark, a bidi control). The rest of
++        // the 0xD8 block is ordinary Arabic text.
++        0xD8 if bytes.get(i + 1) == Some(&0x9C) => {
++            buffer.push('\u{FFFD}');
++            2
++        }
+         // False-alarm trigger: pass the full UTF-8 sequence through.
+-        lead @ (0xC2 | 0xE2 | 0xEF) => {
++        lead @ (0xC2 | 0xD8 | 0xE2 | 0xEF) => {
+             let n = utf8_len_from_lead(lead);
+             buffer.push_str(&full[i..i + n]);
+             n
+@@ -217,10 +223,11 @@ fn sanitize_at(
+ 
+ #[inline]
+ fn is_dangerous_e2(bytes: &[u8], i: usize) -> bool {
+-    // U+200B..D (zero-width), U+202A..E (bidi controls), U+2066..9 (isolates).
++    // U+200B..D (zero-width), U+200E..F (LRM/RLM), U+202A..E (bidi embedding
++    // and override), U+2066..9 (bidi isolates).
+     matches!(
+         (bytes.get(i + 1), bytes.get(i + 2)),
+-        (Some(0x80), Some(0x8B..=0x8D | 0xAA..=0xAE)) | (Some(0x81), Some(0xA6..=0xA9))
++        (Some(0x80), Some(0x8B..=0x8F | 0xAA..=0xAE)) | (Some(0x81), Some(0xA6..=0xA9))
+     )
+ }
+ 
+@@ -411,6 +418,34 @@ fn test_sanitize_substitutes_bidi_and_zero_width() {
+     assert_eq!(sanitize("a\u{FEFF}b"), format!("a{r}b"));
+ }
+ 
++#[test]
++fn test_sanitize_substitutes_every_bidi_control() {
++    // Unicode Bidi_Control is exactly these 12 codepoints. Covering only some
++    // of them leaves a reordering attack available through the rest.
++    let r = '\u{FFFD}';
++    for c in [
++        '\u{061C}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}',
++        '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
++    ] {
++        assert_eq!(
++            sanitize(&format!("a{c}b")),
++            format!("a{r}b"),
++            "U+{:04X} was not substituted",
++            c as u32
++        );
++    }
++}
++
++#[test]
++fn test_sanitize_preserves_arabic_sharing_the_alm_lead_byte() {
++    // U+061C is reached via lead byte 0xD8, which also leads ordinary Arabic.
++    assert_eq!(
++        sanitize("\u{0600}\u{061F}\u{06FF}"),
++        "\u{0600}\u{061F}\u{06FF}"
++    );
++    assert_eq!(sanitize("مرحبا بالعالم"), "مرحبا بالعالم");
++}
++
+ #[test]
+ fn test_sanitize_preserves_legitimate_bytes() {
+     assert_eq!(sanitize("crlf\r\nline\r\n"), "crlf\r\nline\r\n");
+diff --git a/src/printer.rs b/src/printer.rs
+index 42405902..fa2c809b 100644
+--- a/src/printer.rs
++++ b/src/printer.rs
+@@ -104,6 +104,9 @@ pub(crate) trait Printer {
+ pub struct SimplePrinter<'a> {
+     config: &'a Config<'a>,
+     consecutive_empty_lines: usize,
++    /// Captured in `print_header`, which the controller always calls before any
++    /// `print_line`. Only the sanitizing path needs it; raw passthrough does not.
++    content_type: Option<ContentType>,
+ }
+ 
+ impl<'a> SimplePrinter<'a> {
+@@ -111,7 +114,41 @@ impl<'a> SimplePrinter<'a> {
+         SimplePrinter {
+             config,
+             consecutive_empty_lines: 0,
++            content_type: None,
++        }
++    }
++
++    /// Applies `--sanitize=always` in loop-through mode, where the line would
++    /// otherwise be passed through raw. Sanitizing exists to make untrusted
++    /// content safe to display, and a preview pane reads piped output, so
++    /// skipping it here would defeat the flag in its main use case.
++    ///
++    /// `--strip-ansi` deliberately does not act here: it is a display-fidelity
++    /// option, and `strip_ansi_does_not_affect_simple_printer` pins that.
++    /// `Auto` means "unless the syntax is plain text", and loop-through mode
++    /// emits no escape sequences of its own, so it is that case by construction.
++    ///
++    /// Decoding mirrors `InteractivePrinter::print_line`: UTF-16 is not UTF-8,
++    /// so decoding it lossily would replace every byte of the file.
++    fn transform_untrusted(&self, line_number: usize, line_buffer: &[u8]) -> Option<String> {
++        if self.config.sanitize != StripAnsiMode::Always {
++            return None;
+         }
++
++        let line = match self.content_type {
++            Some(ContentType::UTF_16LE) => UTF_16LE.decode_with_bom_removal(line_buffer).0,
++            Some(ContentType::UTF_16BE) => UTF_16BE.decode_with_bom_removal(line_buffer).0,
++            _ => {
++                let line = String::from_utf8_lossy(line_buffer);
++                // A leading UTF-8 BOM would otherwise be substituted as U+FEFF.
++                match line.strip_prefix('\u{feff}').filter(|_| line_number == 1) {
++                    Some(stripped) => stripped.to_string().into(),
++                    None => line,
++                }
++            }
++        };
++
++        Some(sanitize(&line))
+     }
+ }
+ 
+@@ -119,9 +156,10 @@ impl Printer for SimplePrinter<'_> {
+     fn print_header(
+         &mut self,
+         _handle: &mut OutputHandle,
+-        _input: &OpenedInput,
++        input: &OpenedInput,
+         _add_header_padding: bool,
+     ) -> Result<()> {
++        self.content_type = input.reader.content_type;
+         Ok(())
+     }
+ 
+@@ -137,7 +175,7 @@ impl Printer for SimplePrinter<'_> {
+         &mut self,
+         out_of_range: bool,
+         handle: &mut OutputHandle,
+-        _line_number: usize,
++        line_number: usize,
+         line_buffer: &[u8],
+         _max_buffered_line_number: MaxBufferedLineNumber,
+     ) -> Result<()> {
+@@ -164,6 +202,10 @@ impl Printer for SimplePrinter<'_> {
+                     self.config.nonprintable_notation,
+                 );
+                 write!(handle, "{line}")?;
++            } else if let Some(line) = self.transform_untrusted(line_number, line_buffer) {
++                // These exist to make untrusted content safe to display, so they
++                // must survive loop-through mode rather than be passed over.
++                write!(handle, "{line}")?;
+             } else {
+                 match handle {
+                     OutputHandle::IoWrite(handle) => handle.write_all(line_buffer)?,
+diff --git a/tests/integration_tests.rs b/tests/integration_tests.rs
+index 33de3fbf..8da3b3e5 100644
+--- a/tests/integration_tests.rs
++++ b/tests/integration_tests.rs
+@@ -2553,6 +2553,33 @@ fn no_first_line_fallback_when_mapping_to_invalid_syntax() {
+         .stderr(predicate::str::contains("unknown syntax: 'InvalidSyntax'"));
+ }
+ 
++#[test]
++fn unknown_language_is_reported_without_color() {
++    // Without highlighting nothing resolves the syntax, so the typo used to be
++    // ignored: the same flag errored under --color=always and passed here.
++    for extra in ["--color=never", "--decorations=never"] {
++        bat()
++            .arg("-l")
++            .arg("nosuchlang")
++            .arg(extra)
++            .arg("test.txt")
++            .assert()
++            .failure()
++            .stderr(predicate::str::contains("unknown syntax: 'nosuchlang'"));
++    }
++}
++
++#[test]
++fn show_all_pseudo_language_is_not_rejected() {
++    // -A sets language to "show-nonprintable"; language validation must accept it.
++    bat()
++        .arg("-A")
++        .arg("--color=never")
++        .write_stdin("a\tb\n")
++        .assert()
++        .success();
++}
++
+ #[test]
+ fn fallback_syntax_is_used_when_no_syntax_is_detected() {
+     let content = "# comment\nfoo=bar\n";
+@@ -3857,6 +3884,57 @@ fn sanitize_implies_strip_ansi() {
+         .stdout("Yellow");
+ }
+ 
++#[test]
++fn sanitize_applies_in_loop_through_mode() {
++    // No --decorations=always here, so bat takes the SimplePrinter path, which
++    // is what a preview pane reading piped output gets. Sanitizing must still
++    // happen, and must not drag decorations into the output.
++    bat()
++        .arg("--sanitize=always")
++        .write_stdin("safe\x1B[31mRED\x1B[0m\rEVIL")
++        .assert()
++        .success()
++        .stdout("safeRED\u{FFFD}EVIL");
++}
++
++#[test]
++fn sanitize_decodes_utf16_in_loop_through_mode() {
++    // UTF-16 is not UTF-8, so sanitizing it as if it were replaces every byte.
++    for (file, expected) in [
++        ("test_UTF-16LE.txt", "hello world\n"),
++        ("test_UTF-16BE.txt", "hello world\nthis is a test\n"),
++    ] {
++        bat()
++            .arg("--sanitize=always")
++            .arg(file)
++            .assert()
++            .success()
++            .stdout(expected);
++    }
++}
++
++#[test]
++fn sanitize_does_not_substitute_utf8_bom_in_loop_through_mode() {
++    // U+FEFF is a sanitize target, so a leading BOM must be removed before
++    // sanitizing rather than turned into a replacement character.
++    bat()
++        .arg("--sanitize=always")
++        .arg("test_BOM.txt")
++        .assert()
++        .success()
++        .stdout("hello world\n");
++}
++
++#[test]
++fn sanitize_never_passes_through_in_loop_through_mode() {
++    bat()
++        .arg("--sanitize=never")
++        .write_stdin("safe\x1B[31mRED\x1B[0m\rEVIL")
++        .assert()
++        .success()
++        .stdout("safe\x1B[31mRED\x1B[0m\rEVIL");
++}
++
+ #[test]
+ fn sanitize_strips_osc_clipboard_hijack() {
+     // OSC 52 sets the system clipboard. A file containing this would silently
