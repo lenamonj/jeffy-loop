@@ -141,7 +141,7 @@ check_markers skills/jeffy/references/plan-default.md \
   "## Lessons" \
   "leaves no open task behind" \
   "run report" \
-  "independent evaluator gate" \
+  "adversarial evaluator gate" \
   "the only sub-agent review this Method authorizes" \
   "strong enough to fail" \
   "stops auditing for the rest of the run" \
