@@ -82,19 +82,19 @@ Self-runs are easy mode. So Jeffy was pointed at real, famous, unaffiliated proj
 
 Ordered by severity of what was found, most severe first.
 
-| Project | Stars | Iterations | Run | Headline |
-|---|---|---|---|---|
-| [quantstats](evals/quantstats/REPORT.md) | 7,489 | 40 | **converged** | 29 findings behind 125 green tests; the library ended smaller than it started |
-| [records](evals/records/REPORT.md) | 7,220 | 7 | **converged** | four High data-loss bugs behind a green suite |
-| [PyPortfolioOpt](evals/pyportfolioopt/REPORT.md) | 5,905 | 58 | **converged** | CI-red baseline to 356 passing; the evaluator rejected five convergence attempts |
-| [dayjs](evals/dayjs/REPORT.md) | 48,657 | 74 | **converged** | 45 findings, 10 High, in a 63M-downloads-a-week library |
-| [mustache.js](evals/mustache.js/REPORT.md) | 16,725 | 11 | **converged** | revived a suite that could not start; npm audit 107 to 2 |
-| [ta](evals/ta/REPORT.md) | 5,129 | 64 | **converged** | wrong numbers shipped since 2023; caught its own regression and wrote "It is mine" |
-| [bat](evals/bat/REPORT.md) | 59,915 | 10 | **converged** | a just-merged security flag did nothing when piped; caught before it ever shipped |
-| [yfinance](evals/yfinance/REPORT.md) | 24,837 | 9 | **converged** | closed a High that upstream's own failing test was advertising |
-| [speedtest-cli](evals/speedtest-cli/REPORT.md) | 14,080 | 5 | **converged** | the restraint case: small findings, nothing invented |
-| [chalk](evals/chalk/REPORT.md) | 23,288 | 8 | **converged** | the control: one Medium found - fixed upstream, shipped in chalk v6.0.0 |
-| [PapaParse](evals/papaparse/REPORT.md) | 13,532 | - | *audit* | four Highs in the streaming path; conversion waits on four open PRs |
+| Project | Stars | Iterations | Run | Upstream | Headline |
+|---|---|---|---|---|---|
+| [quantstats](evals/quantstats/REPORT.md) | 7,489 | 40 | **converged** | [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | 29 findings behind 125 green tests; the library ended smaller than it started |
+| [records](evals/records/REPORT.md) | 7,220 | 7 | **converged** | [issue filed](https://github.com/kennethreitz/records/issues/236) | four High data-loss bugs behind a green suite |
+| [PyPortfolioOpt](evals/pyportfolioopt/REPORT.md) | 5,905 | 58 | **converged** | [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | CI-red baseline to 356 passing; the evaluator rejected five convergence attempts |
+| [dayjs](evals/dayjs/REPORT.md) | 48,657 | 74 | **converged** | [PR open](https://github.com/iamkun/dayjs/pull/3167) | 45 findings, 10 High, in a 63M-downloads-a-week library |
+| [mustache.js](evals/mustache.js/REPORT.md) | 16,725 | 11 | **converged** | [issue filed](https://github.com/janl/mustache.js/issues/848) | revived a suite that could not start; npm audit 107 to 2 |
+| [ta](evals/ta/REPORT.md) | 5,129 | 64 | **converged** | - | wrong numbers shipped since 2023; caught its own regression and wrote "It is mine" |
+| [bat](evals/bat/REPORT.md) | 59,915 | 10 | **converged** | **[FIX MERGED](https://github.com/sharkdp/bat/pull/3862)** | a just-merged security flag did nothing when piped; caught before it ever shipped |
+| [yfinance](evals/yfinance/REPORT.md) | 24,837 | 9 | **converged** | [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | closed a High that upstream's own failing test was advertising |
+| [speedtest-cli](evals/speedtest-cli/REPORT.md) | 14,080 | 5 | **converged** | - | the restraint case: small findings, nothing invented |
+| [chalk](evals/chalk/REPORT.md) | 23,288 | 8 | **converged** | **[FIX MERGED](https://github.com/chalk/chalk/pull/687)** | the control: one Medium found - fixed upstream, shipped in chalk v6.0.0 |
+| [PapaParse](evals/papaparse/REPORT.md) | 13,532 | - | *audit* | [4 PRs open](https://github.com/mholt/PapaParse/issues/1132) | four Highs in the streaming path; conversion waits on four open PRs |
 
 <details>
 <summary><b>ranaroussi/quantstats</b> - the deepest run, where the loop and the engine improved each other in public</summary>
