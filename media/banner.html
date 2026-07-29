@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<!-- Source for the README banner. Render both themes at deviceScaleFactor 2:
+     media/banner-light.png (?theme=light) and media/banner-dark.png (?theme=dark),
+     viewport 1600x380, e.g. with scripts/render-banner.py (playwright). -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg: #ffffff; --fg: #1f2937; --muted: #57606a; --accent: #d97757; --chipbg: #f6f8fa; --chipborder: #d0d7de; }
+  body.dark { --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --accent: #d97757; --chipbg: #161b22; --chipborder: #30363d; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1600px; height: 380px; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  }
+  .stack { text-align: center; }
+  .brand { display: flex; align-items: center; justify-content: center; gap: 28px; }
+  .glyph { width: 96px; height: 96px; }
+  .word { font-size: 96px; font-weight: 800; letter-spacing: -2px; color: var(--fg); line-height: 1; }
+  .word .loop { color: var(--accent); }
+  .tagline { margin-top: 26px; font-size: 30px; color: var(--muted); font-weight: 400; }
+  .chip {
+    display: inline-block; margin-top: 30px; padding: 12px 26px;
+    background: var(--chipbg); border: 2px solid var(--chipborder); border-radius: 12px;
+    font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+    font-size: 26px; color: var(--fg);
+  }
+  .chip .prompt { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="stack">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 100 100" fill="none">
+        <path d="M 50 12 A 38 38 0 1 1 16.5 31" stroke="#d97757" stroke-width="11" stroke-linecap="round"/>
+        <path d="M 8 12 L 16.5 31 L 35 22 Z" fill="#d97757"/>
+      </svg>
+      <div class="word">JEFFY&nbsp;<span class="loop">LOOP</span></div>
+    </div>
+    <div class="tagline">Point it at a project. Give it a budget. Come back to a better codebase and a report.</div>
+    <div class="chip"><span class="prompt">&gt;</span> /jeffy 10</div>
+  </div>
+  <script>
+    if (new URLSearchParams(location.search).get('theme') === 'dark') document.body.classList.add('dark');
+  </script>
+</body>
+</html>
