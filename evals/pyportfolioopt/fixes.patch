@@ -1,180 +1,1446 @@
+diff --git a/docs/BlackLitterman.rst b/docs/BlackLitterman.rst
+index 8a6b703..2f736c9 100644
+--- a/docs/BlackLitterman.rst
++++ b/docs/BlackLitterman.rst
+@@ -218,6 +218,22 @@ inherits from ``BaseOptimizer``, this follows the same API as the ``EfficientFro
+     bl.bl_weights(delta)
+     weights = bl.clean_weights()
+ 
++.. caution::
++
++    Like every optimizer in this library, ``bl_weights()`` rescales its solution to sum to one. That rescaling
++    cancels :math:`\delta` exactly, because the raw weights above are proportional to :math:`1/\delta`. Passing a
++    ``delta`` to ``bl_weights()`` therefore does not change the weights it returns - the argument is accepted so the
++    signature matches the rest of the library, and the line above is included only to mirror the formula. Risk
++    aversion does bite in the two places that consume it before any normalisation: the ``risk_aversion`` argument of
++    ``BlackLittermanModel``, which scales the market-implied prior, and ``EfficientFrontier.max_quadratic_utility``.
++
++    That same rescaling has no answer when the implied portfolio is net short, which is what broadly negative
++    posterior returns produce: dividing by a negative net would invert every position, and dividing by a net near
++    zero would blow the weights up. ``bl_weights()`` raises a ``ValueError`` in that case rather than return either.
++    If you hit it, use the posterior estimates the way the literature suggests - feed ``bl_returns()`` and
++    ``bl_cov()`` into an optimizer, which can express a net-short or market-neutral book that a fully-invested
++    weight vector cannot.
++
+ 
+ Documentation reference
+ =======================
+diff --git a/docs/MeanVariance.rst b/docs/MeanVariance.rst
+index a0a1c05..7910166 100644
+--- a/docs/MeanVariance.rst
++++ b/docs/MeanVariance.rst
+@@ -99,11 +99,12 @@ Basic Usage
+ 
+         .. automethod:: efficient_risk
+ 
+-            .. caution::
++            .. note::
+ 
+-                If you pass an unreasonable target into :py:meth:`efficient_risk` or
+-                :py:meth:`efficient_return`, the optimizer will fail silently and return
+-                weird weights. *Caveat emptor* applies!
++                A target outside the reachable range is rejected with a ``ValueError``
++                naming the limit, and that limit is computed under the weight bounds,
++                added constraints and weight-sum rule this optimizer will actually
++                solve with, so it is a target you can pass straight back in.
+ 
+         .. automethod:: efficient_return
+ 
 diff --git a/pypfopt/base/_base_optimizer.py b/pypfopt/base/_base_optimizer.py
-index ad8c771..0332430 100644
+index ad8c771..fed3c53 100644
 --- a/pypfopt/base/_base_optimizer.py
 +++ b/pypfopt/base/_base_optimizer.py
-@@ -336,7 +336,10 @@ class BaseConvexOptimizer(BaseOptimizer):
+@@ -19,7 +19,7 @@ import numpy as np
+ import pandas as pd
+ import scipy.optimize as sco
+ 
+-from pypfopt.exceptions import InstantiationError, OptimizationError
++from pypfopt.exceptions import CVXPY_ERRORS, InstantiationError, OptimizationError
+ from pypfopt.objective_functions import (
+     portfolio_return,
+     portfolio_variance,
+@@ -336,7 +336,7 @@ class BaseConvexOptimizer(BaseOptimizer):
                  solver=self._solver, verbose=self._verbose, **self._solver_options
              )
  
 -        except (TypeError, cp.DCPError) as e:
-+        except (TypeError, cp.DCPError, cp.SolverError) as e:
-+            # cp.SolverError carries the raw solver status code as its whole
-+            # message (e.g. "4"), which tells the caller nothing. Wrap it in
-+            # the library's own error, keeping the original as __cause__.
++        except (TypeError, *CVXPY_ERRORS) as e:
              raise OptimizationError from e
  
          if self._opt.status not in {"optimal", "optimal_inaccurate"}:
+@@ -595,7 +595,9 @@ def portfolio_performance(
+         elif isinstance(cov_matrix, pd.DataFrame):
+             tickers = list(cov_matrix.columns)
+         else:
+-            tickers = list(range(len(expected_returns)))
++            # Sized from the covariance, which is always present, because
++            # expected_returns is documented as optional on this path.
++            tickers = list(range(len(cov_matrix)))
+         new_weights = np.zeros(len(tickers))
+ 
+         for i, k in enumerate(tickers):
+diff --git a/pypfopt/black_litterman.py b/pypfopt/black_litterman.py
+index ec4bff4..d9a4c1a 100644
+--- a/pypfopt/black_litterman.py
++++ b/pypfopt/black_litterman.py
+@@ -7,7 +7,6 @@ views. In addition, two utility functions are defined, which calculate:
+ - market-implied risk-aversion parameter
+ """
+ 
+-import sys
+ import warnings
+ 
+ import numpy as np
+@@ -185,11 +184,6 @@ class BlackLittermanModel(BaseOptimizer):
+         risk_free_rate : float, optional
+             (kwarg) risk_free_rate is needed in some methods. Defaults to 0.0.
+         """
+-        if sys.version_info[1] == 5:  # pragma: no cover
+-            warnings.warn(
+-                "When using python 3.5 you must explicitly construct the Black-Litterman inputs"
+-            )
+-
+         # Keep raw dataframes
+         self._raw_cov_matrix = cov_matrix
+ 
+@@ -482,15 +476,35 @@ class BlackLittermanModel(BaseOptimizer):
+ 
+             w = (\delta \Sigma)^{-1} E(R)
+ 
++        The raw solution is then rescaled to sum to one, because every
++        optimizer in this library returns a fully-invested portfolio. Note
++        that this rescaling cancels ``risk_aversion`` exactly: the raw
++        weights are proportional to :math:`1/\delta`, so the normalised
++        weights are the same for every value of it. ``risk_aversion``
++        therefore has no effect on the output of this method, and is kept
++        only so that the signature matches the rest of the library. Use it
++        where it does bite - as the ``risk_aversion`` argument of
++        :py:class:`BlackLittermanModel`, which feeds the market-implied
++        prior, or of ``EfficientFrontier.max_quadratic_utility``.
++
+         Parameters
+         ----------
+         risk_aversion : positive float, optional
+-            risk aversion parameter, defaults to 1
++            risk aversion parameter, defaults to 1. Has no effect on the
++            returned weights; see the note above.
++
++        Raises
++        ------
++        ValueError
++            if the implied portfolio has zero or negative net exposure, so
++            that no fully-invested rescaling of it exists. This happens when
++            the posterior returns are largely negative; feed ``bl_returns()``
++            into an optimizer instead.
+ 
+         Returns
+         -------
+         OrderedDict
+-            asset weights implied by returns
++            asset weights implied by returns, normalised to sum to one
+         """
+         if risk_aversion is None:
+             risk_aversion = self.risk_aversion
+@@ -506,7 +520,22 @@ class BlackLittermanModel(BaseOptimizer):
+             else:
+                 raise e
+         raw_weights = weight_solution
+-        self.weights = raw_weights / raw_weights.sum()
++        net = raw_weights.sum()
++        # Rescaling to sum to one is only meaningful while the net exposure is
++        # positive and not negligible against the gross. A negative net flips
++        # every position, and a near-zero one blows the weights up without
++        # producing an infinity that a later check could catch.
++        if net <= 1e-8 * np.abs(raw_weights).sum():
++            raise ValueError(
++                "The implied portfolio has net exposure {:.4g} against gross exposure "
++                "{:.4g}, so it cannot be rescaled to a fully-invested portfolio: doing "
++                "so would invert every position or explode the weights. This usually "
++                "means the posterior returns are largely negative. Pass bl_returns() "
++                "into an optimizer such as EfficientFrontier instead.".format(
++                    float(net), float(np.abs(raw_weights).sum())
++                )
++            )
++        self.weights = raw_weights / net
+         return self._make_output_weights()
+ 
+     def optimize(self, risk_aversion=None):
 diff --git a/pypfopt/cla.py b/pypfopt/cla.py
-index bde53b1..e61d308 100644
+index bde53b1..ba0db3b 100644
 --- a/pypfopt/cla.py
 +++ b/pypfopt/cla.py
-@@ -69,11 +69,24 @@ class CLA(BaseOptimizer):
+@@ -52,8 +52,10 @@ class CLA(BaseOptimizer):
+         Parameters
+         ----------
+         expected_returns : pd.Series, list, or np.ndarray
+-            expected returns for each asset. Set to None if
+-            optimising for volatility only.
++            expected returns for each asset. Required, unlike
++            ``EfficientFrontier``: the critical line algorithm traces the
++            frontier in order of expected return, so it cannot optimise for
++            volatility alone.
+         cov_matrix : pd.DataFrame or np.array
+             covariance of returns for each asset
+         weight_bounds : tuple (float, float) or (list/ndarray, list/ndarray) or list(tuple(float, float))
+@@ -64,15 +66,46 @@ class CLA(BaseOptimizer):
+         ------
+         TypeError
+             if ``expected_returns`` is not a series, list or array
++        ValueError
++            if all ``expected_returns`` are equal (and there is more than one
++            asset), because the algorithm then has no frontier to trace
++        ValueError
++            if ``expected_returns`` or ``cov_matrix`` contains NaN or infinite
++            values, which the algorithm's arithmetic would otherwise propagate
++            into a silently wrong portfolio
+         TypeError
+             if ``cov_matrix`` is not a dataframe or array
          """
          # Initialize the class
++        if expected_returns is None:
++            raise TypeError(
++                "expected_returns is required by CLA, which optimises along the "
++                "mean-variance frontier; use EfficientFrontier.min_volatility "
++                "to optimise for volatility alone"
++            )
          self.mean = np.array(expected_returns).reshape((len(expected_returns), 1))
 -        # if (self.mean == np.ones(self.mean.shape) * self.mean.mean()).all():
 -        #     self.mean[-1, 0] += 1e-5
++        # A finite-ness gate for both numeric inputs: the cvxpy-backed
++        # optimizers refuse non-finite data loudly at solve time, but CLA's
++        # own arithmetic propagates it and returns a plausible-looking wrong
++        # portfolio, so refuse it here with the argument named.
++        if not np.isfinite(self.mean).all():
++            raise ValueError("expected_returns contains NaN or infinite values")
++        # A flat mean vector makes _compute_lambda's denominator exactly 0 for
++        # every candidate, so the algorithm can never free an asset: it would
++        # terminate on its init state and return a silently wrong portfolio.
++        # There is no frontier to trace, so refuse rather than perturb the
++        # data, which is what the hack this guard replaced used to do.
++        if len(self.mean) > 1 and np.ptp(self.mean) == 0:
++            raise ValueError(
++                "all expected_returns are equal, so there is no frontier for "
++                "the critical line algorithm to trace; use "
++                "EfficientFrontier.min_volatility for the minimum-variance "
++                "portfolio"
++            )
          self.expected_returns = self.mean.reshape((len(self.mean),))
          self.cov_matrix = np.asarray(cov_matrix)
++        if not np.isfinite(self.cov_matrix).all():
++            raise ValueError("cov_matrix contains NaN or infinite values")
  
-+        # Single validation boundary for the numeric inputs. Without it a NaN
-+        # anywhere in either input propagates silently all the way to a
-+        # portfolio containing NaN weights; EfficientFrontier rejects the same
-+        # input, so CLA was the only entry point that did not.
-+        for name, arr in (
-+            ("expected_returns", self.mean),
-+            ("cov_matrix", self.cov_matrix),
-+        ):
-+            if not np.all(np.isfinite(arr)):
-+                raise ValueError(
-+                    "{} contains NaN or infinite values. Check your price "
-+                    "history for gaps or zero prices before estimating "
-+                    "it.".format(name)
-+                )
-+
          # Bounds
          if len(weight_bounds) == len(self.mean) and not isinstance(
-             weight_bounds[0], (float, int)
-@@ -192,15 +205,42 @@ class CLA(BaseOptimizer):
-         res = float(res[0, 0])
-         return res, bi
- 
--    def _get_matrices(self, f):
-+    def _get_matrices(self, f, w):
-         # Slice covarF,covarFB,covarB,meanF,meanB,wF,wB
-+        #
-+        # ``w`` is the weight vector currently being built, not self.w[-1].
-+        # They differ in exactly one place: after a free asset has been pushed
-+        # to its boundary, ``w`` already holds the boundary value while
-+        # self.w[-1] still holds the previous turning point's interior value.
-+        # Slicing wB out of the stale vector solves the free weights against
-+        # the wrong bounded budget and yields a turning point whose weights do
-+        # not sum to 1.
-         covarF = self._reduce_matrix(self.cov_matrix, f, f)
-         meanF = self._reduce_matrix(self.mean, f, [0])
-         b = self._get_b(f)
-         covarFB = self._reduce_matrix(self.cov_matrix, f, b)
--        wB = self._reduce_matrix(self.w[-1], b, [0])
-+        wB = self._reduce_matrix(w, b, [0])
-         return covarF, covarFB, meanF, wB
- 
-+    @staticmethod
-+    def _invert(matrix):
-+        """
-+        Invert a covariance submatrix, converting numpy's raw ``LinAlgError``
-+        into an actionable message. The critical line algorithm requires the
-+        covariance matrix to be positive *definite*; a merely positive
-+        semidefinite one (perfectly collinear assets) is singular.
-+        """
-+        try:
-+            return np.linalg.inv(matrix)
-+        except np.linalg.LinAlgError as e:
-+            raise ValueError(
-+                "The covariance matrix is singular, so the critical line algorithm "
-+                "cannot invert it. This happens when assets are perfectly collinear. "
-+                "Drop the redundant assets, apply a shrinkage estimator "
-+                "(pypfopt.risk_models.CovarianceShrinkage), or use EfficientFrontier, "
-+                "which does not require an invertible covariance matrix."
-+            ) from e
-+
-     def _get_b(self, f):
-         return self._diff_lists(list(range(self.mean.shape[0])), f)
- 
-@@ -262,6 +302,9 @@ class CLA(BaseOptimizer):
- 
-     def _purge_excess(self):
-         # Remove violations of the convex hull
-+        if len(self.w) < 2:
-+            # Nothing to compare against; the indexing below would run off the end.
-+            return
-         i, repeat = 0, False
-         while True:
-             if repeat is False:
-@@ -329,6 +372,18 @@ class CLA(BaseOptimizer):
- 
-     def _solve(self):
-         # Compute the turning points,free sets and weights
-+        if self.mean.shape[0] > 1 and np.all(self.mean == self.mean[0, 0]):
-+            # Every lambda in _compute_lambda has an exactly zero denominator,
-+            # so no turning point is well defined. Left unguarded the recursion
-+            # either raises a raw TypeError/IndexError or returns a portfolio
-+            # that is not on the efficient frontier at all.
-+            raise ValueError(
-+                "All expected returns are identical, so the efficient frontier "
-+                "collapses to the single minimum-variance portfolio and the "
-+                "critical line algorithm has no turning points to trace. Use "
-+                "EfficientFrontier(mu, S).min_volatility() instead, or supply "
-+                "expected returns that differ between assets."
-+            )
-         f, w = self._init_algo()
-         self.w.append(np.copy(w))  # store solution
-         self.ls.append(None)
-@@ -338,8 +393,8 @@ class CLA(BaseOptimizer):
-             # 1) case a): Bound one free weight
-             l_in = None
-             if len(f) > 1:
--                covarF, covarFB, meanF, wB = self._get_matrices(f)
--                covarF_inv = np.linalg.inv(covarF)
-+                covarF, covarFB, meanF, wB = self._get_matrices(f, w)
-+                covarF_inv = self._invert(covarF)
-                 j = 0
-                 for i in f:
-                     lam, bi = self._compute_lambda(
-@@ -353,8 +408,8 @@ class CLA(BaseOptimizer):
-             if len(f) < self.mean.shape[0]:
-                 b = self._get_b(f)
-                 for i in b:
--                    covarF, covarFB, meanF, wB = self._get_matrices(f + [i])
--                    covarF_inv = np.linalg.inv(covarF)
-+                    covarF, covarFB, meanF, wB = self._get_matrices(f + [i], w)
-+                    covarF_inv = self._invert(covarF)
-                     lam, bi = self._compute_lambda(
-                         covarF_inv,
-                         covarFB,
-@@ -370,8 +425,8 @@ class CLA(BaseOptimizer):
+@@ -363,9 +396,13 @@ class CLA(BaseOptimizer):
+                         meanF.shape[0] - 1,
+                         self.w[-1][i],
+                     )
++                    # _infnone shields lam exactly as case a) does: _compute_lambda
++                    # returns None when its denominator is 0, which is true for
++                    # every candidate when all expected returns are equal, and a
++                    # bare comparison then raises TypeError.
+                     if (
+-                        self.ls[-1] is None or lam < self.ls[-1]
+-                    ) and lam > CLA._infnone(l_out):
++                        self.ls[-1] is None or CLA._infnone(lam) < self.ls[-1]
++                    ) and CLA._infnone(lam) > CLA._infnone(l_out):
+                         l_out, i_out = lam, i
              if (l_in is None or l_in < 0) and (l_out is None or l_out < 0):
                  # 3) compute minimum variance solution
-                 self.ls.append(0)
--                covarF, covarFB, meanF, wB = self._get_matrices(f)
--                covarF_inv = np.linalg.inv(covarF)
-+                covarF, covarFB, meanF, wB = self._get_matrices(f, w)
-+                covarF_inv = self._invert(covarF)
-                 meanF = np.zeros(meanF.shape)
-             else:
-                 # 4) decide lambda
-@@ -382,8 +437,8 @@ class CLA(BaseOptimizer):
-                 else:
-                     self.ls.append(l_out)
-                     f.append(i_out)
--                covarF, covarFB, meanF, wB = self._get_matrices(f)
--                covarF_inv = np.linalg.inv(covarF)
-+                covarF, covarFB, meanF, wB = self._get_matrices(f, w)
-+                covarF_inv = self._invert(covarF)
-             # 5) compute solution vector
-             wF, g = self._compute_w(covarF_inv, covarFB, meanF, wB)
-             for i in range(len(f)):
+@@ -447,7 +484,10 @@ class CLA(BaseOptimizer):
+         Parameters
+         ----------
+         points : int, optional
+-            rough number of points to evaluate, defaults to 100
++            rough number of points to evaluate, defaults to 100. The frontier
++            is sampled segment by segment between its turning points, so a
++            value below the number of turning points returns roughly that many
++            points rather than fewer.
+ 
+         Raises
+         ------
+@@ -463,14 +503,19 @@ class CLA(BaseOptimizer):
+             self._solve()
+ 
+         mu, sigma, weights = [], [], []
++        # Two samples per segment at minimum, so every segment contributes its
++        # own endpoints. points // len(self.w) reaches zero as soon as the
++        # caller asks for fewer points than the frontier has turning points,
++        # and the loop below then returned three empty lists without saying so.
++        per_segment = max(2, points // len(self.w))
+         # remove the 1, to avoid duplications
+-        a = np.linspace(0, 1, points // len(self.w))[:-1]
++        a = np.linspace(0, 1, per_segment)[:-1]
+         b = list(range(len(self.w) - 1))
+         for i in b:
+             w0, w1 = self.w[i], self.w[i + 1]
+             if i == b[-1]:
+                 # include the 1 in the last iteration
+-                a = np.linspace(0, 1, points // len(self.w))
++                a = np.linspace(0, 1, per_segment)
+             for j in a:
+                 w = w1 * j + (1 - j) * w0
+                 weights.append(np.copy(w))
+diff --git a/pypfopt/discrete_allocation.py b/pypfopt/discrete_allocation.py
+index f4033e0..20ffc98 100644
+--- a/pypfopt/discrete_allocation.py
++++ b/pypfopt/discrete_allocation.py
+@@ -241,7 +241,12 @@ class DiscreteAllocation:
+             # Calculate the equivalent continuous weights of the shares that
+             # have already been bought
+             current_weights = np.array(buy_prices) * np.array(shares_bought)
+-            current_weights /= current_weights.sum()
++            invested = current_weights.sum()
++            # Nothing was affordable in the first round, so the holdings stay at
++            # zero and every asset is fully deficient. Normalising here would be
++            # 0/0.
++            if invested > 0:
++                current_weights = current_weights / invested
+             ideal_weights = np.array([i[1] for i in self.weights])
+             deficit = ideal_weights - current_weights
+ 
+@@ -299,6 +304,12 @@ class DiscreteAllocation:
+             the CVXPY solver to use (must support mixed-integer programs).
+             Defaults to "ECOS_BB" if ecos is installed, else None.
+ 
++        Raises
++        ------
++        exceptions.OptimizationError
++            if the allocation cannot be solved, which includes passing a
++            ``solver`` that does not support mixed-integer programs
++
+         Returns
+         -------
+         (dict, float)
+@@ -372,7 +383,13 @@ class DiscreteAllocation:
+         objective = cp.sum(u) + r
+ 
+         opt = cp.Problem(cp.Minimize(objective), constraints)
+-        opt.solve(solver=solver)
++        try:
++            opt.solve(solver=solver)
++        except exceptions.CVXPY_ERRORS as e:
++            # A solver that cannot take integer variables reports itself here,
++            # which is the documented way to get this call wrong; it is reported
++            # as OptimizationError like every other failure to solve.
++            raise exceptions.OptimizationError from e
+ 
+         if opt.status not in {"optimal", "optimal_inaccurate"}:  # pragma: no cover
+             raise exceptions.OptimizationError("Please try greedy_portfolio")
+diff --git a/pypfopt/efficient_frontier/efficient_cdar.py b/pypfopt/efficient_frontier/efficient_cdar.py
+index 8983ef4..c147948 100644
+--- a/pypfopt/efficient_frontier/efficient_cdar.py
++++ b/pypfopt/efficient_frontier/efficient_cdar.py
+@@ -3,13 +3,11 @@ The ``efficient_cdar`` submodule houses the EfficientCDaR class, which
+ generates portfolios along the mean-CDaR (conditional drawdown-at-risk) frontier.
+ """
+ 
+-import warnings
+-
+ import cvxpy as cp
+ import numpy as np
+ 
+ from .. import objective_functions
+-from .efficient_frontier import EfficientFrontier
++from .efficient_frontier import EfficientFrontier, _empirical_cvar, _validate_beta
+ 
+ 
+ class EfficientCDaR(EfficientFrontier):
+@@ -40,7 +38,6 @@ class EfficientCDaR(EfficientFrontier):
+     - ``add_constraint()`` adds a (linear) constraint to the optimisation problem
+ 
+     - ``portfolio_performance()`` calculates the expected return and CDaR of the portfolio
+-    - ``set_weights()`` creates self.weights (np.ndarray) from a weights dict
+     - ``clean_weights()`` rounds the weights and clips near-zeros.
+     - ``save_weights_to_file()`` saves the weights to csv, json, or txt.
+     """
+@@ -81,10 +78,16 @@ class EfficientCDaR(EfficientFrontier):
+         ------
+         TypeError
+             if ``expected_returns`` is not a series, list or array
++        TypeError
++            if ``returns`` is not a pd.DataFrame or np.ndarray
+         """
+         super().__init__(
+             expected_returns=expected_returns,
+-            cov_matrix=np.zeros((len(expected_returns),) * 2),  # dummy
++            # A dummy covariance, sized from returns - always present, unlike
++            # the optional expected_returns - through the shared type check, so
++            # every off-contract ``returns`` gets _validate_returns' documented
++            # TypeError, which test_cdar_errors pins, not an IndexError.
++            cov_matrix=np.zeros((self._validate_returns_type(returns).shape[1],) * 2),
+             weight_bounds=weight_bounds,
+             solver=solver,
+             verbose=verbose,
+@@ -92,7 +95,7 @@ class EfficientCDaR(EfficientFrontier):
+         )
+ 
+         self.returns = self._validate_returns(returns)
+-        self._beta = self._validate_beta(beta)
++        self._beta = _validate_beta(beta)
+         self._alpha = cp.Variable()
+         self._u = cp.Variable(len(self.returns) + 1)
+         self._z = cp.Variable(len(self.returns))
+@@ -100,17 +103,6 @@ class EfficientCDaR(EfficientFrontier):
+     def set_weights(self, input_weights):
+         raise NotImplementedError("Method not available in EfficientCDaR.")
+ 
+-    @staticmethod
+-    def _validate_beta(beta):
+-        if not (0 <= beta < 1):
+-            raise ValueError("beta must be between 0 and 1")
+-        if beta <= 0.2:
+-            warnings.warn(
+-                "Warning: beta is the confidence-level, not the quantile. Typical values are 80%, 90%, 95%.",
+-                UserWarning,
+-            )
+-        return beta
+-
+     def min_volatility(self):
+         raise NotImplementedError("Please use min_cdar instead.")
+ 
+@@ -161,7 +153,8 @@ class EfficientCDaR(EfficientFrontier):
+         Raises
+         ------
+         ValueError
+-            if ``target_return`` is not a positive float
++            if ``target_return`` is not a real number, or is greater than the
++            largest achievable return. Negative targets are accepted.
+         ValueError
+             if no portfolio can be found with return equal to ``target_return``
+ 
+@@ -170,6 +163,7 @@ class EfficientCDaR(EfficientFrontier):
+         OrderedDict
+             asset weights for the optimal portfolio
+         """
++        target_return = self._validate_target_return(target_return, market_neutral)
+ 
+         update_existing_parameter = self.is_parameter_defined("target_return")
+         if update_existing_parameter:
+@@ -178,9 +172,7 @@ class EfficientCDaR(EfficientFrontier):
+             return self._solve_cvxpy_opt_problem()
+         else:
+             ret = self.expected_returns.T @ self._w
+-            target_return_par = cp.Parameter(
+-                value=target_return, name="target_return", nonneg=True
+-            )
++            target_return_par = cp.Parameter(value=target_return, name="target_return")
+             self.add_constraint(lambda _: ret >= target_return_par)
+             return self.min_cdar(market_neutral)
+ 
+@@ -198,17 +190,34 @@ class EfficientCDaR(EfficientFrontier):
+             whether the portfolio should be market neutral (weights sum to zero),
+             defaults to False. Requires negative lower weight bound.
+ 
++        Raises
++        ------
++        ValueError
++            if ``target_cdar`` is not a non-negative real number
++        exceptions.OptimizationError
++            if the problem cannot be solved. When the cause is that
++            ``target_cdar`` is below the lowest CDaR this optimizer can
++            reach, the message names that floor, which is the value
++            ``min_cdar`` achieves under the same weight bounds, added
++            constraints and weight-sum rule; use a higher target than
++            the one named.
++
+         Returns
+         -------
+         OrderedDict
+             asset weights for the efficient risk portfolio
+         """
++        target_cdar = self._validate_target_risk(target_cdar, "target_cdar")
+ 
+         update_existing_parameter = self.is_parameter_defined("target_cdar")
+         if update_existing_parameter:
+             self._validate_market_neutral(market_neutral)
+             self.update_parameter_value("target_cdar", target_cdar)
+         else:
++            # Kept as this optimizer stood before the target constraint went in,
++            # so an unreachable target can be answered with the floor it missed.
++            self._floor_probe = self.deepcopy()
++
+             self._objective = objective_functions.portfolio_return(
+                 self._w, self.expected_returns
+             )
+@@ -226,7 +235,9 @@ class EfficientCDaR(EfficientFrontier):
+             self._add_cdar_constraints()
+ 
+             self._make_weight_sum_constraint(market_neutral)
+-        return self._solve_cvxpy_opt_problem()
++        return self._solve_naming_the_risk_floor(
++            target_cdar, "CDaR", EfficientCDaR.min_cdar, market_neutral
++        )
+ 
+     def _add_cdar_constraints(self) -> None:
+         self.add_constraint(lambda _: self._z >= self._u[1:] - self._alpha)
+@@ -255,17 +266,27 @@ class EfficientCDaR(EfficientFrontier):
+         Returns
+         -------
+         (float, float)
+-            expected return, CDaR.
++            expected return, CDaR. The expected return is None when the
++            optimizer was built without ``expected_returns``.
+         """
++        # The drawdown series the programme's constraints define: with
++        # u[0] = 0 and u[i] >= u[i-1] - r[i-1], the smallest feasible u is the
++        # running peak of the uncompounded cumulative return minus its current
++        # level. CDaR is then the conditional value at risk of those drawdowns.
++        portfolio_returns = self.returns.values @ self.weights
++        cumulative = np.concatenate([[0.0], np.cumsum(portfolio_returns)])
++        drawdowns = np.maximum.accumulate(cumulative) - cumulative
++        cdar_val = _empirical_cvar(drawdowns[1:], self._beta)
++
++        if self.expected_returns is None:
++            if verbose:
++                print("Conditional Drawdown at Risk: {:.2f}%".format(100 * cdar_val))
++            return None, cdar_val
++
+         mu = objective_functions.portfolio_return(
+             self.weights, self.expected_returns, negative=False
+         )
+ 
+-        cdar = self._alpha + 1.0 / (len(self.returns) * (1 - self._beta)) * cp.sum(
+-            self._z
+-        )
+-        cdar_val = cdar.value
+-
+         if verbose:
+             print("Expected annual return: {:.1f}%".format(100 * mu))
+             print("Conditional Drawdown at Risk: {:.2f}%".format(100 * cdar_val))
+diff --git a/pypfopt/efficient_frontier/efficient_cvar.py b/pypfopt/efficient_frontier/efficient_cvar.py
+index 2cb21bb..6b21db4 100644
+--- a/pypfopt/efficient_frontier/efficient_cvar.py
++++ b/pypfopt/efficient_frontier/efficient_cvar.py
+@@ -3,13 +3,11 @@ The ``efficient_cvar`` submodule houses the EfficientCVaR class, which
+ generates portfolios along the mean-CVaR frontier.
+ """
+ 
+-import warnings
+-
+ import cvxpy as cp
+ import numpy as np
+ 
+ from .. import objective_functions
+-from .efficient_frontier import EfficientFrontier
++from .efficient_frontier import EfficientFrontier, _empirical_cvar, _validate_beta
+ 
+ 
+ class EfficientCVaR(EfficientFrontier):
+@@ -41,7 +39,6 @@ class EfficientCVaR(EfficientFrontier):
+     - ``add_constraint()`` adds a constraint to the optimization problem
+ 
+     - ``portfolio_performance()`` calculates the expected return and CVaR of the portfolio
+-    - ``set_weights()`` creates self.weights (np.ndarray) from a weights dict
+     - ``clean_weights()`` rounds the weights and clips near-zeros.
+     - ``save_weights_to_file()`` saves the weights to csv, json, or txt.
+     """
+@@ -82,10 +79,15 @@ class EfficientCVaR(EfficientFrontier):
+         ------
+         TypeError
+             if ``expected_returns`` is not a series, list or array
++        TypeError
++            if ``returns`` is not a pd.DataFrame or np.ndarray
+         """
+         super().__init__(
+             expected_returns=expected_returns,
+-            cov_matrix=np.zeros((returns.shape[1],) * 2),  # dummy
++            # A dummy covariance, sized through the shared type check so that
++            # every off-contract ``returns`` gets _validate_returns' documented
++            # TypeError rather than an IndexError from the shape lookup.
++            cov_matrix=np.zeros((self._validate_returns_type(returns).shape[1],) * 2),
+             weight_bounds=weight_bounds,
+             solver=solver,
+             verbose=verbose,
+@@ -93,24 +95,13 @@ class EfficientCVaR(EfficientFrontier):
+         )
+ 
+         self.returns = self._validate_returns(returns)
+-        self._beta = self._validate_beta(beta)
++        self._beta = _validate_beta(beta)
+         self._alpha = cp.Variable()
+         self._u = cp.Variable(len(self.returns))
+ 
+     def set_weights(self, input_weights):
+         raise NotImplementedError("Method not available in EfficientCVaR.")
+ 
+-    @staticmethod
+-    def _validate_beta(beta):
+-        if not (0 <= beta < 1):
+-            raise ValueError("beta must be between 0 and 1")
+-        if beta <= 0.2:
+-            warnings.warn(
+-                "Warning: beta is the confidence-level, not the quantile. Typical values are 80%, 90%, 95%.",
+-                UserWarning,
+-            )
+-        return beta
+-
+     def min_volatility(self):
+         raise NotImplementedError("Please use min_cvar instead.")
+ 
+@@ -165,7 +156,8 @@ class EfficientCVaR(EfficientFrontier):
+         Raises
+         ------
+         ValueError
+-            if ``target_return`` is not a positive float
++            if ``target_return`` is not a real number, or is greater than the
++            largest achievable return. Negative targets are accepted.
+         ValueError
+             if no portfolio can be found with return equal to ``target_return``
+ 
+@@ -174,6 +166,8 @@ class EfficientCVaR(EfficientFrontier):
+         OrderedDict
+             asset weights for the optimal portfolio
+         """
++        target_return = self._validate_target_return(target_return, market_neutral)
++
+         update_existing_parameter = self.is_parameter_defined("target_return")
+         if update_existing_parameter:
+             self._validate_market_neutral(market_neutral)
+@@ -212,16 +206,34 @@ class EfficientCVaR(EfficientFrontier):
+             whether the portfolio should be market neutral (weights sum to zero),
+             defaults to False. Requires negative lower weight bound.
+ 
++        Raises
++        ------
++        ValueError
++            if ``target_cvar`` is not a non-negative real number
++        exceptions.OptimizationError
++            if the problem cannot be solved. When the cause is that
++            ``target_cvar`` is below the lowest CVaR this optimizer can
++            reach, the message names that floor, which is the value
++            ``min_cvar`` achieves under the same weight bounds, added
++            constraints and weight-sum rule; use a higher target than
++            the one named.
++
+         Returns
+         -------
+         OrderedDict
+             asset weights for the efficient risk portfolio
+         """
++        target_cvar = self._validate_target_risk(target_cvar, "target_cvar")
++
+         update_existing_parameter = self.is_parameter_defined("target_cvar")
+         if update_existing_parameter:
+             self._validate_market_neutral(market_neutral)
+             self.update_parameter_value("target_cvar", target_cvar)
+         else:
++            # Kept as this optimizer stood before the target constraint went in,
++            # so an unreachable target can be answered with the floor it missed.
++            self._floor_probe = self.deepcopy()
++
+             self._objective = objective_functions.portfolio_return(
+                 self._w, self.expected_returns
+             )
+@@ -242,7 +254,9 @@ class EfficientCVaR(EfficientFrontier):
+             )
+ 
+             self._make_weight_sum_constraint(market_neutral)
+-        return self._solve_cvxpy_opt_problem()
++        return self._solve_naming_the_risk_floor(
++            target_cvar, "CVaR", EfficientCVaR.min_cvar, market_neutral
++        )
+ 
+     def portfolio_performance(self, verbose=False):
+         """
+@@ -262,17 +276,20 @@ class EfficientCVaR(EfficientFrontier):
+         Returns
+         -------
+         (float, float)
+-            expected return, CVaR.
++            expected return, CVaR. The expected return is None when the
++            optimizer was built without ``expected_returns``.
+         """
++        cvar_val = _empirical_cvar(-(self.returns.values @ self.weights), self._beta)
++
++        if self.expected_returns is None:
++            if verbose:
++                print("Conditional Value at Risk: {:.2f}%".format(100 * cvar_val))
++            return None, cvar_val
++
+         mu = objective_functions.portfolio_return(
+             self.weights, self.expected_returns, negative=False
+         )
+ 
+-        cvar = self._alpha + 1.0 / (len(self.returns) * (1 - self._beta)) * cp.sum(
+-            self._u
+-        )
+-        cvar_val = cvar.value
+-
+         if verbose:
+             print("Expected annual return: {:.1f}%".format(100 * mu))
+             print("Conditional Value at Risk: {:.2f}%".format(100 * cvar_val))
+diff --git a/pypfopt/efficient_frontier/efficient_frontier.py b/pypfopt/efficient_frontier/efficient_frontier.py
+index 04e9d62..ab17c4b 100644
+--- a/pypfopt/efficient_frontier/efficient_frontier.py
++++ b/pypfopt/efficient_frontier/efficient_frontier.py
+@@ -3,6 +3,7 @@ The ``efficient_frontier`` submodule houses the EfficientFrontier class, which g
+ classical mean-variance optimal portfolios for a variety of objectives and constraints
+ """
+ 
++import numbers
+ import warnings
+ 
+ import cvxpy as cp
+@@ -14,6 +15,72 @@ from pypfopt.base import BaseConvexOptimizer, portfolio_performance
+ from .. import exceptions, objective_functions
+ 
+ 
++def _validate_beta(beta):
++    """
++    Validate the confidence level shared by the tail-risk optimizers
++    (``EfficientCVaR`` and ``EfficientCDaR``).
++
++    Parameters
++    ----------
++    beta : float
++        confidence level, in [0, 1)
++
++    Raises
++    ------
++    ValueError
++        if ``beta`` is outside [0, 1)
++
++    Returns
++    -------
++    float
++        the validated confidence level
++    """
++    if not (0 <= beta < 1):
++        raise ValueError("beta must be between 0 and 1")
++    if beta <= 0.2:
++        warnings.warn(
++            "Warning: beta is the confidence-level, not the quantile. Typical values are 80%, 90%, 95%.",
++            UserWarning,
++        )
++    return beta
++
++
++def _empirical_cvar(losses, beta):
++    """
++    The conditional value at risk of an empirical loss sample, computed exactly.
++
++    This is the optimal value of the Rockafellar-Uryasev programme: the mean of
++    the worst ``1 - beta`` fraction of the sample, with the observation on the
++    boundary weighted by however much of it falls inside that fraction.
++
++    The tail-risk optimizers report their risk through here rather than reading
++    the solved value of the programme's own auxiliary variables, because those
++    are driven to the risk-minimising point only when the risk measure is the
++    objective. Under ``efficient_risk`` it is a constraint instead, so any
++    feasible value of them is optimal and the solved value describes the bound
++    that was imposed rather than the risk of the portfolio that came back.
++
++    Parameters
++    ----------
++    losses : np.ndarray
++        realised losses, positive meaning a loss
++    beta : float
++        confidence level, in [0, 1)
++
++    Returns
++    -------
++    float
++        the conditional value at risk of the sample at level ``beta``
++    """
++    tail_size = len(losses) * (1 - beta)
++    whole = int(np.floor(tail_size))
++    worst = np.sort(losses)[::-1]
++    total = worst[:whole].sum()
++    if whole < len(worst):
++        total += (tail_size - whole) * worst[whole]
++    return float(total / tail_size)
++
++
+ class EfficientFrontier(BaseConvexOptimizer):
+     """
+     An EfficientFrontier object (inheriting from BaseConvexOptimizer) contains multiple
+@@ -94,6 +161,9 @@ class EfficientFrontier(BaseConvexOptimizer):
+         self.cov_matrix = self._validate_cov_matrix(cov_matrix)
+         self.expected_returns = self._validate_expected_returns(expected_returns)
+         self._max_return_value = None
++        self._min_volatility_value = None
++        self._bound_key = None
++        self._floor_probe = None
+         self._market_neutral = None
+ 
+         if self.expected_returns is None:
+@@ -146,12 +216,22 @@ class EfficientFrontier(BaseConvexOptimizer):
+         else:
+             raise TypeError("cov_matrix is not a dataframe or array")
+ 
+-    def _validate_returns(self, returns):
++    @staticmethod
++    def _validate_returns_type(returns):
+         """
+-        Helper method to validate daily returns (needed for some efficient frontiers)
++        Helper method shared by _validate_returns and the subclasses that size
++        a dummy covariance matrix from ``returns`` before reaching it, so that
++        every off-contract ``returns`` fails with the same TypeError.
+         """
+         if not isinstance(returns, (pd.DataFrame, np.ndarray)):
+             raise TypeError("returns should be a pd.DataFrame or np.ndarray")
++        return returns
++
++    def _validate_returns(self, returns):
++        """
++        Helper method to validate daily returns (needed for some efficient frontiers)
++        """
++        self._validate_returns_type(returns)
+ 
+         returns_df = pd.DataFrame(returns)
+         if returns_df.isnull().values.any():
+@@ -210,6 +290,313 @@ class EfficientFrontier(BaseConvexOptimizer):
+         self.add_constraint(lambda w: cp.sum(w) == 1)
+         return self._solve_cvxpy_opt_problem()
+ 
++    def _feasible_bound(self, objective, market_neutral):
++        """
++        Minimise ``objective`` over exactly the feasible set the caller's
++        optimization will use - this optimizer's weight bounds, the constraints
++        already added to it, and the weight-sum rule implied by
++        ``market_neutral`` - and return the optimal value.
++
++        Every limit this package reports to a caller goes through here. A limit
++        is a promise that the solve which follows can serve any target on the
++        permitted side of it, so it has to be computed over that solve's
++        feasible set and no other. Deriving one from a closed form, or under a
++        different weight-sum rule, produces a guard that admits targets the
++        solver then rejects and refuses targets it would have served.
++
++        Parameters
++        ----------
++        objective : callable
++            maps the weight variable to the cvxpy expression to minimise
++        market_neutral : bool
++            the weight-sum rule the caller's solve will use
++
++        Returns
++        -------
++        float
++            the optimal value of ``objective`` over that feasible set
++        """
++        a = self.deepcopy()
++        # The copy is solved as a problem in its own right, so it must not
++        # inherit the caller's cvxpy problem instance. Additional objectives are
++        # left out on purpose: they change which point is optimal, not which
++        # points are feasible, and a limit is a statement about feasibility.
++        a._opt = None
++        a._objective = objective(a._w)
++        with warnings.catch_warnings():
++            # For a market-neutral portfolio with non-negative bounds this warns
++            # that the bounds were amended. The caller's own solve emits that
++            # warning; computing a limit on the way to it must not repeat it.
++            warnings.simplefilter("ignore", RuntimeWarning)
++            a._make_weight_sum_constraint(market_neutral)
++        a._solve_cvxpy_opt_problem()
++        return a._opt.value
++
++    def _reachable_risk_floor(self, minimise, market_neutral):
++        """
++        The lowest risk this optimizer can reach, or None when that cannot be
++        established.
++
++        ``EfficientFrontier`` derives its volatility floor before solving,
++        because it has one guard to place it in. The three risk measures with no
++        such guard - semideviation, CVaR and CDaR - can only discover an
++        unreachable target by failing to solve for it, so this reconstructs the
++        floor afterwards from ``_floor_probe``, the optimizer as it stood before
++        the target constraint went in.
++
++        Parameters
++        ----------
++        minimise : callable
++            the unbound ``min_*`` method that minimises this optimizer's risk
++        market_neutral : bool
++            the weight-sum rule the failed call used
++
++        Returns
++        -------
++        float or None
++            the lowest reachable risk, or None when the probe cannot solve
++        """
++        if self._floor_probe is None:
++            return None
++
++        probe = self._floor_probe.deepcopy()
++        probe._opt = None
++        probe._objective = None
++        # Left out for the reason _feasible_bound leaves them out: additional
++        # objectives change which point is optimal, not which points are
++        # feasible, and a floor is a statement about feasibility.
++        probe._additional_objectives = []
++        try:
++            with warnings.catch_warnings():
++                # The same rule _feasible_bound follows: a market-neutral solve
++                # on non-negative bounds warns that they were amended, the
++                # caller's own solve has already emitted it, and finding the
++                # floor on the way to reporting one must not repeat it. The probe
++                # is a private computation on a copy, so nothing it has to say
++                # about that copy is the caller's business.
++                warnings.simplefilter("ignore", RuntimeWarning)
++                minimise(probe, market_neutral=market_neutral)
++        except (exceptions.OptimizationError, exceptions.InstantiationError):
++            return None
++        # float() on purpose: EfficientSemivariance measures its risk with numpy
++        # and would otherwise put np.float64(0.08497...) in a message the caller
++        # is meant to be able to read a usable target out of.
++        return float(probe.portfolio_performance()[1])
++
++    def _solve_naming_the_risk_floor(self, target, name, minimise, market_neutral):
++        """
++        Solve, and when the risk target turns out to be below anything this
++        optimizer can reach, re-raise naming that floor.
++
++        The floor costs a solve, so it is found only here, on a call that has
++        already failed, and never on the path that works. If the probe cannot
++        establish it the original error stands unchanged: this exists to say
++        more about a failure, never to turn one failure into a different one.
++
++        Parameters
++        ----------
++        target : float
++            the risk target the caller asked for
++        name : str
++            what this optimizer's risk is called, for the message
++        minimise : callable
++            the unbound ``min_*`` method that minimises that risk
++        market_neutral : bool
++            the weight-sum rule this call is using
++
++        Returns
++        -------
++        OrderedDict
++            asset weights, when the solve succeeds
++        """
++        try:
++            return self._solve_cvxpy_opt_problem()
++        except exceptions.OptimizationError as failure:
++            floor = self._reachable_risk_floor(minimise, market_neutral)
++            if floor is None or target >= floor:
++                raise
++            raise exceptions.OptimizationError(
++                "The minimum {} is {!r}. Please use a higher target".format(name, floor)
++            ) from failure
++
++    def _discard_stale_bounds(self, market_neutral):
++        """
++        Drop the cached limits when the feasible set they were computed over is
++        not the one the caller is about to solve, and report whether this call
++        may derive a limit it does not already hold.
++
++        Both limits are cached because a caller sweeping many targets would
++        otherwise pay a solve per target, but each is only meaningful for the
++        weight bounds, constraints and weight-sum rule it was derived under.
++        A call that is refused by a guard still populates the cache without
++        solving, so without this the first such call decides the limit for every
++        later call on the same object - refusing targets that are reachable, and
++        admitting targets the solver then rejects once a constraint is added.
++
++        This is the only place that decides whether a limit may be derived. Both
++        guards act on the answer rather than testing the condition themselves,
++        because the defect this replaced was a rule about the cache that the
++        computation under it did not follow.
++
++        Parameters
++        ----------
++        market_neutral : bool
++            the weight-sum rule the caller's solve will use
++
++        Returns
++        -------
++        bool
++            whether a limit absent from the cache may be derived for this call
++        """
++        if self._opt is not None:
++            # Once solved the feasible set is frozen - constraints can no longer
++            # be added and the weight-sum rule can no longer change - so a cached
++            # limit still describes it and is kept.
++            if self._market_neutral is not None:
++                self._validate_market_neutral(market_neutral)
++            # A limit that is not already cached cannot be derived now. Deriving
++            # one solves a copy of this problem, and the copy carries the
++            # weight-sum constraint of the solve that has already run, so it is
++            # infeasible against the rule this call asks for or shaped by an
++            # objective this call is not asking about - either way the number
++            # would not describe this call's feasible set. The call is on its way
++            # to add_constraint, which refuses an already solved problem, and
++            # that is the error it has earned.
++            return False
++
++        key = self._feasible_set_key(market_neutral)
++        if self._bound_key != key:
++            self._max_return_value = None
++            self._min_volatility_value = None
++            self._bound_key = key
++        return True
++
++    def _feasible_set_key(self, market_neutral):
++        """
++        A hashable summary of everything a cached limit depends on.
++
++        A limit describes a feasible set, which is the weight-sum rule implied
++        by ``market_neutral`` together with ``self._constraints`` - the weight
++        bounds included, since ``_map_bounds_to_constraints`` expresses those as
++        constraints too. Before the first solve that list moves in exactly two
++        ways, and this covers both: the list itself gains or replaces entries,
++        caught by the constraint identities, and a ``cp.Parameter`` inside an
++        entry is given a new value by ``update_parameter_value``, caught by the
++        values. A cvxpy expression is immutable apart from its parameter values,
++        so there is no third way for the feasible set to move, which is what
++        makes this key complete rather than merely wider than the last one.
++
++        Parameters
++        ----------
++        market_neutral : bool
++            the weight-sum rule the caller's solve will use
++
++        Returns
++        -------
++        tuple
++            comparable for equality against the key an earlier call recorded
++        """
++        return (
++            market_neutral,
++            tuple(constraint.id for constraint in self._constraints),
++            tuple(
++                None if param.value is None else np.asarray(param.value).tobytes()
++                for constraint in self._constraints
++                for param in constraint.parameters()
++            ),
++        )
++
++    @staticmethod
++    def _validate_target_risk(target, name):
++        """
++        Shared validation for the risk target of ``efficient_risk``, the
++        counterpart of ``_validate_target_return``. The four optimizers in this
++        package measure risk differently - volatility, semideviation, CVaR,
++        CDaR - but the domain of the argument is the same for all of them, any
++        non-negative real number, and it used to be checked four different ways:
++        one accepted only ``float`` and ``int`` and so refused ``numpy`` scalars,
++        one squared its target before anything could see the sign and so
++        accepted negatives, and all four read ``True`` as 1.
++
++        Parameters
++        ----------
++        target : float
++            the desired maximum risk of the resulting portfolio
++        name : str
++            the argument's name in the calling method, used in the message
++
++        Raises
++        ------
++        ValueError
++            if ``target`` is not a real number, or is negative
++
++        Returns
++        -------
++        float
++            the validated target
++        """
++        if isinstance(target, bool) or not isinstance(target, numbers.Real):
++            raise ValueError("{} should be a real number".format(name))
++        if target < 0:
++            raise ValueError("{} should be non-negative".format(name))
++        return float(target)
++
++    def _validate_target_return(self, target_return, market_neutral=False):
++        """
++        Shared validation for the ``target_return`` argument of
++        ``efficient_return``, so that every optimizer in this package accepts
++        the same domain: any real number up to the largest return a feasible
++        portfolio can achieve. Negative targets are legitimate - they are what
++        a universe of negative expected returns requires.
++
++        Parameters
++        ----------
++        target_return : float
++            the desired return of the resulting portfolio
++        market_neutral : bool, optional
++            the weight-sum rule the caller's solve will use, since the largest
++            achievable return depends on it
++
++        Raises
++        ------
++        ValueError
++            if ``target_return`` is not a real number, or exceeds the largest
++            achievable return
++
++        Returns
++        -------
++        float
++            the validated target return
++        """
++        if isinstance(target_return, bool) or not isinstance(
++            target_return, numbers.Real
++        ):
++            raise ValueError("target_return should be a real number")
++        if self.expected_returns is None:
++            raise ValueError("no expected returns provided")
++        may_derive_bound = self._discard_stale_bounds(market_neutral)
++        if self._max_return_value is None and may_derive_bound:
++            self._max_return_value = -self._feasible_bound(
++                lambda w: objective_functions.portfolio_return(
++                    w, self.expected_returns
++                ),
++                market_neutral,
++            )
++        if (
++            self._max_return_value is not None
++            and target_return > self._max_return_value
++        ):
++            # Printed at full round-trip precision on purpose: the limit is a solver
++            # estimate a few 1e-9 below the true maximum, and rounding it for display
++            # produced a message stating a limit above the target it had just
++            # rejected, which reads as a contradiction and tells the caller nothing
++            # about which values are actually accepted.
++            raise ValueError(
++                "target_return must be lower than the largest achievable return of "
++                "{!r}".format(float(self._max_return_value))
++            )
++        return float(target_return)
++
+     def _max_return(self, return_value=True):
+         """
+         Helper method to maximise return. This should not be used to optimize a portfolio.
+@@ -372,26 +759,45 @@ class EfficientFrontier(BaseConvexOptimizer):
+         Raises
+         ------
+         ValueError
+-            if ``target_volatility`` is not a positive float
+-        ValueError
+-            if no portfolio can be found with volatility equal to ``target_volatility``
++            if ``target_volatility`` is not a non-negative real number
+         ValueError
+-            if ``risk_free_rate`` is non-numeric
++            if ``target_volatility`` is below the lowest volatility reachable
++            under this optimizer's weight bounds, its added constraints and the
++            weight-sum rule implied by ``market_neutral``. The message names
++            that floor, and it is itself an accepted target. The floor depends
++            on all three: tightening the bounds raises it, and market neutrality
++            lowers it, because weights summing to zero may cancel to nothing.
+ 
+         Returns
+         -------
+         OrderedDict
+             asset weights for the efficient risk portfolio
+         """
+-        if not isinstance(target_volatility, (float, int)) or target_volatility < 0:
+-            raise ValueError("target_volatility should be a positive float")
++        target_volatility = self._validate_target_risk(
++            target_volatility, "target_volatility"
++        )
+ 
+-        global_min_volatility = np.sqrt(1 / np.sum(np.linalg.pinv(self.cov_matrix)))
++        may_derive_bound = self._discard_stale_bounds(market_neutral)
++        if self._min_volatility_value is None and may_derive_bound:
++            self._min_volatility_value = np.sqrt(
++                self._feasible_bound(
++                    lambda w: objective_functions.portfolio_variance(
++                        w, self.cov_matrix
++                    ),
++                    market_neutral,
++                )
++            )
+ 
+-        if target_volatility < global_min_volatility:
++        if (
++            self._min_volatility_value is not None
++            and target_volatility < self._min_volatility_value
++        ):
++            # Printed at full round-trip precision for the same reason as
++            # _validate_target_return: rounding the limit for display produced a
++            # message naming a volatility that this method then refused to solve.
+             raise ValueError(
+-                "The minimum volatility is {:.3f}. Please use a higher target_volatility".format(
+-                    global_min_volatility
++                "The minimum volatility is {!r}. Please use a higher target_volatility".format(
++                    float(self._min_volatility_value)
+                 )
+             )
+ 
+@@ -430,7 +836,8 @@ class EfficientFrontier(BaseConvexOptimizer):
+         Raises
+         ------
+         ValueError
+-            if ``target_return`` is not a positive float
++            if ``target_return`` is not a real number, or is greater than the
++            largest achievable return. Negative targets are accepted.
+         ValueError
+             if no portfolio can be found with return equal to ``target_return``
+ 
+@@ -439,15 +846,7 @@ class EfficientFrontier(BaseConvexOptimizer):
+         OrderedDict
+             asset weights for the Markowitz portfolio
+         """
+-        if not isinstance(target_return, float):
+-            raise ValueError("target_return should be a float")
+-        if not self._max_return_value:
+-            a = self.deepcopy()
+-            self._max_return_value = a._max_return()
+-        if target_return > self._max_return_value:
+-            raise ValueError(
+-                "target_return must be lower than the maximum possible return"
+-            )
++        target_return = self._validate_target_return(target_return, market_neutral)
+ 
+         update_existing_parameter = self.is_parameter_defined("target_return")
+         if update_existing_parameter:
+@@ -483,6 +882,13 @@ class EfficientFrontier(BaseConvexOptimizer):
+             The period of the risk-free rate should correspond to the
+             frequency of expected returns.
+ 
++            Ignored once ``max_sharpe`` has run: that portfolio is optimal only
++            for the rate it was optimised against, so reporting it against a
++            different one would describe a portfolio nobody asked for. The rate
++            given to ``max_sharpe`` takes precedence, and passing a different
++            value here warns rather than silently using either. Every other
++            optimizer leaves this argument fully in effect.
++
+         Raises
+         ------
+         ValueError
+diff --git a/pypfopt/efficient_frontier/efficient_semivariance.py b/pypfopt/efficient_frontier/efficient_semivariance.py
+index 9dfd769..e14fbe5 100644
+--- a/pypfopt/efficient_frontier/efficient_semivariance.py
++++ b/pypfopt/efficient_frontier/efficient_semivariance.py
+@@ -91,11 +91,16 @@ class EfficientSemivariance(EfficientFrontier):
+         ------
+         TypeError
+             if ``expected_returns`` is not a series, list or array
++        TypeError
++            if ``returns`` is not a pd.DataFrame or np.ndarray
+         """
+         # Instantiate parent
+         super().__init__(
+             expected_returns=expected_returns,
+-            cov_matrix=np.zeros((returns.shape[1],) * 2),  # dummy
++            # A dummy covariance, sized through the shared type check so that
++            # every off-contract ``returns`` gets _validate_returns' documented
++            # TypeError rather than an IndexError from the shape lookup.
++            cov_matrix=np.zeros((self._validate_returns_type(returns).shape[1],) * 2),
+             weight_bounds=weight_bounds,
+             solver=solver,
+             verbose=verbose,
+@@ -197,16 +202,36 @@ class EfficientSemivariance(EfficientFrontier):
+             whether the portfolio should be market neutral (weights sum to zero),
+             defaults to False. Requires negative lower weight bound.
+ 
++        Raises
++        ------
++        ValueError
++            if ``target_semideviation`` is not a non-negative real number
++        exceptions.OptimizationError
++            if the problem cannot be solved. When the cause is that
++            ``target_semideviation`` is below the lowest semideviation this optimizer can
++            reach, the message names that floor, which is the value
++            ``min_semivariance`` achieves under the same weight bounds, added
++            constraints and weight-sum rule; use a higher target than
++            the one named.
++
+         Returns
+         -------
+         OrderedDict
+             asset weights for the efficient risk portfolio
+         """
++        target_semideviation = self._validate_target_risk(
++            target_semideviation, "target_semideviation"
++        )
++
+         update_existing_parameter = self.is_parameter_defined("target_semivariance")
+         if update_existing_parameter:
+             self._validate_market_neutral(market_neutral)
+             self.update_parameter_value("target_semivariance", target_semideviation**2)
+         else:
++            # Kept as this optimizer stood before the target constraint went in,
++            # so an unreachable target can be answered with the floor it missed.
++            self._floor_probe = self.deepcopy()
++
+             self._objective = objective_functions.portfolio_return(
+                 self._w, self.expected_returns
+             )
+@@ -225,7 +250,12 @@ class EfficientSemivariance(EfficientFrontier):
+             B = (self.returns.values - self.benchmark) / np.sqrt(self._T)
+             self.add_constraint(lambda w: B @ w - p + n == 0)
+             self._make_weight_sum_constraint(market_neutral)
+-        return self._solve_cvxpy_opt_problem()
++        return self._solve_naming_the_risk_floor(
++            target_semideviation,
++            "semideviation",
++            EfficientSemivariance.min_semivariance,
++            market_neutral,
++        )
+ 
+     def efficient_return(self, target_return, market_neutral=False):
+         """
+@@ -242,7 +272,8 @@ class EfficientSemivariance(EfficientFrontier):
+         Raises
+         ------
+         ValueError
+-            if ``target_return`` is not a positive float
++            if ``target_return`` is not a real number, or is greater than the
++            largest achievable return. Negative targets are accepted.
+         ValueError
+             if no portfolio can be found with return equal to ``target_return``
+ 
+@@ -251,12 +282,7 @@ class EfficientSemivariance(EfficientFrontier):
+         OrderedDict
+             asset weights for the optimal portfolio
+         """
+-        if not isinstance(target_return, float) or target_return < 0:
+-            raise ValueError("target_return should be a positive float")
+-        if target_return > np.abs(self.expected_returns).max():
+-            raise ValueError(
+-                "target_return must be lower than the largest expected return"
+-            )
++        target_return = self._validate_target_return(target_return, market_neutral)
+ 
+         update_existing_parameter = self.is_parameter_defined("target_return")
+         if update_existing_parameter:
+@@ -300,16 +326,23 @@ class EfficientSemivariance(EfficientFrontier):
+         Returns
+         -------
+         (float, float, float)
+-            expected return, semideviation, Sortino ratio.
++            expected return, semideviation, Sortino ratio. The expected return
++            and the Sortino ratio are None when the optimizer was built without
++            ``expected_returns``.
+         """
+-        mu = objective_functions.portfolio_return(
+-            self.weights, self.expected_returns, negative=False
+-        )
+-
+         portfolio_returns = self.returns @ self.weights
+         drops = np.fmin(portfolio_returns - self.benchmark, 0)
+         semivariance = np.sum(np.square(drops)) / self._T * self.frequency
+         semi_deviation = np.sqrt(semivariance)
++
++        if self.expected_returns is None:
++            if verbose:
++                print("Annual semi-deviation: {:.1f}%".format(100 * semi_deviation))
++            return None, semi_deviation, None
++
++        mu = objective_functions.portfolio_return(
++            self.weights, self.expected_returns, negative=False
++        )
+         sortino_ratio = (mu - risk_free_rate) / semi_deviation
+ 
+         if verbose:
+diff --git a/pypfopt/exceptions.py b/pypfopt/exceptions.py
+index 36c929b..2cff6ff 100644
+--- a/pypfopt/exceptions.py
++++ b/pypfopt/exceptions.py
+@@ -4,6 +4,24 @@ The ``exceptions`` module houses custom exceptions. Currently implemented:
+ - OptimizationError
+ """
+ 
++import cvxpy as cp
++
++# Every exception cvxpy raises out of a solve. Each one means the problem could
++# not be solved, which is exactly what OptimizationError reports, so every
++# boundary in this library that calls a cvxpy solver converts them rather than
++# letting a third-party type reach a caller who is catching OptimizationError.
++# cvxpy gives these no common base class, so they are enumerated here once
++# instead of being re-listed at each boundary.
++CVXPY_ERRORS = (
++    cp.error.DCPError,
++    cp.error.DGPError,
++    cp.error.DNLPError,
++    cp.error.DPPError,
++    cp.error.DQCPError,
++    cp.error.ParameterError,
++    cp.error.SolverError,
++)
++
+ 
+ class OptimizationError(Exception):
+     """
+diff --git a/pypfopt/expected_returns.py b/pypfopt/expected_returns.py
+index bbbf69c..f76e154 100644
+--- a/pypfopt/expected_returns.py
++++ b/pypfopt/expected_returns.py
+@@ -18,6 +18,9 @@ Currently implemented:
+     - CAPM estimate of returns
+ 
+ Additionally, we provide utility functions to convert from returns to prices and vice-versa.
++These are convenience helpers rather than exact inverses of one another: a series of N prices
++carries only N-1 returns, so a round trip through both costs one observation. Where that matters,
++pass returns directly to any estimator with ``returns_data=True`` instead of synthesising prices.
+ """
+ 
+ import warnings
+@@ -53,7 +56,10 @@ def returns_from_prices(prices, log_returns=False):
+     Returns
+     -------
+     pd.DataFrame
+-        (daily) returns
++        (daily) returns, one row shorter than ``prices`` because the first
++        date has no preceding price. Note that ``prices_from_returns`` does
++        not restore that row, so the pair is not an exact round trip; see its
++        docstring.
+     """
+     if log_returns:
+         returns = np.log(1 + prices.pct_change(fill_method=None)).dropna(how="all")
+@@ -68,17 +74,32 @@ def prices_from_returns(returns, log_returns=False):
+     the initial prices are all set to 1, but it behaves as intended when passed
+     to any PyPortfolioOpt method.
+ 
++    The output always has the same number of rows as ``returns``, and the first
++    row is consumed to hold the base price of 1. Pass returns that are aligned
++    to the original price index - the direct output of ``prices.pct_change()``,
++    whose first row is the empty row for the first date - and nothing is lost,
++    because that row carried no return.
++
++    This is deliberately **not** an exact inverse of ``returns_from_prices``,
++    which drops that first row. Feeding this function the output of
++    ``returns_from_prices`` therefore spends the caller's first real return on
++    the base price, and the resulting series covers one period fewer. That is
++    lossy but not wrong: every consecutive change in the result still equals the
++    corresponding input return. To avoid the round trip altogether, pass your
++    returns straight to any estimator with ``returns_data=True``.
++
+     Parameters
+     ----------
+     returns : pd.DataFrame
+-        (daily) percentage returns of the assets
++        (daily) percentage returns of the assets, ideally still carrying the
++        empty leading row produced by ``pct_change()``
+     log_returns : bool, optional
+         whether to compute using log returns. Defaults to False.
+ 
+     Returns
+     -------
+     pd.DataFrame
+-        (daily) pseudo-prices.
++        (daily) pseudo-prices, with the same index as ``returns``.
+     """
+     if log_returns:
+         ret = np.exp(returns)
+@@ -278,7 +299,9 @@ def capm_return(
+     if returns_data:
+         returns = prices.copy()
+         if market_prices is not None:
+-            market_returns = market_prices
++            # copied because the market column is renamed below, which would
++            # otherwise rename the caller's own dataframe in place
++            market_returns = market_prices.copy()
+     else:
+         returns = returns_from_prices(prices, log_returns)
+ 
 diff --git a/pypfopt/hierarchical_portfolio.py b/pypfopt/hierarchical_portfolio.py
-index 6dc76d0..81d26dd 100644
+index 6dc76d0..7af7958 100644
 --- a/pypfopt/hierarchical_portfolio.py
 +++ b/pypfopt/hierarchical_portfolio.py
-@@ -171,14 +171,16 @@ class HRPOpt(BaseOptimizer):
+@@ -171,14 +171,17 @@ class HRPOpt(BaseOptimizer):
          linkage_method : str
              which scipy linkage method to use
  
 +        Raises
 +        ------
 +        ValueError
-+            if ``linkage_method`` is not one recognised by scipy
++            if ``linkage_method`` is not one recognised by
++            ``scipy.cluster.hierarchy.linkage``
 +
          Returns
          -------
@@ -187,63 +1453,1850 @@ index 6dc76d0..81d26dd 100644
          if self.returns is None:
              cov = self.cov_matrix
              corr = cov_to_corr(self.cov_matrix).round(6)
-@@ -192,6 +194,10 @@ class HRPOpt(BaseOptimizer):
-         matrix = np.sqrt(np.clip((1.0 - corr) / 2.0, a_min=0.0, a_max=1.0))
-         dist = ssd.squareform(matrix, checks=False)
+diff --git a/pypfopt/plotting.py b/pypfopt/plotting.py
+index c5cdaf4..9f8f4a0 100644
+--- a/pypfopt/plotting.py
++++ b/pypfopt/plotting.py
+@@ -272,11 +272,15 @@ def _plot_ef(ef, ef_param, ef_param_range, ax, show_assets, show_tickers, intera
+         except exceptions.OptimizationError:
+             continue
+         except ValueError:
++            # Same as the OptimizationError branch: no portfolio was solved for
++            # this parameter value, so there is nothing to read off the
++            # optimizer and the point is skipped.
+             warnings.warn(
+                 "Could not construct portfolio for parameter value {:.3f}".format(
+                     param_value
+                 )
+             )
++            continue
  
-+        # scipy validates linkage_method itself and raises
-+        # ValueError("Invalid method: ..."). Do not pre-check against
-+        # sch._LINKAGE_METHODS: that private attribute left the
-+        # scipy.cluster.hierarchy namespace in scipy 1.18.
-         self.clusters = sch.linkage(dist, linkage_method)
-         sort_ix = HRPOpt._get_quasi_diag(self.clusters)
-         ordered_tickers = corr.index[sort_ix].tolist()
+         ret, sigma, _ = ef.portfolio_performance()
+         mus.append(ret)
 diff --git a/pypfopt/risk_models.py b/pypfopt/risk_models.py
-index 171ce0d..8216977 100644
+index 171ce0d..0f13a09 100644
 --- a/pypfopt/risk_models.py
 +++ b/pypfopt/risk_models.py
-@@ -459,6 +459,25 @@ class CovarianceShrinkage:
-         else:
-             self.X = returns_from_prices(prices, log_returns).dropna(how="all")
+@@ -41,14 +41,32 @@ def _is_positive_semidefinite(matrix):
+     matrix : np.ndarray or pd.DataFrame
+         (covariance) matrix to test
  
-+        # Every shrinkage estimator on this class feeds self.X to numpy or
-+        # sklearn through np.nan_to_num, which has no notion of a missing
-+        # return: a NaN becomes a 0% return, so an asset that was not yet
-+        # listed reads as an asset that did not move. Variances and
-+        # covariances are diluted in proportion to how much data is missing.
-+        # self.S, computed just below, uses pandas' pairwise deletion instead,
-+        # so the two disagree on the same input. Say so rather than doing it
-+        # silently; picking the estimator's NaN convention is the maintainer's
-+        # call, not something to change underneath existing users.
-+        n_missing = int(self.X.isnull().values.sum())
-+        if n_missing:
-+            warnings.warn(
-+                "{} missing return(s) will be treated as 0% returns by the "
-+                "shrinkage estimators, which understates the variance of any "
-+                "asset with an incomplete history. self.S uses pairwise "
-+                "deletion instead, so the two do not agree.".format(n_missing),
-+                UserWarning,
-+            )
++    A singular but positive semidefinite matrix - a covariance estimated from
++    fewer observations than assets, for instance - sits exactly on the boundary,
++    so the test needs a tolerance. That tolerance is taken relative to the
++    magnitude of the matrix, because eigenvalue round-off grows with it: a fixed
++    absolute nudge is invisible on a covariance of daily returns near 1e-2 and
++    far too small for the same data quoted in percent, where it rejects matrices
++    that are positive semidefinite by construction.
 +
-         self.S = self.X.cov().values
-         self.delta = None  # shrinkage constant
+     Returns
+     -------
+     bool
+         whether matrix is positive semidefinite
+     """
++    matrix = np.asarray(matrix, dtype=float)
++    if not np.isfinite(matrix).all():
++        # np.linalg.cholesky propagates NaN through to its result instead of
++        # raising, so without this a matrix containing NaN is reported as
++        # positive semidefinite. Nothing about such a matrix is semidefinite.
++        return False
++    scale = np.max(np.abs(matrix)) if matrix.size else 0.0
++    if scale == 0:
++        # the all-zero matrix is positive semidefinite, and has no scale to work from
++        return True
+     try:
+         # Significantly more efficient than checking eigenvalues (stackoverflow.com/questions/16266720)
+-        np.linalg.cholesky(matrix + 1e-16 * np.eye(len(matrix)))
++        np.linalg.cholesky(matrix + 1e-12 * scale * np.eye(len(matrix)))
+         return True
+     except np.linalg.LinAlgError:
+         return False
+@@ -79,6 +97,28 @@ def fix_nonpositive_semidefinite(matrix, fix_method="spectral"):
+     pd.DataFrame
+         positive semidefinite covariance matrix
+     """
++    non_finite = ~np.isfinite(np.asarray(matrix, dtype=float))
++    if non_finite.any():
++        # Checked before the repair, not after: the eigendecomposition below
++        # cannot act on non-finite input, and the caller needs to hear about the
++        # missing data rather than about eigenvalues.
++        if isinstance(matrix, pd.DataFrame):
++            pairs = [
++                "{}/{}".format(matrix.index[i], matrix.columns[j])
++                for i, j in zip(*np.where(non_finite))
++            ]
++        else:
++            pairs = ["{}/{}".format(i, j) for i, j in zip(*np.where(non_finite))]
++        shown = ", ".join(pairs[:6]) + (", ..." if len(pairs) > 6 else "")
++        warnings.warn(
++            "The covariance matrix has {} non-finite entries and cannot be used for "
++            "optimisation: {}. Asset pairs with no overlapping observations have no "
++            "defined covariance. Drop those assets or align their history.".format(
++                len(pairs), shown
++            )
++        )
++        return matrix
++
+     if _is_positive_semidefinite(matrix):
+         return matrix
  
+@@ -334,8 +374,47 @@ def min_cov_determinant(
+     random_state=None,
+     log_returns=False,
+     **kwargs,
+-):  # pragma: no cover
+-    warnings.warn("min_cov_determinant is deprecated and will be removed in v1.5")
++):
++    """
++    Calculate the minimum covariance determinant, a covariance estimator that is
++    robust to outliers: it fits the subset of observations whose covariance has the
++    smallest determinant, so a handful of extreme returns cannot dominate the result
++    the way they do in the sample covariance.
++
++    This estimator is deprecated and will be removed in a future release. It warns on
++    every call. Prefer ``sample_cov`` or one of the ``CovarianceShrinkage`` estimators.
++
++    Requires scikit-learn, which is a soft dependency of this package.
++
++    Parameters
++    ----------
++    prices : pd.DataFrame
++        adjusted closing prices of the asset, each row is a date
++        and each column is a ticker/id.
++    returns_data : bool, optional
++        if true, the first argument is returns instead of prices. Defaults to False.
++    frequency : int, optional
++        number of time periods in a year, defaults to 252 (the number
++        of trading days in a year)
++    random_state : int, optional
++        seed for the random subsampling the estimator performs, so that repeated
++        calls on the same data agree. Defaults to None.
++    log_returns : bool, optional
++        whether to compute using log returns. Defaults to False.
++
++    Raises
++    ------
++    ImportError
++        if scikit-learn is not installed
++
++    Returns
++    -------
++    pd.DataFrame
++        annualised robust estimate of the covariance matrix
++    """
++    warnings.warn(
++        "min_cov_determinant is deprecated and will be removed in a future release"
++    )
+ 
+     if not isinstance(prices, pd.DataFrame):
+         warnings.warn("data is not in a dataframe", RuntimeWarning)
+@@ -348,7 +427,7 @@ def min_cov_determinant(
+             " e.g via pip install scikit-learn"
+         )
+ 
+-    from sklearn.covariance import fast_mcd
++    from sklearn.covariance import MinCovDet
+ 
+     assets = prices.columns
+ 
+@@ -358,7 +437,10 @@ def min_cov_determinant(
+         X = returns_from_prices(prices, log_returns)
+     # X = np.nan_to_num(X.values)
+     X = X.dropna().values
+-    raw_cov_array = fast_mcd(X, random_state=random_state)[1]
++    # MinCovDet applies the consistency correction that makes the estimate
++    # unbiased at the normal distribution. The raw fast_mcd covariance does not,
++    # and understates variance by more than half.
++    raw_cov_array = MinCovDet(random_state=random_state).fit(X).covariance_
+     cov = pd.DataFrame(raw_cov_array, index=assets, columns=assets) * frequency
+     return fix_nonpositive_semidefinite(cov, kwargs.get("fix_method", "spectral"))
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index b2c99ee..5dcf147 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -38,7 +38,7 @@ dependencies = [
+     "pandas>=1.0.0,<4.0.0",
+     "scikit-base<0.14.0",
+     "scikit-learn>=0.24.1",
+-    "scipy>=1.3.0",
++    "scipy>=1.3.0,<2.0.0",
+ ]
+ 
+ [project.optional-dependencies]
+diff --git a/tests/test_base_optimizer.py b/tests/test_base_optimizer.py
+index 2552f66..de292fa 100644
+--- a/tests/test_base_optimizer.py
++++ b/tests/test_base_optimizer.py
+@@ -1,13 +1,27 @@
++import ast
++import inspect
+ import json
+ import os
++import re
+ import tempfile
++import textwrap
+ 
+ import cvxpy as cp
+ import numpy as np
+ import pandas as pd
+ import pytest
+ 
+-from pypfopt import EfficientFrontier, exceptions, objective_functions
++import pypfopt
++from pypfopt import (
++    EfficientCDaR,
++    EfficientCVaR,
++    EfficientFrontier,
++    EfficientSemivariance,
++    exceptions,
++    expected_returns,
++    objective_functions,
++    risk_models,
++)
+ from pypfopt.base import BaseOptimizer, portfolio_performance
+ from tests.utilities_for_tests import get_data, setup_efficient_frontier
+ 
+@@ -308,3 +322,229 @@ def test_exception_immutability():
+         Exception, match="A new instance must be created when changing market_neutral"
+     ):
+         ef.efficient_return(0.2, market_neutral=False)
++
++
++def test_solve_converts_cvxpy_errors():
++    # _solve_cvxpy_opt_problem documents OptimizationError as its failure mode,
++    # but cvxpy.error.SolverError sat outside the except tuple and escaped, so a
++    # caller catching the documented type saw a third-party exception instead.
++    ef = setup_efficient_frontier(solver="ABCDEF")
++    with pytest.raises(exceptions.OptimizationError) as excinfo:
++        ef.min_volatility()
++    assert isinstance(excinfo.value.__cause__, cp.error.SolverError)
++
++
++def test_cvxpy_error_conversion_is_exhaustive():
++    # The conversion is only complete if it names every error cvxpy can raise;
++    # a new one added upstream would otherwise escape the same way.
++    declared = {
++        name
++        for name in dir(cp.error)
++        if isinstance(getattr(cp.error, name), type)
++        and issubclass(getattr(cp.error, name), Exception)
++    }
++    assert declared == {exc.__name__ for exc in exceptions.CVXPY_ERRORS}
++
++
++def test_instantiation_error_is_not_converted():
++    # The conversion must not swallow this library's own errors, which are
++    # raised inside the same try block.
++    ef = setup_efficient_frontier()
++    ef.min_volatility()
++    with pytest.raises(exceptions.InstantiationError):
++        ef.add_constraint(lambda w: w[0] >= 0.1)
++
++
++def _documented_methods(cls):
++    """The ``name()`` entries under a class docstring's "Public methods" heading."""
++    lines = (inspect.getdoc(cls) or "").splitlines()
++    try:
++        start = next(
++            i for i, ln in enumerate(lines) if ln.strip().startswith("Public methods")
++        )
++    except StopIteration:
++        return []
++    return [
++        ln.strip().split("``")[1].rstrip("()")
++        for ln in lines[start + 1 :]
++        if ln.strip().startswith("- ``") and "()``" in ln.strip()
++    ]
++
++
++def _is_unconditional_stub(func):
++    """True when the body is nothing but ``raise NotImplementedError(...)``.
++
++    Parsed rather than grepped: ``save_weights_to_file`` raises the same error
++    for an unsupported extension, and a source-text scan reads that as a stub.
++    """
++    try:
++        tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
++    except (OSError, TypeError):
++        return False
++    body = tree.body[0].body
++    if (
++        body
++        and isinstance(body[0], ast.Expr)
++        and isinstance(body[0].value, ast.Constant)
++    ):
++        body = body[1:]
++    return (
++        len(body) == 1
++        and isinstance(body[0], ast.Raise)
++        and "NotImplementedError" in ast.dump(body[0])
++    )
++
++
++def test_documented_public_methods_are_available():
++    # A class docstring that lists a method the class refuses to run sends a
++    # caller to an error the documentation promised would not happen. The
++    # optimizers disable inherited methods that do not apply to them - eleven
++    # of them across four classes - and each is meant to be left out of its
++    # class's "Public methods" list, as min_volatility, max_sharpe and
++    # max_quadratic_utility already are.
++    classes = [
++        getattr(pypfopt, name)
++        for name in pypfopt.__all__
++        if inspect.isclass(getattr(pypfopt, name))
++    ]
++    assert classes, "no exported classes found"
++
++    offenders = []
++    documented = 0
++    for cls in classes:
++        for name in _documented_methods(cls):
++            documented += 1
++            attr = getattr(cls, name, None)
++            if attr is None:
++                offenders.append(f"{cls.__name__}.{name} documented but absent")
++            elif _is_unconditional_stub(attr):
++                offenders.append(f"{cls.__name__}.{name} documented but raises")
++
++    assert documented > 50, f"enumeration collapsed to {documented} methods"
++    assert offenders == []
++
++
++def test_documented_none_expected_returns_is_honoured():
++    # Every optimizer in this family documents expected_returns as optional.
++    # Honouring that means constructing, solving and reporting: the reporting
++    # half is what the two pre-existing no-returns tests never reached, so a
++    # green suite carried a ValueError on the documented path for both tail-risk
++    # classes and a TypeError at EfficientCDaR construction.
++    df = get_data()
++    rets = expected_returns.returns_from_prices(df).dropna()
++    S = risk_models.sample_cov(df)
++
++    specs = [
++        (EfficientFrontier(None, S), "min_volatility", 3),
++        (EfficientSemivariance(None, rets), "min_semivariance", 3),
++        (EfficientCVaR(None, rets), "min_cvar", 2),
++        (EfficientCDaR(None, rets), "min_cdar", 2),
++    ]
++    assert len(specs) == 4
++
++    for optimizer, minimiser, width in specs:
++        name = type(optimizer).__name__
++        getattr(optimizer, minimiser)()
++        perf = optimizer.portfolio_performance()
++        assert len(perf) == width, name
++        # The return element, and the ratio element where there is one, are the
++        # quantities that need expected_returns; the risk element does not.
++        assert perf[0] is None, name
++        assert perf[1] > 0, name
++        if width == 3:
++            assert perf[2] is None, name
++        # verbose must not reach a format string holding None
++        optimizer.portfolio_performance(verbose=True)
++
++
++def test_portfolio_performance_free_function_without_expected_returns():
++    # The labelless branch - dict weights with a non-DataFrame covariance - is
++    # the only one that sized itself from expected_returns, so the DataFrame
++    # path hid it. Integer keys are the correct usage there: a raw array
++    # carries no ticker labels to match string keys against.
++    df = get_data()
++    S = risk_models.sample_cov(df)
++
++    from_frame = portfolio_performance(
++        {t: 1 / len(S.columns) for t in S.columns}, None, S
++    )
++    from_array = portfolio_performance(
++        {i: 1 / len(S.columns) for i in range(len(S.columns))}, None, S.values
++    )
++    assert from_frame[0] is None and from_frame[2] is None
++    assert from_array[0] is None and from_array[2] is None
++    np.testing.assert_almost_equal(from_frame[1], from_array[1])
++
++    # A string-keyed dict against an unlabelled array still reports the
++    # pre-existing mismatch error rather than a TypeError about NoneType.
++    with pytest.raises(ValueError, match="ticker names don't match"):
++        portfolio_performance(
++            {t: 1 / len(S.columns) for t in S.columns}, None, S.values
++        )
++
++
++def test_optional_expected_returns_promise_matches_behaviour():
++    # A class may document expected_returns as optional only if it can really
++    # be built that way. CLA cannot: the critical line algorithm traces the
++    # frontier in order of expected return, so it has no meaning without one,
++    # and its docstring offered None anyway. Auto-discovered from the
++    # signature, so a new optimizer is covered here the day it is added.
++    df = get_data()
++    companions = {
++        "cov_matrix": risk_models.sample_cov(df),
++        "returns": expected_returns.returns_from_prices(df).dropna(),
++    }
++
++    checked = 0
++    for name in pypfopt.__all__:
++        cls = getattr(pypfopt, name)
++        if not inspect.isclass(cls):
++            continue
++        params = list(inspect.signature(cls.__init__).parameters)
++        if "expected_returns" not in params:
++            continue
++
++        doc = inspect.getdoc(cls.__init__) or ""
++        entry = re.search(
++            r"expected_returns\s*:.*?\n(.*?)(?=\n\s*\w+\s*:|\Z)", doc, re.S
++        )
++        assert entry, name + " does not document expected_returns"
++        promises_none = "None" in " ".join(entry.group(1).split())
++
++        companion = next(p for p in params[2:] if p in companions)
++        try:
++            cls(None, companions[companion])
++            honours_none = True
++        except (TypeError, ValueError):
++            honours_none = False
++
++        assert promises_none == honours_none, (
++            "{} documents expected_returns=None as {} but accepting it is {}".format(
++                name, promises_none, honours_none
++            )
++        )
++        checked += 1
++
++    assert checked >= 5, "enumeration collapsed to {} classes".format(checked)
++
++
++def test_list_returns_rejected_consistently_across_the_family():
++    # One validator, one exception type, for every off-contract shape. The
++    # dummy-covariance sizing runs before _validate_returns, so until the
++    # shared type check only a 2-d list reached the validator's TypeError,
++    # while None, a Series and a dict died earlier with IndexError from the
++    # shape lookup inside the sizing expression.
++    df = get_data()
++    rets = expected_returns.returns_from_prices(df).dropna()
++    mu = expected_returns.mean_historical_return(df)
++    off_contract = [
++        None,
++        rets.iloc[:, 0],
++        rets.iloc[:5].to_dict(),
++        rets.to_numpy().tolist(),
++    ]
++
++    for cls in (EfficientSemivariance, EfficientCVaR, EfficientCDaR):
++        for bad in off_contract:
++            with pytest.raises(TypeError, match="pd.DataFrame or np.ndarray"):
++                cls(mu, bad)
+diff --git a/tests/test_black_litterman.py b/tests/test_black_litterman.py
+index 25bdff3..3dc8ca1 100644
+--- a/tests/test_black_litterman.py
++++ b/tests/test_black_litterman.py
+@@ -309,6 +309,86 @@ def test_bl_weights():
+     assert w2 == w
+ 
+ 
++def test_bl_weights_are_delta_invariant():
++    # bl_weights normalises its solution to sum to one, which cancels the
++    # 1/delta factor exactly. This pins that documented behaviour so it
++    # cannot change silently: see the caution in docs/BlackLitterman.rst.
++    df = get_data()
++    S = risk_models.sample_cov(df)
++    viewdict = {"AAPL": 0.20, "BBY": -0.30, "BAC": 0, "SBUX": -0.2, "T": 0.131321}
++
++    weights = []
++    for delta in (1, 2.5, 100):
++        bl = BlackLittermanModel(S, absolute_views=viewdict)
++        weights.append(np.array(list(bl.bl_weights(delta).values())))
++        assert np.isclose(weights[-1].sum(), 1)
++
++    # atol dominates here: most entries are numerically zero, where a
++    # relative tolerance compares the last bits of noise.
++    for other in weights[1:]:
++        np.testing.assert_allclose(weights[0], other, rtol=1e-9, atol=1e-12)
++
++
++def test_bl_weights_rejects_net_short_implied_portfolio():
++    # Broadly negative posterior returns imply a net-short portfolio. There is
++    # no fully-invested rescaling of one, so bl_weights must refuse rather than
++    # divide by a negative sum, which would invert every position silently.
++    df = get_data()
++    S = risk_models.sample_cov(df)
++    mcaps = get_market_caps()
++    bearish = {ticker: -0.25 for ticker in df.columns}
++
++    bl = BlackLittermanModel(S, pi="market", market_caps=mcaps, absolute_views=bearish)
++    posterior = bl.bl_returns()
++    raw = np.linalg.solve(S.values, posterior.values)
++    assert raw.sum() < 0, "fixture must imply a net-short portfolio"
++
++    with pytest.raises(ValueError, match="net exposure"):
++        bl.bl_weights()
++    with pytest.raises(ValueError, match="net exposure"):
++        bl.optimize()
++
++
++def test_bl_weights_sign_agrees_with_raw_solution():
++    # Where a fully-invested rescaling does exist, it must preserve each
++    # position's direction: the returned weights differ from the raw solution
++    # only by a positive scalar.
++    df = get_data()
++    S = risk_models.sample_cov(df)
++    viewdict = {"AAPL": 0.20, "BBY": -0.30, "BAC": 0, "SBUX": -0.2, "T": 0.131321}
++
++    bl = BlackLittermanModel(S, absolute_views=viewdict)
++    weights = np.array(list(bl.bl_weights().values()))
++    raw = np.linalg.solve(S.values, bl.posterior_rets).ravel()
++    assert raw.sum() > 0
++
++    scale = weights / raw
++    np.testing.assert_allclose(scale, scale[0], rtol=1e-9)
++    assert scale[0] > 0
++
++
++def test_bl_constructor_risk_aversion_affects_market_prior():
++    # risk_aversion does bite where it is consumed before normalisation:
++    # it scales the market-implied prior. The counterpart to the invariance
++    # pinned in test_bl_weights_are_delta_invariant.
++    df = get_data()
++    S = risk_models.sample_cov(df)
++    mcaps = get_market_caps()
++    viewdict = {"AAPL": 0.20, "BBY": -0.30, "BAC": 0, "SBUX": -0.2, "T": 0.131321}
++
++    rets = [
++        BlackLittermanModel(
++            S,
++            pi="market",
++            market_caps=mcaps,
++            risk_aversion=delta,
++            absolute_views=viewdict,
++        ).bl_returns()
++        for delta in (1, 5)
++    ]
++    assert not np.allclose(rets[0].values, rets[1].values)
++
++
+ def test_market_implied_prior():
+     df = get_data()
+     S = risk_models.sample_cov(df)
+diff --git a/tests/test_cla.py b/tests/test_cla.py
+index c5f69e2..5e5c4ed 100644
+--- a/tests/test_cla.py
++++ b/tests/test_cla.py
+@@ -1,4 +1,5 @@
+ import numpy as np
++import pandas as pd
+ import pytest
+ 
+ from pypfopt import risk_models
+@@ -150,3 +151,92 @@ def test_cla_efficient_frontier():
+     # higher return = higher risk
+     assert sigma[-1] < sigma[0] and mu[-1] < mu[0]
+     assert weights[0].shape == (20, 1)
++
++
++def test_cla_efficient_frontier_points_never_degenerates():
++    # points is sampled per segment between turning points, so points //
++    # len(self.w) hit zero as soon as the caller asked for fewer points than
++    # the frontier has corners: on this fixture, which has 16 turning points,
++    # points=10 and points=15 returned three empty lists and 16 returned one
++    # point, all silently, and plot_efficient_frontier passes the caller's
++    # points straight through.
++    cla = setup_cla()
++    cla._solve()
++    turning_points = len(cla.w)
++    assert turning_points > 2, "fixture must have several turning points"
++
++    spans = {}
++    for points in (2, 10, turning_points - 1, turning_points, 2 * turning_points, 100):
++        mu, sigma, weights = setup_cla().efficient_frontier(points=points)
++        assert len(mu) == len(sigma) == len(weights), points
++        assert len(mu) >= 2, f"points={points} returned {len(mu)} points"
++        spans[points] = max(sigma) - min(sigma)
++        assert spans[points] > 0, f"points={points} returned a degenerate frontier"
++
++    # every request spans the same frontier; only the sampling density changes
++    assert max(spans.values()) - min(spans.values()) < 1e-9
++    assert len(setup_cla().efficient_frontier(points=200)[0]) > len(
++        setup_cla().efficient_frontier(points=100)[0]
++    )
++
++
++def test_cla_all_equal_expected_returns_rejected():
++    # A flat mean vector - a coherent no-view prior - makes _compute_lambda's
++    # denominator exactly 0 for every candidate, so every lambda is None and
++    # the algorithm can never free an asset. Before the guard that meant a
++    # bare TypeError from a None comparison in _solve; with only the
++    # comparison shielded it meant terminating on the init state and
++    # returning a silently wrong portfolio. There is no frontier to trace,
++    # so the constructor refuses and names the alternative.
++    df = get_data()
++    S = risk_models.sample_cov(df)
++    flat = pd.Series(0.1, index=S.columns)
++
++    with pytest.raises(ValueError, match="all expected_returns are equal"):
++        CLA(flat, S)
++
++    # Near-ties and partial ties stay accepted: only the exactly flat vector
++    # has no frontier.
++    almost = pd.Series(0.1, index=S.columns)
++    almost.iloc[0] = 0.1 + 1e-6
++    w = pd.Series(CLA(almost, S).min_volatility())
++    assert abs(w.sum() - 1) < 1e-8
++
++    # A single asset has ptp 0 by construction and keeps working: case b)
++    # never runs there, and its one-point frontier is well defined.
++    one = CLA(
++        pd.Series([0.1], index=["A"]),
++        pd.DataFrame([[0.04]], index=["A"], columns=["A"]),
++    )
++    assert one.min_volatility() == {"A": 1.0}
++
++
++def test_cla_non_finite_inputs_rejected():
++    # CLA's arithmetic propagates NaN and inf silently: before the guard,
++    # one NaN in the mean completed min_volatility with weights 0.87 away
++    # from the true minimum-variance portfolio, where every cvxpy-backed
++    # optimizer refuses the same data with a loud ValueError at solve time.
++    df = get_data()
++    S = risk_models.sample_cov(df)
++    mu = pd.Series(np.linspace(0.05, 0.30, len(S.columns)), index=S.columns)
++
++    bad_mu = mu.copy()
++    bad_mu.iloc[3] = np.nan
++    with pytest.raises(ValueError, match="expected_returns contains NaN or infinite"):
++        CLA(bad_mu, S)
++
++    bad_mu = mu.copy()
++    bad_mu.iloc[7] = np.inf
++    with pytest.raises(ValueError, match="expected_returns contains NaN or infinite"):
++        CLA(bad_mu, S)
++
++    bad_S = S.copy()
++    bad_S.iloc[2, 5] = np.nan
++    bad_S.iloc[5, 2] = np.nan
++    with pytest.raises(ValueError, match="cov_matrix contains NaN or infinite"):
++        CLA(mu, bad_S)
++
++    bad_S = S.copy()
++    bad_S.iloc[1, 1] = np.inf
++    with pytest.raises(ValueError, match="cov_matrix contains NaN or infinite"):
++        CLA(mu, bad_S)
+diff --git a/tests/test_discrete_allocation.py b/tests/test_discrete_allocation.py
+index f095318..354cbd3 100644
+--- a/tests/test_discrete_allocation.py
++++ b/tests/test_discrete_allocation.py
+@@ -1,8 +1,11 @@
+-from cvxpy.error import SolverError
++import warnings
++
++import cvxpy as cp
+ import numpy as np
+ import pandas as pd
+ import pytest
+ 
++from pypfopt import exceptions
+ from pypfopt.discrete_allocation import DiscreteAllocation, get_latest_prices
+ from tests.utilities_for_tests import get_data, setup_efficient_frontier
+ 
+@@ -443,7 +446,10 @@ def test_allocation_errors():
+         DiscreteAllocation(w, latest_prices, total_portfolio_value=0)
+     with pytest.raises(ValueError):
+         DiscreteAllocation(w, latest_prices, short_ratio=-0.4)
+-    with pytest.raises(SolverError):
++    # An unusable solver is reported as this library's own error, not as the
++    # cvxpy type: a caller catching OptimizationError, which is what this method
++    # documents, has to see every way the allocation can fail to solve.
++    with pytest.raises(exceptions.OptimizationError):
+         da = DiscreteAllocation(w, latest_prices)
+         da.lp_portfolio(solver="ABCDEF")
+ 
+@@ -454,3 +460,36 @@ def test_allocation_errors():
+     latest_prices.iloc[0] = np.nan
+     with pytest.raises(TypeError):
+         DiscreteAllocation(w, latest_prices)
++
++
++def test_lp_portfolio_solver_without_integer_support():
++    # The docstring requires a solver that supports mixed-integer programs, so
++    # passing one that does not is the documented way to get this call wrong.
++    # It used to escape as a raw cvxpy SolverError.
++    ef = setup_efficient_frontier()
++    w = ef.max_sharpe(risk_free_rate=0.02)
++    latest_prices = get_latest_prices(get_data())
++
++    for solver in ["CLARABEL", "SCS"]:
++        da = DiscreteAllocation(w, latest_prices, total_portfolio_value=10000)
++        with pytest.raises(exceptions.OptimizationError) as excinfo:
++            da.lp_portfolio(solver=solver)
++        # The conversion must not lose the reason the solve failed.
++        assert isinstance(excinfo.value.__cause__, cp.error.SolverError)
++
++
++def test_greedy_portfolio_when_no_share_is_affordable():
++    # A budget too small to buy a single share of anything leaves the holdings
++    # at zero, which used to make the second round normalise 0/0 and emit
++    # "invalid value encountered in divide".
++    latest_prices = pd.Series({"A": 500.0, "B": 800.0, "C": 1200.0})
++    weights = {"A": 0.4, "B": 0.35, "C": 0.25}
++
++    with warnings.catch_warnings():
++        warnings.simplefilter("error", RuntimeWarning)
++        allocation, leftover = DiscreteAllocation(
++            weights, latest_prices, total_portfolio_value=100
++        ).greedy_portfolio()
++
++    assert allocation == {}
++    assert leftover == 100
+diff --git a/tests/test_efficient_cdar.py b/tests/test_efficient_cdar.py
+index 650fa48..1a8df21 100644
+--- a/tests/test_efficient_cdar.py
++++ b/tests/test_efficient_cdar.py
+@@ -1,3 +1,5 @@
++import re
++
+ import numpy as np
+ import pytest
+ from skbase.utils.dependencies import _check_soft_dependencies
+@@ -322,7 +324,6 @@ def test_efficient_risk_market_neutral():
+     )
+ 
+ 
+-@pytest.mark.skip(reason="failing test, unknown reason. See bug report #642.")
+ def test_efficient_risk_L2_reg():
+     cd = setup_efficient_cdar()
+     cd.add_objective(objective_functions.L2_reg, gamma=1)
+@@ -332,11 +333,19 @@ def test_efficient_risk_L2_reg():
+     assert set(weights.keys()) == set(cd.tickers)
+     np.testing.assert_almost_equal(cd.weights.sum(), 1)
+     np.testing.assert_array_less(np.zeros(len(weights)), cd.weights + 1e-4)
++    # The CDaR element is the drawdown risk of these weights, not the 0.18 bound
++    # imposed on them. Computing it from the weights also made it far steadier
++    # across solvers than the value read off the programme's auxiliary variables:
++    # 0.155679814 (OSQP, the cvxpy default), 0.155681008 (SCS) and 0.155678412
++    # (CLARABEL) span 2.6e-6, against the 1.1e-3 the old value spanned, so atol
++    # tightens by two orders of magnitude. The old tuple pinned 0.179365, which
++    # was no portfolio's CDaR. The discriminating assertion in this test is still
++    # the equal-weight comparison at the end.
+     np.testing.assert_allclose(
+         cd.portfolio_performance(),
+-        (0.288999, 0.178443),
++        (0.289000, 0.155680),
+         rtol=1e-4,
+-        atol=1e-4,
++        atol=1e-5,
+     )
+ 
+     cd2 = setup_efficient_cdar()
+@@ -387,7 +396,6 @@ def test_efficient_return_short():
+     assert long_only_cdar > cdar
+ 
+ 
+-@pytest.mark.skip(reason="failing test, unknown reason. See bug report #642.")
+ def test_efficient_return_L2_reg():
+     cd = setup_efficient_cdar()
+     cd.add_objective(objective_functions.L2_reg, gamma=1)
+@@ -396,11 +404,15 @@ def test_efficient_return_L2_reg():
+     assert set(w.keys()) == set(cd.tickers)
+     np.testing.assert_almost_equal(cd.weights.sum(), 1)
+     assert all([i >= -1e-5 for i in w.values()])
++    # The return is the binding constraint and is exact; the CDaR is the
++    # minimised objective and varies by 4.4e-5 across installed solvers
++    # (0.101239 OSQP, 0.101241 CLARABEL, 0.101283 SCS), so 5e-4 accepts all
++    # three with room while still catching any real drift in the objective.
+     np.testing.assert_allclose(
+         cd.portfolio_performance(),
+-        (0.25, 0.101115),
++        (0.25, 0.101254),
+         rtol=1e-4,
+-        atol=1e-4,
++        atol=5e-4,
+     )
+ 
+ 
+@@ -430,10 +442,11 @@ def test_cdar_errors():
+         # Beta must be between 0 and 1
+         cd = EfficientCDaR(mu, historical_rets, 1)
+ 
+-    with pytest.raises(OptimizationError):
+-        # Must be <= max expected return
++    with pytest.raises(ValueError, match="largest achievable return"):
++        # Must be <= max expected return, and rejected by validation rather
++        # than by the solver
+         cd = EfficientCDaR(mu, historical_rets)
+-        cd.efficient_return(target_return=np.abs(mu).max() + 0.01)
++        cd.efficient_return(target_return=mu.max() + 0.01)
+ 
+     with pytest.raises(TypeError):
+         # list not supported.
+@@ -452,3 +465,80 @@ def test_parametrization():
+     cd = setup_efficient_cdar()
+     cd.efficient_return(0.08)
+     cd.efficient_return(0.07)
++
++
++def test_cdar_reported_risk_is_the_portfolios_own():
++    # The counterpart of the CVaR case: efficient_risk optimises return, so
++    # alpha, u and z are pinned only by cdar <= target, and every feasible value
++    # of them is optimal. Reading the risk off them therefore described the bound
++    # rather than the portfolio wherever the bound was slack: on this fixture the
++    # old code reported 0.2986593793 at target 0.30 for weights whose CDaR is
++    # 0.2108883384, a 41.6 pct overstatement, rising to 89.4 pct at target 0.40.
++    # The targets below have to reach that slack region to mean anything. The
++    # constraint does not go slack here until past 0.20, so a sweep stopping
++    # there passes against the unfixed code and certifies nothing.
++    mu, historic_returns = setup_efficient_cdar(data_only=True)
++
++    def reference(portfolio_returns, beta):
++        u = np.zeros(len(portfolio_returns) + 1)
++        for i in range(1, len(u)):
++            u[i] = max(0.0, u[i - 1] - portfolio_returns[i - 1])
++        drawdowns = u[1:]
++        candidates = np.unique(drawdowns)
++        return (
++            candidates
++            + np.maximum(drawdowns[None, :] - candidates[:, None], 0).sum(axis=1)
++            / (len(drawdowns) * (1 - beta))
++        ).min()
++
++    for target in [0.06, 0.12, 0.20, 0.25, 0.30, 0.40]:
++        cd = EfficientCDaR(mu, historic_returns)
++        cd.efficient_risk(target)
++        actual = reference(cd.returns.values @ cd.weights, cd._beta)
++        assert abs(cd.portfolio_performance()[1] - actual) < 1e-6, target
++        assert actual <= target + 1e-6, target
++
++
++def test_efficient_risk_below_floor_names_the_floor():
++    # An unreachable risk target used to come back as a bare solver status,
++    # which told the caller nothing about which targets would work. The floor
++    # costs a solve, so it is found only here, on a call that has already
++    # failed, and the number it names has to be a target that actually works.
++    mu, historic_returns = setup_efficient_cdar(data_only=True)
++    reference = EfficientCDaR(mu, historic_returns)
++    reference.min_cdar()
++    floor = reference.portfolio_performance()[1]
++
++    below = EfficientCDaR(mu, historic_returns)
++    with pytest.raises(OptimizationError, match="The minimum CDaR is"):
++        below.efficient_risk(floor - 0.02)
++
++    again = EfficientCDaR(mu, historic_returns)
++    try:
++        again.efficient_risk(floor - 0.02)
++        raise AssertionError("expected the target to be refused")
++    except OptimizationError as e:
++        named = float(re.findall(r"is ([0-9.eE+-]+?)\. Please", str(e))[0])
++    assert abs(named - floor) < 1e-6
++
++    # Round-trip: the floor named in the message is itself an accepted target.
++    accepted = EfficientCDaR(mu, historic_returns)
++    accepted.efficient_risk(named)
++    assert accepted.portfolio_performance()[1] <= named * 1.001
++
++
++def test_cdar_no_returns():
++    # Issue 324, the sibling of test_cvar_no_returns and test_es_no_returns.
++    # This class had no such test at all, and its constructor sized the dummy
++    # covariance from len(expected_returns) where both siblings used
++    # returns.shape[1], so the documented None raised TypeError.
++    df = get_data()
++    historical_rets = expected_returns.returns_from_prices(df).dropna()
++
++    cd = EfficientCDaR(None, historical_rets)
++    assert cd
++
++    cd.min_cdar()
++    mu, cdar = cd.portfolio_performance()
++    assert mu is None
++    assert cdar > 0
+diff --git a/tests/test_efficient_cvar.py b/tests/test_efficient_cvar.py
+index a311723..4c34227 100644
+--- a/tests/test_efficient_cvar.py
++++ b/tests/test_efficient_cvar.py
+@@ -1,3 +1,6 @@
++import re
++import warnings
++
+ import numpy as np
+ import pytest
+ from skbase.utils.dependencies import _check_soft_dependencies
+@@ -40,7 +43,16 @@ def test_cvar_no_returns():
+     # Issue 324
+     df = get_data()
+     historical_rets = expected_returns.returns_from_prices(df).dropna()
+-    assert EfficientCVaR(None, historical_rets)
++    cv = EfficientCVaR(None, historical_rets)
++    assert cv
++
++    # Solving and reporting are part of the documented contract, not just
++    # construction; stopping at the assert above is what let the reporting
++    # half raise ValueError under a green suite.
++    cv.min_cvar()
++    mu, cvar = cv.portfolio_performance()
++    assert mu is None
++    assert cvar > 0
+ 
+ 
+ def test_es_return_sample():
+@@ -335,9 +347,14 @@ def test_efficient_risk_L2_reg():
+     assert set(weights.keys()) == set(cv.tickers)
+     np.testing.assert_almost_equal(cv.weights.sum(), 1)
+     np.testing.assert_array_less(np.zeros(len(weights)), cv.weights + 1e-4)
++    # The CVaR element is the risk of these weights, not the 0.03 bound imposed
++    # on them. efficient_risk optimises return, so the programme's alpha and u
++    # are free anywhere feasible, and reading the risk off them reported
++    # 0.029393474756427136, which is no portfolio's CVaR. The return element is
++    # unchanged to 1e-12: the optimization is not what moved.
+     np.testing.assert_allclose(
+         cv.portfolio_performance(),
+-        (0.2889961577134966, 0.029393474756427136),
++        (0.2889961577134966, 0.0291222935600902),
+         rtol=1e-4,
+         atol=1e-4,
+     )
+@@ -435,13 +452,16 @@ def test_cvar_errors():
+     with pytest.warns(UserWarning):
+         cv = EfficientCVaR(mu, historical_rets, 0.1)
+ 
+-    with pytest.raises(OptimizationError):
+-        # Must be <= max expected return
++    with pytest.raises(ValueError, match="largest achievable return"):
++        # Must be <= max expected return, and rejected by validation rather
++        # than by the solver
+         cv = EfficientCVaR(mu, historical_rets)
+-        cv.efficient_return(target_return=np.abs(mu).max() + 0.01)
++        cv.efficient_return(target_return=mu.max() + 0.01)
+ 
+-    with pytest.raises(AttributeError):
+-        # list not supported.
++    with pytest.raises(TypeError):
++        # list not supported. TypeError, not AttributeError: _validate_returns
++        # states the contract, and the constructor used to die on the missing
++        # .shape attribute before reaching it.
+         EfficientCVaR(mu, historical_rets.to_numpy().tolist())
+ 
+     historical_rets = historical_rets.iloc[:, :-1]
+@@ -457,3 +477,83 @@ def test_parametrization():
+     cv = setup_efficient_cvar()
+     cv.efficient_return(0.25)
+     cv.efficient_return(0.25)
++
++
++def test_cvar_reported_risk_is_the_portfolios_own():
++    # efficient_risk optimises return, so alpha and u are pinned only by the
++    # constraint cvar <= target and every feasible value of them is optimal. The
++    # reported risk used to be read off them, so wherever the target was slack it
++    # described the bound rather than the portfolio: on this fixture the old code
++    # reported 0.0672761461 at target 0.08 for weights whose CVaR is
++    # 0.0384513115, a 75.0 pct overstatement. The targets below span the binding
++    # region, up to 0.03 here, where the two always agreed, and the slack region
++    # past it, where they did not; a sweep confined to the binding region passes
++    # against the unfixed code and certifies nothing.
++    mu, historic_returns = setup_efficient_cvar(data_only=True)
++
++    def reference(losses, beta):
++        # The Rockafellar-Uryasev objective is piecewise linear in alpha with
++        # breakpoints at the observed losses, so evaluating it at each of them
++        # and taking the least is exact for the empirical problem.
++        losses = np.asarray(losses, dtype=float)
++        candidates = np.unique(losses)
++        return (
++            candidates
++            + np.maximum(losses[None, :] - candidates[:, None], 0).sum(axis=1)
++            / (len(losses) * (1 - beta))
++        ).min()
++
++    for target in [0.02, 0.03, 0.04, 0.05, 0.06, 0.08]:
++        cv = EfficientCVaR(mu, historic_returns)
++        cv.efficient_risk(target)
++        actual = reference(-(cv.returns.values @ cv.weights), cv._beta)
++        assert abs(cv.portfolio_performance()[1] - actual) < 1e-6, target
++        # The optimization was always right; only the reporting was not.
++        assert actual <= target + 1e-6, target
++
++
++def test_efficient_risk_below_floor_names_the_floor():
++    # An unreachable risk target used to come back as a bare solver status,
++    # which told the caller nothing about which targets would work. The floor
++    # costs a solve, so it is found only here, on a call that has already
++    # failed, and the number it names has to be a target that actually works.
++    mu, historic_returns = setup_efficient_cvar(data_only=True)
++    reference = EfficientCVaR(mu, historic_returns)
++    reference.min_cvar()
++    floor = reference.portfolio_performance()[1]
++
++    below = EfficientCVaR(mu, historic_returns)
++    with pytest.raises(OptimizationError, match="The minimum CVaR is"):
++        below.efficient_risk(floor - 0.005)
++
++    again = EfficientCVaR(mu, historic_returns)
++    try:
++        again.efficient_risk(floor - 0.005)
++        raise AssertionError("expected the target to be refused")
++    except OptimizationError as e:
++        named = float(re.findall(r"is ([0-9.eE+-]+?)\. Please", str(e))[0])
++    assert abs(named - floor) < 1e-6
++
++    # Round-trip: the floor named in the message is itself an accepted target.
++    accepted = EfficientCVaR(mu, historic_returns)
++    accepted.efficient_risk(named)
++    assert accepted.portfolio_performance()[1] <= named * 1.001
++
++
++def test_floor_probe_does_not_repeat_the_market_neutrality_warning():
++    # The probe that finds the floor solves a copy market-neutral as well, and
++    # the caller's own solve has already warned that non-negative bounds were
++    # amended. _feasible_bound suppresses that duplicate deliberately; the floor
++    # probe did not, so the caller saw the same warning twice.
++    mu, historic_returns = setup_efficient_cvar(data_only=True)
++    with warnings.catch_warnings(record=True) as caught:
++        warnings.simplefilter("always")
++        cv = EfficientCVaR(mu, historic_returns)
++        cv.add_constraint(lambda w: w[0] >= 0.5)
++        with pytest.raises(OptimizationError, match="The minimum CVaR is"):
++            cv.efficient_risk(0.0001, market_neutral=True)
++
++    amended = [
++        w for w in caught if "Market neutrality requires shorting" in str(w.message)
++    ]
++    assert len(amended) == 1, len(amended)
+diff --git a/tests/test_efficient_frontier.py b/tests/test_efficient_frontier.py
+index 038788e..0eca3b3 100644
+--- a/tests/test_efficient_frontier.py
++++ b/tests/test_efficient_frontier.py
+@@ -1,3 +1,4 @@
++import re
+ import warnings
+ 
+ import cvxpy as cp
+@@ -603,6 +604,21 @@ def test_max_sharpe_risk_free_portfolio_performance():
+         np.testing.assert_allclose(res, res2)
+ 
+ 
++def test_portfolio_performance_risk_free_rate_live_without_max_sharpe():
++    # The override above applies only after max_sharpe. Everywhere else the
++    # argument is fully in effect, which is the other half of what the
++    # docstring promises and the half nothing pinned.
++    ef = setup_efficient_frontier()
++    ef.min_volatility()
++    with warnings.catch_warnings():
++        warnings.simplefilter("error")  # no override, so no warning is due
++        low = ef.portfolio_performance(risk_free_rate=0.0)[2]
++        high = ef.portfolio_performance(risk_free_rate=0.05)[2]
++    assert low > high
++    ret, vol, _ = ef.portfolio_performance(risk_free_rate=0.0)
++    np.testing.assert_allclose(low, ret / vol)
++
++
+ def test_min_vol_pair_constraint():
+     ef = setup_efficient_frontier()
+     ef.min_volatility()
+@@ -954,6 +970,260 @@ def test_efficient_risk_error():
+         ef.efficient_risk(-0.01)
+ 
+ 
++def _all_risk_optimizers():
++    """The four optimizers with an efficient_risk, and a target each can solve."""
++    from tests.utilities_for_tests import (
++        setup_efficient_cdar,
++        setup_efficient_cvar,
++        setup_efficient_semivariance,
++    )
++
++    return [
++        (setup_efficient_frontier, "target_volatility", 0.19),
++        (setup_efficient_semivariance, "target_semideviation", 0.20),
++        (setup_efficient_cvar, "target_cvar", 0.02),
++        (setup_efficient_cdar, "target_cdar", 0.08),
++    ]
++
++
++def test_efficient_risk_target_domain_is_shared():
++    # The four efficient_risk methods used to validate their target four ways:
++    # EfficientFrontier took only float and int and so refused numpy scalars,
++    # EfficientSemivariance squared the target before anything saw the sign and
++    # so accepted negatives, and all four read True as 1.
++    for setup, name, good in _all_risk_optimizers():
++        # Any real number is accepted, numpy scalars included.
++        for value in [good, np.float32(good), np.float64(good), 1, np.int64(1)]:
++            assert setup().efficient_risk(value)
++
++        # Negative targets, booleans and non-numbers are refused by name.
++        with pytest.raises(ValueError, match=f"{name} should be non-negative"):
++            setup().efficient_risk(-0.5)
++        for bad in [True, "x"]:
++            with pytest.raises(ValueError, match=f"{name} should be a real number"):
++                setup().efficient_risk(bad)
++
++
++def test_efficient_semivariance_negative_target_not_silently_squared():
++    # -0.5 used to be squared into a 0.5 target and return that portfolio.
++    from tests.utilities_for_tests import setup_efficient_semivariance
++
++    reference = setup_efficient_semivariance()
++    reference.efficient_risk(0.5)
++    with pytest.raises(ValueError):
++        setup_efficient_semivariance().efficient_risk(-0.5)
++
++
++def test_efficient_risk_floor_respects_weight_bounds():
++    # The floor was derived from the unconstrained global minimum variance, which
++    # permits shorting, so for any long-only universe it named a volatility below
++    # the one the solve could reach and waved through a whole band of targets that
++    # then failed inside the solver.
++    mu, S = setup_efficient_frontier(data_only=True)
++    unconstrained_floor = np.sqrt(1 / np.sum(np.linalg.pinv(S)))
++
++    for bounds in [(0, 1), (0, 0.10)]:
++        ef = setup_efficient_frontier(weight_bounds=bounds)
++        ef.min_volatility()
++        floor = ef.portfolio_performance()[1]
++        assert floor > unconstrained_floor
++
++        for target in np.linspace(unconstrained_floor, floor, 8)[1:-1]:
++            ef = setup_efficient_frontier(weight_bounds=bounds)
++            with pytest.raises(ValueError, match="minimum volatility"):
++                ef.efficient_risk(float(target))
++
++
++def test_cached_bounds_are_not_reused_across_feasible_sets():
++    # Both limits are cached, but each is only valid for the weight-sum rule and
++    # constraint set it was derived under. A call refused by a guard populates
++    # the cache without solving, and used to decide the limit for every later
++    # call on the same object. Each sequence must answer as a fresh object does.
++    def fresh(**kw):
++        return setup_efficient_frontier(**kw)
++
++    # A rejected non-neutral call must not fix the market-neutral floor, which
++    # is far lower because weights summing to zero can cancel to nothing.
++    ef = fresh(weight_bounds=(-1, 1))
++    with pytest.raises(ValueError, match="minimum volatility"):
++        ef.efficient_risk(0.05)
++    assert ef.efficient_risk(0.05, market_neutral=True)
++    np.testing.assert_almost_equal(ef.weights.sum(), 0)
++
++    # A rejected market-neutral call must not fix the non-neutral ceiling.
++    ef = fresh(weight_bounds=(-1, 1))
++    with pytest.raises(ValueError, match="largest achievable return"):
++        ef.efficient_return(99.0, market_neutral=True)
++    assert ef.efficient_return(1.9)
++    np.testing.assert_allclose(ef.portfolio_performance()[0], 1.9, atol=1e-6)
++
++    # A constraint added after a rejected call must move the floor, or the guard
++    # admits a target the solver then rejects.
++    ef = fresh()
++    with pytest.raises(ValueError, match="minimum volatility"):
++        ef.efficient_risk(0.10)
++    ef.add_constraint(lambda w: w[0] >= 0.5)
++    reference = fresh()
++    reference.add_constraint(lambda w: w[0] >= 0.5)
++    reference.min_volatility()
++    constrained_floor = reference.portfolio_performance()[1]
++    with pytest.raises(ValueError, match="minimum volatility"):
++        ef.efficient_risk(constrained_floor - 0.01)
++
++
++def test_cached_bounds_are_still_reused_when_valid():
++    # The caches exist so a caller sweeping targets does not pay a solve each
++    # time; invalidating them correctly must not mean invalidating them always.
++    calls = []
++    original = EfficientFrontier._feasible_bound
++
++    def counting(self, objective, market_neutral):
++        calls.append(market_neutral)
++        return original(self, objective, market_neutral)
++
++    EfficientFrontier._feasible_bound = counting
++    try:
++        ef = setup_efficient_frontier()
++        for target in [0.19, 0.22, 0.25, 0.28]:
++            ef.efficient_risk(target)
++    finally:
++        EfficientFrontier._feasible_bound = original
++    # Exactly one: the first call derives the floor, and the three that follow
++    # run against a solved problem whose feasible set can no longer change. Two
++    # would mean the invalidation is firing where it has nothing to invalidate.
++    assert len(calls) == 1, f"bound re-solved {len(calls)} times across four calls"
++
++
++def test_bounds_are_not_derived_against_a_solved_problem():
++    # Guarding the cache is not guarding the computation it feeds. Once a solve
++    # has run, a limit that was never cached cannot be derived: _feasible_bound
++    # solves a copy, and the copy carries the weight-sum constraint of the solve
++    # that already ran. min_volatility, max_sharpe and convex_objective impose
++    # that constraint without going through _make_weight_sum_constraint, so
++    # _market_neutral stays None and no validation fires for them either. Every
++    # one of these calls reached the solver - infeasible when market neutral,
++    # and otherwise a floor derived from the wrong objective - where it should
++    # be refused for adding a constraint to a solved problem, as it is at
++    # 25d2c6a.
++    mu, S = setup_efficient_frontier(data_only=True)
++
++    def solved(solve):
++        ef = EfficientFrontier(mu, S, weight_bounds=(-1, 1))
++        solve(ef)
++        return ef
++
++    solvers = [
++        lambda ef: ef.min_volatility(),
++        lambda ef: ef.max_sharpe(),
++        lambda ef: ef.convex_objective(lambda w: cp.quad_form(w, S.values)),
++    ]
++
++    for solve in solvers:
++        for market_neutral in [False, True]:
++            ef = solved(solve)
++            with pytest.raises(
++                exceptions.InstantiationError,
++                match="Adding constraints to an already solved problem",
++            ):
++                ef.efficient_risk(0.20, market_neutral=market_neutral)
++            # The exception alone is not enough: four of these six sequences
++            # raised it while still solving for a limit nobody can use.
++            assert ef._min_volatility_value is None
++
++            ef = solved(solve)
++            with pytest.raises(
++                exceptions.InstantiationError,
++                match="Adding constraints to an already solved problem",
++            ):
++                ef.efficient_return(0.30, market_neutral=market_neutral)
++            assert ef._max_return_value is None
++
++
++def test_bound_cache_sees_a_parameter_value_change():
++    # update_parameter_value is the one public way to move the feasible set
++    # without changing the number of constraints, so a key counting constraints
++    # could not see it: a refused call cached the floor derived at cap=0.05 and
++    # the next call reused it after the cap had been widened to 1.0, refusing a
++    # target that had become reachable.
++    def capped(cap):
++        mu, S = setup_efficient_frontier(data_only=True)
++        ef = EfficientFrontier(mu, S)
++        ef.add_constraint(
++            lambda w: w <= cp.Parameter(name="cap", value=cap, nonneg=True)
++        )
++        return ef
++
++    ef = capped(0.05)
++    with pytest.raises(ValueError, match="minimum volatility"):
++        ef.efficient_risk(0.16)
++    ef.update_parameter_value("cap", 1.0)
++    ef.efficient_risk(0.16)
++
++    reference = capped(1.0)
++    reference.efficient_risk(0.16)
++
++    np.testing.assert_allclose(
++        ef._min_volatility_value, reference._min_volatility_value, atol=1e-9
++    )
++    np.testing.assert_allclose(ef.weights, reference.weights, atol=1e-6)
++
++
++def test_efficient_risk_floor_is_attainable():
++    # A limit reported to a caller has to round-trip: the volatility named in the
++    # rejection message must be one this method accepts.
++    ef = setup_efficient_frontier()
++    with pytest.raises(ValueError, match="minimum volatility") as excinfo:
++        ef.efficient_risk(0.10)
++    named = float(
++        re.search(r"minimum volatility is (.+?)\. Please", str(excinfo.value)).group(1)
++    )
++
++    ef = setup_efficient_frontier()
++    assert ef.efficient_risk(named)
++    np.testing.assert_allclose(ef.portfolio_performance()[1], named, atol=1e-6)
++
++
++def test_efficient_risk_floor_respects_constraints():
++    # A constraint the caller added moves the floor, so the guard has to be
++    # computed over the same feasible set the solve will use.
++    def constrained():
++        ef = setup_efficient_frontier()
++        ef.add_constraint(lambda w: w[0] >= 0.5)
++        return ef
++
++    ef = constrained()
++    ef.min_volatility()
++    floor = ef.portfolio_performance()[1]
++
++    ef = constrained()
++    with pytest.raises(ValueError, match="minimum volatility"):
++        ef.efficient_risk(floor - 0.01)
++
++    ef = constrained()
++    assert ef.efficient_risk(floor + 0.01)
++
++
++def test_efficient_risk_market_neutral_floor():
++    # Market neutrality replaces sum(w) == 1 with sum(w) == 0, which lowers the
++    # attainable volatility; the old floor refused targets the solve could serve.
++    ef = setup_efficient_frontier(weight_bounds=(-1, 1))
++    assert ef.efficient_risk(0.05, market_neutral=True)
++    np.testing.assert_almost_equal(ef.weights.sum(), 0)
++    np.testing.assert_allclose(ef.portfolio_performance()[1], 0.05, atol=1e-6)
++
++
++def test_efficient_return_market_neutral_ceiling():
++    # Same class on the return side: the largest achievable return depends on the
++    # weight-sum rule, so a ceiling computed under sum(w) == 1 admitted
++    # market-neutral targets the solver could not reach.
++    ef = setup_efficient_frontier(weight_bounds=(-1, 1))
++    with pytest.raises(ValueError, match="largest achievable return"):
++        ef.efficient_return(1.9, market_neutral=True)
++
++    ef = setup_efficient_frontier(weight_bounds=(-1, 1))
++    assert ef.efficient_return(1.9)
++
++
+ def test_efficient_risk_many_values():
+     for target_risk in np.array([0.16, 0.21, 0.30]):
+         ef = setup_efficient_frontier()
+@@ -1357,3 +1627,115 @@ def test_efficient_risk_exp_cov_market_neutral():
+         (0.3934093962620499, 0.18999999989011893, 1.9653126130421081),
+         atol=1e-6,
+     )
++
++
++def _bearish_universe():
++    """Real price data shifted so that every expected return is negative."""
++    df = get_data()
++    returns = expected_returns.returns_from_prices(df).dropna(how="any", axis=0)
++    returns = returns - returns.mean() - 0.001
++    mu = expected_returns.mean_historical_return(returns, returns_data=True)
++    assert (mu < 0).all(), "fixture must have every expected return negative"
++    S = risk_models.sample_cov(returns, returns_data=True)
++    return mu, S, returns
++
++
++def test_efficient_return_target_domain_is_consistent_across_optimizers():
++    # The same documented target_return argument must mean the same thing in
++    # every optimizer. A negative target is legitimate - it is exactly what a
++    # universe of negative expected returns requires.
++    from pypfopt import EfficientCDaR, EfficientCVaR, EfficientSemivariance
++
++    mu, S, returns = _bearish_universe()
++    target = float(mu.max()) - 0.01
++
++    builders = {
++        "EfficientFrontier": lambda: EfficientFrontier(mu, S),
++        "EfficientSemivariance": lambda: EfficientSemivariance(mu, returns),
++        "EfficientCVaR": lambda: EfficientCVaR(mu, returns),
++        "EfficientCDaR": lambda: EfficientCDaR(mu, returns),
++    }
++
++    for name, build in builders.items():
++        weights = np.array(
++            list(build().efficient_return(target_return=target).values())
++        )
++        assert np.isclose(weights.sum(), 1, atol=1e-4), name
++        assert weights @ mu.values >= target - 1e-4, name
++
++
++def test_efficient_return_rejects_unachievable_target_uniformly():
++    # Above the largest achievable return every optimizer must refuse in the
++    # same way, from validation rather than from the solver.
++    from pypfopt import EfficientCDaR, EfficientCVaR, EfficientSemivariance
++
++    mu, S, returns = _bearish_universe()
++    too_high = float(mu.max()) + 0.05
++
++    builders = [
++        EfficientFrontier(mu, S),
++        EfficientSemivariance(mu, returns),
++        EfficientCVaR(mu, returns),
++        EfficientCDaR(mu, returns),
++    ]
++    for optimizer in builders:
++        with pytest.raises(ValueError, match="largest achievable return"):
++            optimizer.efficient_return(target_return=too_high)
++
++
++def test_efficient_return_rejection_message_is_self_consistent():
++    # The limit was rounded to 6 significant figures for display, so rejecting a
++    # target equal to the largest asset return reported "must be lower than
++    # 0.388666" for a target of 0.3886658284439337 - a value that is lower than
++    # 0.388666. The message must never state a limit above the target it refused.
++    from pypfopt import EfficientCDaR, EfficientCVaR, EfficientSemivariance
++
++    mu, S, returns = _bearish_universe()
++    target = float(mu.max())
++
++    builders = [
++        EfficientFrontier(mu, S),
++        EfficientSemivariance(mu, returns),
++        EfficientCVaR(mu, returns),
++        EfficientCDaR(mu, returns),
++    ]
++    for optimizer in builders:
++        with pytest.raises(ValueError, match="largest achievable return") as excinfo:
++            optimizer.efficient_return(target_return=target)
++        stated_limit = float(str(excinfo.value).split()[-1])
++        assert stated_limit < target, str(excinfo.value)
++
++
++def test_efficient_return_rejects_non_numeric_target_uniformly():
++    from pypfopt import EfficientCDaR, EfficientCVaR, EfficientSemivariance
++
++    mu, S, returns = _bearish_universe()
++    builders = [
++        EfficientFrontier(mu, S),
++        EfficientSemivariance(mu, returns),
++        EfficientCVaR(mu, returns),
++        EfficientCDaR(mu, returns),
++    ]
++    for optimizer in builders:
++        with pytest.raises(ValueError, match="real number"):
++            optimizer.efficient_return(target_return="0.05")
++
++
++def test_beta_validation_is_shared_by_the_tail_risk_optimizers():
++    # EfficientCVaR and EfficientCDaR validate the same confidence level with
++    # the same helper. Pinned so the two cannot drift apart again.
++    from pypfopt import EfficientCDaR, EfficientCVaR
++
++    mu, S, returns = _bearish_universe()
++    builders = {
++        "EfficientCVaR": lambda beta: EfficientCVaR(mu, returns, beta=beta),
++        "EfficientCDaR": lambda beta: EfficientCDaR(mu, returns, beta=beta),
++    }
++
++    for name, build in builders.items():
++        for bad in (-0.1, 1, 1.5):
++            with pytest.raises(ValueError, match="beta must be between 0 and 1"):
++                build(bad)
++        with pytest.warns(UserWarning, match="confidence-level"):
++            build(0.1)
++        assert build(0.95)._beta == 0.95, name
+diff --git a/tests/test_efficient_semivariance.py b/tests/test_efficient_semivariance.py
+index 9d1dc58..cb000e4 100644
+--- a/tests/test_efficient_semivariance.py
++++ b/tests/test_efficient_semivariance.py
+@@ -1,4 +1,5 @@
+-from cvxpy.error import SolverError
++import re
++
+ import numpy as np
+ import pytest
+ from skbase.utils.dependencies import _check_soft_dependencies
+@@ -6,10 +7,12 @@ from skbase.utils.dependencies import _check_soft_dependencies
+ from pypfopt import (
+     EfficientFrontier,
+     EfficientSemivariance,
++    exceptions,
+     expected_returns,
+     objective_functions,
+     risk_models,
+ )
++from pypfopt.exceptions import OptimizationError
+ from tests.utilities_for_tests import get_data, setup_efficient_semivariance
+ 
+ 
+@@ -40,7 +43,16 @@ def test_es_no_returns():
+     df = get_data()
+     historical_rets = expected_returns.returns_from_prices(df).dropna()
+ 
+-    assert EfficientSemivariance(None, historical_rets)
++    es = EfficientSemivariance(None, historical_rets)
++    assert es
++
++    # As in test_cvar_no_returns: the contract covers reporting, not only
++    # construction.
++    es.min_semivariance()
++    mu, semi_deviation, sortino = es.portfolio_performance()
++    assert mu is None
++    assert sortino is None
++    assert semi_deviation > 0
+ 
+ 
+ def test_es_return_sample():
+@@ -87,15 +99,13 @@ def test_es_errors():
+         es.max_quadratic_utility(risk_aversion=-0.01)
+ 
+     with pytest.raises(ValueError):
+-        # Must be > 0
+-        es.efficient_return(target_return=-0.01)
+-
+-    with pytest.raises(ValueError):
+-        # Must be <= max expected return
+-        es.efficient_return(target_return=np.abs(mu).max() + 0.01)
++        # Must be <= the largest achievable return
++        es.efficient_return(target_return=mu.max() + 0.01)
+ 
+-    with pytest.raises(AttributeError):
+-        # list not supported.
++    with pytest.raises(TypeError):
++        # list not supported. TypeError, not AttributeError: _validate_returns
++        # states the contract, and the constructor used to die on the missing
++        # .shape attribute before reaching it.
+         EfficientSemivariance(mu, historical_rets.to_numpy().tolist())
+ 
+     historical_rets = historical_rets.iloc[:, :-1]
+@@ -322,16 +332,20 @@ def test_max_quadratic_utility():
+     )
+ 
+ 
+-@pytest.mark.skip(reason="failing test, unknown reason. See bug report #642.")
+ def test_max_quadratic_utility_range():
+     # increasing risk_aversion should lower both vol and return
+     df = get_data().dropna(axis=0, how="any")
+     mean_return = expected_returns.mean_historical_return(df, compounding=False)
+     historic_returns = expected_returns.returns_from_prices(df)
++    # Pinned to CLARABEL on purpose: cvxpy defaults this QP to OSQP, which hits
++    # its iteration limit at risk_aversion=5 and reports "Solver status:
++    # user_limit". CLARABEL and SCS both complete the sweep and agree on the
++    # monotonicity below, so the contract is real and only the default is weak.
+     es = EfficientSemivariance(
+         mean_return,
+         historic_returns,
+         verbose=True,
++        solver="CLARABEL",
+         solver_options={"warm_start": False},
+     )
+     es.max_quadratic_utility(risk_aversion=0.01)
+@@ -417,14 +431,14 @@ def test_efficient_risk():
+     )
+ 
+ 
+-@pytest.mark.skip(reason="failing test, unknown reason. See bug report #642.")
+ def test_efficient_risk_low_risk():
+     es = setup_efficient_semivariance()
+     es.min_semivariance()
+     min_value = es.portfolio_performance(risk_free_rate=0.02)[1]
+ 
+-    # Should fail below
+-    with pytest.raises(SolverError):
++    # Should fail below. The solver terminates PrimalInfeasible and the status
++    # branch converts that, so the library's own error is what reaches a caller.
++    with pytest.raises(exceptions.OptimizationError):
+         es = setup_efficient_semivariance()
+         es.efficient_risk(min_value - 0.01)
+ 
+@@ -597,3 +611,31 @@ def test_parametrization():
+     es = setup_efficient_semivariance()
+     es.max_quadratic_utility(1)
+     es.max_quadratic_utility(1)
++
++
++def test_efficient_risk_below_floor_names_the_floor():
++    # An unreachable risk target used to come back as a bare solver status,
++    # which told the caller nothing about which targets would work. The floor
++    # costs a solve, so it is found only here, on a call that has already
++    # failed, and the number it names has to be a target that actually works.
++    mu, historic_returns = setup_efficient_semivariance(data_only=True)
++    reference = EfficientSemivariance(mu, historic_returns)
++    reference.min_semivariance()
++    floor = reference.portfolio_performance()[1]
++
++    below = EfficientSemivariance(mu, historic_returns)
++    with pytest.raises(OptimizationError, match="The minimum semideviation is"):
++        below.efficient_risk(floor - 0.03)
++
++    again = EfficientSemivariance(mu, historic_returns)
++    try:
++        again.efficient_risk(floor - 0.03)
++        raise AssertionError("expected the target to be refused")
++    except OptimizationError as e:
++        named = float(re.findall(r"is ([0-9.eE+-]+?)\. Please", str(e))[0])
++    assert abs(named - floor) < 1e-6
++
++    # Round-trip: the floor named in the message is itself an accepted target.
++    accepted = EfficientSemivariance(mu, historic_returns)
++    accepted.efficient_risk(named)
++    assert accepted.portfolio_performance()[1] <= named * 1.001
+diff --git a/tests/test_expected_returns.py b/tests/test_expected_returns.py
+index 4e16583..ca97986 100644
+--- a/tests/test_expected_returns.py
++++ b/tests/test_expected_returns.py
+@@ -44,6 +44,35 @@ def test_prices_from_log_returns():
+     assert ((test_prices[1:] - df[1:]).fillna(0) < 1e-5).all().all()
+ 
+ 
++def test_prices_from_returns_is_lossless_with_leading_empty_row():
++    # The documented input: returns still aligned to the price index, so the
++    # first row carries no return and can hold the base price of 1.
++    prices = pd.DataFrame(
++        {"A": [100.0, 110.0, 99.0, 118.8]}, index=pd.date_range("2020-01-01", periods=4)
++    )
++    pseudo = expected_returns.prices_from_returns(prices.pct_change())
++
++    assert len(pseudo) == len(prices)
++    np.testing.assert_allclose(pseudo["A"] * prices["A"].iloc[0], prices["A"])
++
++
++def test_prices_from_returns_spends_first_return_without_the_empty_row():
++    # Feeding it returns_from_prices output costs one period. Pinned because it
++    # is documented behaviour, not an accident: every consecutive change in the
++    # result still equals the corresponding input return.
++    prices = pd.DataFrame(
++        {"A": [100.0, 110.0, 99.0, 118.8]}, index=pd.date_range("2020-01-01", periods=4)
++    )
++    returns = expected_returns.returns_from_prices(prices)
++    pseudo = expected_returns.prices_from_returns(returns)
++
++    assert len(pseudo) == len(returns)
++    assert pseudo["A"].iloc[0] == 1.0
++    # the first return is consumed, the rest survive exactly
++    recovered = expected_returns.returns_from_prices(pseudo)
++    np.testing.assert_allclose(recovered["A"], returns["A"].iloc[1:])
++
++
+ def test_returns_from_prices():
+     df = get_data()
+     returns_df = expected_returns.returns_from_prices(df)
+@@ -250,6 +279,18 @@ def test_capm_with_benchmark():
+     assert (mu2 >= mu).all()
+ 
+ 
++def test_capm_with_benchmark_does_not_mutate_input():
++    # the returns_data path aliased market_prices, so renaming the market column
++    # renamed the caller's own dataframe in place
++    returns = expected_returns.returns_from_prices(get_data())
++    mkt_returns = expected_returns.returns_from_prices(get_benchmark_data())
++    before = mkt_returns.copy()
++
++    expected_returns.capm_return(returns, market_prices=mkt_returns, returns_data=True)
++
++    pd.testing.assert_frame_equal(mkt_returns, before)
++
++
+ def test_risk_matrix_and_returns_data():
+     # Test the switcher method for simple calls
+     df = get_data()
+diff --git a/tests/test_plotting.py b/tests/test_plotting.py
+index a4e5a3f..be1e324 100644
+--- a/tests/test_plotting.py
++++ b/tests/test_plotting.py
+@@ -327,6 +327,31 @@ def test_constrained_ef_plot_risk():
+     plt.close()
+ 
+ 
++@pytest.mark.skipif(
++    not _check_soft_dependencies(["matplotlib"], severity="none"),
++    reason="skip test if matplotlib is not installed in environment",
++)
++def test_ef_plot_skips_unreachable_targets():
++    # A target the optimizer refuses with ValueError leaves no solved portfolio
++    # behind, so the point has to be skipped exactly like an OptimizationError.
++    # Reading performance off the unsolved optimizer raised "Weights is None".
++    import matplotlib.pyplot as plt
++
++    plt.figure()
++    ef = setup_efficient_frontier()
++    with pytest.warns(UserWarning, match="Could not construct portfolio"):
++        ax = plotting.plot_efficient_frontier(
++            ef,
++            ef_param="return",
++            ef_param_range=[5.0],
++            show_assets=False,
++            showfig=False,
++        )
++    assert ax is not None
++    plt.clf()
++    plt.close()
++
++
+ @pytest.mark.skipif(
+     not _check_soft_dependencies(["matplotlib"], severity="none"),
+     reason="skip test if matplotlib is not installed in environment",
+diff --git a/tests/test_readme.py b/tests/test_readme.py
+index ba98af6..41bc2bf 100644
+--- a/tests/test_readme.py
++++ b/tests/test_readme.py
+@@ -4,8 +4,10 @@ This module extracts Python code and expected result blocks from README.md,
+ executes the code, and verifies the output matches the documented result.
+ """
+ 
++import os
+ import pathlib
+ import re
++import shutil
+ import subprocess
+ import sys
+ 
+@@ -18,7 +20,7 @@ CODE_BLOCK = re.compile(r"```python\n(.*?)```", re.DOTALL)
+ RESULT = re.compile(r"```result\n(.*?)```", re.DOTALL)
+ 
+ 
+-def test_readme_runs():
++def test_readme_runs(tmp_path):
+     """Execute README code blocks and compare output to documented results."""
+     readme_text = README.read_text(encoding="utf-8")
+     code_blocks = CODE_BLOCK.findall(readme_text)
+@@ -32,10 +34,19 @@ def test_readme_runs():
+     code = "".join(code_blocks)  # merged code
+     expected = "".join(result_blocks)
+ 
++    # Run in a scratch directory carrying the data the README reads by relative
++    # path, so that whatever an example writes - README.md:94 saves weights.csv -
++    # lands there rather than in the repository.
++    shutil.copytree(ROOT / "tests" / "resources", tmp_path / "tests" / "resources")
++
+     # Trust boundary: we execute Python snippets sourced from README.md in this repo.
+     # The README is part of the trusted repository content and reviewed in PRs.
+     result = subprocess.run(
+-        [sys.executable, "-c", code], capture_output=True, text=True
++        [sys.executable, "-c", code],
++        capture_output=True,
++        text=True,
++        cwd=tmp_path,
++        env={**os.environ, "PYTHONPATH": str(ROOT)},
+     )  # noqa: S603
+ 
+     stdout = result.stdout
+diff --git a/tests/test_readme_examples.py b/tests/test_readme_examples.py
+index 12b77cb..64e9317 100644
+--- a/tests/test_readme_examples.py
++++ b/tests/test_readme_examples.py
+@@ -1,7 +1,6 @@
+-import os
+ from pathlib import Path
+ import re
+-import sys
++import shutil
+ 
+ README_PATH = Path(__file__).resolve().parent.parent / "README.md"
+ 
+@@ -11,7 +10,7 @@ def _extract_python_blocks(markdown_text: str) -> list[str]:
+     return [block.strip() for block in pattern.findall(markdown_text)]
+ 
+ 
+-def test_readme_python_examples_run():
++def test_readme_python_examples_run(tmp_path, monkeypatch):
+     readme_text = README_PATH.read_text(encoding="utf-8")
+     python_blocks = _extract_python_blocks(readme_text)
+ 
+@@ -20,20 +19,18 @@ def test_readme_python_examples_run():
+     repo_root = README_PATH.parent
+ 
+     # Make package importable
+-    sys.path.insert(0, str(repo_root))
++    monkeypatch.syspath_prepend(str(repo_root))
+ 
+-    # Run from repo root so relative paths work
+-    old_cwd = os.getcwd()
+-    os.chdir(repo_root)
++    # Run in a scratch directory carrying the data the README reads by relative
++    # path, so that whatever an example writes - README.md:94 saves weights.csv -
++    # lands there rather than in the repository.
++    shutil.copytree(repo_root / "tests" / "resources", tmp_path / "tests" / "resources")
++    monkeypatch.chdir(tmp_path)
+ 
+     globals_dict = {"__name__": "__main__"}
+ 
+-    try:
+-        for idx, block in enumerate(python_blocks, start=1):
++    for idx, block in enumerate(python_blocks, start=1):
++        try:
+             exec(block, globals_dict)
+-
+-    except Exception as e:
+-        raise AssertionError(f"README python block #{idx} failed:\n{block}") from e
+-
+-    finally:
+-        os.chdir(old_cwd)
++        except Exception as e:
++            raise AssertionError(f"README python block #{idx} failed:\n{block}") from e
 diff --git a/tests/test_risk_models.py b/tests/test_risk_models.py
-index 2b25072..d52b89c 100644
+index 2b25072..d41d15c 100644
 --- a/tests/test_risk_models.py
 +++ b/tests/test_risk_models.py
-@@ -225,8 +225,12 @@ def test_shrunk_covariance():
-     assert risk_models._is_positive_semidefinite(shrunk_cov)
-     with pytest.warns(RuntimeWarning) as w:
-         cs_numpy = risk_models.CovarianceShrinkage(df.to_numpy())
--        assert len(w) == 1
--        assert str(w[0].message) == "data is not in a dataframe"
-+        # Count only RuntimeWarnings: this assertion is about the
-+        # "data is not in a dataframe" warning, and pytest.warns records
-+        # every warning raised in the block, not just the matching category.
-+        runtime = [x for x in w if issubclass(x.category, RuntimeWarning)]
-+        assert len(runtime) == 1
-+        assert str(runtime[0].message) == "data is not in a dataframe"
-         shrunk_cov_numpy = cs_numpy.shrunk_covariance(0.2)
-         assert isinstance(shrunk_cov_numpy, pd.DataFrame)
-         np.testing.assert_equal(shrunk_cov_numpy.to_numpy(), shrunk_cov.to_numpy())
+@@ -1,3 +1,5 @@
++import warnings
++
+ import numpy as np
+ import pandas as pd
+ import pytest
+@@ -53,6 +55,67 @@ def test_is_positive_semidefinite():
+     assert risk_models._is_positive_semidefinite(a)
+ 
+ 
++def test_is_positive_semidefinite_is_scale_invariant():
++    # B @ B.T is positive semidefinite by construction, and singular when B has
++    # fewer columns than rows - the shape of a covariance estimated from fewer
++    # observations than assets. The check nudged the diagonal by a fixed 1e-16,
++    # which eigenvalue round-off swamps once the matrix is large, so the same
++    # matrix was accepted at one magnitude and rejected at another.
++    rng = np.random.default_rng(0)
++    B = rng.normal(0, 1, (20, 12))
++    psd = B @ B.T
++    for scale in [1e-4, 1e-2, 1.0, 1e2, 1e4, 1e8]:
++        assert risk_models._is_positive_semidefinite(psd * scale), scale
++
++    # a genuinely indefinite matrix must still be rejected at every magnitude
++    indefinite = np.array([[0.03818144, 0.04182824], [0.04182824, 0.04149209]])
++    for scale in [1e-4, 1.0, 1e4]:
++        assert not risk_models._is_positive_semidefinite(indefinite * scale), scale
++
++
++def test_is_positive_semidefinite_rejects_non_finite():
++    # np.linalg.cholesky propagates NaN into its result rather than raising, so
++    # a matrix containing NaN used to be reported as positive semidefinite.
++    assert not risk_models._is_positive_semidefinite(
++        np.array([[1.0, np.nan], [np.nan, 1.0]])
++    )
++    assert not risk_models._is_positive_semidefinite(
++        np.array([[1.0, np.inf], [np.inf, 1.0]])
++    )
++    assert not risk_models._is_positive_semidefinite(np.full((3, 3), np.nan))
++
++
++def test_sample_cov_warns_when_assets_never_overlap():
++    # Two assets observed on disjoint dates have no defined covariance. The
++    # resulting NaN used to pass through unflagged, surfacing much later as a
++    # cvxpy error about "parameter values and constants".
++    rng = np.random.default_rng(0)
++    returns = pd.DataFrame(rng.normal(0, 0.01, (300, 4)), columns=list("ABCD"))
++    returns.iloc[:150, 0] = np.nan
++    returns.iloc[150:, 1] = np.nan
++
++    with pytest.warns(UserWarning, match="non-finite"):
++        S = risk_models.sample_cov(returns, returns_data=True)
++
++    assert np.isnan(S.loc["A", "B"])
++    assert not risk_models._is_positive_semidefinite(S)
++
++
++def test_sample_cov_percent_quoted_returns_emits_no_warning():
++    # Returns quoted in percent rather than as decimals raise the covariance by
++    # four orders of magnitude. That used to trip the PSD check on a matrix that
++    # was positive semidefinite by construction, reporting a correct risk model
++    # as one the user should abandon.
++    rng = np.random.default_rng(21)
++    returns = pd.DataFrame(
++        rng.normal(0.0005, 0.012, (40, 60)) * 100,
++        columns=[f"A{i}" for i in range(60)],
++    )
++    with warnings.catch_warnings():
++        warnings.simplefilter("error")
++        risk_models.sample_cov(returns, returns_data=True)
++
++
+ def test_sample_cov_real_data():
+     df = get_data()
+     S = risk_models.sample_cov(df)
+@@ -364,3 +427,24 @@ def test_risk_matrix_not_implemented():
+     df = get_data()
+     with pytest.raises(NotImplementedError):
+         risk_models.risk_matrix(df, method="fancy_new!")
++
++
++def test_min_cov_determinant_recovers_a_known_covariance():
++    # The raw fast_mcd covariance is not consistent at the normal distribution
++    # and understates variance by more than half. Sample from a known
++    # covariance and require the estimate to be close to the truth.
++    true_cov = np.array([[0.04, 0.01, 0.0], [0.01, 0.09, 0.0], [0.0, 0.0, 0.0225]])
++    rng = np.random.default_rng(3)
++    returns = pd.DataFrame(
++        rng.multivariate_normal(np.zeros(3), true_cov, size=4000),
++        columns=["A", "B", "C"],
++    )
++
++    with pytest.warns(UserWarning, match="deprecated"):
++        estimate = risk_models.min_cov_determinant(
++            returns, returns_data=True, frequency=1, random_state=0
++        )
++
++    ratios = np.diag(estimate.values) / np.diag(true_cov)
++    np.testing.assert_allclose(ratios, 1.0, rtol=0.2)
++    assert risk_models._is_positive_semidefinite(estimate)
