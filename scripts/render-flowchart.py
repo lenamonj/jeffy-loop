@@ -48,6 +48,7 @@ REROUTE_JS = """
     { edge: 'L_REVERT_RECORD_0', from: ['REVERT', 0.5, 1], to: ['RECORD', 0.8, 0], label: false },
     { edge: 'L_PROM_BUDGET_0', from: ['PROM', 0.5, 1], to: ['BUDGET', 0.5, 0], label: false },
     { edge: 'L_CHECKS_BUDGET_0', from: ['CHECKS', 0, 0.5], to: ['BUDGET', 0.75, 0.25], label: true, trim: 0 },
+    { edge: 'L_EVAL_RECORD_0', from: ['EVAL', 0.5, 1], to: ['RECORD', 0.4, 0], label: true },
   ];
   const done = [];
   for (const r of ROUTES) {
@@ -68,6 +69,21 @@ REROUTE_JS = """
       }
     }
     done.push(r.edge + ':ok');
+  }
+  // Label-only moves: the edge keeps dagre's path, the chip moves onto it.
+  const LABELS = [ { edge: 'L_EVAL_RECORD_2', t: 0.3 } ];
+  const moveLabel = (edge, path, t) => {
+    const inner = document.querySelector('g[data-id="' + edge + '"]');
+    const lab = inner ? inner.closest('.edgeLabel') : null;
+    if (!lab) return;
+    const m = path.getPointAtLength(path.getTotalLength() * t);
+    const pt = svg.createSVGPoint(); pt.x = m.x; pt.y = m.y;
+    const local = pt.matrixTransform(path.getCTM()).matrixTransform(lab.parentNode.getCTM().inverse());
+    lab.setAttribute('transform', `translate(${local.x}, ${local.y})`);
+  };
+  for (const l of LABELS) {
+    const p = document.querySelector('path[data-id="' + l.edge + '"], path[id*="' + l.edge + '"]');
+    if (p) { moveLabel(l.edge, p, l.t); done.push(l.edge + ':label'); }
   }
   return done.join(' ');
 }
