@@ -516,6 +516,50 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_plan() { # $1 verify command line for PLAN.md
       printf '# Plan\n\n## Verify command\n%s\n' "$1" > "$hb_proj/PLAN.md"
     }
+    # The three hb_*_full / _extra / _entries variants below are staged for the
+    # 1.5.0 cases (Command-line sanitation, inventory rows, state schema
+    # growth, multi-entry journals) and are deliberately not called yet.
+    # shellcheck disable=SC2329
+    hb_write_plan_full() { # $1 Command: payload, $2... Surface inventory rows, one per line
+      hb_cmd="$1"; shift
+      {
+        printf '# Plan\n\n## Verify command\nCommand: %s\n\n## Surface inventory\n' "$hb_cmd"
+        for hb_row in "$@"; do printf '%s\n' "$hb_row"; done
+      } > "$hb_proj/PLAN.md"
+    }
+    # shellcheck disable=SC2329
+    hb_write_state_extra() { # $1 session_id, $2 iteration, $3 max_iterations, $4... raw frontmatter lines placed before started_at
+      hb_sid="$1"; hb_it="$2"; hb_max="$3"; shift 3
+      {
+        printf -- '---\n'
+        printf 'session_id: %s\n' "$hb_sid"
+        printf 'iteration: %s\n' "$hb_it"
+        printf 'max_iterations: %s\n' "$hb_max"
+        printf 'prompt_path: %s\n' "$hb_tmp/prompt.txt"
+        printf 'focus: speed\n'
+        printf 'completion_promise: JEFFY CONVERGED\n'
+        for hb_extra in "$@"; do printf '%s\n' "$hb_extra"; done
+        printf 'started_at: 2026-01-01T00:00:00Z\n'
+        printf -- '---\n'
+        printf 'Jeffy loop state.\n'
+      } > "$hb_state"
+    }
+    # shellcheck disable=SC2329
+    hb_write_journal_entries() { # $1... full entry heading lines, each optionally <heading>:::<body line>
+      # The preamble carries journal-default's unfenced grammar example so the
+      # counting and rotation anchors are exercised against the same decoy the
+      # real journals hold.
+      {
+        printf '# Journal\n\nAppend-only. Heading grammar, exactly:\n'
+        printf '## iter <i>/<N> | <run-id> | <YYYY-MM-DD> | <task-id or AUDIT or RATCHET or WRAPUP or SALVAGE or ROTATION> | <done|blocked|audit|converged|salvage|rotation>\n'
+        for hb_entry in "$@"; do
+          hb_head="${hb_entry%%:::*}"
+          hb_body='Task: t.'
+          case "$hb_entry" in *:::*) hb_body="${hb_entry#*:::}" ;; esac
+          printf '\n%s\n\n%s\n' "$hb_head" "$hb_body"
+        done
+      } > "$hb_proj/JOURNAL.md"
+    }
     hb_write_state_stall() { # $1 session_id, $2 iteration, $3 max, $4 last_head, $5 last_backlog, $6 stall flag
       {
         printf -- '---\n'
