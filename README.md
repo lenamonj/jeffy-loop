@@ -80,7 +80,7 @@ Jeffy Loop descends from Geoffrey Huntley's [Ralph technique](https://ghuntley.c
 
 Testing a tool against its own codebase proves little. Jeffy was therefore run against widely-used open-source projects with no connection to this repository. Every run used a local clone, nothing was pushed upstream without a filed issue or PR, and all runs were held to the same rules: evidence before filing, severity judged against a declared operating envelope, and red-green proof that anyone can re-run.
 
-Each receipt below is a full `/jeffy` loop run that converged. The standard tightened as the engine matured. The earliest runs converged on a clean closing audit and an empty backlog, later runs under the shell-enforced converged stop, and the most recent under the adversarial evaluator's countersignature. Each receipt states which standard its run met, so none of this requires taking our word for it.
+Each receipt below is a full `/jeffy` loop run that converged, except PapaParse, an audit under the same method whose loop conversion waits on four open upstream PRs. The standard tightened as the engine matured. The earliest runs converged on a clean closing audit and an empty backlog, later runs under the shell-enforced converged stop, and the most recent under the adversarial evaluator's countersignature. Each receipt states which standard its run met, so none of this requires taking our word for it.
 
 Ordered by severity of findings, most severe first.
 
