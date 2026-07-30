@@ -76,6 +76,13 @@ flowchart TD
     RECORD -. "commits" .-> GIT
     REVERT -. "restores" .-> GIT
 
+    %% The four state-plane edges above are dashed AND amber - the same amber
+    %% as the control-plane panel they land in - so they read as file writes
+    %% at a glance instead of hiding among the slate control-flow edges.
+    %% linkStyle is INDEX-based over edge declaration order: these are edges
+    %% 31-34. Adding any edge earlier in the file shifts them - recount.
+    linkStyle 31,32,33,34 stroke:#CA8A04,stroke-width:2.5px,stroke-dasharray:7 5
+
     classDef entry fill:#BAE6FD,stroke:#0EA5E9,color:#0C4A6E
     classDef launch fill:#E0F2FE,stroke:#0EA5E9,color:#0C4A6E
     classDef work fill:#FBE9E0,stroke:#D97757,color:#7C2D12
