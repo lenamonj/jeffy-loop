@@ -1,19 +1,19 @@
 """Render media/flowchart.mmd to the two README PNGs, with directional
-arrowheads repeated along the long edges.
+arrowheads repeated along every edge.
 
-Why this script exists: mermaid only draws an arrowhead at an edge's
-endpoint, so on the long sweeps (the re-feed loop back to the top of the
-iteration, the turn-ends drop into the engine) the direction of flow is
-invisible until the far end. SVG marker-mid repeats the arrowhead at every
-curve vertex, but Chromium honors marker-mid only as an element attribute,
-not as CSS, so themeCSS cannot carry it and mmdc's own PNG export cannot
-produce it. This script renders the SVGs with mmdc, injects the attribute
-on the named edges, and rasterizes both themes at 3x with Playwright.
+Why this script exists: mermaid draws one arrowhead per edge, at the far
+end, so on long sweeps the direction of flow is invisible. SVG marker-mid
+repeats arrowheads, but only at path vertices - and dagre emits long
+straight runs with no interior vertices, so attribute injection alone
+leaves them bare (and Chromium ignores marker-mid as CSS entirely). This
+script renders the SVGs with mmdc, then rasterizes with Playwright after
+resampling each edge in the browser: an invisible companion polyline with
+a vertex every SPACING px carries the markers, so chevrons trace the true
+curve at even intervals whatever shape dagre drew.
 
 Usage: python scripts/render-flowchart.py  (from the repo root)
 """
 
-import re
 import subprocess
 import sys
 import tempfile
@@ -24,19 +24,41 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parent.parent
 MMD = ROOT / "media" / "flowchart.mmd"
 
-# Edge ids follow L_<from>_<to>_<n> over declaration order in the .mmd.
-# These are the long edges where flow direction gets lost without help.
-LONG_EDGES = [
-    "L_REFEED_LOAD_0",      # the loop back to the top: iteration i+1
-    "L_RECORD_ENGINE_0",    # turn ends, into the Stop hook
-    "L_PROMISE_ENGINE_0",   # the declaration, into the Stop hook
-    "L_CHECKS_REPORT_0",    # every check holds - converged
-    "L_RECORD_REPORT_0",    # needs your decision
-    "L_CLEAN_RECORD_0",     # findings filed, most severe first
-    "L_OPEN_EVAL_0",        # early evaluator gate
-    "L_GATE_RECORD_0",      # verify green, back to record
-]
 MARKER = "my-svg_flowchart-v2-pointEnd"
+AMBER_MARKER = "my-svg_flowchart-v2-pointEnd__CA8A04"
+SPACING = 220  # px of path length between chevrons; edges shorter than
+               # 1.5x this keep only their endpoint arrow
+
+RESAMPLE_JS = """
+() => {
+  const SPACING = %d;
+  let added = 0;
+  const edges = new Set(document.querySelectorAll(
+    'path[id^="L_"], path[id*="-L_"], path[data-id^="L_"]'));
+  edges.forEach(p => {
+    const len = p.getTotalLength();
+    if (len < SPACING * 1.5) return;
+    const pts = [];
+    for (let d = SPACING * 0.6; d <= len - SPACING * 0.4; d += SPACING) {
+      const pt = p.getPointAtLength(d);
+      pts.push(pt.x.toFixed(2) + ',' + pt.y.toFixed(2));
+    }
+    if (pts.length < 2) return;
+    const amber = (p.getAttribute('style') || '').includes('CA8A04');
+    const marker = amber ? '%s' : '%s';
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    c.setAttribute('d', 'M' + pts.join('L'));
+    c.setAttribute('fill', 'none');
+    c.setAttribute('stroke', amber ? '#CA8A04' : '#64748B');
+    c.setAttribute('stroke-opacity', '0');
+    c.setAttribute('stroke-width', getComputedStyle(p).strokeWidth || '2px');
+    c.setAttribute('marker-mid', 'url(#' + marker + ')');
+    p.after(c);
+    added++;
+  });
+  return added;
+}
+""" % (SPACING, AMBER_MARKER, MARKER)
 
 THEMES = {
     "light": {"args": ["-b", "white"], "bg": "#FFFFFF", "out": "flowchart-light.png"},
@@ -50,15 +72,6 @@ def render_svg(theme_args: list[str], out_svg: Path) -> str:
     return out_svg.read_text(encoding="utf-8")
 
 
-def inject_mid_markers(svg: str) -> str:
-    for eid in LONG_EDGES:
-        needle = f'id="{eid}"'
-        if needle not in svg:
-            raise SystemExit(f"edge id {eid} not found - the .mmd edges changed; update LONG_EDGES")
-        svg = svg.replace(needle, f'{needle} marker-mid="url(#{MARKER})"', 1)
-    return svg
-
-
 def rasterize(svg: str, bg: str, out_png: Path) -> None:
     html = f'<!doctype html><body style="margin:0;background:{bg}">{svg}</body>'
     with sync_playwright() as p:
@@ -66,6 +79,11 @@ def rasterize(svg: str, bg: str, out_png: Path) -> None:
         page = browser.new_page(device_scale_factor=3)
         page.set_content(html)
         page.wait_for_timeout(500)
+        added = page.evaluate(RESAMPLE_JS)
+        if added == 0:
+            raise SystemExit("no edges resampled - the SVG shape changed; fix RESAMPLE_JS")
+        print(f"  chevron companions added on {added} edges")
+        page.wait_for_timeout(200)
         el = page.query_selector("svg")
         el.screenshot(path=str(out_png))
         browser.close()
@@ -76,7 +94,6 @@ def main() -> None:
         with tempfile.TemporaryDirectory() as td:
             svg_path = Path(td) / f"flowchart-{name}.svg"
             svg = render_svg(cfg["args"], svg_path)
-        svg = inject_mid_markers(svg)
         out = ROOT / "media" / cfg["out"]
         rasterize(svg, cfg["bg"], out)
         print(f"{name}: {out} written")

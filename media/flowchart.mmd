@@ -6,8 +6,8 @@
 %% (mermaid v11 via npx renders the SVGs, the script injects marker-mid
 %% arrowheads along the long edges - Chromium ignores marker-mid as CSS,
 %% so it must be an attribute - and Playwright rasterizes both themes
-%% at 3x). The long-edge id list lives in the script; edge ids follow
-%% L_<from>_<to>_<n> over declaration order.
+%% at 3x). Every edge gets the mid arrows; short edges have few or no
+%% curve vertices, so density self-regulates with edge length.
 flowchart TD
     subgraph LAUNCH ["<b>LAUNCH</b> - the /jeffy skill, runs once"]
         USER(["You run  /jeffy 10<br/>an iteration budget, and optionally a focus"])
