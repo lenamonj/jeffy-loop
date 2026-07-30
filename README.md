@@ -94,7 +94,7 @@ Ordered by severity of findings, most severe first.
 | [mustache.js](evals/mustache.js/REPORT.md) | 16,725 | JavaScript | 11 | **converged** | [issue filed](https://github.com/janl/mustache.js/issues/848) | revived a suite that could not start; npm audit 107 to 2 |
 | [ta](evals/ta/REPORT.md) | 5,129 | Python | 64 | **converged** | - | wrong numbers shipped since 2023; caught its own regression and wrote "It is mine" |
 | [bat](evals/bat/REPORT.md) | 59,915 | Rust | 10 | **converged** | **[FIX MERGED](https://github.com/sharkdp/bat/pull/3862)** | a just-merged security flag did nothing when piped; caught before it ever shipped |
-| [jsoncpp](evals/jsoncpp/REPORT.md) | 8,876 | C++ | 10 | **converged** | - | the documented secure-memory build never compiled on MSVC; the evaluator caught the fix being half done |
+| [jsoncpp](evals/jsoncpp/REPORT.md) | 8,876 | C++ | 10 | **converged** | [PR open](https://github.com/open-source-parsers/jsoncpp/pull/1709) | the documented secure-memory build never compiled on MSVC; the evaluator caught the fix being half done |
 | [yfinance](evals/yfinance/REPORT.md) | 24,837 | Python | 9 | **converged** | [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | closed a High that upstream's own failing test was advertising |
 | [speedtest-cli](evals/speedtest-cli/REPORT.md) | 14,080 | Python | 5 | **converged** | - | the restraint case: small findings, nothing invented |
 | [chalk](evals/chalk/REPORT.md) | 23,288 | JavaScript | 8 | **converged** | **[FIX MERGED](https://github.com/chalk/chalk/pull/687)** | the control: one Medium found - fixed upstream, shipped in chalk v6.0.0 |

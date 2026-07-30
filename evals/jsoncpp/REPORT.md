@@ -51,4 +51,14 @@ Two things follow. The gate works, and it works precisely where self-assessment 
 - `fixes.patch` proven to apply cleanly to pristine `60de77f` with `git apply --check`.
 - Convergence conditions confirmed at the tree: `Converged: 5664f81`, 16 of 16 inventory rows swept, `Now`/`Next`/`Later` empty, `Evaluator: PASS` recorded.
 
-**Status**: the work lives in this eval's `fixes.patch` (+299/-77 across 11 files, of which shipped code is 5 files +41/-40, applies to pristine `60de77f`) and `journal.md` (all ten entries of the single run, as written). Nothing has been filed upstream yet. The strongest candidate is JC-1 together with JC-7, which are one defect and should travel as one PR: the fix is small, the reproduction is a single build command on their own documented configuration, and the maintainers' README puts "fixing regressions and critical logical bugs" explicitly in scope while putting features out of it.
+**Status**: the work lives in this eval's `fixes.patch` (+299/-77 across 11 files, of which shipped code is 5 files +41/-40, applies to pristine `60de77f`) and `journal.md` (all ten entries of the single run, as written).
+
+**Upstream**: filed as [open-source-parsers/jsoncpp#1709](https://github.com/open-source-parsers/jsoncpp/pull/1709), 4 files, +32/-31, carrying JC-1 and JC-7 together with the `CZString` move-assignment fix, and closing [#1399](https://github.com/open-source-parsers/jsoncpp/issues/1399), open since March 2022. That issue reported both the portability problem and, in its own words, that "the unit tests won't build" - which is JC-7 exactly, four years before this run found it.
+
+Two things were settled by experiment while preparing the PR rather than by reading the journal, and both changed what got submitted.
+
+The `CZString` move-assignment fix looked like scope creep from JC-1: it releases a key with `releasePrefixedStringValue` where the key came from `duplicateStringValue` and carries no length prefix. Reverting it and rebuilding answered the question - the secure configuration compiles and then **`jsoncpp_test (SEGFAULT)`**. It is load-bearing, not incidental, and the layered failure became the strongest part of the PR: the build fails, then once it builds the test runner fails, then once everything builds the suite crashes. Three defects stacked in one configuration nothing ever exercised.
+
+The under-wipe claim was cut back rather than repeated. The old fill zeroed `n` bytes rather than `n * sizeof(T)`, which reads like live data exposure. It is not: `Json::String` is `SecureAllocator<char>`, so `sizeof(T)` is 1 and the two expressions are identical. It is a genuine latent defect for any wider `T` through the public `Json::Allocator<T>` alias, and the PR says exactly that. Leading with the stronger version would have been overclaiming.
+
+The default build was verified unaffected, 3/3 suites green, before anything was submitted.
