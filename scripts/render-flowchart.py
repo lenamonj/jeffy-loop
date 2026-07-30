@@ -47,24 +47,22 @@ REROUTE_JS = """
   const ROUTES = [
     { edge: 'L_REVERT_RECORD_0', from: ['REVERT', 0.5, 1], to: ['RECORD', 0.8, 0], label: false },
     { edge: 'L_PROM_BUDGET_0', from: ['PROM', 0.5, 1], to: ['BUDGET', 0.5, 0], label: false },
-    { edge: 'L_CHECKS_BUDGET_0', from: ['CHECKS', 0, 0.5], to: ['BUDGET', 1, 0.5], label: true },
+    { edge: 'L_CHECKS_BUDGET_0', from: ['CHECKS', 0, 0.5], to: ['BUDGET', 0.75, 0.25], label: true, trim: 0 },
   ];
   const done = [];
   for (const r of ROUTES) {
     const path = document.querySelector('path[data-id="' + r.edge + '"], path[id*="' + r.edge + '"]');
     if (!path || !node(r.from[0]) || !node(r.to[0])) { done.push(r.edge + ':MISSING'); continue; }
     const s = anchor(...r.from), e = anchor(...r.to);
-    e.y -= 4 * Math.sign(e.y - s.y) || 0;
+    e.y -= (r.trim === undefined ? 4 : r.trim) * Math.sign(e.y - s.y) || 0;
     path.setAttribute('d', `M${s.x},${s.y} C${s.x + (e.x - s.x) * 0.15},${s.y + (e.y - s.y) * 0.55} ${e.x + (s.x - e.x) * 0.15},${e.y - (e.y - s.y) * 0.35} ${e.x},${e.y}`);
     if (r.label) {
       const inner = document.querySelector('g[data-id="' + r.edge + '"]');
       const lab = inner ? inner.closest('.edgeLabel') : null;
       if (lab) {
-        const L = path.getTotalLength();
-        const m = path.getPointAtLength(L * 0.5), m2 = path.getPointAtLength(L * 0.5 + 10);
-        const dx = m2.x - m.x, dy = m2.y - m.y, n = Math.hypot(dx, dy) || 1;
+        const m = path.getPointAtLength(path.getTotalLength() * 0.5);
         const pt = svg.createSVGPoint();
-        pt.x = m.x + (dy / n) * 150; pt.y = m.y + (-dx / n) * 150;
+        pt.x = m.x; pt.y = m.y;
         const local = pt.matrixTransform(path.getCTM()).matrixTransform(lab.parentNode.getCTM().inverse());
         lab.setAttribute('transform', `translate(${local.x}, ${local.y})`);
       }
