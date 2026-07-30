@@ -1,0 +1,355 @@
+diff --git a/.github/workflows/cmake.yml b/.github/workflows/cmake.yml
+index cccf8ed..31f0e6d 100644
+--- a/.github/workflows/cmake.yml
++++ b/.github/workflows/cmake.yml
+@@ -22,4 +22,25 @@ jobs:
+         uses: threeal/cmake-action@v2.0.0
+         with:
+           options: CMAKE_CXX_STANDARD=${{ matrix.cxx_standard }}
++
++  cmake-secure-memory:
++    # Builds and runs the unit suite with the opt-in secure allocator enabled,
++    # so the JSONCPP_USE_SECURE_MEMORY configuration cannot silently rot.
++    runs-on: ${{ matrix.os }}
++
++    strategy:
++      fail-fast: false
++      matrix:
++        os: [ubuntu-latest, windows-latest, macos-latest]
++
++    steps:
++      - name: checkout project
++        uses: actions/checkout@v5
++
++      - name: build project with secure memory
++        uses: threeal/cmake-action@v2.0.0
++        with:
++          options: |
++            CMAKE_CXX_STANDARD=17
++            CMAKE_CXX_FLAGS=-DJSONCPP_USE_SECURE_MEMORY=1
+         
+diff --git a/.gitignore b/.gitignore
+index 69868f4..01bd86e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -59,3 +59,4 @@ compile_commands.json
+ # Bazel output paths
+ /bazel-*
+ /MODULE.bazel.lock
++.claude/jeffy-loop.local.md
+diff --git a/appveyor.yml b/appveyor.yml
+deleted file mode 100644
+index cccce42..0000000
+--- a/appveyor.yml
++++ /dev/null
+@@ -1,37 +0,0 @@
+-clone_folder: c:\projects\jsoncpp
+-
+-environment:
+-
+-  matrix:
+-    - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2015
+-      CMAKE_GENERATOR: Visual Studio 14 2015
+-    - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2015
+-      CMAKE_GENERATOR: Visual Studio 14 2015 Win64
+-    - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2017
+-      CMAKE_GENERATOR: Visual Studio 15 2017
+-    - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2017
+-      CMAKE_GENERATOR: Visual Studio 15 2017 Win64
+-
+-build_script:
+-  - cmake --version
+-  # The build script starts in root.
+-  - set JSONCPP_FOLDER=%cd%
+-  - set JSONCPP_BUILD_FOLDER=%JSONCPP_FOLDER%\build\release
+-  - mkdir -p %JSONCPP_BUILD_FOLDER%
+-  - cd %JSONCPP_BUILD_FOLDER%
+-  - cmake -G "%CMAKE_GENERATOR%" -DCMAKE_INSTALL_PREFIX:PATH=%CD:\=/%/install -DBUILD_SHARED_LIBS:BOOL=ON %JSONCPP_FOLDER%
+-  # Use ctest to make a dashboard build:
+-  # - ctest -D Experimental(Start|Update|Configure|Build|Test|Coverage|MemCheck|Submit)
+-  # NOTE: Testing on windows is not yet finished:
+-  # - ctest -C Release -D ExperimentalStart -D ExperimentalConfigure -D ExperimentalBuild -D ExperimentalTest -D ExperimentalSubmit
+-  - ctest -C Release -D ExperimentalStart -D ExperimentalConfigure -D ExperimentalBuild -D ExperimentalSubmit
+-  # Final step is to verify that installation succeeds
+-  - cmake --build . --config Release --target install
+-
+-deploy:
+-    provider: GitHub
+-    auth_token:
+-        secure: K2Tp1q8pIZ7rs0Ot24ZMWuwr12Ev6Tc6QkhMjGQxoQG3ng1pXtgPasiJ45IDXGdg
+-    on:
+-        branch: master
+-        appveyor_repo_tag: true
+diff --git a/include/json/allocator.h b/include/json/allocator.h
+index 459c34c..fa79d97 100644
+--- a/include/json/allocator.h
++++ b/include/json/allocator.h
+@@ -43,10 +43,9 @@ public:
+     // unlike memset.
+ #if defined(HAVE_MEMSET_S)
+     memset_s(p, n * sizeof(T), 0, n * sizeof(T));
+-#elif defined(_WIN32)
+-    RtlSecureZeroMemory(p, n * sizeof(T));
+ #else
+-    std::fill_n(reinterpret_cast<volatile unsigned char*>(p), n, 0);
++    std::fill_n(reinterpret_cast<volatile unsigned char*>(p), n * sizeof(T),
++                static_cast<unsigned char>(0));
+ #endif
+ 
+     // free using "global operator delete"
+diff --git a/include/json/value.h b/include/json/value.h
+index f14a71c..ccce647 100644
+--- a/include/json/value.h
++++ b/include/json/value.h
+@@ -40,7 +40,9 @@
+ #endif
+ 
+ #ifndef JSONCPP_HAS_STRING_VIEW
+-#if __cplusplus >= 201703L
++// MSVC keeps __cplusplus at 199711L unless /Zc:__cplusplus is passed; use
++// _MSVC_LANG so /std:c++17 gets the same API there as on GCC/Clang.
++#if __cplusplus >= 201703L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
+ #define JSONCPP_HAS_STRING_VIEW 1
+ #endif
+ #endif
+@@ -280,7 +282,9 @@ private:
+     CZString(CZString const& other);
+     CZString(CZString&& other) noexcept;
+     ~CZString();
+-    CZString& operator=(const CZString& other);
++    // Copy assignment is deleted: the old shallow-copy implementation aliased
++    // an owning pointer (latent double free) and nothing uses the operation.
++    CZString& operator=(const CZString& other) = delete;
+     CZString& operator=(CZString&& other) noexcept;
+ 
+     bool operator<(CZString const& other) const;
+@@ -299,7 +303,9 @@ private:
+       unsigned length_ : 30; // 1GB max
+     };
+ 
+-    char const* cstr_; // actually, a prefixed string, unless policy is noDup
++    char const* cstr_; // plain zero-terminated string from
++                       // duplicateStringValue (no length prefix), owned when
++                       // policy_ is duplicate; aliased caller memory otherwise
+     union {
+       ArrayIndex index_;
+       StringStorage storage_;
+diff --git a/src/jsontestrunner/main.cpp b/src/jsontestrunner/main.cpp
+index ab6a800..e499276 100644
+--- a/src/jsontestrunner/main.cpp
++++ b/src/jsontestrunner/main.cpp
+@@ -328,7 +328,7 @@ int main(int argc, const char* argv[]) {
+       return modern_return_code;
+     }
+ 
+-    const std::string filename =
++    const Json::String filename =
+         opts.path.substr(opts.path.find_last_of("\\/") + 1);
+     const bool should_run_legacy = (filename.rfind("legacy_", 0) == 0);
+     if (should_run_legacy) {
+diff --git a/src/lib_json/json_value.cpp b/src/lib_json/json_value.cpp
+index 5823bd1..b574fbe 100644
+--- a/src/lib_json/json_value.cpp
++++ b/src/lib_json/json_value.cpp
+@@ -316,15 +316,11 @@ void Value::CZString::swap(CZString& other) {
+   std::swap(index_, other.index_);
+ }
+ 
+-Value::CZString& Value::CZString::operator=(const CZString& other) {
+-  cstr_ = other.cstr_;
+-  index_ = other.index_;
+-  return *this;
+-}
+-
+ Value::CZString& Value::CZString::operator=(CZString&& other) noexcept {
+   if (cstr_ && storage_.policy_ == duplicate) {
+-    releasePrefixedStringValue(const_cast<char*>(cstr_));
++    // CZString keys come from duplicateStringValue (no length prefix), so
++    // release with the matching non-prefixed variant, as the destructor does.
++    releaseStringValue(const_cast<char*>(cstr_), storage_.length_ + 1U);
+   }
+   cstr_ = other.cstr_;
+   if (other.cstr_) {
+diff --git a/src/test_lib_json/main.cpp b/src/test_lib_json/main.cpp
+index 0d1c330..24dc720 100644
+--- a/src/test_lib_json/main.cpp
++++ b/src/test_lib_json/main.cpp
+@@ -214,8 +214,8 @@ JSONTEST_FIXTURE_LOCAL(ValueTest, CZStringCoverage) { runCZStringTests(); }
+ 
+ JSONTEST_FIXTURE_LOCAL(ValueTest, checkNormalizeFloatingPointStr) {
+   struct TestData {
+-    std::string in;
+-    std::string out;
++    Json::String in;
++    Json::String out;
+   } const testData[] = {
+       {"0.0", "0.0"},
+       {"0e0", "0e0"},
+@@ -295,7 +295,7 @@ JSONTEST_FIXTURE_LOCAL(ValueTest, objects) {
+   JSONTEST_ASSERT(foundId != nullptr);
+   JSONTEST_ASSERT_EQUAL(Json::Value(1234), *foundId);
+ 
+-  const std::string stringIdKey = "id";
++  const Json::String stringIdKey = "id";
+   const Json::Value* stringFoundId = object1_.find(stringIdKey);
+   JSONTEST_ASSERT(stringFoundId != nullptr);
+   JSONTEST_ASSERT_EQUAL(Json::Value(1234), *stringFoundId);
+@@ -305,7 +305,7 @@ JSONTEST_FIXTURE_LOCAL(ValueTest, objects) {
+       object1_.find(unknownIdKey, unknownIdKey + strlen(unknownIdKey));
+   JSONTEST_ASSERT_EQUAL(nullptr, foundUnknownId);
+ 
+-  const std::string stringUnknownIdKey = "unknown id";
++  const Json::String stringUnknownIdKey = "unknown id";
+   const Json::Value* stringFoundUnknownId = object1_.find(stringUnknownIdKey);
+   JSONTEST_ASSERT_EQUAL(nullptr, stringFoundUnknownId);
+ 
+@@ -357,7 +357,7 @@ JSONTEST_FIXTURE_LOCAL(ValueTest, objects) {
+ 
+   const Json::Value* stringFound = object2_.findString("string");
+   JSONTEST_ASSERT(stringFound != nullptr);
+-  JSONTEST_ASSERT_EQUAL(std::string{"string"}, *stringFound);
++  JSONTEST_ASSERT_EQUAL(Json::String{"string"}, *stringFound);
+   JSONTEST_ASSERT(object3_.findString("string") == nullptr);
+ 
+   const Json::Value* arrayFound = object2_.findArray("array");
+@@ -2027,9 +2027,9 @@ JSONTEST_FIXTURE_LOCAL(ValueTest, StaticString) {
+ 
+ JSONTEST_FIXTURE_LOCAL(ValueTest, WideString) {
+   // https://github.com/open-source-parsers/jsoncpp/issues/756
+-  const std::string uni =
++  const Json::String uni =
+       reinterpret_cast<const char*>(u8"\u5f0f\uff0c\u8fdb"); // "式，进"
+-  std::string styled;
++  Json::String styled;
+   {
+     Json::Value v;
+     v["abc"] = uni;
+@@ -2038,7 +2038,7 @@ JSONTEST_FIXTURE_LOCAL(ValueTest, WideString) {
+   Json::Value root;
+   {
+     JSONCPP_STRING errs;
+-    std::istringstream iss(styled);
++    Json::IStringStream iss(styled);
+     bool ok = parseFromStream(Json::CharReaderBuilder(), iss, &root, &errs);
+     JSONTEST_ASSERT(ok);
+     if (!ok) {
+@@ -2893,7 +2893,7 @@ JSONTEST_FIXTURE_LOCAL(StreamWriterTest, unicode) {
+ JSONTEST_FIXTURE_LOCAL(StreamWriterTest, escapeControlCharacters) {
+   auto uEscape = [](unsigned ch) {
+     static const char h[] = "0123456789abcdef";
+-    std::string r = "\\u";
++    Json::String r = "\\u";
+     r += h[(ch >> (3 * 4)) & 0xf];
+     r += h[(ch >> (2 * 4)) & 0xf];
+     r += h[(ch >> (1 * 4)) & 0xf];
+@@ -2930,8 +2930,8 @@ JSONTEST_FIXTURE_LOCAL(StreamWriterTest, escapeControlCharacters) {
+       if (!emitUTF8 && i >= 0x80)
+         break; // The algorithm would try to parse UTF-8, so stop here.
+ 
+-      std::string raw({static_cast<char>(i)});
+-      std::string esc = raw;
++      Json::String raw({static_cast<char>(i)});
++      Json::String esc = raw;
+       if (i < 0x20)
+         esc = uEscape(i);
+       if (const char* shEsc = shortEscape(i))
+@@ -2943,7 +2943,7 @@ JSONTEST_FIXTURE_LOCAL(StreamWriterTest, escapeControlCharacters) {
+       Json::Value root;
+       root["test"] = raw;
+       JSONTEST_ASSERT_STRING_EQUAL(
+-          std::string("{\n\t\"test\" : \"").append(esc).append("\"\n}"),
++          Json::String("{\n\t\"test\" : \"").append(esc).append("\"\n}"),
+           Json::writeString(b, root))
+           << ", emit=" << emitUTF8 << ", i=" << i << ", raw=\"" << raw << "\""
+           << ", esc=\"" << esc << "\"";
+@@ -3017,7 +3017,7 @@ struct ReaderTest : JsonTest::TestCase {
+   template <typename Input>
+   void checkParse(Input&& input,
+                   const std::vector<Json::Reader::StructuredError>& structured,
+-                  const std::string& formatted) {
++                  const Json::String& formatted) {
+     checkParse(input, structured);
+     JSONTEST_ASSERT_EQUAL(formatted, reader->getFormattedErrorMessages());
+   }
+@@ -3763,7 +3763,7 @@ struct CharReaderAllowDropNullTest : JsonTest::TestCase {
+     return [=](const Value& root) { JSONTEST_ASSERT_EQUAL(root, v); };
+   }
+ 
+-  static ValueCheck objGetAnd(std::string idx, ValueCheck f) {
++  static ValueCheck objGetAnd(Json::String idx, ValueCheck f) {
+     return [=](const Value& root) { f(root.get(idx, true)); };
+   }
+ 
+@@ -4087,16 +4087,16 @@ JSONTEST_FIXTURE_LOCAL(IteratorTest, members) {
+   j["k1"] = "a";
+   j["k2"] = "b";
+ 
+-  std::vector<std::string> keys;
+-  std::vector<std::string> values;
++  std::vector<Json::String> keys;
++  std::vector<Json::String> values;
+ 
+   for (const auto& member : j.members()) {
+     keys.push_back(member.name);
+     values.push_back(member.value.asString());
+   }
+ 
+-  JSONTEST_ASSERT((keys == std::vector<std::string>{"k1", "k2"}));
+-  JSONTEST_ASSERT((values == std::vector<std::string>{"a", "b"}));
++  JSONTEST_ASSERT((keys == std::vector<Json::String>{"k1", "k2"}));
++  JSONTEST_ASSERT((values == std::vector<Json::String>{"a", "b"}));
+ 
+   // Test modification through value reference
+   for (const auto& member : j.members()) {
+@@ -4115,8 +4115,8 @@ JSONTEST_FIXTURE_LOCAL(IteratorTest, members) {
+     values.push_back(member.value.asString());
+   }
+ 
+-  JSONTEST_ASSERT((keys == std::vector<std::string>{"k1", "k2"}));
+-  JSONTEST_ASSERT((values == std::vector<std::string>{"c", "c"}));
++  JSONTEST_ASSERT((keys == std::vector<Json::String>{"k1", "k2"}));
++  JSONTEST_ASSERT((values == std::vector<Json::String>{"c", "c"}));
+ 
+ #if __cplusplus >= 201703L
+   keys.clear();
+@@ -4125,8 +4125,8 @@ JSONTEST_FIXTURE_LOCAL(IteratorTest, members) {
+     keys.push_back(k);
+     values.push_back(v.asString());
+   }
+-  JSONTEST_ASSERT((keys == std::vector<std::string>{"k1", "k2"}));
+-  JSONTEST_ASSERT((values == std::vector<std::string>{"c", "c"}));
++  JSONTEST_ASSERT((keys == std::vector<Json::String>{"k1", "k2"}));
++  JSONTEST_ASSERT((values == std::vector<Json::String>{"c", "c"}));
+ #endif
+ }
+ 
+@@ -4143,25 +4143,25 @@ JSONTEST_FIXTURE_LOCAL(IteratorTest, decrement) {
+   Json::Value json;
+   json["k1"] = "a";
+   json["k2"] = "b";
+-  std::vector<std::string> values;
++  std::vector<Json::String> values;
+   for (auto it = json.end(); it != json.begin();) {
+     --it;
+     values.push_back(it->asString());
+   }
+-  JSONTEST_ASSERT((values == std::vector<std::string>{"b", "a"}));
++  JSONTEST_ASSERT((values == std::vector<Json::String>{"b", "a"}));
+ }
+ 
+ JSONTEST_FIXTURE_LOCAL(IteratorTest, reverseIterator) {
+   Json::Value json;
+   json["k1"] = "a";
+   json["k2"] = "b";
+-  std::vector<std::string> values;
++  std::vector<Json::String> values;
+   using Iter = decltype(json.begin());
+   auto re = std::reverse_iterator<Iter>(json.begin());
+   for (auto it = std::reverse_iterator<Iter>(json.end()); it != re; ++it) {
+     values.push_back(it->asString());
+   }
+-  JSONTEST_ASSERT((values == std::vector<std::string>{"b", "a"}));
++  JSONTEST_ASSERT((values == std::vector<Json::String>{"b", "a"}));
+ }
+ 
+ JSONTEST_FIXTURE_LOCAL(IteratorTest, distance) {
