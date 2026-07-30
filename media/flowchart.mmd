@@ -7,7 +7,7 @@
 flowchart TD
     subgraph LAUNCH ["<b>LAUNCH</b> - the /jeffy skill, runs once"]
         USER(["You run  /jeffy 10<br/>an iteration budget, and optionally a focus"])
-        PRE["Pre-flight, then bootstrap<br/>engine installed, no rival loop, tree clean;<br/>PLAN.md, BACKLOG.md, JOURNAL.md<br/>created from templates if missing"]
+        PRE["Pre-flight, then bootstrap<br/>engine installed, no rival loop, tree clean,<br/>the plan's Verify command parses as shell;<br/>PLAN.md, BACKLOG.md, JOURNAL.md<br/>created from templates if missing"]
         WRITE["Write the loop state file<br/>owner session, iteration 1 of N, the promise<br/>phrase - then start iteration 1 directly"]
         USER --> PRE --> WRITE
     end
@@ -15,7 +15,7 @@ flowchart TD
     subgraph WORK ["<b>THE ITERATION</b> - one unit of verified work per turn"]
         LOAD["Load context fresh<br/>PLAN.md and BACKLOG.md in full, the last<br/>3 journal entries; salvage any interrupted<br/>work into a commit before touching anything"]
         OPEN{"Open tasks in<br/>the backlog?"}
-        AUDIT["Audit the project<br/>sweeps the surface inventory in PLAN.md<br/>breadth-first, unswept rows before swept ones,<br/>judged against the operating envelope; each finding<br/>gets evidence, a severity, an acceptance check"]
+        AUDIT["Audit the project<br/>sweeps the surface inventory in PLAN.md<br/>breadth-first, unswept rows before swept ones,<br/>judged against the operating envelope; each finding<br/>gets evidence, a severity, a class, an acceptance check"]
         CLEAN{"Zero High, zero Medium,<br/>nothing left open?"}
         EXEC["Execute exactly one task<br/>the top unblocked item, never a batch;<br/>run its acceptance check,<br/>3 fix attempts, then mark it blocked"]
         GATE{"Repo verify command<br/>still green?"}
@@ -28,7 +28,9 @@ flowchart TD
         OPEN -->|"backlog empty"| AUDIT --> CLEAN
         CLEAN -->|"findings filed, most severe first"| RECORD
         CLEAN -->|"yes - done means done"| EVAL
-        EVAL -->|"PASS - countersigned"| PROMISE
+        OPEN -->|"ledger just emptied, a clean audit<br/>already on record, 3 or more left -<br/>gate now, while a REJECT is answerable"| EVAL
+        EVAL -->|"PASS, and this iteration declares"| PROMISE
+        EVAL -->|"PASS earlier in the run - recorded;<br/>the declaring iteration re-invokes"| RECORD
         EVAL -->|"REJECT - reasons filed<br/>as new tasks"| RECORD
         OPEN -->|"tasks waiting"| EXEC --> GATE
         GATE -->|"green"| RECORD
@@ -38,14 +40,17 @@ flowchart TD
 
     subgraph ENGINE ["<b>THE ENGINE</b> - a Stop hook at every turn end, plain shell"]
         PROM{"Promise phrase in the<br/>last assistant message?"}
-        CHECKS{"The stop is machine-checked<br/>no open task left in the ledger, the Converged<br/>line certifies this tree, no surface inventory<br/>row is unswept, and the project's own verify<br/>command exits 0 when the hook re-runs it"}
+        CHECKS{"The stop is machine-checked<br/>no open task left in the ledger, the Converged<br/>line certifies this tree, no surface inventory row<br/>is unswept, the closing journal entry records an<br/>evaluator verdict, and the project's own verify<br/>command exits 0 when the hook re-runs it"}
         BUDGET{"Iterations left?"}
+        EXTEND{"Nothing left but the<br/>convergence sequence?<br/>ledger empty, every row swept,<br/>no extension granted yet"}
         STALL{"Second flat iteration?<br/>no commit and no ledger change,<br/>twice in a row"}
-        REFEED["Block the stop and re-feed<br/>the iteration prompt, with any focus, the<br/>evidence of a rejected convergence, and<br/>hygiene notes when the finished iteration<br/>skipped its journal entry or its checkpoint"]
+        REFEED["Block the stop and re-feed<br/>the iteration prompt, with any focus, the<br/>evidence of a rejected convergence, hygiene<br/>notes when the finished iteration skipped its<br/>journal entry or its checkpoint, and the RUN STATE<br/>line - iterations left, open tasks, unswept rows"]
         PROM -->|"no"| BUDGET
         PROM -->|"yes"| CHECKS
-        CHECKS -->|"a check failed"| REFEED
+        CHECKS -->|"a check failed - the violation<br/>rides the budget test"| BUDGET
         BUDGET -->|"yes"| STALL
+        BUDGET -->|"no - budget spent"| EXTEND
+        EXTEND -->|"yes - one-time +2, once per run"| REFEED
         STALL -->|"no"| REFEED
     end
 
@@ -55,18 +60,18 @@ flowchart TD
 
     REPORT["Run report<br/>iterations spent, tasks closed with severities,<br/>the diffstat, blocked items, decisions waiting on you;<br/>JOURNAL.md and git log hold the full record"]
 
-    CHECKS -->|"all four hold -<br/>converged"| REPORT
-    BUDGET -->|"no - budget spent"| REPORT
+    CHECKS -->|"every check holds -<br/>converged"| REPORT
+    EXTEND -->|"no - the run is over"| REPORT
     STALL -->|"yes - ended as stalled"| REPORT
     RECORD -->|"needs your decision"| REPORT
 
     subgraph FILES ["<b>THE CONTROL PLANE</b> - files, not vibes"]
         SF[("jeffy-loop.local.md<br/>transient loop state, written at launch:<br/>owner session, iteration i of N;<br/>deleted when the run ends")]
-        MEM[("PLAN.md, BACKLOG.md, JOURNAL.md<br/>persistent memory between runs:<br/>envelope, surface inventory and lessons,<br/>task ledger, append-only record")]
+        MEM[("PLAN.md, BACKLOG.md, JOURNAL.md<br/>persistent memory between runs:<br/>envelope, surface inventory and lessons,<br/>task ledger, append-only record;<br/>.jeffy/probes holds the kept known-answer batteries")]
         GIT[("git checkpoints<br/>one jeffy: commit per iteration,<br/>the revert and recovery unit")]
     end
 
-    REFEED -. "iteration + 1" .-> SF
+    REFEED -. "iteration + 1, and the +2 when granted" .-> SF
     RECORD -. "writes" .-> MEM
     RECORD -. "commits" .-> GIT
     REVERT -. "restores" .-> GIT
@@ -81,7 +86,7 @@ flowchart TD
     class USER entry
     class PRE,WRITE launch
     class LOAD,OPEN,AUDIT,CLEAN,EXEC,GATE,REVERT,RECORD,EVAL work
-    class PROM,CHECKS,BUDGET,STALL,REFEED engine
+    class PROM,CHECKS,BUDGET,EXTEND,STALL,REFEED engine
     class SF,MEM,GIT file
     class REPORT,PROMISE good
 
