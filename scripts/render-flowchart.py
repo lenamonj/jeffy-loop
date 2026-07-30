@@ -57,9 +57,17 @@ REROUTE_JS = """
     e.y -= 4 * Math.sign(e.y - s.y) || 0;
     path.setAttribute('d', `M${s.x},${s.y} C${s.x + (e.x - s.x) * 0.15},${s.y + (e.y - s.y) * 0.55} ${e.x + (s.x - e.x) * 0.15},${e.y - (e.y - s.y) * 0.35} ${e.x},${e.y}`);
     if (r.label) {
-      const lab = document.querySelector('g[data-id="' + r.edge + '"].edgeLabel, g.edgeLabel[id*="' + r.edge + '"]');
-      if (lab) { const m = path.getPointAtLength(path.getTotalLength() * 0.55);
-        lab.setAttribute('transform', `translate(${m.x}, ${m.y})`); }
+      const inner = document.querySelector('g[data-id="' + r.edge + '"]');
+      const lab = inner ? inner.closest('.edgeLabel') : null;
+      if (lab) {
+        const L = path.getTotalLength();
+        const m = path.getPointAtLength(L * 0.5), m2 = path.getPointAtLength(L * 0.5 + 10);
+        const dx = m2.x - m.x, dy = m2.y - m.y, n = Math.hypot(dx, dy) || 1;
+        const pt = svg.createSVGPoint();
+        pt.x = m.x + (dy / n) * 150; pt.y = m.y + (-dx / n) * 150;
+        const local = pt.matrixTransform(path.getCTM()).matrixTransform(lab.parentNode.getCTM().inverse());
+        lab.setAttribute('transform', `translate(${local.x}, ${local.y})`);
+      }
     }
     done.push(r.edge + ':ok');
   }
@@ -76,23 +84,21 @@ RESAMPLE_JS = """
   edges.forEach(p => {
     const len = p.getTotalLength();
     if (len < SPACING * 1.5) return;
-    const pts = [];
-    for (let d = SPACING * 0.6; d <= len - SPACING * 0.4; d += SPACING) {
-      const pt = p.getPointAtLength(d);
-      pts.push(pt.x.toFixed(2) + ',' + pt.y.toFixed(2));
-    }
-    if (pts.length < 2) return;
     const amber = (p.getAttribute('style') || '').includes('CA8A04');
     const marker = amber ? '%s' : '%s';
-    const c = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    c.setAttribute('d', 'M' + pts.join('L'));
-    c.setAttribute('fill', 'none');
-    c.setAttribute('stroke', amber ? '#CA8A04' : '#64748B');
-    c.setAttribute('stroke-opacity', '0');
-    c.setAttribute('stroke-width', getComputedStyle(p).strokeWidth || '2px');
-    c.setAttribute('marker-mid', 'url(#' + marker + ')');
-    p.after(c);
-    added++;
+    const sw = getComputedStyle(p).strokeWidth || '2px';
+    for (let d = SPACING * 0.6; d <= len - SPACING * 0.4; d += SPACING) {
+      const a = p.getPointAtLength(Math.max(0, d - 8)), b = p.getPointAtLength(d);
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      c.setAttribute('d', `M${a.x.toFixed(2)},${a.y.toFixed(2)}L${b.x.toFixed(2)},${b.y.toFixed(2)}`);
+      c.setAttribute('fill', 'none');
+      c.setAttribute('stroke', amber ? '#CA8A04' : '#64748B');
+      c.setAttribute('stroke-opacity', '0');
+      c.setAttribute('stroke-width', sw);
+      c.setAttribute('marker-end', 'url(#' + marker + ')');
+      p.after(c);
+      added++;
+    }
   });
   return added;
 }
