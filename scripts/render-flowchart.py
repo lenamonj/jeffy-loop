@@ -29,6 +29,28 @@ AMBER_MARKER = "my-svg_flowchart-v2-pointEnd__CA8A04"
 SPACING = 220  # px of path length between chevrons; edges shorter than
                # 1.5x this keep only their endpoint arrow
 
+# REVERT's edge to RECORD gets a manual route: dagre's crossing minimizer
+# sends it on a page-wide left detour underneath the evaluator diamond,
+# where the short drop into RECORD's top-right is the honest drawing. Runs
+# before the resampler so the chevrons follow the new curve.
+REROUTE_JS = """
+() => {
+  const path = document.querySelector('path[data-id="L_REVERT_RECORD_0"], path[id*="L_REVERT_RECORD_0"]');
+  const revert = document.querySelector('g[id*="flowchart-REVERT-"]');
+  const record = document.querySelector('g[id*="flowchart-RECORD-"]');
+  if (!path || !revert || !record) return 'reroute: elements not found';
+  const svg = document.querySelector('svg');
+  const scale = svg.viewBox.baseVal.width / svg.getBoundingClientRect().width;
+  const box = el => { const r = el.getBoundingClientRect(), s = svg.getBoundingClientRect();
+    return { x: (r.x - s.x) * scale, y: (r.y - s.y) * scale, w: r.width * scale, h: r.height * scale }; };
+  const a = box(revert), b = box(record);
+  const sx = a.x + a.w * 0.5, sy = a.y + a.h;
+  const ex = b.x + b.w * 0.8, ey = b.y - 4;
+  path.setAttribute('d', `M${sx},${sy} C${sx},${sy + (ey - sy) * 0.5} ${ex},${ey - (ey - sy) * 0.35} ${ex},${ey}`);
+  return 'reroute: ok';
+}
+"""
+
 RESAMPLE_JS = """
 () => {
   const SPACING = %d;
@@ -79,6 +101,7 @@ def rasterize(svg: str, bg: str, out_png: Path) -> None:
         page = browser.new_page(device_scale_factor=3)
         page.set_content(html)
         page.wait_for_timeout(500)
+        print(f"  {page.evaluate(REROUTE_JS)}")
         added = page.evaluate(RESAMPLE_JS)
         if added == 0:
             raise SystemExit("no edges resampled - the SVG shape changed; fix RESAMPLE_JS")
