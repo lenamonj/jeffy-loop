@@ -98,6 +98,7 @@ Ordered by severity of findings, most severe first.
 | [yfinance](evals/yfinance/REPORT.md) | 24,837 | Python | 9 | **converged** | [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | closed a High that upstream's own failing test was advertising |
 | [speedtest-cli](evals/speedtest-cli/REPORT.md) | 14,080 | Python | 5 | **converged** | - | the restraint case: small findings, nothing invented |
 | [chalk](evals/chalk/REPORT.md) | 23,288 | JavaScript | 8 | **converged** | **[FIX MERGED](https://github.com/chalk/chalk/pull/687)** | the control: one Medium found - fixed upstream, shipped in chalk v6.0.0 |
+| [RuboCop](evals/rubocop/REPORT.md) | 12,892 | Ruby | 7 | **converged** | - | the null result: every cop department swept, the last 20 commits re-proven, zero findings, zero lines changed |
 | [PapaParse](evals/papaparse/REPORT.md) | 13,532 | JavaScript | - | *audit* | [4 PRs open](https://github.com/mholt/PapaParse/issues/1132) | four Highs in the streaming path; conversion waits on four open PRs |
 
 <details>
@@ -193,6 +194,14 @@ Dormant since 2021 but fundamentally sound, where the honest outcome is small fi
 <br>
 
 One of the best-maintained small libraries alive, chosen to test whether the loop invents problems where there are none. The core survived clean: correctness, security and architecture all scored None on first pass, vendored code was declined rather than churned, and a semver-major engines bump was routed to the owner instead of seized. The audit still had teeth, surfacing one genuine reproduced Medium - `ansi256` skips level downconversion, contradicting the readme's promise. Findings were disclosed upstream with repros and a PR offer in [chalk/chalk#686](https://github.com/chalk/chalk/issues/686) - a chalk contributor reproduced it independently and called it surprising that it had not surfaced sooner given how heavily chalk is used, the project owner then wrote and merged [#687](https://github.com/chalk/chalk/pull/687) implementing exactly that fix, and it **shipped in [chalk v6.0.0](https://github.com/chalk/chalk/releases/tag/v6.0.0)**.
+
+</details>
+
+<details>
+<summary><b>rubocop/rubocop</b> - the null result nobody picked to be clean</summary>
+<br>
+
+Ruby's standard linter, the sixth language in this set, chosen for the opposite reason chalk was: its maintainers merge outside bugfix PRs daily, so it was expected to yield findings. It yielded none, and the receipt's value is how that nothing was earned. One run, seven iterations, converged at the upstream master tip of the run day - **zero findings at any severity, zero lines of project code changed**; the certified tree differs from upstream by loop bookkeeping alone, so there is no fixes.patch, only the record. The sweep behind the claim: all 21 inventory rows, every cop department (Layout 100, Lint 157, Style 300, plus seven more) against the project's 33,546-example known-answer suite, live end-to-end probes of the CLI, config, server, and LSP surfaces - and, because a commit that co-edits code and specs is certified only by tests written by the same hand, the loop **individually re-verified the last 20 upstream commits with 16 live probes**, three of them differential autocorrect comparisons proven byte-identical. The adversarial evaluator re-ran the full suite fresh, reproduced four audited claims with its own probes, hunted with invalid UTF-8 and null-byte source, and passed it on the first invocation. The receipt states the limits as plainly as the result: the verify gate exercises the Parser engine only, so Prism-specific behavior is out of scope, and a null result certifies the surface examined, not the absence of bugs. Findings were not disclosed upstream: there are none.
 
 </details>
 
