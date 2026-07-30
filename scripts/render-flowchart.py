@@ -48,8 +48,8 @@ REROUTE_JS = """
     { edge: 'L_REVERT_RECORD_0', from: ['REVERT', 0.5, 1], to: ['RECORD', 0.8, 0], label: false },
     { edge: 'L_PROM_BUDGET_0', from: ['PROM', 0.5, 1], to: ['BUDGET', 0.5, 0], label: false },
     { edge: 'L_CHECKS_BUDGET_0', from: ['CHECKS', 0, 0.5], to: ['BUDGET', 0.75, 0.25], label: true, trim: 0 },
-    { edge: 'L_EVAL_RECORD_0', from: ['EVAL', 0.5, 1], to: ['RECORD', 0.4, 0], label: true, shape: 'drop', labelT: 0.42 },
-    { edge: 'L_EVAL_RECORD_2', from: ['EVAL', 0.25, 0.75], to: ['RECORD', 0, 0.35], label: true, labelT: 0.5, shape: 'bulgeLeft', trim: 0 },
+    { edge: 'L_EVAL_RECORD_0', from: ['EVAL', 0.75, 0.75], to: ['RECORD', 0.5, 0], label: true, shape: 'elbowRight', labelT: 0.44 },
+    { edge: 'L_EVAL_RECORD_2', from: ['EVAL', 0.25, 0.75], to: ['RECORD', 0, 0.35], label: true, labelT: 0.36, shape: 'bulgeLeft', trim: 0 },
   ];
   const done = [];
   for (const r of ROUTES) {
@@ -58,8 +58,8 @@ REROUTE_JS = """
     const s = anchor(...r.from), e = anchor(...r.to);
     e.y -= (r.trim === undefined ? 4 : r.trim) * Math.sign(e.y - s.y) || 0;
     const dy = e.y - s.y;
-    if (r.shape === 'drop') {
-      path.setAttribute('d', `M${s.x},${s.y} C${s.x},${s.y + dy * 0.75} ${e.x - (e.x - s.x) * 0.25},${e.y - dy * 0.12} ${e.x},${e.y}`);
+    if (r.shape === 'elbowRight') {
+      path.setAttribute('d', `M${s.x},${s.y} C${s.x + (e.x - s.x) * 0.6},${s.y + dy * 0.18} ${e.x},${e.y - dy * 0.55} ${e.x},${e.y}`);
     } else if (r.shape === 'bulgeLeft') {
       const bx = Math.min(s.x, e.x) - 150;
       path.setAttribute('d', `M${s.x},${s.y} C${bx},${s.y + dy * 0.45} ${bx + 30},${e.y - dy * 0.15} ${e.x},${e.y}`);
