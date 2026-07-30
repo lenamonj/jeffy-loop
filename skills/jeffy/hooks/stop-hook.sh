@@ -82,8 +82,10 @@ if [ -n "$promise" ]; then
         # between it and HEAD - the ratchet's definition of an unchanged
         # tree. HEAD-exact equality would be unsatisfiable wherever the state
         # files are tracked, because the closing checkpoint commits the
-        # Converged line itself. Skipped in non-git projects.
-        conv_hash="$(awk '{ sub(/\r$/, "") } /^## Converged$/ { take = 1; next } /^## / { take = 0 } take && /^Converged: / { h = $2 } END { if (h) print h }' "$root/BACKLOG.md")"
+        # Converged line itself. Skipped in non-git projects. The line is
+        # markdown a model writes, so a leading list marker and backticks
+        # around the hash are tolerated; the section anchoring is not.
+        conv_hash="$(awk '{ sub(/\r$/, "") } /^## Converged$/ { take = 1; next } /^## / { take = 0 } take && /^[-*] +Converged: / { sub(/^[-*] +/, "") } take && /^Converged: / { h = $2; gsub(/^`|`$/, "", h) } END { if (h) print h }' "$root/BACKLOG.md")"
         if [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
           violation="the ## Converged section of BACKLOG.md does not name a commit in this repository; append the Converged line for the certified checkpoint"
         else
@@ -118,23 +120,65 @@ if [ -n "$promise" ]; then
         elif ! command -v timeout >/dev/null 2>&1; then
           echo "jeffy stop hook: coreutils timeout not found; skipping the verify check." >&2
         else
-          # Two PLAN shapes ship: the template writes prose then a
-          # "Command: <cmd>" line; older hand-written plans put the bare
-          # command as the first non-empty line. Prefer the labeled line,
-          # fall back to the bare shape - never run the section prose.
+          # The template writes prose under the heading and the command on a
+          # "Command: <cmd>" line, and only that labeled line is ever run.
+          # Section prose fed to bash -c is not a gate, it is an accidental
+          # command whose exit status means nothing, so a section without
+          # the label skips the check with a note instead.
           verify_cmd="$(awk '{ sub(/\r$/, "") } /^## Verify command$/ { take = 1; next } /^## / { take = 0 } take && /^Command: / { sub(/^Command: /, ""); print; exit }' "$root/PLAN.md")"
+          # A markdown hard break is two trailing spaces, so the payload
+          # arrives padded often enough to matter: the padding defeats the
+          # backtick pattern below, which anchors on both ends, and pads the
+          # command quoted back in a violation. Trim before anything reads it.
+          verify_cmd="${verify_cmd#"${verify_cmd%%[![:space:]]*}"}"
+          verify_cmd="${verify_cmd%"${verify_cmd##*[![:space:]]}"}"
+          # Both empty payloads skip the check, and the note has to say which
+          # one it is: a section with no Command line at all is a different
+          # edit to PLAN.md than a Command line holding nothing.
+          vc_skip=""
           if [ -z "$verify_cmd" ]; then
-            verify_cmd="$(awk '{ sub(/\r$/, "") } /^## Verify command$/ { take = 1; next } /^## / { take = 0 } take && NF { print; exit }' "$root/PLAN.md")"
+            vc_skip="carries no Command line"
           fi
-          if [ -n "$verify_cmd" ] && [ "$verify_cmd" != "none" ]; then
-            vt="$(fm verify_timeout_seconds)"
-            case "$vt" in '' | *[!0-9]*) vt=240 ;; esac
-            ( cd "$root" && timeout "$vt" bash -c "$verify_cmd" ) >/dev/null 2>&1
-            vrc=$?
-            if [ "$vrc" -eq 124 ]; then
-              violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; get it green, then re-declare convergence"
-            elif [ "$vrc" -ne 0 ]; then
-              violation="the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence"
+          # Markdown reflex wraps the command in backticks, and bash -c reads
+          # the pair as command substitution: it runs the output of the
+          # command instead of the command itself and exits 127. Strip one
+          # wrapping pair, only when both ends carry it and nothing between
+          # them does - a payload whose first and last backticks belong to two
+          # different substitutions is re-paired by a blind strip and then
+          # executes a command nobody wrote, and it parses, so bash -n below
+          # cannot catch it.
+          case "$verify_cmd" in
+            '`'*'`')
+              vc_inner="${verify_cmd#'`'}"; vc_inner="${vc_inner%'`'}"
+              case "$vc_inner" in
+                *'`'*) ;;
+                *) verify_cmd="$vc_inner" ;;
+              esac
+              ;;
+          esac
+          if [ -z "$verify_cmd" ] && [ -z "$vc_skip" ]; then
+            vc_skip="carries an empty Command line"
+          fi
+          if [ -n "$vc_skip" ]; then
+            echo "jeffy stop hook: the Verify command section of PLAN.md $vc_skip; skipping the verify check." >&2
+          elif [ "$verify_cmd" != "none" ]; then
+            # An annotated line (cargo test (419 tests)) is not runnable
+            # shell, and running it reports the parse failure as a mystery
+            # exit status. Parse it first and name the defect; never guess
+            # which trailing text was the annotation, and never execute a
+            # line that did not parse.
+            if ! verify_syntax="$(printf '%s\n' "$verify_cmd" | bash -n 2>&1)"; then
+              violation="the Verify command line ($verify_cmd) is not runnable shell (bash -n: $(printf '%s' "$verify_syntax" | head -n 1)); make the Command line a pure runnable command with no annotation, then re-declare convergence"
+            else
+              vt="$(fm verify_timeout_seconds)"
+              case "$vt" in '' | *[!0-9]*) vt=240 ;; esac
+              ( cd "$root" && timeout "$vt" bash -c "$verify_cmd" ) >/dev/null 2>&1
+              vrc=$?
+              if [ "$vrc" -eq 124 ]; then
+                violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; get it green, then re-declare convergence"
+              elif [ "$vrc" -ne 0 ]; then
+                violation="the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence"
+              fi
             fi
           fi
         fi
@@ -182,9 +226,21 @@ run_tok="$(printf '%s' "$(fm started_at)" | sed -n 's/.*T\([0-9][0-9]\):\([0-9][
 if [ -n "$run_tok" ]; then
   runid8="$runid8-$run_tok"
 fi
+next=$((iter + 1))
 if [ -f "$root/JOURNAL.md" ]; then
   if ! grep -qF -- "## iter $iter/$max | $runid8" "$root/JOURNAL.md"; then
     hygiene="iteration $iter wrote no JOURNAL.md entry with the heading ## iter $iter/$max | $runid8; record it before proceeding"
+  fi
+  # Duplicate-index hygiene: a user interrupt can leave the journal ahead of
+  # the loop counter, and the re-fed iteration then writes a second primary
+  # entry under an index that already holds one - two entries headed 10/10
+  # on one run, after which per-iteration accounting is silently wrong.
+  # Warn only: the entry is what gets corrected, never the state.
+  # Without the started_at token runid8 is the bare session prefix, which
+  # every run of the session shares, so an earlier run's entry at the next
+  # index reads as a desync that never happened. No token, no check.
+  if [ -n "$run_tok" ] && grep -qF -- "## iter $next/$max | $runid8" "$root/JOURNAL.md"; then
+    hygiene="$hygiene${hygiene:+; also }JOURNAL.md already holds a primary entry headed ## iter $next/$max | $runid8; the loop counter may have desynced (a user interrupt), so continue at the next free index and say so in the entry"
   fi
 else
   echo "jeffy stop hook: JOURNAL.md missing at $root; skipping the journal-entry check." >&2
@@ -208,18 +264,35 @@ fi
 # with no recorded baseline - never rotated, or launched before this shipped -
 # never fires.
 cur_archive="none"
+naive_archive="none"
 if [ -f "$root/JOURNAL-archive.md" ]; then
-  cur_archive="$(grep -c '^## iter ' "$root/JOURNAL-archive.md" 2>/dev/null || true)"
+  # An entry heading names an iteration number; the journal template's
+  # heading-grammar example begins "## iter <i>/<N>" and is not an entry,
+  # so the count anchors on a digit. The strict count is always stored.
+  cur_archive="$(grep -c '^## iter [0-9]' "$root/JOURNAL-archive.md" 2>/dev/null || true)"
   case "$cur_archive" in '' | *[!0-9]*) cur_archive=0 ;; esac
+  naive_archive="$(grep -c '^## iter ' "$root/JOURNAL-archive.md" 2>/dev/null || true)"
+  case "$naive_archive" in '' | *[!0-9]*) naive_archive=0 ;; esac
 fi
 last_archive="$(fm last_archive)"
+# A baseline written before the strict anchor counted the template line, so a
+# strict count one below it is the correction and not a loss. That escape is
+# one-shot: it holds only until the state file carries archive_migrated, which
+# the rewrite below stamps on with the strict baseline. A permanent escape
+# would mask every later one-entry loss in an archive that keeps the template
+# line, which is exactly the archive this migration exists for.
+archive_migrated="$(fm archive_migrated)"
 case "$last_archive" in
   '' | none | *[!0-9]*) ;;
   *)
     if [ "$cur_archive" = "none" ]; then
       hygiene="$hygiene${hygiene:+; also }JOURNAL-archive.md held $last_archive entries at the previous turn end and is now missing; the archive is append-only, so restore it"
     elif [ "$cur_archive" -lt "$last_archive" ]; then
-      hygiene="$hygiene${hygiene:+; also }JOURNAL-archive.md fell from $last_archive entries to $cur_archive; rotation must append to the archive and never overwrite it, so restore the lost entries"
+      if [ "$archive_migrated" != "1" ] && [ "$naive_archive" -ge "$last_archive" ]; then
+        echo "jeffy stop hook: migrated a legacy JOURNAL-archive.md baseline of $last_archive to the strict count $cur_archive; template lines are excluded from the count from here on." >&2
+      else
+        hygiene="$hygiene${hygiene:+; also }JOURNAL-archive.md fell from $last_archive entries to $cur_archive; rotation must append to the archive and never overwrite it, so restore the lost entries"
+      fi
     fi
     ;;
 esac
@@ -260,15 +333,22 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
   fi
 fi
 
-next=$((iter + 1))
 tmp="$state.tmp"
+# The rewriter owns the keys it names and prints every other line verbatim,
+# so the schema is additive: a state file carrying keys this version never
+# heard of survives the re-feed untouched. extension_granted and a rewritable
+# max_iterations are reserved on that path for the 1.5.0 closing extension.
+# archive_migrated rides along with the strict archive baseline it certifies:
+# the baseline this rewrite stores is strict, so the naive escape above has
+# done its one job and must never be taken again.
 if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v la="$cur_archive" '
-  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!sla) print "last_archive: " la } print; next }
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
   fmc == 1 && /^last_head: / { print "last_head: " lh; slh = 1; next }
   fmc == 1 && /^last_backlog: / { print "last_backlog: " lb; slb = 1; next }
   fmc == 1 && /^stall: / { print "stall: " sf; ssf = 1; next }
   fmc == 1 && /^last_archive: / { print "last_archive: " la; sla = 1; next }
+  fmc == 1 && /^archive_migrated: / { print "archive_migrated: 1"; sam = 1; next }
   { print }
 ' "$state" > "$tmp"; then
   mv "$tmp" "$state"

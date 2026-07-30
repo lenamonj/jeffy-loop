@@ -513,8 +513,11 @@ if command -v jq >/dev/null 2>&1; then
         printf 'Jeffy loop state.\n'
       } > "$hb_state"
     }
-    hb_write_plan() { # $1 verify command line for PLAN.md
-      printf '# Plan\n\n## Verify command\n%s\n' "$1" > "$hb_proj/PLAN.md"
+    hb_write_plan() { # $1 command for PLAN.md's Command: line
+      # The labeled line is the only shape the hook executes (the bare
+      # first-line fallback was removed in 1.5.0), so every fixture that
+      # wants its command run writes it here.
+      printf '# Plan\n\n## Verify command\nCommand: %s\n' "$1" > "$hb_proj/PLAN.md"
     }
     # The three hb_*_full / _extra / _entries variants below are staged for the
     # 1.5.0 cases (Command-line sanitation, inventory rows, state schema
@@ -741,7 +744,7 @@ if command -v jq >/dev/null 2>&1; then
     # never been opened. A PLAN.md without the section predates the check
     # and fails open.
     hb_write_state sess-1 1 3
-    printf '# Plan\n\n## Surface inventory\n\n- [x] core: swept at abc1234 - all entry points probed\n- [ ] plots: unswept\n\n## Verify command\nnone\n' > "$hb_proj/PLAN.md"
+    printf '# Plan\n\n## Surface inventory\n\n- [x] core: swept at abc1234 - all entry points probed\n- [ ] plots: unswept\n\n## Verify command\nCommand: none\n' > "$hb_proj/PLAN.md"
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
     if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Surface inventory' \
@@ -754,7 +757,7 @@ if command -v jq >/dev/null 2>&1; then
     fi
 
     hb_write_state sess-1 1 3
-    printf '# Plan\n\n## Surface inventory\n\n- [x] core: swept at abc1234 - all entry points probed\n- [x] plots: swept at abc1234 - all 20 functions probed\n\n## Verify command\nnone\n' > "$hb_proj/PLAN.md"
+    printf '# Plan\n\n## Surface inventory\n\n- [x] core: swept at abc1234 - all entry points probed\n- [x] plots: swept at abc1234 - all 20 functions probed\n\n## Verify command\nCommand: none\n' > "$hb_proj/PLAN.md"
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
     if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
       pass "stop hook accepts the promise once every Surface inventory row is swept"
@@ -1280,6 +1283,376 @@ if command -v jq >/dev/null 2>&1; then
       pass "stop hook ends the loop when the prompt file is missing (state deleted, stop allowed)"
     else
       fault "stop hook mishandled a missing prompt file"
+    fi
+
+    # --- v1.5.0 Phase 1 expectations (E1, E6, E7, E8) --------------------
+    # These cases state the planned parser, counting, and hygiene behavior
+    # and are written before the hook changes that satisfy them, so several
+    # are red against the v1.4.1 hook by design. Each names the corpus loss
+    # it exists to prevent. The missing-prompt case above deleted the prompt
+    # file; every re-feed below needs it back.
+    printf 'Do the jeffy iteration now.' > "$hb_tmp/prompt.txt"
+
+    if command -v git >/dev/null 2>&1; then
+      # The promise path only means anything inside a repository - the
+      # converged-hash check has to certify a real commit - and a dedicated
+      # sandbox keeps these fixtures clear of the stall and archive
+      # scenarios above.
+      hb_saved_proj="$hb_proj"; hb_saved_state="$hb_state"
+      hb_proj="$hb_tmp/p1proj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      mkdir -p "$hb_proj/.claude"
+      hb_git init -q -b main
+      printf 'v1\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null
+      hb_git commit -q -m c1
+      hb_p1_c1="$(hb_git rev-parse HEAD)"
+      hb_p1_row='- [x] core: swept at abc1234 - all entry points probed'
+      hb_write_journal 1 3
+
+      # E1: the Converged line is prose a model writes, so the parser must
+      # tolerate the markdown shapes it actually produces - a list marker,
+      # and a hash in backticks. The column-zero anchor cost bat two
+      # declarations and the run its last two iterations.
+      hb_write_state sess-1 1 3
+      hb_write_plan_full none "$hb_p1_row"
+      hb_write_backlog '' "- Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a Converged line written as a markdown list item"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a list-form Converged line that names HEAD"
+      fi
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' '- Converged: `'"$hb_p1_c1"'` - 2026-01-01'
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a Converged line whose hash is wrapped in backticks"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a backticked Converged hash that names HEAD"
+      fi
+
+      # The other list marker markdown produces, alone and combined with the
+      # backticked hash: the parser tolerates the shapes models write, so
+      # every one of them is pinned rather than assumed.
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "* Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a Converged line written with a star list marker"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a star-marker Converged line that names HEAD"
+      fi
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' '* Converged: `'"$hb_p1_c1"'` - 2026-01-01'
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a Converged line carrying both a list marker and a backticked hash"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a Converged line combining a list marker with a backticked hash"
+      fi
+
+      if command -v timeout >/dev/null 2>&1; then
+        # E1: a backticked Command payload reaches bash -c as command
+        # substitution, which runs the command's own output as a command -
+        # exit 127, and the shape that killed declarations on bat, dayjs,
+        # fasthttp, and pyportfolioopt. The wrapping pair is stripped.
+        hb_write_state sess-1 1 3
+        # The backticks are the fixture, not an expansion: the payload has to
+        # reach the hook wrapped in literal backticks, exactly as written.
+        # shellcheck disable=SC2016
+        hb_write_plan_full '`echo ok`' "$hb_p1_row"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+          pass "stop hook strips wrapping backticks from the Command line and runs the command"
+        else
+          printf '%s\n' "$hb_out"
+          fault "stop hook fed a backticked Command line to bash -c as command substitution"
+        fi
+
+        # E1: a Command line carrying an annotation is not runnable shell.
+        # The hook must say so instead of executing it and reporting the
+        # syntax error as a mystery exit 2 (ta, yfinance, bat), and must
+        # never guess which trailing text was annotation - so nothing runs.
+        rm -f "$hb_proj/p1-side.txt"
+        hb_write_state sess-1 1 3
+        hb_write_plan_full 'printf p1 > p1-side.txt (419 tests)' "$hb_p1_row"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+        if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'not runnable shell' \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'bash -n' \
+          && [ ! -f "$hb_proj/p1-side.txt" ] \
+          && grep -q '^iteration: 2$' "$hb_state"; then
+          pass "stop hook reports a non-runnable Command line as a bash -n violation without executing it"
+        else
+          printf '%s\n' "$hb_out"
+          fault "stop hook executed a Command line that is not runnable shell"
+        fi
+
+        # E1: with the bare-first-line fallback deleted, a Verify section
+        # that names no Command line skips the check with a stderr note the
+        # way every other infrastructure defect does. Prose is never shell.
+        hb_write_state sess-1 1 3
+        printf '# Plan\n\n## Verify command\nRun the full suite before declaring; see CONTRIBUTING.md.\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+          && grep -q 'carries no Command line' "$hb_tmp/hb_err.txt" \
+          && grep -q 'skipping the verify check' "$hb_tmp/hb_err.txt"; then
+          pass "stop hook skips the verify check when the Verify section has no Command line (stderr note)"
+        else
+          printf '%s\n' "$hb_out"
+          cat "$hb_tmp/hb_err.txt"
+          fault "stop hook ran the prose of a Verify section that names no Command line"
+        fi
+
+        # The other empty payload: a Command line holding a bare pair of
+        # backticks is empty only after the strip, and it is a different edit
+        # to PLAN.md than a section with no Command line at all, so the note
+        # has to name the line rather than deny it exists.
+        hb_write_state sess-1 1 3
+        # shellcheck disable=SC2016
+        hb_write_plan_full '``' "$hb_p1_row"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+          && grep -q 'carries an empty Command line' "$hb_tmp/hb_err.txt" \
+          && grep -q 'skipping the verify check' "$hb_tmp/hb_err.txt"; then
+          pass "stop hook reports a Command line emptied by the backtick strip as an empty Command line"
+        else
+          printf '%s\n' "$hb_out"
+          cat "$hb_tmp/hb_err.txt"
+          fault "stop hook misdiagnosed a Command line emptied by the backtick strip"
+        fi
+
+        # The fallback's own target shape - a bare command as the section's
+        # first non-empty line - proves the deletion: the marker must not
+        # exist afterwards, so nothing was executed.
+        rm -f "$hb_proj/p1-prose-ran.txt"
+        hb_write_state sess-1 1 3
+        printf '# Plan\n\n## Verify command\ntouch p1-prose-ran.txt\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && [ ! -f "$hb_proj/p1-prose-ran.txt" ]; then
+          pass "stop hook no longer executes a bare first line as the Verify command (fallback deleted)"
+        else
+          printf '%s\n' "$hb_out"
+          fault "stop hook executed an unlabeled first line as the Verify command"
+        fi
+        rm -f "$hb_proj/p1-prose-ran.txt"
+
+        # Regression guard for the bash -n check: parentheses inside quotes
+        # are legitimate shell and must still run. The check rejects
+        # unparsable lines, not lines that merely look annotated.
+        hb_write_state sess-1 1 3
+        hb_write_plan_full "test -n 'ok (419 tests)'" "$hb_p1_row"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+          pass "stop hook still runs a Command line whose parentheses are quoted"
+        else
+          printf '%s\n' "$hb_out"
+          fault "stop hook rejected a runnable Command line carrying quoted parentheses"
+        fi
+
+        # Trailing spaces are a markdown hard break, a shape real PLAN.md
+        # files carry, and they sit outside the closing backtick where they
+        # defeat a strip anchored on both ends. The payload is trimmed first.
+        hb_write_state sess-1 1 3
+        # shellcheck disable=SC2016
+        hb_write_plan_full '`echo ok` ' "$hb_p1_row"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+          pass "stop hook trims whitespace around the Command payload before stripping backticks"
+        else
+          printf '%s\n' "$hb_out"
+          fault "stop hook let trailing whitespace defeat the Command-line backtick strip"
+        fi
+
+        # The strip pairs the two ends, so a payload whose first and last
+        # backticks belong to two different substitutions must be left alone:
+        # stripping re-pairs them into a command nobody wrote, and it parses,
+        # so bash -n cannot catch it. Written as-is the payload creates
+        # p1-tick.txt; re-paired it creates a differently named file instead
+        # and still exits 0, so only the marker tells the two apart.
+        rm -f "$hb_proj"/p1-tick.txt*
+        hb_write_state sess-1 1 3
+        # shellcheck disable=SC2016
+        hb_write_plan_full '`touch p1-tick.txt` true `true`' "$hb_p1_row"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && [ -f "$hb_proj/p1-tick.txt" ]; then
+          pass "stop hook leaves a Command payload with interior backticks exactly as written"
+        else
+          printf '%s\n' "$hb_out"
+          ls "$hb_proj"
+          fault "stop hook re-paired backticks belonging to two different substitutions"
+        fi
+        rm -f "$hb_proj"/p1-tick.txt*
+      else
+        echo "[SKIP] Command-line sanitation scenarios (coreutils timeout not on PATH)"
+      fi
+
+      hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
+    else
+      echo "[SKIP] Converged-line and Command-line scenarios (git not on PATH)"
+    fi
+
+    # E6: the archive counter must anchor on real entries. journal-default's
+    # unfenced grammar example begins "## iter <i>/<N>", so a naive count of
+    # "^## iter " counts a line that is not an entry: the baseline inflates
+    # by one every turn and a real loss of one entry reads as no change.
+    hb_write_archive_tpl() { # $1 entry count, $2 'template' to prepend journal-default's unfenced grammar example
+      {
+        printf '# Journal archive\n\n'
+        if [ "${2:-}" = template ]; then
+          printf '## iter <i>/<N> | <run-id> | <YYYY-MM-DD> | <task-id or AUDIT or RATCHET or WRAPUP or SALVAGE or ROTATION> | <done|blocked|audit|converged|salvage|rotation>\n\n'
+        fi
+        hb_i=1
+        while [ "$hb_i" -le "$1" ]; do
+          printf '## iter %s/9 | sess-1-000000 | 2026-01-01 | T%s | done\n\nTask: t.\n\n' "$hb_i" "$hb_i"
+          hb_i=$((hb_i + 1))
+        done
+      } > "$hb_proj/JOURNAL-archive.md"
+    }
+    hb_write_backlog ''
+    hb_write_journal 1 3
+
+    hb_write_archive_tpl 3 template
+    hb_write_state_extra sess-1 1 3 'last_archive: 3'
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'JOURNAL-archive.md' \
+      && grep -q '^last_archive: 3$' "$hb_state"; then
+      pass "stop hook counts archive entries strictly, excluding the grammar-example line"
+    else
+      printf '%s\n' "$hb_out"
+      grep '^last_archive: ' "$hb_state"
+      fault "stop hook counted journal-default's grammar example as an archived entry"
+    fi
+
+    # Migration: a baseline recorded by the naive counter includes the
+    # template line, so the strict counter must not read the correction as
+    # loss. The escape is one-shot and says so on stderr: the same re-feed
+    # stores the strict baseline and stamps archive_migrated on the state.
+    hb_write_archive_tpl 2 template
+    hb_write_state_extra sess-1 1 3 'last_archive: 3'
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'JOURNAL-archive.md' \
+      && grep -q 'migrated a legacy JOURNAL-archive.md baseline' "$hb_tmp/hb_err.txt" \
+      && grep -q '^last_archive: 2$' "$hb_state" \
+      && grep -q '^archive_migrated: 1$' "$hb_state"; then
+      pass "stop hook migrates a template-inflated archive baseline once and records the migration"
+    else
+      printf '%s\n' "$hb_out"
+      cat "$hb_tmp/hb_err.txt"
+      grep '^last_archive: \|^archive_migrated: ' "$hb_state"
+      fault "stop hook mishandled a legacy archive baseline that counted the grammar example"
+    fi
+
+    # The blind spot the flag closes: the archive still carries the template
+    # line after migration, so a permanent naive escape would swallow every
+    # later loss of exactly one entry. With the flag set, the strict count
+    # alone decides and the loss is named.
+    hb_write_archive_tpl 2 template
+    hb_write_state_extra sess-1 1 3 'last_archive: 3' 'archive_migrated: 1'
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'JOURNAL-archive.md fell from 3 entries to 2' \
+      && grep -q '^last_archive: 2$' "$hb_state" \
+      && grep -q '^archive_migrated: 1$' "$hb_state"; then
+      pass "stop hook catches a one-entry archive loss after migration (the template line stops excusing it)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let a migrated template-carrying archive hide a one-entry loss"
+    fi
+
+    # Loss detection keeps its teeth: no template, two entries, a baseline
+    # of three is a destroyed rotation and must still be named.
+    hb_write_archive_tpl 2
+    hb_write_state_extra sess-1 1 3 'last_archive: 3'
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'JOURNAL-archive.md fell from 3 entries to 2' \
+      && grep -q '^last_archive: 2$' "$hb_state"; then
+      pass "stop hook still catches a genuine archive loss under the strict count"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook lost its archive-loss detection to the strict count"
+    fi
+    rm -f "$hb_proj/JOURNAL-archive.md"
+
+    # E7: a user interrupt desyncs the iteration counter from the journal,
+    # and the run then writes two primary entries under one index - observed
+    # on fasthttp at 10/10, where per-iteration accounting went silently
+    # wrong. Warn only: the note rides the re-feed, no state surgery.
+    hb_write_journal_entries \
+      '## iter 1/3 | sess-1-000000 | 2026-01-01 | T1 | done' \
+      '## iter 2/3 | sess-1-000000 | 2026-01-01 | T2 | done'
+    hb_write_state sess-1 1 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION HYGIENE' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'iter 2/3' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'desynced' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook flags a re-feed into an index that already holds a primary entry"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook re-fed an already-occupied iteration index without a hygiene note"
+    fi
+
+    # The bound on that check: a state file older than started_at has no run
+    # token, so the run id is the bare session prefix every run of the session
+    # shares. An earlier run's entry at the next index is then not a desync,
+    # and the note would ride every re-feed of an upgraded run.
+    hb_write_journal_entries \
+      '## iter 1/3 | sess-1 | 2026-01-01 | T1 | done' \
+      '## iter 2/3 | sess-1 | 2026-01-01 | T2 | done'
+    {
+      printf -- '---\n'
+      printf 'session_id: sess-1\n'
+      printf 'iteration: 1\n'
+      printf 'max_iterations: 3\n'
+      printf 'prompt_path: %s\n' "$hb_tmp/prompt.txt"
+      printf 'focus: speed\n'
+      printf 'completion_promise: JEFFY CONVERGED\n'
+      printf -- '---\n'
+      printf 'Jeffy loop state.\n'
+    } > "$hb_state"
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'desynced' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook skips the duplicate-index check when the state file carries no run token"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook read an earlier run's entry as a desync on a state file with no run token"
+    fi
+
+    # E8: the state schema grows additively. The awk rewriter must carry
+    # extension_granted and any key it has never heard of through untouched,
+    # so an old state file stays valid and a new one survives every re-feed.
+    hb_write_journal 1 3
+    hb_write_state_extra sess-1 1 3 'extension_granted: 1' 'unknown_future_key: x'
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^extension_granted: 1$' "$hb_state" \
+      && grep -q '^unknown_future_key: x$' "$hb_state" \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook state rewrite preserves extension_granted and unknown keys verbatim"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook dropped an additive state key on the re-feed"
     fi
 
     rm -rf "$hb_tmp"
