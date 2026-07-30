@@ -21,6 +21,15 @@ __pycache__/
 
 /CHANGELOG.md
 
+# Launch and announcement drafts - not part of the product
+/reddit_post.md
+/reddit_post.MD
+
+# Avatar and profile art working files - the shipped product images live in
+# media/, so these are anchored to the repo root only
+/jeffy-avatar*.png
+/jeffy.jpg
+
 # Fable session dev logs - class patterns so future logs are covered by default
 # (both casings spelled out: gitignore matching is case-sensitive on Linux)
 /FABLE*.md
