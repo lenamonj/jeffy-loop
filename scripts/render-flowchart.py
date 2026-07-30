@@ -29,25 +29,41 @@ AMBER_MARKER = "my-svg_flowchart-v2-pointEnd__CA8A04"
 SPACING = 220  # px of path length between chevrons; edges shorter than
                # 1.5x this keep only their endpoint arrow
 
-# REVERT's edge to RECORD gets a manual route: dagre's crossing minimizer
-# sends it on a page-wide left detour underneath the evaluator diamond,
-# where the short drop into RECORD's top-right is the honest drawing. Runs
-# before the resampler so the chevrons follow the new curve.
+# Manual routes for edges dagre draws badly: REVERT's page-wide left
+# detour under the evaluator diamond becomes the short drop into RECORD,
+# and the PROM/CHECKS pair into BUDGET uncrosses - the "no" drop takes
+# the diamond's top vertex, the check-failed return takes its right
+# vertex, its label moved to the new midpoint. Anchors are fractions of
+# the live node boxes, so a layout shift cannot strand a route. Runs
+# before the resampler so the chevrons follow the new curves.
 REROUTE_JS = """
 () => {
-  const path = document.querySelector('path[data-id="L_REVERT_RECORD_0"], path[id*="L_REVERT_RECORD_0"]');
-  const revert = document.querySelector('g[id*="flowchart-REVERT-"]');
-  const record = document.querySelector('g[id*="flowchart-RECORD-"]');
-  if (!path || !revert || !record) return 'reroute: elements not found';
   const svg = document.querySelector('svg');
   const scale = svg.viewBox.baseVal.width / svg.getBoundingClientRect().width;
   const box = el => { const r = el.getBoundingClientRect(), s = svg.getBoundingClientRect();
     return { x: (r.x - s.x) * scale, y: (r.y - s.y) * scale, w: r.width * scale, h: r.height * scale }; };
-  const a = box(revert), b = box(record);
-  const sx = a.x + a.w * 0.5, sy = a.y + a.h;
-  const ex = b.x + b.w * 0.8, ey = b.y - 4;
-  path.setAttribute('d', `M${sx},${sy} C${sx},${sy + (ey - sy) * 0.5} ${ex},${ey - (ey - sy) * 0.35} ${ex},${ey}`);
-  return 'reroute: ok';
+  const node = name => document.querySelector('g[id*="flowchart-' + name + '-"]');
+  const anchor = (n, fx, fy) => { const b = box(node(n)); return { x: b.x + b.w * fx, y: b.y + b.h * fy }; };
+  const ROUTES = [
+    { edge: 'L_REVERT_RECORD_0', from: ['REVERT', 0.5, 1], to: ['RECORD', 0.8, 0], label: false },
+    { edge: 'L_PROM_BUDGET_0', from: ['PROM', 0.5, 1], to: ['BUDGET', 0.5, 0], label: false },
+    { edge: 'L_CHECKS_BUDGET_0', from: ['CHECKS', 0, 0.5], to: ['BUDGET', 1, 0.5], label: true },
+  ];
+  const done = [];
+  for (const r of ROUTES) {
+    const path = document.querySelector('path[data-id="' + r.edge + '"], path[id*="' + r.edge + '"]');
+    if (!path || !node(r.from[0]) || !node(r.to[0])) { done.push(r.edge + ':MISSING'); continue; }
+    const s = anchor(...r.from), e = anchor(...r.to);
+    e.y -= 4 * Math.sign(e.y - s.y) || 0;
+    path.setAttribute('d', `M${s.x},${s.y} C${s.x + (e.x - s.x) * 0.15},${s.y + (e.y - s.y) * 0.55} ${e.x + (s.x - e.x) * 0.15},${e.y - (e.y - s.y) * 0.35} ${e.x},${e.y}`);
+    if (r.label) {
+      const lab = document.querySelector('g[data-id="' + r.edge + '"].edgeLabel, g.edgeLabel[id*="' + r.edge + '"]');
+      if (lab) { const m = path.getPointAtLength(path.getTotalLength() * 0.55);
+        lab.setAttribute('transform', `translate(${m.x}, ${m.y})`); }
+    }
+    done.push(r.edge + ':ok');
+  }
+  return done.join(' ');
 }
 """
 
