@@ -34,6 +34,26 @@ for sh_src in install.sh skills/jeffy/hooks/stop-hook.sh; do
   fi
 done
 
+# 1b. The executable entry points ship with their exec bit committed. Windows
+#     working trees hide mode bits (core.fileMode=false), so this reads the git
+#     index, not the filesystem: 100644 here means every Linux and Mac clone
+#     fails the README's ./install.sh with Permission denied. Skips cleanly
+#     outside a git checkout (release tarballs).
+if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+  for exec_src in install.sh scripts/validate.sh skills/jeffy/hooks/stop-hook.sh; do
+    mode="$(git ls-files -s "$exec_src" 2>/dev/null | awk '{print $1}')"
+    if [ "$mode" = "100755" ]; then
+      pass "$exec_src carries the exec bit in the git index (100755)"
+    elif [ -z "$mode" ]; then
+      fault "$exec_src is not in the git index"
+    else
+      fault "$exec_src committed without exec bit ($mode): ./install.sh breaks on Linux and Mac"
+    fi
+  done
+else
+  echo "[SKIP] exec-bit checks (not a git checkout)"
+fi
+
 # 2. Every skill carries name: and description: frontmatter.
 for skill in skills/*/SKILL.md; do
   if [ ! -f "$skill" ]; then
