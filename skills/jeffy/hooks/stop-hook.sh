@@ -51,6 +51,21 @@ case "$iter$max" in
     ;;
 esac
 
+# Run identity: the session prefix alone does not name a run. Relaunching
+# /jeffy in the same Claude Code session reuses the session id, so several
+# runs stamp identical headings and the journal cannot say where one ended -
+# observed across six runs and 64 iterations on one project. The started_at
+# time from the loop state, which is rewritten at every launch, separates
+# them. A state file without it predates this and falls back to the prefix.
+# Derived here rather than at the re-feed because the declaration's evaluator
+# check reads the journal under the same run id the hygiene checks use, and
+# two derivations of one identity drift.
+runid8="${fm_session:0:8}"
+run_tok="$(printf '%s' "$(fm started_at)" | sed -n 's/.*T\([0-9][0-9]\):\([0-9][0-9]\):\([0-9][0-9]\).*/\1\2\3/p')"
+if [ -n "$run_tok" ]; then
+  runid8="$runid8-$run_tok"
+fi
+
 # Completion promise: prefer the last_assistant_message field newer CLIs put
 # on stdin; fall back to the last assistant entry of the JSONL transcript.
 violation=""
@@ -183,6 +198,47 @@ if [ -n "$promise" ]; then
           fi
         fi
       fi
+      # Evaluator check: the adversarial gate is where the audits' misses were
+      # found, and six of thirteen corpus convergences recorded no verdict at
+      # all. The closing entry of this run is what must carry it - an earlier
+      # entry's PASS answered an earlier tree - so the search starts at the
+      # last primary heading stamped with this run id and reads to end of
+      # file. A
+      # RATCHET re-declares an unchanged tree and never invokes the gate by
+      # design, so its type field exempts it. A missing journal, or one
+      # holding no entry for this run (rotated away, or a run id predating the
+      # started_at token), is an infrastructure defect and fails open.
+      # ROTATION and SALVAGE are additional entries rather than closing ones:
+      # a closing iteration that pushes JOURNAL.md past 500 lines appends its
+      # ROTATION entry after the declaration, and a scan anchored at the last
+      # heading would then read a window holding no verdict and reject a
+      # declaration that carries one. The anchor is the last primary entry,
+      # and a run whose only entries are those types has no anchor at all.
+      # The verdict is matched as a substring anywhere after the anchor: it
+      # normally lives in the entry's Verification field per journal-default,
+      # a prose false-accept is bounded by the run report a human reads, and
+      # a field-anchored match would reject every legacy journal instead.
+      if [ -z "$violation" ]; then
+        if [ ! -f "$root/JOURNAL.md" ]; then
+          echo "jeffy stop hook: JOURNAL.md missing at $root; skipping the evaluator check." >&2
+        else
+          ev_verdict="$(awk -v tok="| $runid8 |" '
+            { sub(/\r$/, "") }
+            /^## iter / && index($0, tok) {
+              split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+              if (t == "ROTATION" || t == "SALVAGE") next
+              found = 1; ev = 0; type = t; next
+            }
+            found && (index($0, "Evaluator: PASS") || index($0, "Evaluator: unavailable")) { ev = 1 }
+            END { if (!found) print "none"; else if (type == "RATCHET" || ev) print "ok"; else print "missing" }
+          ' "$root/JOURNAL.md")"
+          if [ "$ev_verdict" = "none" ]; then
+            echo "jeffy stop hook: JOURNAL.md holds no entry headed with the run id $runid8; skipping the evaluator check." >&2
+          elif [ "$ev_verdict" = "missing" ]; then
+            violation="the closing entry records no Evaluator verdict; run the adversarial evaluator gate (or record Evaluator: unavailable with the reason), then re-declare"
+          fi
+        fi
+      fi
       if [ -z "$violation" ]; then
         rm -f "$state"
         exit 0
@@ -191,14 +247,68 @@ if [ -n "$promise" ]; then
   esac
 fi
 
+# Run-state facts, read once and used twice: the closing extension below turns
+# on them and every re-feed states them. The model reads the last few journal
+# entries and owns no arithmetic, so a budget it cannot see is a budget it
+# feels rather than plans - "the arithmetic should have been done at iteration
+# 7, not felt at iteration 9". Counting is the same section-scoped awk the
+# promise path uses, per section here. A file that does not exist yields no
+# count and the note simply omits that field: this is an accounting aid, never
+# a gate, and an infrastructure gap must not block a re-feed.
+open_now=""
+open_next=""
+open_later=""
+if [ -f "$root/BACKLOG.md" ]; then
+  read -r open_now open_next open_later <<< "$(awk '
+    { sub(/\r$/, "") }
+    /^## Now$/ { sec = 1; next }
+    /^## Next$/ { sec = 2; next }
+    /^## Later$/ { sec = 3; next }
+    /^## / { sec = 0 }
+    sec && /^- \[ \]/ { n[sec]++ }
+    END { printf "%d %d %d", n[1], n[2], n[3] }
+  ' "$root/BACKLOG.md")"
+fi
+unswept_rows=""
+if [ -f "$root/PLAN.md" ] && grep -q '^## Surface inventory' "$root/PLAN.md"; then
+  unswept_rows="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { n++ } END { printf "%d", n }' "$root/PLAN.md")"
+fi
+
 # Budget spent: end the run and let the session stop. A convergence claim
 # whose checks failed gets a stderr note instead of a silent swallow.
+# One exception, taken once: a run whose ledger is empty and whose inventory
+# is swept has nothing left but its convergence sequence, and that sequence
+# costs two to three iterations nobody budgeted - six of fourteen runs across
+# two projects died there with the work done. The grant is +2, recorded on the
+# state file, and it applies just as much when a check rejected the promise at
+# the last iteration: that rejection is repairable, and today it goes to
+# stderr where nobody reads it. Conditions the hook cannot evaluate (no
+# ledger, no inventory section) are not conditions it can grant on.
+# Two shapes are not the boundary this grant was written for and take the
+# plain exhaustion path instead. An iteration already past max is a
+# hand-lowered budget, and extending it re-feeds arithmetic that runs
+# negative ("-5 remain after it"), so only an iteration exactly at max
+# grants. And the flag that makes the grant once-only is written by the
+# rewriter at the frontmatter close, so a state file whose frontmatter never
+# closes can never record it: the +2 would land every second turn forever
+# with nothing accumulating to stop it. The guard tests the same ^---$ the
+# rewriter counts, because a grant the rewriter cannot stamp is not a grant.
+extension=""
 if [ "$iter" -ge "$max" ]; then
-  if [ -n "$violation" ]; then
-    echo "jeffy stop hook: convergence rejected ($violation) but the budget is spent; ending the run." >&2
+  fm_close="$(grep -c '^---$' "$state" 2>/dev/null || true)"
+  case "$fm_close" in '' | *[!0-9]*) fm_close=0 ;; esac
+  if [ "$iter" -eq "$max" ] && [ "$fm_close" -ge 2 ] \
+    && [ "$(fm extension_granted)" != "1" ] \
+    && [ "$open_now" = "0" ] && [ "$open_next" = "0" ] && [ "$open_later" = "0" ] \
+    && [ "$unswept_rows" = "0" ]; then
+    extension=1
+  else
+    if [ -n "$violation" ]; then
+      echo "jeffy stop hook: convergence rejected ($violation) but the budget is spent; ending the run." >&2
+    fi
+    rm -f "$state"
+    exit 0
   fi
-  rm -f "$state"
-  exit 0
 fi
 
 # Re-feed: advance the iteration counter in place, then block the stop with
@@ -215,17 +325,6 @@ fi
 # an infrastructure defect and fails open with a stderr note; a violation
 # rides the re-feed as evidence, and the budget bounds retries.
 hygiene=""
-# Run identity: the session prefix alone does not name a run. Relaunching
-# /jeffy in the same Claude Code session reuses the session id, so several
-# runs stamp identical headings and the journal cannot say where one ended -
-# observed across six runs and 64 iterations on one project. The started_at
-# time from the loop state, which is rewritten at every launch, separates
-# them. A state file without it predates this and falls back to the prefix.
-runid8="${fm_session:0:8}"
-run_tok="$(printf '%s' "$(fm started_at)" | sed -n 's/.*T\([0-9][0-9]\):\([0-9][0-9]\):\([0-9][0-9]\).*/\1\2\3/p')"
-if [ -n "$run_tok" ]; then
-  runid8="$runid8-$run_tok"
-fi
 next=$((iter + 1))
 if [ -f "$root/JOURNAL.md" ]; then
   if ! grep -qF -- "## iter $iter/$max | $runid8" "$root/JOURNAL.md"; then
@@ -333,17 +432,28 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
   fi
 fi
 
+# The extension is granted by the same rewrite that advances the counter, so
+# the new budget is on the state file before anything reads it: the iteration
+# suffix, the run-state note, and the next turn's budget test all see max+2.
+if [ -n "$extension" ]; then
+  max=$((max + 2))
+fi
+
 tmp="$state.tmp"
 # The rewriter owns the keys it names and prints every other line verbatim,
 # so the schema is additive: a state file carrying keys this version never
-# heard of survives the re-feed untouched. extension_granted and a rewritable
-# max_iterations are reserved on that path for the 1.5.0 closing extension.
+# heard of survives the re-feed untouched. max_iterations and
+# extension_granted are owned only on the re-feed that grants the extension;
+# on every ordinary re-feed they fall through to the verbatim print, because a
+# max_iterations rewritten unconditionally would re-extend the run every turn.
 # archive_migrated rides along with the strict archive baseline it certifies:
 # the baseline this rewrite stores is strict, so the naive escape above has
 # done its one job and must never be taken again.
-if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v la="$cur_archive" '
-  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1" } print; next }
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v la="$cur_archive" -v mx="$max" -v ex="$extension" '
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (ex && !sex) print "extension_granted: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
+  fmc == 1 && ex && /^max_iterations: / { print "max_iterations: " mx; next }
+  fmc == 1 && ex && /^extension_granted: / { print "extension_granted: 1"; sex = 1; next }
   fmc == 1 && /^last_head: / { print "last_head: " lh; slh = 1; next }
   fmc == 1 && /^last_backlog: / { print "last_backlog: " lb; slb = 1; next }
   fmc == 1 && /^stall: / { print "stall: " sf; ssf = 1; next }
@@ -370,6 +480,26 @@ if [ -n "$hygiene" ]; then
 fi
 if [ -n "$stall_note" ]; then
   reason="$reason STALL: $stall_note."
+fi
+if [ -n "$extension" ]; then
+  reason="$reason CLOSING EXTENSION: one-time +2 iterations granted because only the convergence sequence remains. No further extension will be granted."
+fi
+# The run-state note closes the reason, after the evidence the other notes
+# carry: it is the arithmetic, not a finding. Fields the hook could not count
+# are absent rather than guessed.
+run_state="RUN STATE: iteration $next of $max; $((max - next)) remain after it"
+if [ -n "$open_now" ]; then
+  run_state="$run_state; open tasks Now $open_now Next $open_next Later $open_later"
+fi
+if [ -n "$unswept_rows" ]; then
+  run_state="$run_state; unswept rows $unswept_rows"
+fi
+reason="$reason $run_state."
+# An empty ledger over a swept surface is not a finished run: the closing
+# audit, the evaluator gate and the declaration are still to come, and runs
+# that did not know that spent their last iterations discovering it.
+if [ "$open_now" = "0" ] && [ "$open_next" = "0" ] && [ "$open_later" = "0" ] && [ "$unswept_rows" = "0" ]; then
+  reason="$reason Only the convergence sequence remains; it typically needs 2 to 3 iterations (closing audit, evaluator gate, declaration); plan the remaining $((max - next)) accordingly."
 fi
 jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'
 exit 0

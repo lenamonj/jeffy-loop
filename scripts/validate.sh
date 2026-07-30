@@ -582,7 +582,11 @@ if command -v jq >/dev/null 2>&1; then
     }
     hb_write_journal() { # $1 iteration, $2 max - heading for harness session sess-1
       # Run token 000000 comes from the harness started_at of 2026-01-01T00:00:00Z.
-      printf '# Journal\n\n## iter %s/%s | sess-1-000000 | 2026-01-01 | T1 | done\n\nTask: t.\n' "$1" "$2" > "$hb_proj/JOURNAL.md"
+      # The entry records a passing evaluator verdict because most fixtures
+      # below declare convergence on it, and from 1.5.0 a closing entry that
+      # states no verdict is itself the violation. The cases that exercise
+      # that check write their own journals with hb_write_journal_entries.
+      printf '# Journal\n\n## iter %s/%s | sess-1-000000 | 2026-01-01 | T1 | done\n\nTask: t.\nVerification: Evaluator: PASS - clean sweep.\n' "$1" "$2" > "$hb_proj/JOURNAL.md"
     }
     hb_write_backlog() { # $1 optional open task line, $2 optional Converged line
       {
@@ -1653,6 +1657,420 @@ if command -v jq >/dev/null 2>&1; then
     else
       printf '%s\n' "$hb_out"
       fault "stop hook dropped an additive state key on the re-feed"
+    fi
+
+    # --- v1.5.0 Phase 2 expectations (E3, E4, E5) ------------------------
+    # Run-state telemetry on every re-feed, the one-time closing extension,
+    # and a machine-checked evaluator verdict at the declaration. Written
+    # before the hook changes that satisfy them, so most are red against the
+    # Phase 1 hook by design. Each names the corpus loss it exists to
+    # prevent.
+
+    # The telemetry counts open rows per section, so the ledger fixture has
+    # to differ per section and hb_write_backlog only fills Now. The closed
+    # row in each section is the discriminator: a count that reads every
+    # list line rather than the open ones gets a different answer.
+    hb_write_backlog_counts() { # $1 open in Now, $2 open in Next, $3 open in Later
+      {
+        printf '# Backlog\n\n'
+        hb_sec=1
+        for hb_n in "$1" "$2" "$3"; do
+          case "$hb_sec" in
+            1) printf '## Now\n\n' ;;
+            2) printf '## Next\n\n' ;;
+            3) printf '## Later\n\n' ;;
+          esac
+          hb_i=1
+          while [ "$hb_i" -le "$hb_n" ]; do
+            printf -- '- [ ] S%s%s: open task\n' "$hb_sec" "$hb_i"
+            hb_i=$((hb_i + 1))
+          done
+          printf -- '- [x] S%sD: closed task\n\n' "$hb_sec"
+          hb_sec=$((hb_sec + 1))
+        done
+        printf '## Converged\n\n'
+      } > "$hb_proj/BACKLOG.md"
+    }
+
+    # E3: the model reads the last three journal entries and owns no
+    # arithmetic, so the budget is felt rather than computed - "the budget
+    # arithmetic should have been done at iteration 7, not felt at iteration
+    # 9" (pyportfolioopt), and dayjs run 7 spent three iterations on four
+    # tasks it was already arithmetically short of. The hook holds every
+    # number involved and states them on every re-feed.
+    hb_write_journal 1 3
+    hb_write_backlog_counts 2 1 0
+    hb_write_plan_full none \
+      '- [ ] alpha: unswept' \
+      '- [ ] beta: unswept' \
+      '- [ ] gamma: unswept' \
+      '- [x] delta: swept at abc1234 - all entry points probed' \
+      '- [~] epsilon: unreachable on this host - no arm64 runner'
+    hb_write_state sess-1 1 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 2 of 3; 1 remain after it' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'open tasks Now 2 Next 1 Later 0' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'unswept rows 3' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook states the run arithmetic on a mid-budget re-feed (iterations, open tasks per section, unswept rows)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook re-fed without the RUN STATE telemetry (the model owns the budget arithmetic again)"
+    fi
+
+    # The endgame is the case the telemetry exists for: an empty ledger and
+    # a swept inventory still need two to three iterations of ceremony, and
+    # a run that does not know that spends them and dies mid-declaration.
+    hb_write_backlog_counts 0 0 0
+    hb_write_plan_full none \
+      '- [x] delta: swept at abc1234 - all entry points probed' \
+      '- [~] epsilon: unreachable on this host - no arm64 runner'
+    hb_write_state sess-1 1 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'unswept rows 0' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Only the convergence sequence remains' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'plan the remaining 1 accordingly'; then
+      pass "stop hook names the convergence sequence when the ledger is empty and every row is swept"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook left the endgame cost unstated on an empty ledger"
+    fi
+
+    # Telemetry is an accounting aid, never a gate: a project missing the
+    # files it counts from re-feeds exactly as before, with the fields it
+    # could not compute simply absent.
+    rm -f "$hb_proj/BACKLOG.md" "$hb_proj/PLAN.md"
+    hb_write_state sess-1 1 3
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 2 of 3; 1 remain after it' \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'open tasks' \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'unswept rows' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook omits the telemetry fields it cannot compute without BACKLOG.md or PLAN.md (re-feed unchanged)"
+    else
+      printf '%s\n' "$hb_out"
+      cat "$hb_tmp/hb_err.txt"
+      fault "stop hook let missing telemetry sources change the re-feed"
+    fi
+
+    # E4: six of fourteen dayjs and pyportfolioopt runs died at the tail
+    # with the work done and only the declaration outstanding. When the
+    # ledger is empty and the inventory swept, the run is inside the
+    # convergence sequence, and the hook grants it two more iterations -
+    # once, mechanically, on conditions it already computes.
+    hb_write_journal 3 3
+    hb_write_backlog_counts 0 0 0
+    hb_write_plan_full none \
+      '- [x] core: swept at abc1234 - all entry points probed' \
+      '- [~] plots: unreachable on this host - no display'
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CLOSING EXTENSION' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'This is jeffy iteration 4 of 5' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 4 of 5; 1 remain after it' \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION HYGIENE' \
+      && grep -q '^iteration: 4$' "$hb_state" \
+      && grep -q '^max_iterations: 5$' "$hb_state" \
+      && grep -q '^extension_granted: 1$' "$hb_state"; then
+      pass "stop hook grants the one-time closing extension at budget exhaustion with an empty ledger and a swept inventory"
+    else
+      printf '%s\n' "$hb_out"
+      grep '^iteration: \|^max_iterations: \|^extension_granted: ' "$hb_state" 2>/dev/null
+      fault "stop hook ended a run that had only its convergence sequence left"
+    fi
+
+    # The bound: the flag is the whole of it. A run that already took its
+    # extension ends at the new budget exactly the way it ended at the old
+    # one, so the escape cannot be taken twice.
+    hb_write_state_extra sess-1 3 3 'extension_granted: 1'
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook ends the run at budget exhaustion when the closing extension was already granted"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook granted a second closing extension"
+    fi
+
+    # The conditions: an open task or an unswept row means the run is not
+    # in its convergence sequence, and the budget is the budget.
+    hb_write_backlog_counts 1 0 0
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook ends the run at budget exhaustion while a task is still open (no extension)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook extended a run that still had open tasks"
+    fi
+
+    hb_write_backlog_counts 0 0 0
+    hb_write_plan_full none \
+      '- [x] core: swept at abc1234 - all entry points probed' \
+      '- [ ] plots: unswept'
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook ends the run at budget exhaustion while the Surface inventory lists an unswept row (no extension)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook extended a run with unswept surface"
+    fi
+
+    # The once-only flag is written by the rewriter at the frontmatter close,
+    # so a state file that never closes its frontmatter cannot record it: the
+    # conditions stay true, the budget climbs by two every second turn, and
+    # nothing ever accumulates to stop it. Every other condition here is the
+    # accepting one, so the case turns on the missing second --- alone.
+    hb_write_backlog_counts 0 0 0
+    hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
+    {
+      printf -- '---\n'
+      printf 'session_id: sess-1\n'
+      printf 'iteration: 3\n'
+      printf 'max_iterations: 3\n'
+      printf 'prompt_path: %s\n' "$hb_tmp/prompt.txt"
+      printf 'focus: speed\n'
+      printf 'completion_promise: JEFFY CONVERGED\n'
+      printf 'started_at: 2026-01-01T00:00:00Z\n'
+      printf 'Jeffy loop state.\n'
+    } > "$hb_state"
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook ends the run at budget exhaustion on a state file whose frontmatter never closes (no extension)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook granted a closing extension it could never record as granted"
+    fi
+
+    # The grant belongs to the budget boundary, not to everything past it. A
+    # hand-lowered budget leaves the iteration already beyond max, and an
+    # extension there re-feeds arithmetic that runs negative ("-5 remain
+    # after it") straight to the model. Ending the run says nothing at all,
+    # which is what the stderr and stdout assertions below check.
+    hb_write_state sess-1 10 5
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+      && ! grep -q -- '-[0-9]' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook ends the run when the iteration is already past max (no extension, no negative arithmetic)"
+    else
+      printf '%s\n' "$hb_out"
+      cat "$hb_tmp/hb_err.txt"
+      fault "stop hook extended a run whose iteration had already passed its budget"
+    fi
+
+    # The near-death shape bat actually died of: the promise fires at the
+    # last iteration and a check rejects it, so today the run ends with the
+    # rejection on stderr and nobody to read it. The violation and the
+    # extension ride the same re-feed.
+    if command -v timeout >/dev/null 2>&1; then
+      hb_write_journal 3 3
+      hb_write_backlog_counts 0 0 0
+      hb_write_plan_full 'exit 3' '- [x] core: swept at abc1234 - all entry points probed'
+      hb_write_state sess-1 3 3
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 3' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CLOSING EXTENSION' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 4 of 5' \
+        && ! grep -q 'budget is spent' "$hb_tmp/hb_err.txt" \
+        && grep -q '^iteration: 4$' "$hb_state" \
+        && grep -q '^max_iterations: 5$' "$hb_state" \
+        && grep -q '^extension_granted: 1$' "$hb_state"; then
+        pass "stop hook grants the closing extension when a promise is rejected at the last iteration (violation rides the re-feed)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt"
+        fault "stop hook discarded a repairable convergence rejection at the budget"
+      fi
+    else
+      echo "[SKIP] closing extension on the rejected-promise path (coreutils timeout not on PATH)"
+    fi
+
+    # E8 round trip: the extension writes two keys the rewriter now owns,
+    # and every ordinary re-feed after it must leave both exactly as it
+    # found them. A max_iterations the rewriter rewrites unconditionally
+    # would extend the run again on every turn.
+    hb_write_journal 3 3
+    hb_write_backlog_counts 0 0 0
+    hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    hb_out2=""
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^max_iterations: 5$' "$hb_state"; then
+      hb_write_journal 4 5
+      hb_out2="$(hb_run sess-1 'still working' '')"
+    fi
+    if [ -n "$hb_out2" ] \
+      && [ "$(printf '%s' "$hb_out2" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out2" | jq -r '.reason' | grep -qF 'CLOSING EXTENSION' \
+      && printf '%s' "$hb_out2" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 5 of 5; 0 remain after it' \
+      && grep -q '^iteration: 5$' "$hb_state" \
+      && grep -q '^max_iterations: 5$' "$hb_state" \
+      && grep -q '^extension_granted: 1$' "$hb_state"; then
+      pass "stop hook carries the granted extension through later re-feeds untouched (only the iteration advances)"
+    else
+      printf '%s\n%s\n' "$hb_out" "$hb_out2"
+      grep '^iteration: \|^max_iterations: \|^extension_granted: ' "$hb_state" 2>/dev/null
+      fault "stop hook did not round-trip max_iterations and extension_granted after granting the extension"
+    fi
+    rm -f "$hb_state"
+
+    # E5: the hook contains no notion of the evaluator gate, and six of
+    # thirteen corpus convergences carried no evaluator verdict at all. The
+    # gate is where the audits' misses were found, so the declaration is
+    # where its verdict is read. Needs a repository: the promise path only
+    # means something where the Converged hash can name a commit.
+    if command -v git >/dev/null 2>&1; then
+      hb_saved_proj="$hb_proj"; hb_saved_state="$hb_state"
+      hb_proj="$hb_tmp/p2proj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      mkdir -p "$hb_proj/.claude"
+      hb_git init -q -b main
+      printf 'v1\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null
+      hb_git commit -q -m c1
+      hb_p2_c1="$(hb_git rev-parse HEAD)"
+      hb_p2_row='- [x] core: swept at abc1234 - all entry points probed'
+      # Everything except the journal is held at the accepting shape, so
+      # each case below turns on the closing entry alone.
+      hb_p2_fixture() {
+        hb_write_state sess-1 2 3
+        hb_write_plan_full 'exit 0' "$hb_p2_row"
+        hb_write_backlog '' "Converged: $hb_p2_c1 - 2026-01-01"
+      }
+
+      # The earlier entry carries a PASS and the closing entry does not, so
+      # a check that greps the file rather than the closing entry accepts a
+      # declaration the gate never saw.
+      hb_write_journal_entries \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: Evaluator: PASS - clean sweep.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | T2 | done:::Verification: the suite is green.'
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'records no Evaluator verdict' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook rejects a declaration whose closing entry records no Evaluator verdict"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a convergence no evaluator gate ever answered"
+      fi
+
+      hb_write_journal_entries \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: audit only.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | T2 | converged:::Verification: Evaluator: PASS - ok'
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a declaration whose closing entry records Evaluator: PASS"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a declaration carrying a passing evaluator verdict"
+      fi
+
+      # ta recorded the gate unavailable twice under a session constraint
+      # that forbade sub-agents. A disclosed unavailability is a verdict;
+      # silence is not.
+      hb_write_journal_entries \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: audit only.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | T2 | converged:::Verification: Evaluator: unavailable (no sub-agents in this session)'
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a declaration recording Evaluator: unavailable with a reason"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a disclosed evaluator unavailability"
+      fi
+
+      # The ratchet never invokes the gate by design - it re-declares an
+      # already-converged tree - and yfinance's accepted ratchet
+      # re-declaration is the precedent the exemption is written from.
+      hb_write_journal_entries \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | SALVAGE | salvage:::Task: recovered the state files.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | RATCHET | converged:::Task: re-declared an unchanged tree.'
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook exempts a RATCHET closing entry from the evaluator requirement"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook demanded an evaluator verdict from a ratchet re-declaration"
+      fi
+
+      # Rotation is an additional entry, not a closing one: a closing
+      # iteration that pushes JOURNAL.md past 500 lines appends its ROTATION
+      # entry after the declaration, and a scan anchored at the last heading
+      # reads a window with no verdict in it and rejects a declaration that
+      # carries one. The anchor is the last primary entry.
+      hb_write_journal_entries \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: audit only.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | T2 | converged:::Verification: Evaluator: PASS - ok' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | ROTATION | rotation:::Task: moved 40 entries to JOURNAL-archive.md.'
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a declaration whose ROTATION entry lands after the closing entry's verdict"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a declaration because a rotation entry followed it"
+      fi
+
+      # The companion bound: skipping those headings must not invent an
+      # anchor where there is none. A run holding only rotation entries has
+      # no primary entry to read a verdict from, which is the rotated-away
+      # shape, and that fails open with the note rather than rejecting.
+      hb_write_journal_entries \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | ROTATION | rotation:::Task: moved 40 entries to JOURNAL-archive.md.'
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'skipping the evaluator check' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook fails open when this run's only journal entries are ROTATION entries"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt"
+        fault "stop hook rejected a declaration over a journal holding only rotation entries for this run"
+      fi
+
+      # Fail-open contract: an infrastructure defect skips the check with a
+      # stderr note, a discipline defect rejects. A missing journal and a
+      # journal holding no entry for this run (rotated, or a legacy run id)
+      # are both the former.
+      rm -f "$hb_proj/JOURNAL.md"
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'skipping the evaluator check' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook fails open on a missing JOURNAL.md at the evaluator check (stderr note)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt"
+        fault "stop hook mishandled a missing JOURNAL.md at the evaluator check"
+      fi
+
+      hb_write_journal_entries \
+        '## iter 9/9 | sess-9-999999 | 2026-01-01 | T9 | done:::Verification: an earlier run, rotated away.'
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'skipping the evaluator check' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook fails open when JOURNAL.md holds no entry for this run (rotated or legacy)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt"
+        fault "stop hook rejected a declaration over a journal carrying no entry for this run"
+      fi
+
+      hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
+    else
+      echo "[SKIP] evaluator-verdict scenarios (git not on PATH)"
     fi
 
     rm -rf "$hb_tmp"
