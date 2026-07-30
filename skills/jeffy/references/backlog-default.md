@@ -3,7 +3,8 @@
 Ledger, not narrative. Top unblocked item is next. Markers: [ ] open, [b] blocked.
 
 Rules:
-- One line per item: `- [ ] <ID> (<Severity>, <dimension>): <finding>. Acceptance: <runnable command or observable fact>.`
+- One line per item: `- [ ] <ID> (<Severity>, <class>, <dimension>): <finding>. Acceptance: <runnable command or observable fact>.`
+- Class is one of runtime, test, build-ci, docs, dev-tooling, chosen by the files the fix will touch; a line without one is read as runtime. Within a section, order by severity first, then runtime before the other classes.
 - A finished task is deleted from its section and recorded as one line in the JOURNAL entry that closed it. No done markers accumulate here.
 - Run context, audit scores, and DONE annotations live in JOURNAL.md only. No prose sections and no headings beyond the ones below, ever.
 

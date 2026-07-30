@@ -104,7 +104,15 @@ if [ -n "$promise" ]; then
         if [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
           violation="the ## Converged section of BACKLOG.md does not name a commit in this repository; append the Converged line for the certified checkpoint"
         else
-          nonstate="$(git -C "$root" diff --name-only "$conv_hash" HEAD 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md)$' | head -n 1)"
+          # .jeffy/ is loop memory too, so it joins the state files in the
+          # exclusion: a row's known-answer battery lives under
+          # .jeffy/probes/ and the checkpoints commit it, which makes a
+          # battery written or refreshed on the way to the declaration
+          # loop-state churn rather than a product change. Without this the
+          # run that kept its instruments fails the nothing-but-state test
+          # that the run which threw them away and rebuilt them passes, and
+          # the persistence the probes exist for costs a declaration.
+          nonstate="$(git -C "$root" diff --name-only "$conv_hash" HEAD 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*)$' | head -n 1)"
           if [ -n "$nonstate" ]; then
             violation="product path $nonstate changed after the Converged hash $conv_hash; certify the current tree before declaring"
           fi

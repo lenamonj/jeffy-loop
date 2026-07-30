@@ -117,8 +117,10 @@ fi
 #    (the templates and iteration prompt live under skills/jeffy/references).
 #    Guards the operating envelope, settled-classes ledger, ratchet,
 #    checkpoint, verify gate, promise discipline, and the rest of the prompt
-#    discipline against a silent regression in a future edit. Dependency-free
-#    (grep).
+#    discipline against a silent regression in a future edit. The hook and
+#    SKILL.md carry lists of their own, for the strings the reference text
+#    teaches the model to read and the launcher check nothing else asserts.
+#    Dependency-free (grep).
 gm_missing=0
 check_markers() {
   local file="$1"
@@ -152,11 +154,18 @@ check_markers skills/jeffy/references/plan-default.md \
   "a correctness check, not a liveness check" \
   "a comparable amount of surface" \
   "including underscore-private modules" \
-  "every documented parameter"
+  "every documented parameter" \
+  "- [~] <surface>: unreachable on this host" \
+  "cost: exceeds one iteration" \
+  ".jeffy/probes/" \
+  "scope line names the enumeration command" \
+  "recording its second occurrence is marked" \
+  "(<Severity>, <class>, <dimension>)"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
-  "## Converged"
+  "## Converged" \
+  "(<Severity>, <class>, <dimension>)"
 # Rotation must append. "Move all but the last 10 entries to JOURNAL-archive.md"
 # reads as "write the archive" to a model that has never seen one, and the
 # second rotation of a long run then destroys everything the first preserved -
@@ -165,7 +174,8 @@ check_markers skills/jeffy/references/backlog-default.md \
 check_markers skills/jeffy/references/journal-default.md \
   "Append-only." \
   "never overwriting it" \
-  "so two runs in one session are told apart"
+  "so two runs in one session are told apart" \
+  "or AUDIT or EVALUATOR or RATCHET"
 check_markers skills/jeffy/references/iteration-prompt.txt \
   "Salvage first:" \
   "Ratchet next:" \
@@ -189,7 +199,31 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "rows swept of rows total" \
   "never only run-without-crash probes" \
   "newly exposed rather than introduced" \
-  "whose value changes nothing"
+  "whose value changes nothing" \
+  "Run the gate while its verdict can still be answered:" \
+  "One transaction closes the run:" \
+  "copy the fixed files aside" \
+  "or a test run through head or tail" \
+  "or AUDIT or EVALUATOR or RATCHET" \
+  ".jeffy/probes/"
+# The hook's two named notes. The model is taught to read both by name - the
+# run-state arithmetic on every re-feed, the one-time closing extension at the
+# budget boundary - so the names are an interface, not internal wording, and
+# Phase 2 shipped them pinned by nothing but the behavior fixtures that write
+# them.
+check_markers skills/jeffy/hooks/stop-hook.sh \
+  "RUN STATE" \
+  "CLOSING EXTENSION"
+# The launch-time lint is the whole malformed-Verify-command class caught at
+# zero iteration cost: the hook's parser runs only on the convergence branch,
+# so without this check a line written at launch waits a whole run to fire.
+# Its placeholder exemption is pinned too: the bootstrapped PLAN.md ships
+# `Command: <first audit fills this in>`, which no sanitation makes parse, so
+# a lint that reads the template's own line as a defect hard-stops every
+# relaunch whose first iteration was interrupted before the audit filled it.
+check_markers skills/jeffy/SKILL.md \
+  "Verify command lint:" \
+  "nor an unfilled \`<...>\` placeholder"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
@@ -229,6 +263,20 @@ if [ -f "$prompt_file" ]; then
     pass "evaluator gate marker appears exactly once (removing the gate fails check 6)"
   else
     fault "evaluator gate marker count is $ev_count, expected exactly 1 (check 6 loses its teeth)"
+  fi
+fi
+
+# 6d. The one-transaction exemption is the single crack in one task per
+#     iteration and it exists on the convergence path alone. Check 6 proves the
+#     clause is present; a second copy of it anywhere else in the prompt reads
+#     as a general licence to batch, which is the discipline the exemption was
+#     carved out of, and check 6 would stay green through it. Exactly one.
+if [ -f "$prompt_file" ]; then
+  ot_count="$(grep -oF -- "One transaction closes the run:" "$prompt_file" | wc -l | tr -d '[:space:]')"
+  if [ "$ot_count" = "1" ]; then
+    pass "one-transaction exemption appears exactly once (the convergence path is its only home)"
+  else
+    fault "one-transaction exemption count is $ot_count, expected exactly 1 (a second copy licenses batching)"
   fi
 fi
 
@@ -2071,6 +2119,64 @@ if command -v jq >/dev/null 2>&1; then
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
       echo "[SKIP] evaluator-verdict scenarios (git not on PATH)"
+    fi
+
+    # --- v1.5.0 Phase 3 expectations (P8) --------------------------------
+    # A row's known-answer battery lives under .jeffy/probes/ and the
+    # checkpoints commit it, so the converged-tree check has to read it as
+    # loop memory the way it reads the ledger files. Otherwise the run that
+    # kept its instruments fails the nothing-but-state test that the run
+    # which threw them away and rebuilt them passes - pyportfolioopt and
+    # quantstats each rebuilt a battery a prior session already had.
+    if command -v git >/dev/null 2>&1; then
+      hb_saved_proj="$hb_proj"; hb_saved_state="$hb_state"
+      hb_proj="$hb_tmp/p3proj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      mkdir -p "$hb_proj/.claude" "$hb_proj/.jeffy/probes"
+      hb_git init -q -b main
+      printf 'v1\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null
+      hb_git commit -q -m c1
+      hb_p3_c1="$(hb_git rev-parse HEAD)"
+      hb_p3_row='- [x] core: swept at abc1234 - all entry points probed'
+
+      # The closing checkpoint: a probe battery and the state files, nothing
+      # else, committed after the hash the Converged line certifies.
+      hb_write_journal 1 3
+      hb_write_plan_full none "$hb_p3_row"
+      hb_write_backlog '' "Converged: $hb_p3_c1 - 2026-01-01"
+      printf '#!/bin/sh\nexit 0\n' > "$hb_proj/.jeffy/probes/x.sh"
+      hb_git add PLAN.md BACKLOG.md JOURNAL.md .jeffy >/dev/null
+      hb_git commit -q -m probes-and-state
+      hb_write_state sess-1 1 3
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a commit after the Converged hash touching only .jeffy probes and state files"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a committed probe battery as a product change"
+      fi
+
+      # The companion bound: excluding .jeffy/ excuses the probes, never the
+      # tree around them. A commit carrying a refreshed battery and a source
+      # edit is still an uncertified tree, and the violation names the source.
+      printf 'v2\n' > "$hb_proj/product.txt"
+      printf '#!/bin/sh\nexit 0\n# refreshed\n' > "$hb_proj/.jeffy/probes/x.sh"
+      hb_git add product.txt .jeffy >/dev/null
+      hb_git commit -q -m probe-and-product
+      hb_write_state sess-1 1 3
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'product.txt changed after the Converged hash' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook still rejects a product path changed alongside a committed probe battery"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let the .jeffy exclusion excuse a product change"
+      fi
+
+      hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
+    else
+      echo "[SKIP] probe-battery converged-tree scenarios (git not on PATH)"
     fi
 
     rm -rf "$hb_tmp"
