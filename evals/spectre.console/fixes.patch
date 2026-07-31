@@ -1,0 +1,28 @@
+diff --git a/src/Spectre.Console/Widgets/Panel.cs b/src/Spectre.Console/Widgets/Panel.cs
+index ba8af55..6e9fbc1 100644
+--- a/src/Spectre.Console/Widgets/Panel.cs
++++ b/src/Spectre.Console/Widgets/Panel.cs
+@@ -92,9 +92,22 @@ public sealed class Panel : Renderable, IHasBoxBorder, IHasBorder, IExpandable,
+                 constrainedWidth);
+         }
+ 
++        var maxPanelWidth = childWidth.Max + edgeWidth;
++
++        if (Width == null && Header?.Text != null)
++        {
++            // The header renders through a Rule with TitlePadding 1 and no
++            // spacing, so showing it in full needs the title width plus two
++            // border cells and two padding cells. Only the natural width
++            // grows: an explicit Width, Expand, or a narrower maxWidth still
++            // collapse the header as before.
++            var headerWidth = ((IRenderable)new Markup(Header.Text)).Measure(options, maxWidth).Max + 4;
++            maxPanelWidth = Math.Max(maxPanelWidth, Math.Min(headerWidth, maxWidth));
++        }
++
+         return new Measurement(
+             childWidth.Min + edgeWidth,
+-            childWidth.Max + edgeWidth);
++            maxPanelWidth);
+     }
+ 
+     /// <inheritdoc/>

@@ -98,6 +98,7 @@ Ordered by severity of findings, most severe first.
 | [yfinance](evals/yfinance/REPORT.md) | 24,837 | Python | 9 | **converged** | [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | closed a High that upstream's own failing test was advertising |
 | [speedtest-cli](evals/speedtest-cli/REPORT.md) | 14,080 | Python | 5 | **converged** | - | the restraint case: small findings, nothing invented |
 | [chalk](evals/chalk/REPORT.md) | 23,288 | JavaScript | 8 | **converged** | **[FIX MERGED](https://github.com/chalk/chalk/pull/687)** | the control: one Medium found - fixed upstream, shipped in chalk v6.0.0 |
+| [Spectre.Console](evals/spectre.console/REPORT.md) | 11,567 | C# | 8 | **converged** | - | a panel header wider than its content was dropped, not truncated - invisible to 3,618 tests |
 | [gson](evals/gson/REPORT.md) | 24,229 | Java | 2 | **converged** | - | the fastest run: one audit, one gate, one priced-and-declined Low, not a line changed |
 | [RuboCop](evals/rubocop/REPORT.md) | 12,892 | Ruby | 7 | **converged** | - | the null result: every cop department swept, the last 20 commits re-proven, zero findings, zero lines changed |
 | [PapaParse](evals/papaparse/REPORT.md) | 13,532 | JavaScript | - | *audit* | [4 PRs open](https://github.com/mholt/PapaParse/issues/1132) | four Highs in the streaming path; conversion waits on four open PRs |
@@ -195,6 +196,14 @@ Dormant since 2021 but fundamentally sound, where the honest outcome is small fi
 <br>
 
 One of the best-maintained small libraries alive, chosen to test whether the loop invents problems where there are none. The core survived clean: correctness, security and architecture all scored None on first pass, vendored code was declined rather than churned, and a semver-major engines bump was routed to the owner instead of seized. The audit still had teeth, surfacing one genuine reproduced Medium - `ansi256` skips level downconversion, contradicting the readme's promise. Findings were disclosed upstream with repros and a PR offer in [chalk/chalk#686](https://github.com/chalk/chalk/issues/686) - a chalk contributor reproduced it independently and called it surprising that it had not surfaced sooner given how heavily chalk is used, the project owner then wrote and merged [#687](https://github.com/chalk/chalk/pull/687) implementing exactly that fix, and it **shipped in [chalk v6.0.0](https://github.com/chalk/chalk/releases/tag/v6.0.0)**.
+
+</details>
+
+<details>
+<summary><b>spectreconsole/spectre.console</b> - the header that vanished instead of truncating</summary>
+<br>
+
+The .NET console-rendering library, and the eighth language in this set. Eight iterations, converged, with **one genuine Medium**: `Panel.Measure` never accounted for the header's width, and the header renders through a `Rule` that discards a title it cannot fit - so `new Panel("x").Header("HDR")` produced a panel with **no header at all**, dropped rather than truncated. It survived a **3,618-test suite** because every header test used content wider than the header, or a constrained width where truncation is the intended result; the unconstrained case where the header is the widest element had no test, and the run's surface inventory is what pointed at it. The fix is **14 insertions and 1 deletion in one file** and it is verified in this receipt against pristine upstream rather than the loop's own tree: the regression test fails on the upstream commit and passes with the patch, with **753 tests green and not one existing snapshot altered** - including `Render_Header_Collapse`, which asserts the collapse behavior that an explicit width, `Expand`, or a narrow parent must still produce. The run's other 22 inventory rows came back clean against 22 committed known-answer batteries, and the receipt calls that thin yield what it is. The adversarial evaluator ran 19 edge probes of its own - markup headers, CJK width, boundary-fit cases - before countersigning.
 
 </details>
 
