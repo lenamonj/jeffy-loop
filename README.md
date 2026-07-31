@@ -357,9 +357,9 @@ Each rule is enforced by the iteration prompt, the state files, or the Stop hook
 - `focus` - optional directive for the run, e.g. `/jeffy 8 test coverage and error handling`.
 
 ```
-/jeffy            # 10 iterations, full-spectrum improvement
-/jeffy 5          # 5 iterations
-/jeffy 12 accessibility and performance
+/jeffy                                     # 10 iterations, full-spectrum improvement
+/jeffy 5                                   # 5 iterations
+/jeffy 12 accessibility and performance    # 12 iterations with a focus directive
 ```
 
 **Scoped mode.** By default `/jeffy` runs in Improvement mode: an open-ended audit-and-fix loop. To run it against a concrete target instead, edit `PLAN.md` - replace the Goal and Definition of done with the target, seed `BACKLOG.md` with the finite tasks, then run `/jeffy`. Everything else (envelope, verify gate, checkpoints, journal, report) behaves the same.
