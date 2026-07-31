@@ -103,7 +103,7 @@ Ordered by severity of findings, most severe first.
 | [Spectre.Console](evals/spectre.console/REPORT.md) | 11,567 | C# | 8 | **converged** | [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | a panel header wider than its content was dropped, not truncated - invisible to 3,618 tests |
 | [gson](evals/gson/REPORT.md) | 24,229 | Java | 2 | **converged** | - | the fastest run: one audit, one gate, one priced-and-declined Low, not a line changed |
 | [RuboCop](evals/rubocop/REPORT.md) | 12,892 | Ruby | 7 | **converged** | - | the null result: every cop department swept, the last 20 commits re-proven, zero findings, zero lines changed |
-| [python-dotenv](evals/python-dotenv/REPORT.md) | 8,830 | Python | 38 | *not converged* | - | 25 findings closed over four runs, and every audit still finds more; suite 220 to 461 |
+| [python-dotenv](evals/python-dotenv/REPORT.md) | 8,830 | Python | 38 | *not converged* | [PR open](https://github.com/theskumar/python-dotenv/pull/678) | 25 findings closed over four runs, and every audit still finds more; suite 220 to 461 |
 | [PapaParse](evals/papaparse/REPORT.md) | 13,532 | JavaScript | - | *audit* | [4 PRs open](https://github.com/mholt/PapaParse/issues/1132) | four Highs in the streaming path; conversion waits on four open PRs |
 
 <details>
