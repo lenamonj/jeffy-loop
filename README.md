@@ -21,6 +21,16 @@ Run `/jeffy 10` and walk away. Jeffy maps your project's whole public surface, a
 
 It has receipts. Widely used open-source libraries have been run to convergence, surfacing shipped, reproducible bugs - many hiding behind green test suites. [The receipts are below.](#external-validation-public-open-source-projects)
 
+<div align="center">
+
+![Jeffy Loop vs a raw prompt loop - the head-to-head](media/jeffy-vs-raw-loop.gif)
+
+<sub>The head-to-head vs a raw prompt loop. Every row is a guarantee you can verify in the code: the engine is <code>skills/jeffy/hooks/stop-hook.sh</code>, the discipline is <code>skills/jeffy/references/iteration-prompt.txt</code>, and the receipts live under <a href="evals/"><code>evals/</code></a>. <a href="media/jeffy-vs-raw-loop.mp4">Watch in HD</a>.</sub>
+
+</div>
+
+Jeffy Loop descends from Geoffrey Huntley's [Ralph technique](https://ghuntley.com/ralph/) - the insight that a coding agent re-fed one prompt in a loop compounds into real work. The head-to-head above is engine versus method: the raw loop is the engine pattern Jeffy is built on, and Jeffy is the engineering method wrapped around it. The method distills what the people running loops at scale have published - Anthropic's [Claude Code best practices](https://code.claude.com/docs/en/best-practices) and [Boris Cherny's public workflow](https://x.com/bcherny/status/2007179832300581177): give the agent a check it can run, one task at a time, promote every hard-won lesson into a file the next run reads, and prefer small fresh-context runs over one long one.
+
 ## Quickstart
 
 You need exactly two things. The installer handles everything else, including `jq`.
@@ -119,16 +129,6 @@ The installer verifies the Claude Code CLI and `jq` (offering to install it via 
 - **The stop is machine-checked, and the machine is tested.** The Stop hook - plain shell, not a model - refuses the converged stop unless the backlog is empty, the Converged commit still certifies the tree, no inventory row is unswept, and the project's own verify command exits green when the hook re-runs it. A failed check re-feeds the loop with the evidence, and when the budget expires with the ledger empty and the surface swept - the shape where runs used to die with the work done - the hook grants one +2 closing extension, once per run, so the convergence sequence has room to finish. The engine itself is held to **119 behavioural checks** on each CI leg, Linux and Windows, with a shellcheck lint pass riding the Linux leg on top.
 
 - **It stops on purpose, and it shows its work.** Budget spent, convergence reached, progress stalled, or a decision only you can make - the loop ends itself and says why, instead of burning budget spinning. The run report lists iterations used, tasks closed with severities, the diffstat, anything blocked, and decisions waiting on you; an append-only journal and the checkpoint commits hold the full, greppable record.
-
-<div align="center">
-
-![Jeffy Loop vs a raw prompt loop - the head-to-head](media/jeffy-vs-raw-loop.gif)
-
-<sub>The head-to-head vs a raw prompt loop. Every row is a guarantee you can verify in the code: the engine is <code>skills/jeffy/hooks/stop-hook.sh</code>, the discipline is <code>skills/jeffy/references/iteration-prompt.txt</code>, and the receipts live under <a href="evals/"><code>evals/</code></a>. <a href="media/jeffy-vs-raw-loop.mp4">Watch in HD</a>.</sub>
-
-</div>
-
-Jeffy Loop descends from Geoffrey Huntley's [Ralph technique](https://ghuntley.com/ralph/) - the insight that a coding agent re-fed one prompt in a loop compounds into real work. The head-to-head above is engine versus method: the raw loop is the engine pattern Jeffy is built on, and Jeffy is the engineering method wrapped around it. The method distills what the people running loops at scale have published - Anthropic's [Claude Code best practices](https://code.claude.com/docs/en/best-practices) and [Boris Cherny's public workflow](https://x.com/bcherny/status/2007179832300581177): give the agent a check it can run, one task at a time, promote every hard-won lesson into a file the next run reads, and prefer small fresh-context runs over one long one.
 
 ## External Validation: Public Open-Source Projects
 
