@@ -28,12 +28,24 @@ You need exactly two things. The installer handles everything else, including `j
 1. **[Claude Code](https://claude.com/claude-code)** - installed and signed in once
 2. **[git](https://git-scm.com/downloads)** - confirm with `git --version`
 
-No git yet? One command:
+No git yet? One command for your platform:
+
+**Windows**
+
+```powershell
+winget install Git.Git
+```
+
+**macOS**
 
 ```bash
-winget install Git.Git      # Windows
-brew install git            # macOS
-sudo apt-get install git    # Debian/Ubuntu
+brew install git
+```
+
+**Debian/Ubuntu**
+
+```bash
+sudo apt-get install git
 ```
 
 Install Jeffy:
@@ -44,17 +56,21 @@ cd jeffy-loop
 ./install.sh        # Windows PowerShell: .\install.ps1
 ```
 
-Then open Claude Code in the project you want to improve and type `/jeffy 10`.
+> [!NOTE]
+> If PowerShell blocks the installer with "running scripts is disabled on this system", run it once with `powershell -ExecutionPolicy Bypass -File .\install.ps1` - the bypass applies to that single invocation only.
 
-When that run ends, close the session and start a new one to run it again. That restart is doing real work, and [why is worth two minutes](#use-several-short-runs-not-one-long-one).
+Then open Claude Code in the project you want to improve and type `/jeffy 10`.
 
 > [!TIP]
 > `/jeffy` is a slash command inside the Claude Code session, not a shell command.
 
-> [!NOTE]
-> If PowerShell blocks the installer with "running scripts is disabled on this system", run it once with `powershell -ExecutionPolicy Bypass -File .\install.ps1` - the bypass applies to that single invocation only.
+When that run ends, close the session and start a new one to run it again. That restart is doing real work, and [why is worth two minutes](#use-several-short-runs-not-one-long-one).
 
-The installer verifies the Claude Code CLI and `jq` (offering to install it via winget, Homebrew, or apt), copies the `/jeffy` and `/cancel-jeffy` skills - engine included - to `~/.claude/skills`, and registers the loop's hook in `~/.claude/settings.json`. Every step prints an [OK] or the exact fix. Re-running is always safe: it skips what is installed, upgrades in place, and never duplicates the hook registration. To update, `git pull` and re-run the installer - upgrades also refresh the hook's registered timeout. To uninstall, delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy` and remove the hook entry from `~/.claude/settings.json`.
+The installer verifies the Claude Code CLI and `jq` (offering to install it via winget, Homebrew, or apt), copies the `/jeffy` and `/cancel-jeffy` skills - engine included - to `~/.claude/skills`, and registers the loop's hook in `~/.claude/settings.json`. Every step prints an [OK] or the exact fix.
+
+- **Re-run** - always safe: it skips what is installed, upgrades in place, and never duplicates the hook registration.
+- **Update** - `git pull`, then re-run the installer; upgrades also refresh the hook's registered timeout.
+- **Uninstall** - delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy`, and remove the hook entry from `~/.claude/settings.json`.
 
 <div align="center">
 
@@ -99,10 +115,10 @@ Every run used a local clone, nothing was pushed upstream without a filed issue 
 
 Each receipt below is a full `/jeffy` loop run that converged, with two deliberate exceptions kept in the table rather than hidden: PapaParse, an audit under the same method whose loop conversion waits on four open upstream PRs, and python-dotenv, where four runs closed 25 findings and still have not earned the clean closing audit convergence requires. A method that always converges is not measuring anything. The standard tightened as the engine matured. The earliest runs converged on a clean closing audit and an empty backlog, later runs under the shell-enforced converged stop, and the most recent under the adversarial evaluator's countersignature. Each receipt states which standard its run met, so none of this requires taking our word for it.
 
-Ordered by severity of findings, most severe first.
+<sub>Ordered by severity of findings, most severe first.</sub>
 
 | Project | Stars | Language | Iterations | Run | Upstream | Headline |
-|---|---|---|---|---|---|---|
+|:---|---:|:---|---:|:---|:---|:---|
 | [quantstats](evals/quantstats/REPORT.md) | 7,489 | Python | 40 | **converged** | [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | 29 findings behind 125 green tests; the library ended smaller than it started |
 | [fasthttp](evals/fasthttp/REPORT.md) | 23,422 | Go | 58 | **converged** | [PR open](https://github.com/valyala/fasthttp/pull/2343) | 31 findings in a tagged release; a Content-Length no parser should accept became a wrong number |
 | [records](evals/records/REPORT.md) | 7,220 | Python | 7 | **converged** | [issue filed](https://github.com/kennethreitz/records/issues/236) | four High data-loss bugs behind a green suite |
@@ -352,13 +368,13 @@ Each rule is enforced by the iteration prompt, the state files, or the Stop hook
 
 ## Good to know
 
-- One loop per project at a time. A crashed session can leave a stale state file behind; the skill detects it at launch and asks before cleaning up.
-- You can talk to the session mid-run: your message gets answered, then the loop resumes on its own. The turn counts against the budget.
-- Permission prompts pause the loop. For unattended runs, allowlist your test and file tools or use acceptEdits mode. Never allowlist push or force operations for a loop.
-- Budget counts turns, and a single turn is unbounded in time and cost - keep N small on a first run and watch it. Check spend anytime with `/cost`.
-- Prefer several small runs over one big one. Context accumulates across iterations within a run, and the state files carry everything between runs, so two runs of 5 beat one run of 10 - but the clean context only arrives with a new session. Close the session and start a fresh one in the same directory; nothing is lost.
-- Edit `PLAN.md` or `BACKLOG.md` between iterations, not mid-iteration; the Proposed section is the designed channel for decisions.
-- A `.jeffy/` directory appears at the root of a project the loop has swept: it holds the known-answer probe batteries a later sweep re-runs instead of rebuilding, and the checkpoints commit it on purpose - loop memory, exactly like the three state files. Only the transient loop state file is gitignored.
+- **One loop per project at a time.** A crashed session can leave a stale state file behind; the skill detects it at launch and asks before cleaning up.
+- **You can talk to the session mid-run.** Your message gets answered, then the loop resumes on its own. The turn counts against the budget.
+- **Permission prompts pause the loop.** For unattended runs, allowlist your test and file tools or use acceptEdits mode. Never allowlist push or force operations for a loop.
+- **Budget counts turns, and a single turn is unbounded in time and cost.** Keep N small on a first run and watch it. Check spend anytime with `/cost`.
+- **Prefer several small runs over one big one.** Context accumulates across iterations within a run, and the state files carry everything between runs, so two runs of 5 beat one run of 10 - but the clean context only arrives with a new session. Close the session and start a fresh one in the same directory; nothing is lost.
+- **Edit `PLAN.md` or `BACKLOG.md` between iterations, not mid-iteration.** The Proposed section is the designed channel for decisions.
+- **A `.jeffy/` directory appears at the root of a project the loop has swept.** It holds the known-answer probe batteries a later sweep re-runs instead of rebuilding, and the checkpoints commit it on purpose - loop memory, exactly like the three state files. Only the transient loop state file is gitignored.
 
 > [!IMPORTANT]
 > **Trust model.** The entire engine is one auditable shell script in this repo (`skills/jeffy/hooks/stop-hook.sh`), registered as a Claude Code Stop hook. It fires at turn end but exits instantly unless the current project has a live Jeffy state file naming that session - zero cost and zero behavior outside a run. The installer's only writes outside this repo are the two skill folders it copies into `~/.claude/skills` (engine included) and that one hook registration in `~/.claude/settings.json`.
