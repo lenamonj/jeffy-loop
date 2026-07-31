@@ -317,6 +317,12 @@ all 12 swept rows; Now, Next, Later all empty; all three filed
 findings completed (D1 at 5e9be82, D2 at 71a420c, D3 at fa73cf3);
 no unswept or stale inventory row; Converged line appended for
 fa73cf3a6e5e277d80e48dc2d34111f67cc4f526.
+
+(run report, and then the session's last words - the phrase the
+Stop hook verifies against every condition above before letting
+the run end:)
+
+<promise>JEFFY CONVERGED</promise>
 ```
 
 When Jeffy converges on your project, the checkpoint lands in your `git log` and under `## Converged` in the loop's backlog, so relaunches on an unchanged tree re-verify instead of re-auditing. Run `/jeffy` on your own project and read the journal it leaves behind.
