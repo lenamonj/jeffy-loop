@@ -1,0 +1,1673 @@
+diff --git a/src/dotenv/__init__.py b/src/dotenv/__init__.py
+index dde24a0..779debe 100644
+--- a/src/dotenv/__init__.py
++++ b/src/dotenv/__init__.py
+@@ -1,3 +1,4 @@
++import shlex
+ from typing import Any, Optional
+ 
+ from .main import dotenv_values, find_dotenv, get_key, load_dotenv, set_key, unset_key
+@@ -15,28 +16,30 @@ def get_cli_string(
+     key: Optional[str] = None,
+     value: Optional[str] = None,
+     quote: Optional[str] = None,
+-):
++) -> str:
+     """Returns a string suitable for running as a shell script.
+ 
+     Useful for converting a arguments passed to a fabric task
+     to be passed to a `local` or `run` command.
++
++    Every interpolated field is shell-quoted, so a path, key or value containing
++    spaces, quotes or shell metacharacters survives as a single argument instead
++    of being split or interpreted by the shell that runs the string.
+     """
+     command = ["dotenv"]
+     if quote:
+-        command.append(f"-q {quote}")
++        command += ["-q", shlex.quote(quote)]
+     if path:
+-        command.append(f"-f {path}")
++        command += ["-f", shlex.quote(path)]
+     if action:
+-        command.append(action)
++        command.append(shlex.quote(action))
+         if key:
+-            command.append(key)
+-            if value:
+-                if " " in value:
+-                    command.append(f'"{value}"')
+-                else:
+-                    command.append(value)
+-
+-    return " ".join(command).strip()
++            command.append(shlex.quote(key))
++            # An empty string is a value worth setting, so test presence, not truth.
++            if value is not None:
++                command.append(shlex.quote(value))
++
++    return " ".join(command)
+ 
+ 
+ __all__ = [
+diff --git a/src/dotenv/cli.py b/src/dotenv/cli.py
+index 79613e2..a65f893 100644
+--- a/src/dotenv/cli.py
++++ b/src/dotenv/cli.py
+@@ -1,5 +1,6 @@
+ import json
+ import os
++import re
+ import shlex
+ import sys
+ from contextlib import contextmanager
+@@ -17,9 +18,22 @@ except ImportError:
+     )
+     sys.exit(1)
+ 
+-from .main import dotenv_values, set_key, unset_key
++from .main import (
++    DotEnv,
++    StrPath,
++    _is_file_or_fifo,
++    dotenv_values,
++    set_key,
++    unset_key,
++    usable_as_environment_variable,
++)
+ from .version import __version__
+ 
++# A name the shell can assign to. The `.env` format allows keys this pattern
++# rejects - `a-b`, or `'my key'` quoted - and they cannot be represented in
++# shell syntax at all, so quoting them would not help.
++_SHELL_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
++
+ 
+ def enumerate_env() -> Optional[str]:
+     """
+@@ -35,12 +49,48 @@ def enumerate_env() -> Optional[str]:
+     return path
+ 
+ 
+-@click.group()
++class DotenvGroup(click.Group):
++    """Report a `.env` this CLI cannot use once, for every subcommand.
++
++    The five subcommands reach the file by three different routes - a stream,
++    a path, and `rewrite` - so the group is the only place they share. Without
++    this, a file the editor saved in its own encoding reaches the user as a
++    `UnicodeDecodeError` traceback, which is neither actionable nor something
++    they can work around, since the CLI has no encoding option; and any
++    `OSError` the rewrite path raises - a directory that is not writable, a
++    full disk, a read-only filesystem - reaches them as a `PermissionError`
++    naming a temporary file they never chose. `stream_file` already does this
++    for the read path, which is why `list` and `get` were the only two
++    commands that failed cleanly.
++    """
++
++    def invoke(self, ctx: click.Context) -> Any:
++        try:
++            return super().invoke(ctx)
++        except UnicodeDecodeError as exc:
++            path = ctx.params.get("file")
++            print(
++                f"Error reading env file {path}: {exc}. It must be UTF-8.",
++                file=sys.stderr,
++            )
++            sys.exit(2)
++        except OSError as exc:
++            # `exc` names the temporary file the rewrite was building, which
++            # tells the user nothing; `strerror` plus their own path does.
++            path = ctx.params.get("file")
++            print(
++                f"Error accessing env file {path}: {exc.strerror}.",
++                file=sys.stderr,
++            )
++            sys.exit(2)
++
++
++@click.group(cls=DotenvGroup)
+ @click.option(
+     "-f",
+     "--file",
+     default=enumerate_env(),
+-    type=click.Path(file_okay=True),
++    type=click.Path(file_okay=True, dir_okay=False),
+     help="Location of the .env file, defaults to .env file in current working directory.",
+ )
+ @click.option(
+@@ -48,7 +98,9 @@ def enumerate_env() -> Optional[str]:
+     "--quote",
+     default="always",
+     type=click.Choice(["always", "never", "auto"]),
+-    help="Whether to quote or not the variable values. Default mode is always. This does not affect parsing.",
++    help="Whether to quote or not the variable values. Default mode is always. "
++    "With never, a value that could not be read back verbatim without quotes is "
++    "rejected rather than written.",
+ )
+ @click.option(
+     "-e",
+@@ -59,21 +111,33 @@ def enumerate_env() -> Optional[str]:
+ )
+ @click.version_option(version=__version__)
+ @click.pass_context
+-def cli(ctx: click.Context, file: Any, quote: Any, export: Any) -> None:
++def cli(ctx: click.Context, file: Optional[str], quote: str, export: bool) -> None:
+     """This script is used to set, get or unset values from a .env file."""
++    if file is None:
++        # enumerate_env() returns None when the working directory no longer
++        # exists, and every subcommand needs a path. Fail here, once, rather
++        # than letting None reach open() or set_key() as a TypeError.
++        raise click.UsageError(
++            "Could not determine the .env path because the current working "
++            "directory does not exist. Pass one explicitly with -f.",
++            ctx=ctx,
++        )
+     ctx.obj = {"QUOTE": quote, "EXPORT": export, "FILE": file}
+ 
+ 
+ @contextmanager
+-def stream_file(path: os.PathLike) -> Iterator[IO[str]]:
++def stream_file(path: StrPath) -> Iterator[IO[str]]:
+     """
+     Open a file and yield the corresponding (decoded) stream.
+ 
+-    Exits with error code 2 if the file cannot be opened.
++    Decodes as UTF-8, which is what every other read path in this CLI uses;
++    the locale's encoding would make `list` and `get` disagree with `set`,
++    `unset` and `run` about the same file. A decoding failure is reported by
++    `DotenvGroup`; this exits with error code 2 if the file cannot be opened.
+     """
+ 
+     try:
+-        with open(path) as stream:
++        with open(path, encoding="utf-8") as stream:
+             yield stream
+     except OSError as exc:
+         print(f"Error opening env file: {exc}", file=sys.stderr)
+@@ -88,10 +152,20 @@ def stream_file(path: os.PathLike) -> Iterator[IO[str]]:
+     default="simple",
+     type=click.Choice(["simple", "json", "shell", "export"]),
+     help="The format in which to display the list. Default format is simple, "
+-    "which displays name=value without quotes.",
++    "which displays name=value without quotes. The shell and export formats "
++    "emit shell syntax, so they skip any key that is not a valid shell "
++    "variable name and report it on stderr.",
+ )
+ def list_values(ctx: click.Context, output_format: str) -> None:
+-    """Display all the stored key/value."""
++    """
++    Display all the stored key/value.
++
++    The `shell` and `export` formats are meant to be evaluated by a shell, so a
++    key that is not a valid shell variable name - `a-b`, or a quoted `'my key'`,
++    both of which the `.env` format allows - is skipped with a message on
++    stderr. Quoting cannot rescue those names: `export 'a-b'=x` is still not a
++    valid identifier. The `simple` and `json` formats show every key.
++    """
+     file = ctx.obj["FILE"]
+ 
+     with stream_file(file) as stream:
+@@ -100,20 +174,29 @@ def list_values(ctx: click.Context, output_format: str) -> None:
+     if output_format == "json":
+         click.echo(json.dumps(values, indent=2, sort_keys=True))
+     else:
++        shell_syntax = output_format in ("export", "shell")
+         prefix = "export " if output_format == "export" else ""
+         for k in sorted(values):
+             v = values[k]
+-            if v is not None:
+-                if output_format in ("export", "shell"):
+-                    v = shlex.quote(v)
+-                click.echo(f"{prefix}{k}={v}")
++            if v is None:
++                continue
++            if shell_syntax:
++                if not _SHELL_IDENTIFIER.match(k):
++                    click.echo(
++                        f"Skipping {k!r}: not a valid shell variable name, so it "
++                        f"cannot be expressed in {output_format} format.",
++                        err=True,
++                    )
++                    continue
++                v = shlex.quote(v)
++            click.echo(f"{prefix}{k}={v}")
+ 
+ 
+ @cli.command(name="set")
+ @click.pass_context
+ @click.argument("key", required=True)
+ @click.argument("value", required=True)
+-def set_value(ctx: click.Context, key: Any, value: Any) -> None:
++def set_value(ctx: click.Context, key: str, value: str) -> None:
+     """
+     Store the given key/value.
+ 
+@@ -124,34 +207,46 @@ def set_value(ctx: click.Context, key: Any, value: Any) -> None:
+     file = ctx.obj["FILE"]
+     quote = ctx.obj["QUOTE"]
+     export = ctx.obj["EXPORT"]
+-    success, key, value = set_key(file, key, value, quote, export)
+-    if success:
+-        click.echo(f"{key}={value}")
+-    else:
+-        sys.exit(1)
++    try:
++        # set_key either writes the pair or raises, so there is no failure case
++        # to branch on here; it returns the key and value it actually wrote.
++        _, key, value = set_key(file, key, value, quote, export)
++    except UnicodeDecodeError:
++        # A file this CLI cannot decode is not a bad parameter, and calling it
++        # one produced a message that blamed the key or value. Let the group
++        # report it, so all five subcommands say the same thing.
++        raise
++    except ValueError as exc:
++        raise click.BadParameter(str(exc), ctx=ctx) from exc
++    click.echo(f"{key}={value}")
+ 
+ 
+ @cli.command()
+ @click.pass_context
+ @click.argument("key", required=True)
+-def get(ctx: click.Context, key: Any) -> None:
+-    """Retrieve the value for the given key."""
++def get(ctx: click.Context, key: str) -> None:
++    """
++    Retrieve the value for the given key.
++
++    Exits with code 1 if the key is absent or is present without a value (`KEY`
++    with no `=`). A key set to the empty string (`KEY=`) is a value: it prints an
++    empty line and exits 0.
++    """
+     file = ctx.obj["FILE"]
+ 
+     with stream_file(file) as stream:
+         values = dotenv_values(stream=stream)
+ 
+     stored_value = values.get(key)
+-    if stored_value:
+-        click.echo(stored_value)
+-    else:
++    if stored_value is None:
+         sys.exit(1)
++    click.echo(stored_value)
+ 
+ 
+ @cli.command()
+ @click.pass_context
+ @click.argument("key", required=True)
+-def unset(ctx: click.Context, key: Any) -> None:
++def unset(ctx: click.Context, key: str) -> None:
+     """
+     Removes the given key.
+ 
+@@ -178,19 +273,28 @@ def unset(ctx: click.Context, key: Any) -> None:
+ @click.option(
+     "--override/--no-override",
+     default=True,
+-    help="Override variables from the environment file with those from the .env file.",
++    help="Override existing environment variables with those from the .env file. "
++    "The same precedence governs variable expansion, so with --no-override a "
++    "`${VAR}` reference resolves to the environment's value when there is one.",
+ )
+ @click.argument("commandline", nargs=-1, type=click.UNPROCESSED)
+ def run(ctx: click.Context, override: bool, commandline: tuple[str, ...]) -> None:
+     """Run command with environment variables present."""
+     file = ctx.obj["FILE"]
+-    if not os.path.isfile(file):
++    if not _is_file_or_fifo(file):
+         raise click.BadParameter(
+             f"Invalid value for '-f' \"{file}\" does not exist.", ctx=ctx
+         )
++    # Expansion has to follow the same precedence as the injection below.
++    # `dotenv_values` hard-codes `override=True`, so using it here would expand
++    # `${VAR}` from the file even when --no-override says the environment wins,
++    # handing the child an environment where VAR and its references disagree.
++    values = DotEnv(
++        dotenv_path=file, interpolate=True, override=override, encoding="utf-8"
++    ).dict()
+     dotenv_as_dict = {
+         k: v
+-        for (k, v) in dotenv_values(file).items()
++        for (k, v) in values.items()
+         if v is not None and (override or k not in os.environ)
+     }
+ 
+@@ -221,9 +325,12 @@ def run_command(command: List[str], env: Dict[str, str]) -> None:
+ 
+     """
+     # copy the current environment variables and add the vales from
+-    # `env`
++    # `env`, minus any pair the child's environment cannot hold - `execvpe`
++    # and `Popen` raise on those exactly as `os.environ` does.
+     cmd_env = os.environ.copy()
+-    cmd_env.update(env)
++    cmd_env.update(
++        {k: v for k, v in env.items() if usable_as_environment_variable(k, v)}
++    )
+ 
+     if sys.platform == "win32":
+         # execvpe on Windows returns control immediately
+diff --git a/src/dotenv/ipython.py b/src/dotenv/ipython.py
+index 4e7edbb..dfaeda7 100644
+--- a/src/dotenv/ipython.py
++++ b/src/dotenv/ipython.py
+@@ -1,3 +1,5 @@
++from typing import Any
++
+ from IPython.core.magic import Magics, line_magic, magics_class  # type: ignore
+ from IPython.core.magic_arguments import (
+     argument,
+@@ -31,20 +33,20 @@ class IPythonDotEnv(Magics):
+         help="Search in increasingly higher folders for the `dotenv_path`",
+     )
+     @line_magic
+-    def dotenv(self, line):
++    def dotenv(self, line: str) -> None:
+         args = parse_argstring(self.dotenv, line)
+         # Locate the .env file
+         dotenv_path = args.dotenv_path
+         try:
+             dotenv_path = find_dotenv(dotenv_path, True, True)
+         except IOError:
+-            print("cannot find .env file")
++            print(f"cannot find {dotenv_path}")
+             return
+ 
+         # Load the .env file
+         load_dotenv(dotenv_path, verbose=args.verbose, override=args.override)
+ 
+ 
+-def load_ipython_extension(ipython):
++def load_ipython_extension(ipython: Any) -> None:
+     """Register the %dotenv magic."""
+     ipython.register_magics(IPythonDotEnv)
+diff --git a/src/dotenv/main.py b/src/dotenv/main.py
+index 3c4608d..6272b9b 100644
+--- a/src/dotenv/main.py
++++ b/src/dotenv/main.py
+@@ -29,6 +29,57 @@ def _load_dotenv_disabled() -> bool:
+     return value in {"1", "true", "t", "yes", "y"}
+ 
+ 
++def usable_as_environment_variable(key: str, value: str) -> bool:
++    """
++    Return True if `key`/`value` can be put in an environment, warn if it cannot.
++
++    The parser reads key shapes an environment will not hold. A single-quoted key
++    may contain anything but a quote, so `'a=b'` parses cleanly and then makes
++    `os.environ` and `execvpe` raise `ValueError`, and a NUL anywhere in a key or
++    value does the same. A pair that cannot be encoded in the filesystem encoding
++    is rejected too, which is why a valid UTF-8 `.env` holding an accented value
++    fails under `LC_ALL=C`. Skipping such a pair with a warning is what this
++    library already does with a line it cannot parse and with a key `dotenv list
++    --format shell` cannot emit; the alternative, letting the error escape, aborts
++    the load partway with the earlier keys already set.
++
++    This is the only gate in front of an environment, so both places that build
++    one - `DotEnv.set_as_environment_variables` and `cli.run_command` - call it.
++    `dotenv_values` and `get_key` do not: they return a mapping rather than
++    populate an environment, and reading these keys is documented behaviour.
++    """
++    if "=" in key:
++        reason = "its name contains '='"
++    elif "\0" in key:
++        reason = "its name contains a null byte"
++    elif "\0" in value:
++        reason = "its value contains a null byte"
++    else:
++        # `os.environ` encodes with the filesystem encoding and its error
++        # handler, which is what `os.fsencode` does. Asking it is what keeps
++        # this in step: encoding by hand with `sys.getfilesystemencoding()`
++        # drops the `surrogateescape` handler and would reject a lone
++        # surrogate that an environment accepts.
++        try:
++            os.fsencode(key)
++            os.fsencode(value)
++        except UnicodeEncodeError:
++            reason = (
++                f"it cannot be encoded in {sys.getfilesystemencoding()!r}, the "
++                "encoding this process uses for the environment - set a UTF-8 "
++                "locale or PYTHONUTF8=1 to carry it"
++            )
++        else:
++            return True
++
++    logger.warning(
++        "python-dotenv could not set %r as an environment variable because %s.",
++        key,
++        reason,
++    )
++    return False
++
++
+ def with_warn_for_invalid_lines(mappings: Iterator[Binding]) -> Iterator[Binding]:
+     for mapping in mappings:
+         if mapping.error:
+@@ -104,7 +155,7 @@ class DotEnv:
+         for k, v in self.dict().items():
+             if k in os.environ and not self.override:
+                 continue
+-            if v is not None:
++            if v is not None and usable_as_environment_variable(k, v):
+                 os.environ[k] = v
+ 
+         return True
+@@ -190,6 +241,21 @@ def rewrite(
+         raise error from None
+ 
+ 
++def _round_trips(line: str, key: str, value: str) -> bool:
++    """
++    Return True if `line` parses back as exactly the one binding it was written for.
++
++    Asks the parser rather than restating its rules, so the two can't drift apart.
++    """
++    bindings = list(parse_stream(io.StringIO(line)))
++    return (
++        len(bindings) == 1
++        and not bindings[0].error
++        and bindings[0].key == key
++        and bindings[0].value == value
++    )
++
++
+ def set_key(
+     dotenv_path: StrPath,
+     key_to_set: str,
+@@ -198,12 +264,38 @@ def set_key(
+     export: bool = False,
+     encoding: Optional[str] = "utf-8",
+     follow_symlinks: bool = False,
+-) -> Tuple[Optional[bool], str, str]:
++) -> Tuple[bool, str, str]:
+     """
+     Adds or Updates a key/value to the given .env
+ 
+     The target .env file is created if it doesn't exist.
+ 
++    Keys are always written unquoted, so this function writes fewer key shapes
++    than the parser reads: a key needing quotes to survive being read back is
++    rejected, not quoted. A key like `'my key'` already present in the file is
++    still readable with `get_key` and removable with `unset_key`; it just cannot
++    be created or updated here.
++
++    Parameters:
++        quote_mode: `always` to single-quote every value, `never` to write every
++            value bare, `auto` to quote only values that need it. It governs the
++            value only; the key is never quoted.
++
++    Returns:
++        `(True, key_to_set, value_to_set)`. The first element is always `True`:
++        this function either writes the pair or raises, so there is no failure
++        for a caller to branch on. Contrast `unset_key`, which returns `None`
++        when there was nothing to remove.
++
++    Raises:
++        ValueError: if `quote_mode` is unknown; if the key cannot survive being
++            read back - because it contains `=`, `#`, whitespace, a newline, or
++            is empty or quoted; or if `quote_mode` leaves the value unquoted
++            while the value cannot survive being read back that way - because it
++            contains a newline, leading or trailing whitespace, or whitespace
++            followed by `#`. Writing any of these anyway would silently store a
++            different key or value than the one requested.
++
+     This function doesn't follow symlinks by default, to avoid accidentally
+     modifying a file at a potentially untrusted path. If you don't need this
+     protection and need symlinks to be followed, use `follow_symlinks`.
+@@ -211,6 +303,17 @@ def set_key(
+     if quote_mode not in ("always", "auto", "never"):
+         raise ValueError(f"Unknown quote_mode: {quote_mode}")
+ 
++    prefix = "export " if export else ""
++
++    # Probe the key on its own with a value known to survive, so a failure here
++    # is unambiguously the key's fault and gets the message that says so.
++    if not _round_trips(f"{prefix}{key_to_set}='x'\n", key_to_set, "x"):
++        raise ValueError(
++            f"Cannot write key {key_to_set!r}: it would be read back as a "
++            "different key, or not read back at all, because it is empty or "
++            "contains '=', '#', whitespace, a newline, or a leading quote."
++        )
++
+     quote = quote_mode == "always" or (
+         quote_mode == "auto" and not value_to_set.isalnum()
+     )
+@@ -219,10 +322,16 @@ def set_key(
+         value_out = "'{}'".format(value_to_set.replace("'", "\\'"))
+     else:
+         value_out = value_to_set
+-    if export:
+-        line_out = f"export {key_to_set}={value_out}\n"
+-    else:
+-        line_out = f"{key_to_set}={value_out}\n"
++
++    line_out = f"{prefix}{key_to_set}={value_out}\n"
++
++    if not _round_trips(line_out, key_to_set, value_to_set):
++        raise ValueError(
++            f"Cannot write {key_to_set} with quote_mode {quote_mode!r}: the "
++            "value would be read back as a different value because it "
++            "contains a newline, leading or trailing whitespace, or "
++            "whitespace followed by '#'. Use quote_mode 'always' or 'auto'."
++        )
+ 
+     with rewrite(dotenv_path, encoding=encoding, follow_symlinks=follow_symlinks) as (
+         source,
+@@ -258,6 +367,12 @@ def unset_key(
+     If the .env path given doesn't exist, fails.
+     If the given key doesn't exist in the .env, fails.
+ 
++    Parameters:
++        quote_mode: accepted for signature symmetry with `set_key` and ignored.
++            Removing a line writes no value, so there is nothing to quote; every
++            value produces the same result, and unlike `set_key` an unknown one
++            is not rejected.
++
+     This function doesn't follow symlinks by default, to avoid accidentally
+     modifying a file at a potentially untrusted path. If you don't need this
+     protection and need symlinks to be followed, use `follow_symlinks`.
+@@ -340,7 +455,7 @@ def find_dotenv(
+     Returns path to the file if found, or an empty string otherwise
+     """
+ 
+-    def _is_interactive():
++    def _is_interactive() -> bool:
+         """Decide whether this is running in a REPL or IPython notebook"""
+         if hasattr(sys, "ps1") or hasattr(sys, "ps2"):
+             return True
+@@ -350,7 +465,7 @@ def find_dotenv(
+             return False
+         return not hasattr(main, "__file__")
+ 
+-    def _is_debugger():
++    def _is_debugger() -> bool:
+         return sys.gettrace() is not None
+ 
+     if usecwd or _is_interactive() or _is_debugger() or getattr(sys, "frozen", False):
+@@ -400,7 +515,12 @@ def load_dotenv(
+         interpolate: Whether to interpolate variables using POSIX variable expansion.
+         encoding: Encoding to be used to read the file.
+     Returns:
+-        Bool: True if at least one environment variable is set else False
++        Bool: True if the parsed source contained at least one key, else False.
++            This reports what was found, not what changed: a key declared without
++            a value sets nothing, and with `override=False` a key already present
++            in the environment is left as it was, yet both still return True.
++            False means the source was missing, empty, or held only comments -
++            and also whenever `PYTHON_DOTENV_DISABLED` is set to a truthy value.
+ 
+     If both `dotenv_path` and `stream` are `None`, `find_dotenv()` is used to find the
+     .env file with its default parameters. If you need to change the default parameters
+@@ -409,6 +529,11 @@ def load_dotenv(
+ 
+     If the environment variable `PYTHON_DOTENV_DISABLED` is set to a truthy value,
+     .env loading is disabled.
++
++    A key an environment cannot hold - one whose name contains `=`, or whose name
++    or value contains a null byte - is skipped with a warning rather than raising,
++    so one such key does not abort the load with the earlier keys already set. The
++    parser reads those keys and `dotenv_values` still returns them.
+     """
+     if _load_dotenv_disabled():
+         logger.debug(
+diff --git a/src/dotenv/parser.py b/src/dotenv/parser.py
+index 6677360..f8fdaa5 100644
+--- a/src/dotenv/parser.py
++++ b/src/dotenv/parser.py
+@@ -87,13 +87,6 @@ class Reader:
+     def peek(self, count: int) -> str:
+         return self.string[self.position.chars : self.position.chars + count]
+ 
+-    def read(self, count: int) -> str:
+-        result = self.string[self.position.chars : self.position.chars + count]
+-        if len(result) < count:
+-            raise Error("read: End of string")
+-        self.position.advance(result)
+-        return result
+-
+     def read_regex(self, regex: Pattern[str]) -> Sequence[str]:
+         match = regex.match(self.string, self.position.chars)
+         if match is None:
+diff --git a/src/dotenv/variables.py b/src/dotenv/variables.py
+index 667f2f2..3f99ed0 100644
+--- a/src/dotenv/variables.py
++++ b/src/dotenv/variables.py
+@@ -16,12 +16,6 @@ _posix_variable: Pattern[str] = re.compile(
+ 
+ 
+ class Atom(metaclass=ABCMeta):
+-    def __ne__(self, other: object) -> bool:
+-        result = self.__eq__(other)
+-        if result is NotImplemented:
+-            return NotImplemented
+-        return not result
+-
+     @abstractmethod
+     def resolve(self, env: Mapping[str, Optional[str]]) -> str: ...
+ 
+@@ -62,9 +56,12 @@ class Variable(Atom):
+         return hash((self.__class__, self.name, self.default))
+ 
+     def resolve(self, env: Mapping[str, Optional[str]]) -> str:
+-        default = self.default if self.default is not None else ""
+-        result = env.get(self.name, default)
+-        return result if result is not None else ""
++        # A `None` entry means the name was declared without a value (`FOO` with
++        # no `=`), which is not a value, so the default still applies.
++        result = env.get(self.name)
++        if result is not None:
++            return result
++        return self.default if self.default is not None else ""
+ 
+ 
+ def parse_variables(value: str) -> Iterator[Atom]:
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index d4e3ad4..b97ea5e 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -1,4 +1,7 @@
+ import os
++import subprocess
++import sys
++import threading
+ from pathlib import Path
+ from typing import Optional
+ 
+@@ -50,7 +53,7 @@ def test_list_not_a_file(cli):
+     result = cli.invoke(dotenv_cli, ["--file", ".", "list"])
+ 
+     assert result.exit_code == 2, result.output
+-    assert "Error opening env file" in result.output
++    assert "is a directory" in result.output
+ 
+ 
+ def test_list_no_file(cli):
+@@ -73,6 +76,45 @@ def test_get_non_existent_value(cli, dotenv_path):
+     assert (result.exit_code, result.output) == (1, "")
+ 
+ 
++def test_get_empty_value(cli, dotenv_path):
++    dotenv_path.write_text("a=\n")
++
++    result = cli.invoke(dotenv_cli, ["--file", dotenv_path, "get", "a"])
++
++    assert (result.exit_code, result.output) == (0, "\n")
++
++
++def test_get_key_without_value(cli, dotenv_path):
++    dotenv_path.write_text("a\n")
++
++    result = cli.invoke(dotenv_cli, ["--file", dotenv_path, "get", "a"])
++
++    assert (result.exit_code, result.output) == (1, "")
++
++
++@pytest.mark.parametrize(
++    "command",
++    [["list"], ["get", "a"], ["set", "a", "b"], ["unset", "a"], ["run", "true"]],
++)
++def test_command_without_a_working_directory(cli, command):
++    """
++    `enumerate_env()` yields None when the cwd is gone; that must not reach open().
++    """
++    result = cli.invoke(dotenv_cli, command, default_map={"file": None})
++
++    assert result.exit_code == 2
++    assert "current working directory does not exist" in result.output
++
++
++def test_enumerate_env_without_a_working_directory(monkeypatch):
++    def gone():
++        raise FileNotFoundError
++
++    monkeypatch.setattr(os, "getcwd", gone)
++
++    assert dotenv.cli.enumerate_env() is None
++
++
+ def test_get_non_existent_file(cli):
+     result = cli.invoke(dotenv_cli, ["--file", "nx_file", "get", "a"])
+ 
+@@ -84,7 +126,7 @@ def test_get_not_a_file(cli):
+     result = cli.invoke(dotenv_cli, ["--file", ".", "get", "a"])
+ 
+     assert result.exit_code == 2
+-    assert "Error opening env file" in result.output
++    assert "is a directory" in result.output
+ 
+ 
+ def test_unset_existing_value(cli, dotenv_path):
+@@ -133,6 +175,128 @@ def test_set_quote_options(cli, dotenv_path, quote_mode, variable, value, expect
+     assert dotenv_path.read_text() == expected
+ 
+ 
++def test_set_never_quote_mode_reports_unrepresentable_value(cli, dotenv_path):
++    dotenv_path.write_text("")
++
++    result = cli.invoke(
++        dotenv_cli,
++        ["--file", dotenv_path, "--quote", "never", "set", "a", "hello # world"],
++    )
++
++    assert result.exit_code == 2
++    assert "quote_mode" in result.output
++    assert dotenv_path.read_text() == ""
++
++
++@pytest.mark.parametrize(
++    "output_format,expected",
++    (
++        ("simple", "OK=1\n"),
++        ("shell", "OK=1\n"),
++        ("export", "export OK=1\n"),
++        ("json", '{\n  "FOO": null,\n  "OK": "1"\n}\n'),
++    ),
++)
++def test_list_valueless_key(cli, dotenv_path, output_format, expected):
++    """`FOO` with no `=` has no value: omitted from the flat formats, null in JSON."""
++    dotenv_path.write_text("FOO\nOK=1\n")
++
++    result = cli.invoke(
++        dotenv_cli, ["--file", dotenv_path, "list", "--format", output_format]
++    )
++
++    assert (result.exit_code, result.stdout) == (0, expected)
++
++
++@pytest.mark.parametrize("output_format", ("export", "shell"))
++def test_list_skips_keys_that_are_not_shell_identifiers(
++    cli, dotenv_path, output_format
++):
++    dotenv_path.write_text("'my key'=v\na-b=x\nNORMAL=y\n")
++
++    result = cli.invoke(
++        dotenv_cli, ["--file", dotenv_path, "list", "--format", output_format]
++    )
++
++    prefix = "export " if output_format == "export" else ""
++    assert result.exit_code == 0
++    assert result.stdout == f"{prefix}NORMAL=y\n"
++    assert "a-b" in result.stderr
++    assert "my key" in result.stderr
++
++
++@pytest.mark.parametrize("output_format", ("export", "shell"))
++@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX shell")
++def test_list_shell_identifier_output_is_evaluable(tmp_path, output_format):
++    env_file = tmp_path / ".env"
++    env_file.write_text("'my key'=v\na-b=x\nNORMAL=y\n")
++
++    emitted = subprocess.run(
++        [
++            sys.executable,
++            "-m",
++            "dotenv",
++            "-f",
++            str(env_file),
++            "list",
++            "--format",
++            output_format,
++        ],
++        capture_output=True,
++        text=True,
++    )
++    assert emitted.returncode == 0
++
++    evaluated = subprocess.run(
++        [
++            "bash",
++            "-c",
++            'eval "$1"; echo "NORMAL=[$NORMAL] key=[$key]"',
++            "_",
++            emitted.stdout,
++        ],
++        capture_output=True,
++        text=True,
++    )
++
++    assert evaluated.returncode == 0
++    assert evaluated.stdout.strip() == "NORMAL=[y] key=[]"
++    assert evaluated.stderr == ""
++
++
++@pytest.mark.parametrize(
++    "args",
++    (
++        ["list"],
++        ["get", "a"],
++        ["set", "a", "b"],
++        ["unset", "a"],
++        ["run", "true"],
++    ),
++)
++def test_directory_path_is_rejected(cli, tmp_path, args):
++    directory = tmp_path / "adir"
++    directory.mkdir()
++
++    result = cli.invoke(dotenv_cli, ["--file", str(directory), *args])
++
++    assert result.exit_code == 2
++    assert "is a directory" in result.output
++    assert "Traceback" not in result.output
++    assert result.exception is None or isinstance(result.exception, SystemExit)
++
++
++@pytest.mark.parametrize("key", ["a=b", "a b", "a#b", "'a'", "export A"])
++def test_set_key_validation_reports_unrepresentable_key(cli, dotenv_path, key):
++    dotenv_path.write_text("existing=1\n")
++
++    result = cli.invoke(dotenv_cli, ["--file", dotenv_path, "set", key, "x"])
++
++    assert result.exit_code == 2
++    assert "Cannot write key" in result.output
++    assert dotenv_path.read_text() == "existing=1\n"
++
++
+ @pytest.mark.parametrize(
+     "dotenv_path,export_mode,variable,value,expected",
+     (
+@@ -211,6 +375,163 @@ def test_run_with_existing_variable_not_overridden(tmp_path):
+     check_process(result, exit_code=0, stdout="C\n")
+ 
+ 
++@pytest.mark.parametrize(
++    "flags,expected",
++    (
++        (["--no-override"], "C\nCx\n"),
++        ([], "x\nxx\n"),
++    ),
++)
++def test_run_expansion_follows_override(tmp_path, flags, expected):
++    (tmp_path / ".env").write_text("A=x\nB=${A}x\n")
++    env = dict(os.environ)
++    env.update({"LANG": "en_US.UTF-8", "A": "C"})
++
++    result = run_dotenv(["run", *flags, "printenv", "A", "B"], cwd=tmp_path, env=env)
++
++    check_process(result, exit_code=0, stdout=expected)
++
++
++@pytest.mark.parametrize(
++    "args",
++    [
++        ["list"],
++        ["get", "A"],
++        ["unset", "A"],
++        ["run", "--", "true"],
++        ["set", "B", "2"],
++    ],
++)
++def test_undecodable_env_file_is_reported_not_raised(tmp_path, args):
++    """A `.env` saved in the editor's own encoding is a wrong value, not a
++    crash: every subcommand says so on one line and leaves the file alone."""
++    env_file = tmp_path / ".env"
++    original = "A=café\n".encode("latin-1")
++    env_file.write_bytes(original)
++
++    result = run_dotenv(args, cwd=tmp_path)
++
++    assert result.returncode == 2, result.stderr
++    assert "Traceback" not in result.stderr
++    assert "Error reading env file" in result.stderr
++    assert "It must be UTF-8." in result.stderr
++    assert env_file.read_bytes() == original
++    assert list(tmp_path.glob(".tmp_*")) == []
++
++
++@pytest.mark.skipif(
++    sys.platform != "win32" and os.geteuid() == 0,
++    reason="Root user can write to a directory even with 555 permissions.",
++)
++@pytest.mark.skipif(
++    sys.platform == "win32", reason="directory mode bits behave differently on Windows"
++)
++@pytest.mark.parametrize("args", [["set", "B", "2"], ["unset", "A"]])
++def test_unwritable_directory_in_process(cli, tmp_path, args):
++    """The same failure driven in process, so the group's OSError handler is
++    executed by the suite and not only by the subprocess test above."""
++    env_file = tmp_path / ".env"
++    env_file.write_text("A=1\n")
++    tmp_path.chmod(0o555)
++
++    try:
++        result = cli.invoke(dotenv_cli, ["--file", str(env_file), *args])
++    finally:
++        tmp_path.chmod(0o755)
++
++    assert result.exit_code == 2, result.output
++    assert "Error accessing env file" in result.output
++
++
++@pytest.mark.parametrize(
++    "args", [["list"], ["get", "A"], ["unset", "A"], ["set", "B", "2"]]
++)
++def test_undecodable_env_file_in_process(cli, dotenv_path, args):
++    """The same failure driven in process, so the group's handler and
++    `set_value`'s re-raise are executed by the suite and not only by the
++    subprocess tests above, which coverage cannot see into."""
++    dotenv_path.write_bytes("A=café\n".encode("latin-1"))
++
++    result = cli.invoke(dotenv_cli, ["--file", str(dotenv_path), *args])
++
++    assert result.exit_code == 2, result.output
++    assert "Error reading env file" in result.output
++
++
++@pytest.mark.skipif(
++    sys.platform != "win32" and os.geteuid() == 0,
++    reason="Root user can write to a directory even with 555 permissions.",
++)
++@pytest.mark.skipif(
++    sys.platform == "win32", reason="directory mode bits behave differently on Windows"
++)
++@pytest.mark.parametrize("args", [["set", "B", "2"], ["unset", "A"]])
++def test_unwritable_directory_is_reported_not_raised(tmp_path, args):
++    """The rewrite path fails for a reason the user can act on, and says so
++    without naming the temporary file it was building."""
++    env_file = tmp_path / ".env"
++    env_file.write_text("A=1\n")
++    tmp_path.chmod(0o555)
++
++    try:
++        result = run_dotenv(args, cwd=tmp_path)
++    finally:
++        tmp_path.chmod(0o755)
++
++    assert result.returncode == 2, result.stderr
++    assert "Traceback" not in result.stderr
++    assert "Error accessing env file" in result.stderr
++    assert "Permission denied" in result.stderr
++    assert ".tmp_" not in result.stderr
++    assert env_file.read_text() == "A=1\n"
++    assert list(tmp_path.glob(".tmp_*")) == []
++
++
++@pytest.mark.skipif(
++    sys.platform != "win32" and os.geteuid() == 0,
++    reason="Root user can write to a directory even with 555 permissions.",
++)
++@pytest.mark.skipif(
++    sys.platform == "win32", reason="directory mode bits behave differently on Windows"
++)
++@pytest.mark.parametrize("args,expected", [(["list"], "A=1\n"), (["get", "A"], "1\n")])
++def test_unwritable_directory_still_reads(tmp_path, args, expected):
++    """The guard must reject only what cannot be done: reading needs no write
++    permission on the directory and still works there."""
++    (tmp_path / ".env").write_text("A=1\n")
++    tmp_path.chmod(0o555)
++
++    try:
++        result = run_dotenv(args, cwd=tmp_path)
++    finally:
++        tmp_path.chmod(0o755)
++
++    check_process(result, exit_code=0, stdout=expected)
++
++
++def test_utf16_env_file_is_reported_not_raised(tmp_path):
++    (tmp_path / ".env").write_bytes("A=1\n".encode("utf-16"))
++
++    result = run_dotenv(["list"], cwd=tmp_path)
++
++    assert result.returncode == 2, result.stderr
++    assert "Traceback" not in result.stderr
++    assert "Error reading env file" in result.stderr
++
++
++@pytest.mark.parametrize(
++    "args,expected", [(["list"], "A=café\n"), (["get", "A"], "café\n")]
++)
++def test_non_ascii_utf8_env_file_still_reads(tmp_path, args, expected):
++    """The check above must reject only what cannot be decoded: a UTF-8 file
++    with non-ASCII content is ordinary input and still works."""
++    (tmp_path / ".env").write_bytes("A=café\n".encode())
++
++    result = run_dotenv(args, cwd=tmp_path)
++
++    check_process(result, exit_code=0, stdout=expected)
++
++
+ def test_run_with_none_value(tmp_path):
+     (tmp_path / ".env").write_text("A=x\nc")
+ 
+@@ -258,6 +579,30 @@ def test_run_with_env_missing_and_invalid_cmd(tmp_path):
+     assert "Invalid value for '-f'" in result.stderr
+ 
+ 
++@pytest.mark.skipif(sys.platform == "win32", reason="FIFOs are Unix-only")
++def test_run_with_fifo(tmp_path):
++    """
++    README documents FIFO reads, and `dotenv list` accepts one, so `run` must too.
++    """
++    fifo = tmp_path / "fifo.env"
++    os.mkfifo(fifo)
++
++    def writer():
++        with open(fifo, "w", encoding="utf-8") as w:
++            w.write("A=from-fifo\n")
++
++    # Daemon: if `run` rejects the FIFO the writer blocks on open() forever, and the
++    # test must fail on the assertion rather than hang the session at exit.
++    t = threading.Thread(target=writer, daemon=True)
++    t.start()
++    try:
++        result = run_dotenv(["-f", str(fifo), "run", "printenv", "A"], cwd=tmp_path)
++    finally:
++        t.join(timeout=5)
++
++    check_process(result, exit_code=0, stdout="from-fifo\n")
++
++
+ def test_run_with_version(tmp_path):
+     result = run_dotenv(["--version"], cwd=tmp_path)
+ 
+@@ -293,3 +638,72 @@ def test_run_with_dotenv_and_command_flags(dotenv_path, tmp_path):
+ 
+     check_process(result, exit_code=0)
+     assert result.stdout.strip().startswith("dotenv, version")
++
++
++def test_run_skips_keys_a_child_environment_cannot_hold(tmp_path):
++    """`dotenv run` used to die with a 31-line traceback on this file."""
++    (tmp_path / ".env").write_text("GOOD_ONE=1\n'a=b'=x\nGOOD_TWO=2\n")
++
++    result = run_dotenv(["run", "printenv", "GOOD_TWO"], cwd=tmp_path)
++
++    check_process(result, exit_code=0, stdout="2\n")
++    assert "Traceback" not in result.stderr
++    assert "'a=b'" in result.stderr
++
++
++def test_run_skips_null_byte_keys_and_values(tmp_path):
++    (tmp_path / ".env").write_text("GOOD=1\n'a\x00b'=x\nNULVAL='y\x00z'\n")
++
++    result = run_dotenv(["run", "printenv", "GOOD"], cwd=tmp_path)
++
++    check_process(result, exit_code=0, stdout="1\n")
++    assert "Traceback" not in result.stderr
++
++
++def test_list_still_shows_keys_run_skips(tmp_path):
++    """The gate is in front of the environment only; `list` is unchanged."""
++    (tmp_path / ".env").write_text("GOOD_ONE=1\n'a=b'=x\n")
++
++    result = run_dotenv(["list"], cwd=tmp_path)
++
++    check_process(result, exit_code=0, stdout="GOOD_ONE=1\na=b=x\n")
++
++
++def test_run_skips_a_value_the_fsencoding_cannot_carry(tmp_path):
++    """`dotenv run` used to die with a 31-line UnicodeEncodeError traceback."""
++    (tmp_path / ".env").write_text("GOOD=1\nACCENT=café\n", encoding="utf-8")
++
++    result = run_dotenv(
++        ["run", "printenv", "GOOD"],
++        cwd=tmp_path,
++        env={
++            **os.environ,
++            "PYTHONUTF8": "0",
++            "PYTHONCOERCECLOCALE": "0",
++            "LC_ALL": "C",
++            "LANG": "C",
++        },
++    )
++
++    check_process(result, exit_code=0, stdout="1\n")
++    assert "Traceback" not in result.stderr
++    assert "ACCENT" in result.stderr
++
++
++def test_list_still_reads_that_file_under_a_narrow_locale(tmp_path):
++    """The outside edge: reading needs no environment, so it must still work."""
++    (tmp_path / ".env").write_text("GOOD=1\nACCENT=café\n", encoding="utf-8")
++
++    result = run_dotenv(
++        ["list"],
++        cwd=tmp_path,
++        env={
++            **os.environ,
++            "PYTHONUTF8": "0",
++            "PYTHONCOERCECLOCALE": "0",
++            "LC_ALL": "C",
++            "LANG": "C",
++        },
++    )
++
++    check_process(result, exit_code=0, stdout="ACCENT=café\nGOOD=1\n")
+diff --git a/tests/test_ipython.py b/tests/test_ipython.py
+index 6eda086..382a3b3 100644
+--- a/tests/test_ipython.py
++++ b/tests/test_ipython.py
+@@ -45,6 +45,21 @@ def test_ipython_existing_variable_override(tmp_path):
+     assert os.environ == {"a": "b"}
+ 
+ 
++@pytest.mark.parametrize("requested", ["missing.env", "config/production.env"])
++@mock.patch.dict(os.environ, {}, clear=True)
++def test_ipython_not_found_names_the_requested_path(tmp_path, capsys, requested):
++    from IPython.terminal.embed import InteractiveShellEmbed
++
++    os.chdir(tmp_path)
++
++    ipshell = InteractiveShellEmbed()
++    ipshell.run_line_magic("load_ext", "dotenv")
++    ipshell.run_line_magic("dotenv", requested)
++
++    assert f"cannot find {requested}" in capsys.readouterr().out
++    assert os.environ == {}
++
++
+ @pytest.mark.skipif(
+     sys.platform == "win32", reason="This test assumes case-sensitive variable names"
+ )
+diff --git a/tests/test_main.py b/tests/test_main.py
+index 1c33c80..87f7b87 100644
+--- a/tests/test_main.py
++++ b/tests/test_main.py
+@@ -63,6 +63,123 @@ def test_set_key_encoding(dotenv_path):
+     assert dotenv_path.read_text(encoding=encoding) == "a='é'\n"
+ 
+ 
++@pytest.mark.parametrize(
++    "content,env,override,expected_return,expected_env",
++    [
++        # Something was found: True, and the environment changed.
++        ("a=b\n", {}, False, True, {"a": "b"}),
++        # Something was found, but nothing changed: still True.
++        ("a\n", {}, False, True, {}),
++        ("a=b\n", {"a": "keep"}, False, True, {"a": "keep"}),
++        # Nothing was found: False.
++        ("", {}, False, False, {}),
++        ("# only a comment\n", {}, False, False, {}),
++        ("\n\n", {}, False, False, {}),
++    ],
++)
++def test_load_dotenv_return_value(
++    content, env, override, expected_return, expected_env
++):
++    with mock.patch.dict(os.environ, env, clear=True):
++        result = dotenv.load_dotenv(stream=io.StringIO(content), override=override)
++
++        assert result is expected_return
++        assert dict(os.environ) == expected_env
++
++
++def test_load_dotenv_return_value_when_disabled():
++    with mock.patch.dict(os.environ, {"PYTHON_DOTENV_DISABLED": "1"}, clear=True):
++        result = dotenv.load_dotenv(stream=io.StringIO("a=b\n"))
++
++        assert result is False
++        assert "a" not in os.environ
++
++
++@pytest.mark.parametrize(
++    "value",
++    [
++        "hello # world",
++        "  leading",
++        "trailing  ",
++        "line1\nline2",
++        "a\tb #c",
++    ],
++)
++def test_set_key_never_quote_mode_rejects_unrepresentable_value(dotenv_path, value):
++    dotenv_path.write_text("")
++
++    with pytest.raises(ValueError, match="quote_mode"):
++        dotenv.set_key(dotenv_path, "a", value, quote_mode="never")
++
++    assert dotenv_path.read_text() == ""
++
++
++@pytest.mark.parametrize(
++    "value",
++    ["", "plain", "with space", "has#hash", "#lead", "a'b", 'a"b', "$X"],
++)
++def test_set_key_never_quote_mode_round_trips(dotenv_path, value):
++    dotenv_path.write_text("")
++
++    result = dotenv.set_key(dotenv_path, "a", value, quote_mode="never")
++
++    assert result == (True, "a", value)
++    assert dotenv.dotenv_values(dotenv_path, interpolate=False) == {"a": value}
++
++
++@pytest.mark.parametrize("quote_mode", ["alwys", "ALWAYS", "", "quoted"])
++def test_set_key_rejects_unknown_quote_mode(dotenv_path, quote_mode):
++    dotenv_path.write_text("existing=1\n")
++
++    with pytest.raises(ValueError, match="Unknown quote_mode"):
++        dotenv.set_key(dotenv_path, "a", "b", quote_mode=quote_mode)
++
++    assert dotenv_path.read_text() == "existing=1\n"
++
++
++@pytest.mark.parametrize("quote_mode", ["alwys", "ALWAYS", "", "quoted"])
++def test_unset_key_accepts_unknown_quote_mode(dotenv_path, quote_mode):
++    """The asymmetry `unset_key`'s docstring claims: removing writes no value,
++    so there is nothing to quote and an unknown mode is not an error."""
++    dotenv_path.write_text("existing=1\na=b\n")
++
++    result = dotenv.unset_key(dotenv_path, "a", quote_mode=quote_mode)
++
++    assert result == (True, "a")
++    assert dotenv_path.read_text() == "existing=1\n"
++
++
++@pytest.mark.parametrize("quote_mode", ["always", "auto", "never"])
++@pytest.mark.parametrize("export", [False, True])
++@pytest.mark.parametrize(
++    "key",
++    ["a b", "a=b", "a#b", "", "a\nb", "a\tb", " a", "a ", "'a'", "export A"],
++)
++def test_set_key_key_validation_rejects_unrepresentable_key(
++    dotenv_path, key, export, quote_mode
++):
++    dotenv_path.write_text("existing=1\n")
++
++    with pytest.raises(ValueError, match="Cannot write key"):
++        dotenv.set_key(dotenv_path, key, "x", quote_mode=quote_mode, export=export)
++
++    assert dotenv_path.read_text() == "existing=1\n"
++
++
++@pytest.mark.parametrize("quote_mode", ["always", "auto", "never"])
++@pytest.mark.parametrize("export", [False, True])
++@pytest.mark.parametrize("key", ["ok_key", "a", "A_B9", "1abc", "a'b", 'a"b', "a$b"])
++def test_set_key_key_validation_round_trips_representable_key(
++    dotenv_path, key, export, quote_mode
++):
++    dotenv_path.write_text("")
++
++    result = dotenv.set_key(dotenv_path, key, "x", quote_mode=quote_mode, export=export)
++
++    assert result == (True, key, "x")
++    assert dotenv.dotenv_values(dotenv_path, interpolate=False) == {key: "x"}
++
++
+ @pytest.mark.skipif(
+     sys.platform == "win32", reason="file mode bits behave differently on Windows"
+ )
+@@ -77,6 +194,44 @@ def test_set_key_preserves_file_mode(dotenv_path):
+     assert mode_before == mode_after
+ 
+ 
++def test_rewrite_failure_in_body_leaves_original_intact(tmp_path):
++    dotenv_path = tmp_path / ".env"
++    dotenv_path.write_text("a=x\nb=y\n")
++
++    with pytest.raises(RuntimeError, match="boom"):
++        with dotenv.main.rewrite(dotenv_path, encoding="utf-8") as (source, dest):
++            dest.write("destroyed=1\n")
++            raise RuntimeError("boom")
++
++    assert dotenv_path.read_text() == "a=x\nb=y\n"
++    assert list(tmp_path.glob(".tmp_*")) == []
++
++
++def test_rewrite_failure_to_replace_leaves_original_intact(tmp_path):
++    dotenv_path = tmp_path / ".env"
++    dotenv_path.write_text("a=x\nb=y\n")
++
++    with mock.patch("dotenv.main.os.replace", side_effect=OSError("no replace")):
++        with pytest.raises(OSError, match="no replace"):
++            with dotenv.main.rewrite(dotenv_path, encoding="utf-8") as (source, dest):
++                dest.write("c=z\n")
++
++    assert dotenv_path.read_text() == "a=x\nb=y\n"
++    assert list(tmp_path.glob(".tmp_*")) == []
++
++
++def test_rewrite_failure_through_set_key_leaves_original_intact(tmp_path):
++    dotenv_path = tmp_path / ".env"
++    dotenv_path.write_text("a=x\n")
++
++    with mock.patch("dotenv.main.os.replace", side_effect=OSError("no replace")):
++        with pytest.raises(OSError, match="no replace"):
++            dotenv.set_key(dotenv_path, "b", "y")
++
++    assert dotenv_path.read_text() == "a=x\n"
++    assert list(tmp_path.glob(".tmp_*")) == []
++
++
+ def test_rewrite_closes_file_handle_on_lstat_failure(tmp_path):
+     dotenv_path = tmp_path / ".env"
+     dotenv_path.write_text("a=x\n")
+@@ -655,6 +810,45 @@ def test_dotenv_values_file(dotenv_path):
+     assert result == {"a": "b"}
+ 
+ 
++def test_dotenv_values_without_path_finds_the_file(tmp_path, monkeypatch):
++    (tmp_path / ".env").write_text("a=b")
++    monkeypatch.chdir(tmp_path)
++
++    result = dotenv.dotenv_values()
++
++    assert result == {"a": "b"}
++
++
++@pytest.mark.parametrize(
++    "content,expected_values,expected_error_lines",
++    [
++        ("GOOD=1\n=bad line\nALSO_GOOD=2\n", {"GOOD": "1", "ALSO_GOOD": "2"}, [2]),
++        (
++            "GOOD=1\n=bad\nMID=2\n'unclosed=3\nLAST=4\n",
++            {"GOOD": "1", "MID": "2", "LAST": "4"},
++            [2, 4],
++        ),
++        ("=bad only\n", {}, [1]),
++    ],
++)
++def test_unparseable_line_is_skipped_and_reported(
++    dotenv_path, content, expected_values, expected_error_lines
++):
++    """A hand-authored `.env` with a typo keeps its good keys, and the line that
++    was dropped is named on the logger - the only signal the user gets."""
++    dotenv_path.write_text(content)
++    logger = logging.getLogger("dotenv.main")
++
++    with mock.patch.object(logger, "warning") as mock_warning:
++        result = dotenv.dotenv_values(dotenv_path)
++
++    assert result == expected_values
++    assert mock_warning.call_args_list == [
++        mock.call("python-dotenv could not parse statement starting at line %s", line)
++        for line in expected_error_lines
++    ]
++
++
+ @pytest.mark.skipif(
+     sys.platform == "win32", reason="This test assumes case-sensitive variable names"
+ )
+@@ -678,6 +872,13 @@ def test_dotenv_values_file(dotenv_path):
+         ({"b": "c"}, "a='${b}'", True, {"a": "c"}),
+         # With surrounding text
+         ({"b": "c"}, "a=x${b}y", True, {"a": "xcy"}),
++        # Declared without a value: not a value, so a default still applies
++        ({}, "a\nb=${a:-d}", True, {"a": None, "b": "d"}),
++        ({}, "a\nb=${a}", True, {"a": None, "b": ""}),
++        # Declared as the empty string: that is a value, so it wins over a default
++        ({}, "a=\nb=${a:-d}", True, {"a": "", "b": ""}),
++        # Set to the empty string in the environment: also a value
++        ({"a": ""}, "b=${a:-d}", True, {"b": ""}),
+         # Self-referential
+         ({"a": "b"}, "a=${a}", True, {"a": "b"}),
+         ({}, "a=${a}", True, {"a": ""}),
+@@ -708,3 +909,176 @@ def test_dotenv_values_file_stream(dotenv_path):
+         result = dotenv.dotenv_values(stream=f)
+ 
+     assert result == {"a": "b"}
++
++
++@pytest.mark.parametrize(
++    "content,unusable_key",
++    [
++        ("'a=b'=x\n", "a=b"),
++        ("'a\x00b'=x\n", "a\x00b"),
++        ("A='x\x00y'\n", "A"),
++    ],
++)
++def test_load_dotenv_skips_keys_an_environ_name_cannot_hold(
++    content, unusable_key, caplog
++):
++    """A key the parser reads but `os.environ` rejects is skipped, not raised."""
++    stream = io.StringIO(f"GOOD_ONE=1\n{content}GOOD_TWO=2\n")
++
++    with mock.patch.dict(os.environ, {}, clear=True):
++        with caplog.at_level(logging.WARNING):
++            result = dotenv.load_dotenv(stream=stream, override=True)
++
++        # The whole file is loaded: the bad key does not abort the ones after it.
++        assert result is True
++        assert os.environ["GOOD_ONE"] == "1"
++        assert os.environ["GOOD_TWO"] == "2"
++        assert unusable_key not in os.environ
++
++    assert repr(unusable_key) in caplog.text
++
++
++def test_load_dotenv_unusable_key_alone_still_reports_what_was_found():
++    """The return value reports what the source held, not what was set."""
++    with mock.patch.dict(os.environ, {}, clear=True):
++        result = dotenv.load_dotenv(stream=io.StringIO("'a=b'=x\n"), override=True)
++
++        assert result is True
++        assert dict(os.environ) == {}
++
++
++def test_dotenv_values_still_returns_keys_an_environ_name_cannot_hold():
++    """The gate is in front of the environment only; the mapping API is unchanged."""
++    result = dotenv.dotenv_values(stream=io.StringIO("'a=b'=x\nA='y\x00z'\n"))
++
++    assert result == {"a=b": "x", "A": "y\x00z"}
++
++
++@pytest.mark.parametrize(
++    "key,value,expected",
++    [
++        ("A", "1", True),
++        ("my key", "x", True),
++        ("a-b", "x", True),
++        ("a#b", "x", True),
++        ("A", "x=y", True),
++        ("A", "", True),
++        ("a=b", "x", False),
++        ("a\x00b", "x", False),
++        ("A", "x\x00y", False),
++    ],
++)
++def test_usable_as_environment_variable_matches_os_environ(key, value, expected):
++    """The predicate must agree with what os.environ actually accepts."""
++    from dotenv.main import usable_as_environment_variable
++
++    assert usable_as_environment_variable(key, value) is expected
++
++    with mock.patch.dict(os.environ, {}, clear=True):
++        try:
++            os.environ[key] = value
++            accepted = True
++        except (ValueError, OSError):
++            accepted = False
++
++    assert accepted is expected
++
++
++NARROW_LOCALE = {
++    "PYTHONUTF8": "0",
++    "PYTHONCOERCECLOCALE": "0",
++    "LC_ALL": "C",
++    "LANG": "C",
++}
++
++
++def _run_under(env_extra, code, tmp_path):
++    """Run `code` in a child process with the given environment additions."""
++    return subprocess.run(
++        [sys.executable, "-c", textwrap.dedent(code)],
++        capture_output=True,
++        text=True,
++        cwd=tmp_path,
++        env={**os.environ, **env_extra},
++    )
++
++
++def test_load_dotenv_skips_a_value_the_fsencoding_cannot_carry(tmp_path):
++    """A valid UTF-8 .env under LC_ALL=C used to raise UnicodeEncodeError."""
++    (tmp_path / ".env").write_text("GOOD=1\nACCENT=café\n", encoding="utf-8")
++
++    result = _run_under(
++        NARROW_LOCALE,
++        """
++        import os, sys
++        from dotenv import load_dotenv
++        r = load_dotenv(".env", override=True)
++        print(sys.getfilesystemencoding(), r,
++              os.environ.get("GOOD"), "ACCENT" in os.environ)
++        """,
++        tmp_path,
++    )
++
++    assert result.returncode == 0, result.stderr
++    assert result.stdout.strip() == "ascii True 1 False"
++    assert "Traceback" not in result.stderr
++    # The warning must name the variable and the encoding, so the fix is legible.
++    assert "ACCENT" in result.stderr
++    assert "ascii" in result.stderr
++
++
++def test_load_dotenv_loads_that_same_value_under_utf8(tmp_path):
++    """The outside edge: the guard must not reject what the locale can carry."""
++    (tmp_path / ".env").write_text("GOOD=1\nACCENT=café\n", encoding="utf-8")
++
++    result = _run_under(
++        {"PYTHONUTF8": "1"},
++        """
++        import os
++        from dotenv import load_dotenv
++        load_dotenv(".env", override=True)
++        print(os.environ.get("ACCENT"))
++        """,
++        tmp_path,
++    )
++
++    assert result.returncode == 0, result.stderr
++    assert result.stdout.strip() == "café"
++
++
++def test_usable_as_environment_variable_agrees_with_fsencode_on_surrogates():
++    """A lone surrogate survives surrogateescape, so it must not be rejected."""
++    from dotenv.main import usable_as_environment_variable
++
++    with mock.patch.dict(os.environ, {}, clear=True):
++        os.environ["K"] = "\udcff"
++        assert os.environ["K"] == "\udcff"
++
++    assert usable_as_environment_variable("K", "\udcff") is True
++    assert usable_as_environment_variable("K\udcff", "x") is True
++
++
++def test_load_dotenv_skips_a_high_surrogate_at_the_default_encoding(caplog):
++    """A high surrogate is unencodable even under UTF-8, so the branch is
++    reachable in process: os.environ rejects it exactly as os.fsencode does."""
++    from dotenv.main import usable_as_environment_variable
++
++    with mock.patch.dict(os.environ, {}, clear=True):
++        with pytest.raises(UnicodeEncodeError):
++            os.environ["K"] = "\ud800"
++
++    assert usable_as_environment_variable("K", "\ud800") is False
++    assert usable_as_environment_variable("K\ud800", "x") is False
++
++    with mock.patch.dict(os.environ, {}, clear=True):
++        with caplog.at_level(logging.WARNING):
++            result = dotenv.load_dotenv(
++                stream=io.StringIO("GOOD=1\nBAD=\ud800\n"), override=True
++            )
++
++        assert result is True
++        assert os.environ["GOOD"] == "1"
++        assert "BAD" not in os.environ
++
++    assert "BAD" in caplog.text
++    assert "utf-8" in caplog.text
+diff --git a/tests/test_utils.py b/tests/test_utils.py
+index 93b8bae..ed5581b 100644
+--- a/tests/test_utils.py
++++ b/tests/test_utils.py
+@@ -1,3 +1,7 @@
++import shlex
++
++import pytest
++
+ from dotenv import get_cli_string as c
+ 
+ 
+@@ -12,8 +16,41 @@ def test_to_cli_string():
+         c(action="set", key="SECRET", value="=@asdfasf")
+         == "dotenv set SECRET =@asdfasf"
+     )
+-    assert c(action="set", key="SECRET", value="a b") == 'dotenv set SECRET "a b"'
++    assert c(action="set", key="SECRET", value="a b") == "dotenv set SECRET 'a b'"
+     assert (
+         c(action="set", key="SECRET", value="a b", quote="always")
+-        == 'dotenv -q always set SECRET "a b"'
++        == "dotenv -q always set SECRET 'a b'"
+     )
++
++
++@pytest.mark.parametrize(
++    "path",
++    ["/etc/.env", "/tmp/my env/.env", "/tmp/it's/.env", "/tmp/a;b/.env"],
++)
++def test_to_cli_string_quotes_path(path):
++    assert shlex.split(c(path=path, action="list")) == ["dotenv", "-f", path, "list"]
++
++
++@pytest.mark.parametrize(
++    "value",
++    [
++        "plain",
++        "a b",
++        "it's",
++        '"quoted"',
++        "$(id)",
++        "`id`",
++        "a; rm -rf /tmp/x",
++        "",
++        "a\nb",
++    ],
++)
++def test_to_cli_string_quotes_value(value):
++    produced = c(action="set", key="SECRET", value=value)
++
++    assert shlex.split(produced) == ["dotenv", "set", "SECRET", value]
++
++
++@pytest.mark.parametrize("key", ["DEBUG", "HAS SPACE", "it's"])
++def test_to_cli_string_quotes_key(key):
++    assert shlex.split(c(action="get", key=key)) == ["dotenv", "get", key]
+diff --git a/tests/test_variables.py b/tests/test_variables.py
+index 6f2b220..34b217d 100644
+--- a/tests/test_variables.py
++++ b/tests/test_variables.py
+@@ -33,3 +33,39 @@ def test_parse_variables(value, expected):
+     result = parse_variables(value)
+ 
+     assert list(result) == expected
++
++
++@pytest.mark.parametrize(
++    "atom,other",
++    [
++        (Literal(value="a"), "a"),
++        (Literal(value="a"), Variable(name="a", default=None)),
++        (Variable(name="a", default=None), "a"),
++        (Variable(name="a", default=None), Literal(value="a")),
++    ],
++)
++def test_atom_comparison_with_another_type(atom, other):
++    """`__eq__` returns NotImplemented for a foreign operand, so Python falls
++    back to identity and `!=` stays the exact negation of `==`."""
++    assert not (atom == other)
++    assert atom != other
++
++
++@pytest.mark.parametrize(
++    "atom,expected_repr",
++    [
++        (Literal(value="a"), "Literal(value=a)"),
++        (Variable(name="a", default=None), "Variable(name=a, default=None)"),
++        (Variable(name="a", default="b"), "Variable(name=a, default=b)"),
++    ],
++)
++def test_atom_repr(atom, expected_repr):
++    assert repr(atom) == expected_repr
++
++
++def test_atoms_are_hashable_and_hash_by_value():
++    assert hash(Literal(value="a")) == hash(Literal(value="a"))
++    assert hash(Variable(name="a", default="b")) == hash(
++        Variable(name="a", default="b")
++    )
++    assert len({Literal(value="a"), Literal(value="a"), Literal(value="b")}) == 2

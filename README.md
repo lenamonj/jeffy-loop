@@ -82,7 +82,7 @@ Testing a tool against its own codebase proves little. Jeffy was therefore run a
 
 Every run used a local clone, nothing was pushed upstream without a filed issue or PR, and all runs were held to the same rules: evidence before filing, severity judged against a declared operating envelope, and red-green proof that anyone can re-run.
 
-Each receipt below is a full `/jeffy` loop run that converged, except PapaParse, an audit under the same method whose loop conversion waits on four open upstream PRs. The standard tightened as the engine matured. The earliest runs converged on a clean closing audit and an empty backlog, later runs under the shell-enforced converged stop, and the most recent under the adversarial evaluator's countersignature. Each receipt states which standard its run met, so none of this requires taking our word for it.
+Each receipt below is a full `/jeffy` loop run that converged, with two deliberate exceptions kept in the table rather than hidden: PapaParse, an audit under the same method whose loop conversion waits on four open upstream PRs, and python-dotenv, where four runs closed 25 findings and still have not earned the clean closing audit convergence requires. A method that always converges is not measuring anything. The standard tightened as the engine matured. The earliest runs converged on a clean closing audit and an empty backlog, later runs under the shell-enforced converged stop, and the most recent under the adversarial evaluator's countersignature. Each receipt states which standard its run met, so none of this requires taking our word for it.
 
 Ordered by severity of findings, most severe first.
 
@@ -103,6 +103,7 @@ Ordered by severity of findings, most severe first.
 | [Spectre.Console](evals/spectre.console/REPORT.md) | 11,567 | C# | 8 | **converged** | [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | a panel header wider than its content was dropped, not truncated - invisible to 3,618 tests |
 | [gson](evals/gson/REPORT.md) | 24,229 | Java | 2 | **converged** | - | the fastest run: one audit, one gate, one priced-and-declined Low, not a line changed |
 | [RuboCop](evals/rubocop/REPORT.md) | 12,892 | Ruby | 7 | **converged** | - | the null result: every cop department swept, the last 20 commits re-proven, zero findings, zero lines changed |
+| [python-dotenv](evals/python-dotenv/REPORT.md) | 8,830 | Python | 38 | *not converged* | - | 25 findings closed over four runs, and every audit still finds more; suite 220 to 461 |
 | [PapaParse](evals/papaparse/REPORT.md) | 13,532 | JavaScript | - | *audit* | [4 PRs open](https://github.com/mholt/PapaParse/issues/1132) | four Highs in the streaming path; conversion waits on four open PRs |
 
 <details>
@@ -222,6 +223,14 @@ The seventh language in this set, and the shortest run in it: **two iterations**
 <br>
 
 Ruby's standard linter, the sixth language in this set, chosen for the opposite reason chalk was: its maintainers merge outside bugfix PRs daily, so it was expected to yield findings. It yielded none, and the receipt's value is how that nothing was earned. One run, seven iterations, converged at the upstream master tip of the run day - **zero findings at any severity, zero lines of project code changed**; the certified tree differs from upstream by loop bookkeeping alone, so there is no fixes.patch, only the record. The sweep behind the claim: all 21 inventory rows, every cop department (Layout 100, Lint 157, Style 300, plus seven more) against the project's 33,546-example known-answer suite, live end-to-end probes of the CLI, config, server, and LSP surfaces - and, because a commit that co-edits code and specs is certified only by tests written by the same hand, the loop **individually re-verified the last 20 upstream commits with 16 live probes**, three of them differential autocorrect comparisons proven byte-identical. The adversarial evaluator re-ran the full suite fresh, reproduced four audited claims with its own probes, hunted with invalid UTF-8 and null-byte source, and passed it on the first invocation. The receipt states the limits as plainly as the result: the verify gate exercises the Parser engine only, so Prism-specific behavior is out of scope, and a null result certifies the surface examined, not the absence of bugs. Findings were not disclosed upstream: there are none.
+
+</details>
+
+<details>
+<summary><b>theskumar/python-dotenv</b> - the one that has not converged, and what that costs</summary>
+<br>
+
+The library that loads `.env` files for a very large share of the Python ecosystem, and the only entry here that is **not converged**. Four runs, 38 iterations, **25 findings closed**, suite from **220 tests to 461** - and the loop still has not earned the clean closing audit convergence requires, because all six full audits it ran found a High or a Medium. That is what a genuinely defect-rich library looks like against a standard of "one complete audit that files nothing", and the receipt states it rather than reframing it. Two findings are silent data corruption in the write path: `set_key(quote_mode="never")` interpolates the value raw, so a `#`, a leading quote or an embedded newline reads back as something else while the call returns success - a 4,000-value fuzz measured 775 round-trip failures in that mode against 211 elsewhere, and the newline case is a `.env` injection primitive that writes an attacker-chosen second variable. Its sibling, `set_key` never validating the **key**, is the one disclosed upstream. The receipt is also where a finding gets retracted: the loop claimed the `${VAR:-default}` behaviour contradicts the README's precedence list, independent verification showed the README's own definitions make the current behaviour correct, and the claim is withdrawn in the open rather than dropped. Run 3 additionally produced the first live firing of the engine's one-time +2 closing extension on a public target, and exposed its flaw - the audit inside the extension window filed new work, so the +2 bought work instead of ceremony.
 
 </details>
 
