@@ -23,7 +23,20 @@ It has receipts. Widely used open-source libraries have been run to convergence,
 
 ## Quickstart
 
-You need [Claude Code](https://claude.com/claude-code) (installed and signed in once) and [git](https://git-scm.com/downloads) - no git yet? `winget install Git.Git` (Windows), `brew install git` (macOS), or `sudo apt-get install git` (Debian/Ubuntu), then confirm with `git --version`. The installer handles everything else, including `jq`.
+You need exactly two things. The installer handles everything else, including `jq`.
+
+1. **[Claude Code](https://claude.com/claude-code)** - installed and signed in once
+2. **[git](https://git-scm.com/downloads)** - confirm with `git --version`
+
+No git yet? One command:
+
+```bash
+winget install Git.Git      # Windows
+brew install git            # macOS
+sudo apt-get install git    # Debian/Ubuntu
+```
+
+Install Jeffy:
 
 ```bash
 git clone https://github.com/lenamonj/jeffy-loop.git
