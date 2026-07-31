@@ -98,6 +98,7 @@ Ordered by severity of findings, most severe first.
 | [yfinance](evals/yfinance/REPORT.md) | 24,837 | Python | 9 | **converged** | [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | closed a High that upstream's own failing test was advertising |
 | [speedtest-cli](evals/speedtest-cli/REPORT.md) | 14,080 | Python | 5 | **converged** | - | the restraint case: small findings, nothing invented |
 | [chalk](evals/chalk/REPORT.md) | 23,288 | JavaScript | 8 | **converged** | **[FIX MERGED](https://github.com/chalk/chalk/pull/687)** | the control: one Medium found - fixed upstream, shipped in chalk v6.0.0 |
+| [gson](evals/gson/REPORT.md) | 24,229 | Java | 2 | **converged** | - | the fastest run: one audit, one gate, one priced-and-declined Low, not a line changed |
 | [RuboCop](evals/rubocop/REPORT.md) | 12,892 | Ruby | 7 | **converged** | - | the null result: every cop department swept, the last 20 commits re-proven, zero findings, zero lines changed |
 | [PapaParse](evals/papaparse/REPORT.md) | 13,532 | JavaScript | - | *audit* | [4 PRs open](https://github.com/mholt/PapaParse/issues/1132) | four Highs in the streaming path; conversion waits on four open PRs |
 
@@ -194,6 +195,14 @@ Dormant since 2021 but fundamentally sound, where the honest outcome is small fi
 <br>
 
 One of the best-maintained small libraries alive, chosen to test whether the loop invents problems where there are none. The core survived clean: correctness, security and architecture all scored None on first pass, vendored code was declined rather than churned, and a semver-major engines bump was routed to the owner instead of seized. The audit still had teeth, surfacing one genuine reproduced Medium - `ansi256` skips level downconversion, contradicting the readme's promise. Findings were disclosed upstream with repros and a PR offer in [chalk/chalk#686](https://github.com/chalk/chalk/issues/686) - a chalk contributor reproduced it independently and called it surprising that it had not surfaced sooner given how heavily chalk is used, the project owner then wrote and merged [#687](https://github.com/chalk/chalk/pull/687) implementing exactly that fix, and it **shipped in [chalk v6.0.0](https://github.com/chalk/chalk/releases/tag/v6.0.0)**.
+
+</details>
+
+<details>
+<summary><b>google/gson</b> - the fastest convergence, on a freshly swept field</summary>
+<br>
+
+The seventh language in this set, and the shortest run in it: **two iterations**, one full audit and one evaluator gate, converged at the upstream master tip of the run day. gson was chosen for the same engagement evidence as RuboCop - its maintainer had merged four outside correctness fixes that same week - and that evidence explains the outcome: the commits immediately under the baseline are those fixes, so the field had just been swept, and this run certifies that what remained held. **Zero High, zero Medium; one Low** - the benchmarks module's Caliper 1.0-beta-3 dependency, unmaintained since 2015 - **filed and declined with its cost stated** under the engine's pricing rule, because migrating a no-runtime-users module to JMH exceeds one iteration. Not a source, test, or build line changed. The single audit swept a 17-row inventory - 128 surefire test classes green across four modules, the JPMS and shrinker assertions run with their required packaging, the adversarial JSON path read at source level - and the GraalVM native-image harness, which cannot run on the host, was marked unreachable in the record rather than silently skipped. The evaluator improved a null result: it re-proved the tree byte-identical to upstream, re-ran every suite, and caught two bookkeeping errors in the audit's own record, both corrected without rewriting history. Findings were not disclosed upstream: the sole finding is a declined Low in a benchmarks-only module.
 
 </details>
 
