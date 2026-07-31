@@ -293,21 +293,30 @@ The restart also gives you the natural review point. Between runs the tree is co
 
 Nothing breaks if you hand it a bigger budget. The state files persist, the ratchet skips a re-audit on an unchanged tree, and a fresh run picks up exactly where the last one stopped. Short runs are simply how you get the loop's design working for you instead of against it.
 
-Jeffy built this repository by running on itself, and that convergence is re-earned, not archived - every fresh run has to reach it again with fresh evidence. The dev journal it wrote stays out of the published tree, since state files are the loop's memory rather than the product, but one abridged entry - shown as written, though journal headings have since tightened to the pipe-delimited grammar the loop uses today - shows the texture of a closing audit:
+Jeffy built this repository by running on itself, and that convergence is re-earned, not archived - every fresh run has to reach it again with fresh evidence. It last did on 2026-07-31, the day after v1.5.0 shipped, running Fable 5 at x-high effort: the opening audit filed three Mediums against the repo's own trust-model and check-count claims, one iteration each fixed them, and the stop still had to be earned. The dev journal stays out of the published tree, since state files are the loop's memory rather than the product, but the closing sequence, abridged, shows the texture of a converged stop:
 
 ```
-## Iteration 1 (run 6, budget 5) - 2026-07-05 - Full audit (convergence check)
+## iter 5/8 | e64f9b2c-160059 | 2026-07-31 | AUDIT | audit
 
-Evidence gathered this iteration (fresh):
-- Validator: bash scripts/validate.sh exits 0, every check green.
-- Check 6 has teeth: negative-path test on a scratch copy with the
-  "## Operating envelope" marker mangled fails the build. Not a silent no-op.
-(7 more evidence lines)
+Verification: bash scripts/validate.sh exit 0 fresh this iteration,
+119 OK, 0 FAIL, 96s wall against the hook's 240s verify budget.
+Inventory: all 12 rows stand. Dimension scores over all 12 swept rows,
+fresh evidence each: (12 dimension scores, every one None)
+Result: zero High, zero Medium, zero new findings at any severity.
+Closeout begins: no further audit or replenishment this run; only the
+convergence sequence remains.
 
-Result: zero High, zero Medium. The Definition of done is genuinely and
-verifiably true. Recorded a Converged line with the full commit hash
-under ## Converged in BACKLOG.md so future relaunches on an unchanged tree
-ratchet in O(1) instead of re-auditing.
+## iter 6/8 | e64f9b2c-160059 | 2026-07-31 | EVALUATOR | converged
+
+Verification: Evaluator: PASS - fresh-context adversarial review
+confirmed scope, re-ran the Verify command at exit 0 (119 OK, 0 FAIL,
+1 SKIP), (re-proved each of the run's three findings against the
+shipped files) and found no missed in-envelope High or Medium.
+Closing conditions: closing audit scored zero High zero Medium over
+all 12 swept rows; Now, Next, Later all empty; all three filed
+findings completed (D1 at 5e9be82, D2 at 71a420c, D3 at fa73cf3);
+no unswept or stale inventory row; Converged line appended for
+fa73cf3a6e5e277d80e48dc2d34111f67cc4f526.
 ```
 
 When Jeffy converges on your project, the checkpoint lands in your `git log` and under `## Converged` in the loop's backlog, so relaunches on an unchanged tree re-verify instead of re-auditing. Run `/jeffy` on your own project and read the journal it leaves behind.
