@@ -51,7 +51,7 @@ index dde24a0..779debe 100644
  
  __all__ = [
 diff --git a/src/dotenv/cli.py b/src/dotenv/cli.py
-index 79613e2..a65f893 100644
+index 79613e2..0fedb2c 100644
 --- a/src/dotenv/cli.py
 +++ b/src/dotenv/cli.py
 @@ -1,5 +1,6 @@
@@ -85,7 +85,7 @@ index 79613e2..a65f893 100644
  
  def enumerate_env() -> Optional[str]:
      """
-@@ -35,12 +49,48 @@ def enumerate_env() -> Optional[str]:
+@@ -35,12 +49,58 @@ def enumerate_env() -> Optional[str]:
      return path
  
  
@@ -99,10 +99,10 @@ index 79613e2..a65f893 100644
 +    `UnicodeDecodeError` traceback, which is neither actionable nor something
 +    they can work around, since the CLI has no encoding option; and any
 +    `OSError` the rewrite path raises - a directory that is not writable, a
-+    full disk, a read-only filesystem - reaches them as a `PermissionError`
-+    naming a temporary file they never chose. `stream_file` already does this
-+    for the read path, which is why `list` and `get` were the only two
-+    commands that failed cleanly.
++    full disk, a read-only filesystem - reaches them as a traceback rather
++    than a message, however well the error itself is named. `stream_file`
++    already does this for the read path, which is why `list` and `get` were
++    the only two commands that failed cleanly.
 +    """
 +
 +    def invoke(self, ctx: click.Context) -> Any:
@@ -116,14 +116,24 @@ index 79613e2..a65f893 100644
 +            )
 +            sys.exit(2)
 +        except OSError as exc:
-+            # `exc` names the temporary file the rewrite was building, which
-+            # tells the user nothing; `strerror` plus their own path does.
++            # Only errors that name the `.env` are reported against it. Every
++            # route that reaches here from the file names it: `rewrite` renames
++            # its own failures onto the path the caller passed, and the read in
++            # `run` gets the name from `open`. Writing the output is the other
++            # way in, and it names nothing - a `.env` that `list` reads happily
++            # was reported as unreadable when the reader of a pipe went away,
++            # and `set` reported failure after the file had already been
++            # written. `strerror` is what is printed because `str(exc)` would
++            # prefix `[Errno N]` and repeat the path in quotes.
 +            path = ctx.params.get("file")
-+            print(
-+                f"Error accessing env file {path}: {exc.strerror}.",
-+                file=sys.stderr,
-+            )
-+            sys.exit(2)
++            if exc.filename == path:
++                print(
++                    f"Error accessing env file {path}: {exc.strerror}.",
++                    file=sys.stderr,
++                )
++                sys.exit(2)
++            print(f"Error writing output: {exc.strerror}.", file=sys.stderr)
++            sys.exit(1)
 +
 +
 +@click.group(cls=DotenvGroup)
@@ -136,7 +146,7 @@ index 79613e2..a65f893 100644
      help="Location of the .env file, defaults to .env file in current working directory.",
  )
  @click.option(
-@@ -48,7 +98,9 @@ def enumerate_env() -> Optional[str]:
+@@ -48,7 +108,9 @@ def enumerate_env() -> Optional[str]:
      "--quote",
      default="always",
      type=click.Choice(["always", "never", "auto"]),
@@ -147,7 +157,7 @@ index 79613e2..a65f893 100644
  )
  @click.option(
      "-e",
-@@ -59,21 +111,33 @@ def enumerate_env() -> Optional[str]:
+@@ -59,21 +121,33 @@ def enumerate_env() -> Optional[str]:
  )
  @click.version_option(version=__version__)
  @click.pass_context
@@ -181,11 +191,11 @@ index 79613e2..a65f893 100644
  
      try:
 -        with open(path) as stream:
-+        with open(path, encoding="utf-8") as stream:
++        with open(path, encoding="utf-8", newline="") as stream:
              yield stream
      except OSError as exc:
          print(f"Error opening env file: {exc}", file=sys.stderr)
-@@ -88,10 +152,20 @@ def stream_file(path: os.PathLike) -> Iterator[IO[str]]:
+@@ -88,10 +162,20 @@ def stream_file(path: os.PathLike) -> Iterator[IO[str]]:
      default="simple",
      type=click.Choice(["simple", "json", "shell", "export"]),
      help="The format in which to display the list. Default format is simple, "
@@ -208,7 +218,7 @@ index 79613e2..a65f893 100644
      file = ctx.obj["FILE"]
  
      with stream_file(file) as stream:
-@@ -100,20 +174,29 @@ def list_values(ctx: click.Context, output_format: str) -> None:
+@@ -100,20 +184,29 @@ def list_values(ctx: click.Context, output_format: str) -> None:
      if output_format == "json":
          click.echo(json.dumps(values, indent=2, sort_keys=True))
      else:
@@ -243,7 +253,7 @@ index 79613e2..a65f893 100644
      """
      Store the given key/value.
  
-@@ -124,34 +207,46 @@ def set_value(ctx: click.Context, key: Any, value: Any) -> None:
+@@ -124,34 +217,46 @@ def set_value(ctx: click.Context, key: Any, value: Any) -> None:
      file = ctx.obj["FILE"]
      quote = ctx.obj["QUOTE"]
      export = ctx.obj["EXPORT"]
@@ -301,7 +311,7 @@ index 79613e2..a65f893 100644
      """
      Removes the given key.
  
-@@ -178,19 +273,28 @@ def unset(ctx: click.Context, key: Any) -> None:
+@@ -178,19 +283,28 @@ def unset(ctx: click.Context, key: Any) -> None:
  @click.option(
      "--override/--no-override",
      default=True,
@@ -333,7 +343,7 @@ index 79613e2..a65f893 100644
          if v is not None and (override or k not in os.environ)
      }
  
-@@ -221,9 +325,12 @@ def run_command(command: List[str], env: Dict[str, str]) -> None:
+@@ -221,10 +335,17 @@ def run_command(command: List[str], env: Dict[str, str]) -> None:
  
      """
      # copy the current environment variables and add the vales from
@@ -346,10 +356,32 @@ index 79613e2..a65f893 100644
 +        {k: v for k, v in env.items() if usable_as_environment_variable(k, v)}
 +    )
  
++    # Both spawn calls report their own OSError here. `DotenvGroup` catches
++    # OSError for the `.env` file, so anything escaping this function is
++    # attributed to that file - and a command the OS refuses to run has
++    # nothing to do with it, leaving the user to fix a file that is fine.
      if sys.platform == "win32":
          # execvpe on Windows returns control immediately
+         # rather than once the command has finished.
+@@ -235,6 +356,9 @@ def run_command(command: List[str], env: Dict[str, str]) -> None:
+         except FileNotFoundError:
+             print(f"Command not found: {command[0]}", file=sys.stderr)
+             sys.exit(1)
++        except OSError as exc:
++            print(f"Cannot run {command[0]}: {exc.strerror}", file=sys.stderr)
++            sys.exit(1)
+ 
+         _, _ = p.communicate()
+ 
+@@ -245,3 +369,6 @@ def run_command(command: List[str], env: Dict[str, str]) -> None:
+         except FileNotFoundError:
+             print(f"Command not found: {command[0]}", file=sys.stderr)
+             sys.exit(1)
++        except OSError as exc:
++            print(f"Cannot run {command[0]}: {exc.strerror}", file=sys.stderr)
++            sys.exit(1)
 diff --git a/src/dotenv/ipython.py b/src/dotenv/ipython.py
-index 4e7edbb..dfaeda7 100644
+index 4e7edbb..527e784 100644
 --- a/src/dotenv/ipython.py
 +++ b/src/dotenv/ipython.py
 @@ -1,3 +1,5 @@
@@ -358,7 +390,20 @@ index 4e7edbb..dfaeda7 100644
  from IPython.core.magic import Magics, line_magic, magics_class  # type: ignore
  from IPython.core.magic_arguments import (
      argument,
-@@ -31,20 +33,20 @@ class IPythonDotEnv(Magics):
+@@ -21,7 +23,11 @@ class IPythonDotEnv(Magics):
+         "-v",
+         "--verbose",
+         action="store_true",
+-        help="Indicate function calls to be verbose",
++        help=(
++            "Accepted and adds no output. It reaches load_dotenv as verbose=True, "
++            "whose only verbose message is a warning that the file is missing, and "
++            "this magic reports that itself before load_dotenv is called."
++        ),
+     )
+     @argument(
+         "dotenv_path",
+@@ -31,20 +37,20 @@ class IPythonDotEnv(Magics):
          help="Search in increasingly higher folders for the `dotenv_path`",
      )
      @line_magic
@@ -383,9 +428,21 @@ index 4e7edbb..dfaeda7 100644
      """Register the %dotenv magic."""
      ipython.register_magics(IPythonDotEnv)
 diff --git a/src/dotenv/main.py b/src/dotenv/main.py
-index 3c4608d..6272b9b 100644
+index 3c4608d..25b2a24 100644
 --- a/src/dotenv/main.py
 +++ b/src/dotenv/main.py
+@@ -7,9 +7,9 @@ import sys
+ import tempfile
+ from collections import OrderedDict
+ from contextlib import contextmanager
+-from typing import IO, Dict, Iterable, Iterator, Mapping, Optional, Tuple, Union
++from typing import IO, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple, Union
+ 
+-from .parser import Binding, parse_stream
++from .parser import _BOM, Binding, parse_stream
+ from .variables import parse_variables
+ 
+ # A type alias for a string path to be used for the paths in this file.
 @@ -29,6 +29,57 @@ def _load_dotenv_disabled() -> bool:
      return value in {"1", "true", "t", "yes", "y"}
  
@@ -444,6 +501,22 @@ index 3c4608d..6272b9b 100644
  def with_warn_for_invalid_lines(mappings: Iterator[Binding]) -> Iterator[Binding]:
      for mapping in mappings:
          if mapping.error:
+@@ -60,13 +111,13 @@ class DotEnv:
+     @contextmanager
+     def _get_stream(self) -> Iterator[IO[str]]:
+         if self.dotenv_path and _is_file_or_fifo(self.dotenv_path):
+-            with open(self.dotenv_path, encoding=self.encoding) as stream:
++            with open(self.dotenv_path, encoding=self.encoding, newline="") as stream:
+                 yield stream
+         elif self.stream is not None:
+             yield self.stream
+         else:
+             if self.verbose:
+-                logger.info(
++                logger.warning(
+                     "python-dotenv could not find configuration file %s.",
+                     self.dotenv_path or ".env",
+                 )
 @@ -104,7 +155,7 @@ class DotEnv:
          for k, v in self.dict().items():
              if k in os.environ and not self.override:
@@ -453,10 +526,193 @@ index 3c4608d..6272b9b 100644
                  os.environ[k] = v
  
          return True
-@@ -190,6 +241,21 @@ def rewrite(
-         raise error from None
+@@ -135,59 +186,164 @@ def get_key(
+     return DotEnv(dotenv_path, verbose=True, encoding=encoding).get(key_to_get)
  
  
++def _reported_against(exc: OSError, path: StrPath) -> OSError:
++    """The same failure, named against `path` instead of wherever it happened.
++
++    An OSError raised inside `rewrite` names something the caller never chose:
++    the temporary file it writes through, the target a symlink resolved to, or
++    nothing at all when the failure happens inside a buffered close. Type and
++    errno are carried across untouched; only the filename changes, to the path
++    the caller passed.
++
++    An OSError carrying no errno did not come from the operating system, so
++    there is nothing to rebuild it from and its message is the only thing it
++    has: it is passed through as it is.
++    """
++    if exc.errno is None:
++        return exc
++    return type(exc)(exc.errno, exc.strerror, os.fspath(path))
++
++
+ @contextmanager
+ def rewrite(
+     path: StrPath,
+     encoding: Optional[str],
+     follow_symlinks: bool = False,
+ ) -> Iterator[Tuple[IO[str], IO[str]]]:
+-    if follow_symlinks:
+-        path = os.path.realpath(path)
+-
++    # What the caller passed, kept for error reporting: `path` is about to be
++    # rebound to the symlink target, and an error naming a path the caller never
++    # wrote is as unhelpful as one naming the temporary file.
++    given = path
++
++    # One guarded region rather than a guard per syscall. Every step inside it
++    # can fail, and each names something the caller never chose: the symlink
++    # target `path` is rebound to, the temporary file, or nothing at all when the
++    # failure surfaces inside a buffered close, which has no path to name.
++    # Guarding the region instead of the calls is what makes that true of steps
++    # nobody enumerated - a write, a flush, a close - rather than only of the
++    # ones with a syscall written in the source. The resolution is inside it for
++    # exactly that reason: `os.path.realpath` ends in `abspath`, so it calls
++    # `os.getcwd` and raises when the working directory is gone.
+     try:
+-        source: IO[str] = open(path, encoding=encoding)
+-        try:
+-            path_stat = os.lstat(path)
+-            original_mode: Optional[int] = (
+-                stat.S_IMODE(path_stat.st_mode)
+-                if stat.S_ISREG(path_stat.st_mode)
+-                else None
+-            )
+-        except BaseException:
+-            source.close()
+-            raise
+-    except FileNotFoundError:
+-        source = io.StringIO("")
+-        original_mode = None
+-
+-    with tempfile.NamedTemporaryFile(
+-        mode="w",
+-        encoding=encoding,
+-        delete=False,
+-        prefix=".tmp_",
+-        dir=os.path.dirname(os.path.abspath(path)),
+-    ) as dest:
+-        dest_path = pathlib.Path(dest.name)
+-        error = None
++        if follow_symlinks:
++            path = os.path.realpath(path)
+ 
+         try:
+-            with source:
+-                yield (source, dest)
+-        except BaseException as err:
+-            error = err
++            source: IO[str] = open(path, encoding=encoding, newline="")
++            try:
++                path_stat = os.lstat(path)
++                original_mode: Optional[int] = (
++                    stat.S_IMODE(path_stat.st_mode)
++                    if stat.S_ISREG(path_stat.st_mode)
++                    else None
++                )
++            except BaseException:
++                source.close()
++                raise
++        except FileNotFoundError:
++            source = io.StringIO("")
++            original_mode = None
++
++        dest_file = tempfile.NamedTemporaryFile(
++            mode="w",
++            encoding=encoding,
++            newline="",
++            delete=False,
++            prefix=".tmp_",
++            dir=os.path.dirname(os.path.abspath(path)),
++        )
++        dest_path = pathlib.Path(dest_file.name)
+ 
+-    if error is None:
++        # The temporary file survives only the rename that gives it the target's
++        # name; on every other exit it is removed here, including exits from
++        # steps outside any `except` arm below, which is how a close that failed
++        # mid-flush used to leave a partial `.tmp_` file in the caller's
++        # directory.
++        replaced = False
+         try:
++            error: Optional[BaseException] = None
++            with dest_file as dest:
++                try:
++                    with source:
++                        yield (source, dest)
++                except BaseException as err:
++                    error = err
++
++            if error is not None:
++                raise error from None
++
+             if original_mode is not None:
+                 os.chmod(dest_path, original_mode)
+ 
+             os.replace(dest_path, path)
+-        except BaseException:
+-            dest_path.unlink(missing_ok=True)
+-            raise
+-    else:
+-        dest_path.unlink(missing_ok=True)
+-        raise error from None
++            replaced = True
++        finally:
++            if not replaced:
++                dest_path.unlink(missing_ok=True)
++    except OSError as exc:
++        # `from None` because the suppressed traceback carries the temporary
++        # name, or the resolved target, that this rebuild exists to remove.
++        raise _reported_against(exc, given) from None
++
++
++# Every terminator the parser recognises, longest first so `\r\n` is never read
++# as a bare `\r`. `parser._newline` is the same set; these files are opened with
++# `newline=""` precisely so the parser, not the io layer, decides what a line
++# ending is, and a CR inside a quoted value stays the data it was written as.
++_TERMINATORS = ("\r\n", "\n", "\r")
++
++
++def _terminator_of(string: str) -> Optional[str]:
++    """The line terminator `string` ends with, or None when it has none."""
++    for candidate in _TERMINATORS:
++        if string.endswith(candidate):
++            return candidate
++    return None
++
++
++def _is_byte_order_mark(binding: Binding) -> bool:
++    """Whether `binding` is the file's leading byte-order mark rather than a line.
++
++    `parse_stream` yields the mark so the originals still join back to the whole
++    file, but it is a prefix and not a line: a file holding only a mark is a file
++    with no lines at all, so a binding appended to it opens line 1 and needs no
++    terminator in front of it. The key is what separates the mark from a real
++    line whose entire content is that same character, which the parser reads as a
++    key - in a file ending `A=1\\n\\ufeff` the last binding has the same original
++    string as a mark and must still be terminated before anything is appended.
++    """
++    return binding.key is None and binding.original.string == _BOM
++
++
++def _terminator_used_by(bindings: List[Binding]) -> str:
++    """The line ending a file already uses, defaulting to `\\n` when it has none.
++
++    A file written by hand is written with one convention, so a binding added to
++    it gets that convention rather than whatever this module happens to emit.
++    The parser reads all three either way; what this avoids is a CRLF file
++    quietly acquiring one LF line, which is a diff on every line for the next
++    person to open it on the platform that wrote it.
++    """
++    for binding in bindings:
++        found = _terminator_of(binding.original.string)
++        if found is not None:
++            return found
++    return "\n"
++
++
 +def _round_trips(line: str, key: str, value: str) -> bool:
 +    """
 +    Return True if `line` parses back as exactly the one binding it was written for.
@@ -470,12 +726,10 @@ index 3c4608d..6272b9b 100644
 +        and bindings[0].key == key
 +        and bindings[0].value == value
 +    )
-+
-+
+ 
+ 
  def set_key(
-     dotenv_path: StrPath,
-     key_to_set: str,
-@@ -198,12 +264,38 @@ def set_key(
+@@ -198,12 +354,51 @@ def set_key(
      export: bool = False,
      encoding: Optional[str] = "utf-8",
      follow_symlinks: bool = False,
@@ -491,6 +745,12 @@ index 3c4608d..6272b9b 100644
 +    rejected, not quoted. A key like `'my key'` already present in the file is
 +    still readable with `get_key` and removable with `unset_key`; it just cannot
 +    be created or updated here.
++
++    Lines the file already holds are written back byte for byte, and a line this
++    function adds ends with the line ending the file already uses - `\\r\\n` for a
++    file written on Windows, `\\n` for one written on Unix - so editing one
++    binding does not restyle the rest of the file. A file with no line ending to
++    copy, because it is empty or its only line has none, gets `\\n`.
 +
 +    Parameters:
 +        quote_mode: `always` to single-quote every value, `never` to write every
@@ -511,11 +771,18 @@ index 3c4608d..6272b9b 100644
 +            contains a newline, leading or trailing whitespace, or whitespace
 +            followed by `#`. Writing any of these anyway would silently store a
 +            different key or value than the one requested.
++        OSError: if the file cannot be written - a missing or unwritable parent
++            directory, or a filesystem with no room left, for instance. The
++            error names `dotenv_path` exactly as you passed it, even when
++            `follow_symlinks` resolved it elsewhere, and never the temporary
++            file this function writes through to keep the update atomic. Any
++            existing file is left with its original contents and no temporary
++            file is left behind, whichever step of the write failed.
 +
      This function doesn't follow symlinks by default, to avoid accidentally
      modifying a file at a potentially untrusted path. If you don't need this
      protection and need symlinks to be followed, use `follow_symlinks`.
-@@ -211,6 +303,17 @@ def set_key(
+@@ -211,6 +406,17 @@ def set_key(
      if quote_mode not in ("always", "auto", "never"):
          raise ValueError(f"Unknown quote_mode: {quote_mode}")
  
@@ -533,7 +800,7 @@ index 3c4608d..6272b9b 100644
      quote = quote_mode == "always" or (
          quote_mode == "auto" and not value_to_set.isalnum()
      )
-@@ -219,10 +322,16 @@ def set_key(
+@@ -219,27 +425,42 @@ def set_key(
          value_out = "'{}'".format(value_to_set.replace("'", "\\'"))
      else:
          value_out = value_to_set
@@ -542,19 +809,50 @@ index 3c4608d..6272b9b 100644
 -    else:
 -        line_out = f"{key_to_set}={value_out}\n"
 +
-+    line_out = f"{prefix}{key_to_set}={value_out}\n"
++    line_body = f"{prefix}{key_to_set}={value_out}"
 +
-+    if not _round_trips(line_out, key_to_set, value_to_set):
-+        raise ValueError(
-+            f"Cannot write {key_to_set} with quote_mode {quote_mode!r}: the "
-+            "value would be read back as a different value because it "
-+            "contains a newline, leading or trailing whitespace, or "
-+            "whitespace followed by '#'. Use quote_mode 'always' or 'auto'."
-+        )
++    # Validated with every terminator this function may write, not just the one
++    # it used to write, so the string that reaches the file is always a string
++    # that was checked - the terminator is chosen later, from the file itself.
++    for candidate in _TERMINATORS:
++        if not _round_trips(line_body + candidate, key_to_set, value_to_set):
++            raise ValueError(
++                f"Cannot write {key_to_set} with quote_mode {quote_mode!r}: the "
++                "value would be read back as a different value because it "
++                "contains a newline, leading or trailing whitespace, or "
++                "whitespace followed by '#'. Use quote_mode 'always' or 'auto'."
++            )
  
      with rewrite(dotenv_path, encoding=encoding, follow_symlinks=follow_symlinks) as (
          source,
-@@ -258,6 +367,12 @@ def unset_key(
+         dest,
+     ):
++        bindings = list(with_warn_for_invalid_lines(parse_stream(source)))
++        line_out = line_body + _terminator_used_by(bindings)
++
+         replaced = False
+-        missing_newline = False
+-        for mapping in with_warn_for_invalid_lines(parse_stream(source)):
++        unterminated = False
++        for mapping in bindings:
+             if mapping.key == key_to_set:
+                 dest.write(line_out)
+                 replaced = True
++                unterminated = False
+             else:
+                 dest.write(mapping.original.string)
+-                missing_newline = not mapping.original.string.endswith("\n")
++                if not _is_byte_order_mark(mapping):
++                    unterminated = _terminator_of(mapping.original.string) is None
+         if not replaced:
+-            if missing_newline:
+-                dest.write("\n")
++            if unterminated:
++                dest.write(_terminator_used_by(bindings))
+             dest.write(line_out)
+ 
+     return True, key_to_set, value_to_set
+@@ -258,6 +479,12 @@ def unset_key(
      If the .env path given doesn't exist, fails.
      If the given key doesn't exist in the .env, fails.
  
@@ -567,7 +865,39 @@ index 3c4608d..6272b9b 100644
      This function doesn't follow symlinks by default, to avoid accidentally
      modifying a file at a potentially untrusted path. If you don't need this
      protection and need symlinks to be followed, use `follow_symlinks`.
-@@ -340,7 +455,7 @@ def find_dotenv(
+@@ -292,21 +519,24 @@ def resolve_variables(
+ ) -> Mapping[str, Optional[str]]:
+     new_values: Dict[str, Optional[str]] = {}
+ 
++    # One lookup table, updated in place. It used to be rebuilt for every
++    # binding - a copy of the whole environment plus everything resolved so far
++    # - which made interpolation quadratic in the number of keys while parsing
++    # stayed linear. The precedence is the same: `override` decides only whether
++    # a name the file defines may replace one the environment already holds.
++    env: Dict[str, Optional[str]] = {}
++    env.update(os.environ)  # type: ignore
++
+     for name, value in values:
+         if value is None:
+             result = None
+         else:
+             atoms = parse_variables(value)
+-            env: Dict[str, Optional[str]] = {}
+-            if override:
+-                env.update(os.environ)  # type: ignore
+-                env.update(new_values)
+-            else:
+-                env.update(new_values)
+-                env.update(os.environ)  # type: ignore
+             result = "".join(atom.resolve(env) for atom in atoms)
+ 
+         new_values[name] = result
++        if override or name not in os.environ:
++            env[name] = result
+ 
+     return new_values
+ 
+@@ -340,7 +570,7 @@ def find_dotenv(
      Returns path to the file if found, or an empty string otherwise
      """
  
@@ -576,7 +906,7 @@ index 3c4608d..6272b9b 100644
          """Decide whether this is running in a REPL or IPython notebook"""
          if hasattr(sys, "ps1") or hasattr(sys, "ps2"):
              return True
-@@ -350,7 +465,7 @@ def find_dotenv(
+@@ -350,7 +580,7 @@ def find_dotenv(
              return False
          return not hasattr(main, "__file__")
  
@@ -585,7 +915,7 @@ index 3c4608d..6272b9b 100644
          return sys.gettrace() is not None
  
      if usecwd or _is_interactive() or _is_debugger() or getattr(sys, "frozen", False):
-@@ -400,7 +515,12 @@ def load_dotenv(
+@@ -400,7 +630,12 @@ def load_dotenv(
          interpolate: Whether to interpolate variables using POSIX variable expansion.
          encoding: Encoding to be used to read the file.
      Returns:
@@ -599,7 +929,7 @@ index 3c4608d..6272b9b 100644
  
      If both `dotenv_path` and `stream` are `None`, `find_dotenv()` is used to find the
      .env file with its default parameters. If you need to change the default parameters
-@@ -409,6 +529,11 @@ def load_dotenv(
+@@ -409,6 +644,11 @@ def load_dotenv(
  
      If the environment variable `PYTHON_DOTENV_DISABLED` is set to a truthy value,
      .env loading is disabled.
@@ -611,11 +941,52 @@ index 3c4608d..6272b9b 100644
      """
      if _load_dotenv_disabled():
          logger.debug(
+@@ -476,7 +716,11 @@ def _is_file_or_fifo(path: StrPath) -> bool:
+ 
+     try:
+         st = os.stat(path)
+-    except (FileNotFoundError, OSError):
++    except OSError:
++        # Any reason the path cannot be stat-ed - it is gone, its directory is
++        # not searchable, the name is too long - is the same answer here: this
++        # is not something to read a `.env` from. `FileNotFoundError` needs no
++        # arm of its own, being an `OSError` already.
+         return False
+ 
+     return stat.S_ISFIFO(st.st_mode)
 diff --git a/src/dotenv/parser.py b/src/dotenv/parser.py
-index 6677360..f8fdaa5 100644
+index 6677360..2c2438d 100644
 --- a/src/dotenv/parser.py
 +++ b/src/dotenv/parser.py
-@@ -87,13 +87,6 @@ class Reader:
+@@ -27,7 +27,7 @@ _double_quoted_value = make_regex(r'"((?:\\"|[^"])*)"')
+ _unquoted_value = make_regex(r"([^\r\n]*)")
+ _comment = make_regex(r"(?:[^\S\r\n]*#[^\r\n]*)?")
+ _end_of_line = make_regex(r"[^\S\r\n]*(?:\r\n|\n|\r|$)")
+-_rest_of_line = make_regex(r"[^\r\n]*(?:\r|\n|\r\n)?")
++_rest_of_line = make_regex(r"[^\r\n]*(?:\r\n|\n|\r)?")
+ _double_quote_escapes = make_regex(r"\\[\\'\"abfnrtv]")
+ _single_quote_escapes = make_regex(r"\\[\\']")
+ 
+@@ -66,9 +66,17 @@ class Error(Exception):
+     pass
+ 
+ 
++_BOM = "\ufeff"
++
++
+ class Reader:
+     def __init__(self, stream: IO[str]) -> None:
+-        self.string = stream.read().removeprefix("\ufeff")
++        raw = stream.read()
++        # Kept rather than discarded: it is not part of any binding, but a
++        # caller rewriting the file needs it back, and the only way to give it
++        # back is to have not thrown it away.
++        self.bom = _BOM if raw.startswith(_BOM) else ""
++        self.string = raw.removeprefix(_BOM)
+         self.position = Position.start()
+         self.mark = Position.start()
+ 
+@@ -87,13 +95,6 @@ class Reader:
      def peek(self, count: int) -> str:
          return self.string[self.position.chars : self.position.chars + count]
  
@@ -629,6 +1000,29 @@ index 6677360..f8fdaa5 100644
      def read_regex(self, regex: Pattern[str]) -> Sequence[str]:
          match = regex.match(self.string, self.position.chars)
          if match is None:
+@@ -177,6 +178,22 @@ def parse_binding(reader: Reader) -> Binding:
+ 
+ 
+ def parse_stream(stream: IO[str]) -> Iterator[Binding]:
++    """Yield one `Binding` per line, and the byte-order mark if the stream has one.
++
++    Every character of the stream appears in exactly one binding's
++    `original.string`, in order, so joining them reproduces the input. That is
++    what lets `set_key` and `unset_key` rewrite a file without disturbing the
++    parts they were not asked to change. The mark carries no binding of its own -
++    its key and value are None, like a comment's - and it is emitted only to keep
++    that property true for a file that begins with one.
++    """
+     reader = Reader(stream)
++    if reader.bom:
++        yield Binding(
++            key=None,
++            value=None,
++            original=Original(string=reader.bom, line=1),
++            error=False,
++        )
+     while reader.has_next():
+         yield parse_binding(reader)
 diff --git a/src/dotenv/variables.py b/src/dotenv/variables.py
 index 667f2f2..3f99ed0 100644
 --- a/src/dotenv/variables.py
@@ -662,11 +1056,54 @@ index 667f2f2..3f99ed0 100644
  
  
  def parse_variables(value: str) -> Iterator[Atom]:
+diff --git a/tests/conftest.py b/tests/conftest.py
+index cc6f0f0..68bb9bf 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -1,7 +1,35 @@
++import os
++import sys
++
+ import pytest
+ from click.testing import CliRunner
+ 
+ 
++@pytest.fixture(autouse=True)
++def restore_process_global_state():
++    """Undo the process-global state tests mutate directly.
++
++    Several tests call bare `os.chdir`, and the `InteractiveShellEmbed` that
++    `test_ipython.py` builds sets `sys.ps1` and `sys.ps2` and never removes them.
++    Left in place, those prompts make `find_dotenv._is_interactive()` return True
++    for every test that runs afterwards, so a later module silently exercises the
++    interactive lookup instead of the script one.
++    """
++    cwd = os.getcwd()
++    prompts = {
++        name: getattr(sys, name) for name in ("ps1", "ps2") if hasattr(sys, name)
++    }
++
++    yield
++
++    os.chdir(cwd)
++    for name in ("ps1", "ps2"):
++        if name in prompts:
++            setattr(sys, name, prompts[name])
++        elif hasattr(sys, name):
++            delattr(sys, name)
++
++
+ @pytest.fixture
+ def cli():
+     runner = CliRunner()
 diff --git a/tests/test_cli.py b/tests/test_cli.py
-index d4e3ad4..b97ea5e 100644
+index d4e3ad4..c43d407 100644
 --- a/tests/test_cli.py
 +++ b/tests/test_cli.py
-@@ -1,4 +1,7 @@
+@@ -1,4 +1,10 @@
++import contextlib
++import io
++import json
  import os
 +import subprocess
 +import sys
@@ -674,7 +1111,44 @@ index d4e3ad4..b97ea5e 100644
  from pathlib import Path
  from typing import Optional
  
-@@ -50,7 +53,7 @@ def test_list_not_a_file(cli):
+@@ -31,7 +37,7 @@ def test_list(
+     dotenv_path.write_text(content + "\n")
+ 
+     args = ["--file", dotenv_path, "list"]
+-    if format is not None:
++    if output_format is not None:
+         args.extend(["--format", output_format])
+ 
+     result = cli.invoke(dotenv_cli, args)
+@@ -39,6 +45,27 @@ def test_list(
+     assert (result.exit_code, result.output) == (0, expected)
+ 
+ 
++def test_list_json_is_read_back_by_a_json_parser(cli, dotenv_path):
++    # Every `--format=json` case above pins a literal string over values that
++    # need no escaping, so none of them can see an escaping defect. This one
++    # reads the output the way its consumer does and compares against what the
++    # library itself returns.
++    dotenv_path.write_text(
++        'DQUOTE="he said \\"hi\\""\n'
++        "BSLASH='C:\\path\\to\\thing'\n"
++        'MULTI="line one\nline two"\n'
++        'TABBED="a\\tb"\n'
++        "UNICODE=caf\u00e9 \u2603\n"
++        "EMPTY=\n",
++        encoding="utf-8",
++    )
++
++    result = cli.invoke(dotenv_cli, ["--file", dotenv_path, "list", "--format", "json"])
++
++    assert result.exit_code == 0, result.output
++    assert json.loads(result.output) == dotenv.dotenv_values(dotenv_path)
++
++
+ def test_list_non_existent_file(cli):
+     result = cli.invoke(dotenv_cli, ["--file", "nx_file", "list"])
+ 
+@@ -50,7 +77,7 @@ def test_list_not_a_file(cli):
      result = cli.invoke(dotenv_cli, ["--file", ".", "list"])
  
      assert result.exit_code == 2, result.output
@@ -683,7 +1157,7 @@ index d4e3ad4..b97ea5e 100644
  
  
  def test_list_no_file(cli):
-@@ -73,6 +76,45 @@ def test_get_non_existent_value(cli, dotenv_path):
+@@ -73,6 +100,45 @@ def test_get_non_existent_value(cli, dotenv_path):
      assert (result.exit_code, result.output) == (1, "")
  
  
@@ -729,7 +1203,7 @@ index d4e3ad4..b97ea5e 100644
  def test_get_non_existent_file(cli):
      result = cli.invoke(dotenv_cli, ["--file", "nx_file", "get", "a"])
  
-@@ -84,7 +126,7 @@ def test_get_not_a_file(cli):
+@@ -84,7 +150,7 @@ def test_get_not_a_file(cli):
      result = cli.invoke(dotenv_cli, ["--file", ".", "get", "a"])
  
      assert result.exit_code == 2
@@ -738,7 +1212,7 @@ index d4e3ad4..b97ea5e 100644
  
  
  def test_unset_existing_value(cli, dotenv_path):
-@@ -133,6 +175,128 @@ def test_set_quote_options(cli, dotenv_path, quote_mode, variable, value, expect
+@@ -133,6 +199,128 @@ def test_set_quote_options(cli, dotenv_path, quote_mode, variable, value, expect
      assert dotenv_path.read_text() == expected
  
  
@@ -867,7 +1341,7 @@ index d4e3ad4..b97ea5e 100644
  @pytest.mark.parametrize(
      "dotenv_path,export_mode,variable,value,expected",
      (
-@@ -211,6 +375,163 @@ def test_run_with_existing_variable_not_overridden(tmp_path):
+@@ -211,6 +399,233 @@ def test_run_with_existing_variable_not_overridden(tmp_path):
      check_process(result, exit_code=0, stdout="C\n")
  
  
@@ -963,8 +1437,14 @@ index d4e3ad4..b97ea5e 100644
 +)
 +@pytest.mark.parametrize("args", [["set", "B", "2"], ["unset", "A"]])
 +def test_unwritable_directory_is_reported_not_raised(tmp_path, args):
-+    """The rewrite path fails for a reason the user can act on, and says so
-+    without naming the temporary file it was building."""
++    """The rewrite path fails for a reason the user can act on, and says so.
++
++    The whole message is pinned rather than fragments of it, because that is
++    what the handler's choice of `exc.strerror` over `str(exc)` is for: the
++    library already names the user's own path in the error, so what this adds
++    is a sentence with no `[Errno N]` prefix, no exception class name, and no
++    traceback.
++    """
 +    env_file = tmp_path / ".env"
 +    env_file.write_text("A=1\n")
 +    tmp_path.chmod(0o555)
@@ -975,12 +1455,76 @@ index d4e3ad4..b97ea5e 100644
 +        tmp_path.chmod(0o755)
 +
 +    assert result.returncode == 2, result.stderr
-+    assert "Traceback" not in result.stderr
-+    assert "Error accessing env file" in result.stderr
-+    assert "Permission denied" in result.stderr
-+    assert ".tmp_" not in result.stderr
++    assert result.stderr == f"Error accessing env file {env_file}: Permission denied.\n"
 +    assert env_file.read_text() == "A=1\n"
 +    assert list(tmp_path.glob(".tmp_*")) == []
++
++
++@pytest.mark.skipif(
++    sys.platform == "win32", reason="POSIX pipe semantics decide when the write fails"
++)
++def test_output_failure_is_not_reported_against_the_env_file(tmp_path):
++    """A reader that stops reading is not a fault of the `.env` file.
++
++    `dotenv list | head` is ordinary use, and the group's `except OSError`
++    reported the resulting `BrokenPipeError` as `Error accessing env file
++    <path>: Broken pipe.` - about a file it had just read without complaint.
++    Only errors that name the file are reported against it now; writing the
++    output names nothing.
++    """
++    env_file = tmp_path / ".env"
++    # Enough output that the child is still writing after the reader goes away:
++    # a pipe buffer holds 64 KiB on Linux and this is four times that. Long
++    # values rather than many keys, so the size comes from bytes written and
++    # not from a key count the run time would scale with.
++    value = "v" * 1000
++    env_file.write_text("".join(f"K{i:03d}={value}\n" for i in range(256)))
++
++    proc = subprocess.Popen(
++        ["dotenv", "--file", str(env_file), "list"],
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        text=True,
++    )
++    assert proc.stdout is not None and proc.stderr is not None
++    with proc:
++        assert proc.stdout.readline() == f"K000={value}\n"
++        # Closing the read end is what makes the child's next write fail.
++        proc.stdout.close()
++        stderr = proc.stderr.read()
++
++    assert "Error accessing env file" not in stderr
++    assert str(env_file) not in stderr
++    assert "Error writing output: Broken pipe." in stderr
++    # The file really is fine, which is the whole point of not blaming it.
++    check_process(run_dotenv(["--file", str(env_file), "get", "K000"]), exit_code=0)
++
++
++@pytest.mark.skipif(
++    not os.path.exists("/dev/full"), reason="needs a device that fails every write"
++)
++def test_output_failure_in_process(dotenv_path):
++    """The same handler, in process, so the branch is covered where CI looks.
++
++    `CliRunner` cannot be used here: it captures output into a buffer that
++    cannot fail, and the whole subject is a write that does. `/dev/full` is a
++    real stream whose every write returns ENOSPC, line buffered so the failure
++    lands inside the command rather than at interpreter shutdown.
++    """
++    dotenv_path.write_text("A=1\n")
++    stderr = io.StringIO()
++    sink = open("/dev/full", "w", buffering=1)
++    try:
++        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(stderr):
++            with pytest.raises(SystemExit) as exit_info:
++                dotenv_cli.main(["--file", str(dotenv_path), "list"])
++    finally:
++        # Closing flushes, and flushing this device fails too.
++        with contextlib.suppress(OSError):
++            sink.close()
++
++    assert exit_info.value.code == 1
++    assert stderr.getvalue() == "Error writing output: No space left on device.\n"
 +
 +
 +@pytest.mark.skipif(
@@ -1031,7 +1575,52 @@ index d4e3ad4..b97ea5e 100644
  def test_run_with_none_value(tmp_path):
      (tmp_path / ".env").write_text("A=x\nc")
  
-@@ -258,6 +579,30 @@ def test_run_with_env_missing_and_invalid_cmd(tmp_path):
+@@ -247,6 +662,44 @@ def test_run_with_invalid_cmd(dotenv_path, tmp_path):
+     assert "Command not found: i_do_not_exist" in result.stderr
+ 
+ 
++@pytest.mark.skipif(
++    sys.platform == "win32", reason="POSIX mode bits decide what execvpe refuses"
++)
++@pytest.mark.skipif(
++    sys.platform != "win32" and os.geteuid() == 0,
++    reason="Root user can execute a file without the execute bit.",
++)
++@pytest.mark.parametrize("kind", ("no_execute_bit", "directory"))
++def test_run_with_unrunnable_cmd(dotenv_path, tmp_path, kind):
++    """
++    A command the OS refuses to run is reported against the command.
++
++    `DotenvGroup` catches OSError for the `.env` file, so before the handler at
++    the exec site this said `Error accessing env file ...: Permission denied.`
++    and exited 2, sending the user to fix a file every other subcommand reads
++    without complaint. Only `FileNotFoundError` was handled where the command
++    is run, so `Command not found` was right and every sibling errno was not.
++    """
++    if kind == "no_execute_bit":
++        target = tmp_path / "script.sh"
++        target.write_text("#!/bin/sh\necho hi\n")
++        target.chmod(0o000)
++    else:
++        target = tmp_path / "a_directory"
++        target.mkdir()
++
++    result = run_dotenv(["--file", str(dotenv_path), "run", str(target)], cwd=tmp_path)
++
++    check_process(result, exit_code=1)
++    assert result.stderr == f"Cannot run {target}: Permission denied\n"
++    assert str(dotenv_path) not in result.stderr
++    # The exit code has to separate the two, not just the message: 2 is what
++    # every env-file failure uses, and this env file is readable.
++    check_process(
++        run_dotenv(["--file", str(dotenv_path), "list"], cwd=tmp_path), exit_code=0
++    )
++
++
+ def test_run_with_env_missing_and_invalid_cmd(tmp_path):
+     """
+     Check that an .env file missing takes precedence over a command not found error.
+@@ -258,6 +711,30 @@ def test_run_with_env_missing_and_invalid_cmd(tmp_path):
      assert "Invalid value for '-f'" in result.stderr
  
  
@@ -1062,7 +1651,7 @@ index d4e3ad4..b97ea5e 100644
  def test_run_with_version(tmp_path):
      result = run_dotenv(["--version"], cwd=tmp_path)
  
-@@ -293,3 +638,72 @@ def test_run_with_dotenv_and_command_flags(dotenv_path, tmp_path):
+@@ -293,3 +770,72 @@ def test_run_with_dotenv_and_command_flags(dotenv_path, tmp_path):
  
      check_process(result, exit_code=0)
      assert result.stdout.strip().startswith("dotenv, version")
@@ -1136,7 +1725,7 @@ index d4e3ad4..b97ea5e 100644
 +
 +    check_process(result, exit_code=0, stdout="ACCENT=café\nGOOD=1\n")
 diff --git a/tests/test_ipython.py b/tests/test_ipython.py
-index 6eda086..382a3b3 100644
+index 6eda086..51856d3 100644
 --- a/tests/test_ipython.py
 +++ b/tests/test_ipython.py
 @@ -45,6 +45,21 @@ def test_ipython_existing_variable_override(tmp_path):
@@ -1161,11 +1750,48 @@ index 6eda086..382a3b3 100644
  @pytest.mark.skipif(
      sys.platform == "win32", reason="This test assumes case-sensitive variable names"
  )
+@@ -61,3 +76,22 @@ def test_ipython_new_variable(tmp_path):
+     ipshell.run_line_magic("dotenv", "")
+ 
+     assert os.environ == {"a": "b"}
++
++
++def test_embedded_shell_does_not_leak_prompt_attributes():
++    """`InteractiveShellEmbed` sets `sys.ps1` and `sys.ps2` and never removes them.
++
++    pytest runs a module in definition order, so arriving here with both absent is
++    what proves the restore in `conftest.py` undid the shells built above; without
++    it `find_dotenv` reads every later test as interactive. The embed below shows
++    the leak is real and not something IPython stopped doing.
++    """
++    from IPython.terminal.embed import InteractiveShellEmbed
++
++    assert not hasattr(sys, "ps1")
++    assert not hasattr(sys, "ps2")
++
++    InteractiveShellEmbed()
++
++    assert hasattr(sys, "ps1")
++    assert hasattr(sys, "ps2")
 diff --git a/tests/test_main.py b/tests/test_main.py
-index 1c33c80..87f7b87 100644
+index 1c33c80..3df3f2c 100644
 --- a/tests/test_main.py
 +++ b/tests/test_main.py
-@@ -63,6 +63,123 @@ def test_set_key_encoding(dotenv_path):
+@@ -1,10 +1,13 @@
++import errno
+ import io
++import json
+ import logging
+ import os
+ import stat
+ import subprocess
+ import sys
+ import textwrap
++from collections.abc import MutableMapping
+ from unittest import mock
+ 
+ import pytest
+@@ -63,6 +66,123 @@ def test_set_key_encoding(dotenv_path):
      assert dotenv_path.read_text(encoding=encoding) == "a='é'\n"
  
  
@@ -1289,7 +1915,7 @@ index 1c33c80..87f7b87 100644
  @pytest.mark.skipif(
      sys.platform == "win32", reason="file mode bits behave differently on Windows"
  )
-@@ -77,6 +194,44 @@ def test_set_key_preserves_file_mode(dotenv_path):
+@@ -77,6 +197,59 @@ def test_set_key_preserves_file_mode(dotenv_path):
      assert mode_before == mode_after
  
  
@@ -1331,20 +1957,530 @@ index 1c33c80..87f7b87 100644
 +    assert list(tmp_path.glob(".tmp_*")) == []
 +
 +
++def test_rewrite_non_os_failure_to_replace_leaves_original_intact(tmp_path):
++    # The OSError arm rebuilds the error against the caller's path; this is the
++    # other arm, for a failure the operating system did not raise. It has to
++    # clean up the temporary file just the same, and must not be swallowed.
++    dotenv_path = tmp_path / ".env"
++    dotenv_path.write_text("a=x\n")
++
++    with mock.patch("dotenv.main.os.replace", side_effect=RuntimeError("boom")):
++        with pytest.raises(RuntimeError, match="boom"):
++            dotenv.set_key(dotenv_path, "b", "y")
++
++    assert dotenv_path.read_text() == "a=x\n"
++    assert list(tmp_path.glob(".tmp_*")) == []
++
++
  def test_rewrite_closes_file_handle_on_lstat_failure(tmp_path):
      dotenv_path = tmp_path / ".env"
      dotenv_path.write_text("a=x\n")
-@@ -655,6 +810,45 @@ def test_dotenv_values_file(dotenv_path):
+@@ -166,6 +339,407 @@ def test_set_key_permission_error(dotenv_path):
+     assert dotenv_path.read_text() == ""
+ 
+ 
++def test_set_key_missing_directory_reports_the_given_path(tmp_path):
++    target = tmp_path / "no-such-dir" / ".env"
++
++    with pytest.raises(FileNotFoundError) as excinfo:
++        dotenv.set_key(target, "a", "b")
++
++    # The temporary file `rewrite` was about to create is an implementation
++    # detail the caller never chose, so the error names the path they passed.
++    assert excinfo.value.filename == str(target)
++    assert ".tmp_" not in str(excinfo.value)
++
++
++def test_set_key_empty_path_reports_the_given_path(tmp_path, monkeypatch):
++    # `find_dotenv()` returns "" when it finds nothing, and passing that straight
++    # to `set_key` is the composition that reaches the rename rather than the
++    # temporary file's creation. The chdir keeps the temporary file inside
++    # tmp_path, since an empty path resolves against the working directory.
++    (tmp_path / "sub").mkdir()
++    monkeypatch.chdir(tmp_path / "sub")
++
++    with pytest.raises(FileNotFoundError) as excinfo:
++        dotenv.set_key("", "a", "b")
++
++    assert excinfo.value.filename == ""
++    assert ".tmp_" not in str(excinfo.value)
++    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".tmp_")] == []
++
++
++@pytest.mark.skipif(
++    sys.platform == "win32" or os.geteuid() == 0,
++    reason="POSIX directory permissions, and root writes regardless of them.",
++)
++def test_set_key_follow_symlinks_reports_the_path_that_was_passed(tmp_path):
++    target_dir = tmp_path / "real"
++    target_dir.mkdir()
++    (target_dir / "actual.env").write_text("a=1\n")
++    link = tmp_path / "link.env"
++    link.symlink_to(target_dir / "actual.env")
++    target_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)
++
++    try:
++        with pytest.raises(PermissionError) as excinfo:
++            dotenv.set_key(link, "a", "b", follow_symlinks=True)
++    finally:
++        target_dir.chmod(0o700)
++
++    # Resolving the symlink is an implementation detail of following it; the
++    # caller is told about the path they passed.
++    assert excinfo.value.filename == str(link)
++    assert ".tmp_" not in str(excinfo.value)
++
++
++@pytest.mark.skipif(
++    sys.platform == "win32" or os.geteuid() == 0,
++    reason="POSIX directory permissions, and root writes regardless of them.",
++)
++def test_set_key_unwritable_directory_reports_the_given_path(tmp_path):
++    unwritable = tmp_path / "unwritable"
++    unwritable.mkdir()
++    unwritable.chmod(stat.S_IRUSR | stat.S_IXUSR)
++    target = unwritable / ".env"
++
++    try:
++        with pytest.raises(PermissionError) as excinfo:
++            dotenv.set_key(target, "a", "b")
++    finally:
++        unwritable.chmod(0o700)
++
++    assert excinfo.value.filename == str(target)
++    assert ".tmp_" not in str(excinfo.value)
++
++
++@pytest.mark.skipif(
++    sys.platform == "win32", reason="mkfifo and POSIX directory permissions"
++)
++def test_is_file_or_fifo_answers_for_every_kind_of_path(tmp_path):
++    """The predicate the CLI and `DotEnv` gate their reads on.
++
++    Its `except` arm decides what an unstat-able path means, and every reason a
++    stat can fail gets the same answer, so the arm is `OSError` rather than a
++    tuple naming one of its own subclasses beside it. These are the five answers
++    that arm and the two checks above it produce.
++    """
++    regular = tmp_path / "regular.env"
++    regular.write_text("A=1\n")
++    fifo = tmp_path / "fifo.env"
++    os.mkfifo(fifo)
++    unsearchable = tmp_path / "unsearchable"
++    unsearchable.mkdir()
++    hidden = unsearchable / "hidden.env"
++    hidden.write_text("A=1\n")
++    unsearchable.chmod(0o000)
++
++    try:
++        answers = {
++            "regular file": dotenv.main._is_file_or_fifo(regular),
++            "fifo": dotenv.main._is_file_or_fifo(fifo),
++            "directory": dotenv.main._is_file_or_fifo(tmp_path),
++            "missing": dotenv.main._is_file_or_fifo(tmp_path / "nope.env"),
++            "unsearchable parent": dotenv.main._is_file_or_fifo(hidden),
++        }
++    finally:
++        unsearchable.chmod(0o700)
++
++    assert answers == {
++        "regular file": True,
++        "fifo": True,
++        "directory": False,
++        "missing": False,
++        "unsearchable parent": False,
++    }
++
++
++BOM = "\ufeff"
++
++
++@pytest.mark.parametrize(
++    "raw",
++    [
++        BOM.encode() + b"A=1\n",
++        BOM.encode() + b"A=1\r\n",
++        BOM.encode() + b"# only a comment\n",
++        BOM.encode() + b"A=1",
++    ],
++)
++def test_a_byte_order_mark_survives_set_key_and_unset_key(tmp_path, raw):
++    """The mark is a byte the caller did not ask to change.
++
++    `Reader` strips it before parsing so it never reaches a value, and it used
++    to be dropped there entirely, so no binding carried it and every rewrite
++    removed it from the file. A `.env` written by PowerShell or Notepad has one.
++    """
++    dotenv_path = tmp_path / ".env"
++    dotenv_path.write_bytes(raw)
++    before = dict(dotenv.dotenv_values(dotenv_path, interpolate=False))
++
++    dotenv.set_key(dotenv_path, "NEW", "v")
++
++    after = dotenv_path.read_bytes()
++    assert after.startswith(BOM.encode())
++    assert after.startswith(raw)
++    assert dict(dotenv.dotenv_values(dotenv_path, interpolate=False)) == {
++        **before,
++        "NEW": "v",
++    }
++
++    dotenv.unset_key(dotenv_path, "NEW")
++
++    assert dotenv_path.read_bytes().startswith(BOM.encode())
++    assert dict(dotenv.dotenv_values(dotenv_path, interpolate=False)) == before
++
++
++@pytest.mark.parametrize("body", [b"A=1\n", b"A=1\r\n", b"# c\nA=1\n"])
++def test_a_byte_order_mark_changes_no_value(tmp_path, body):
++    """Preserving the mark must not let it leak into a key or a value, and the
++    two documented sources must still agree about the same bytes."""
++    with_bom = tmp_path / "with.env"
++    with_bom.write_bytes(BOM.encode() + body)
++    without = tmp_path / "without.env"
++    without.write_bytes(body)
++
++    from_file = dict(dotenv.dotenv_values(with_bom, interpolate=False))
++    from_stream = dict(
++        dotenv.dotenv_values(
++            stream=io.StringIO((BOM.encode() + body).decode()), interpolate=False
++        )
++    )
++
++    assert from_file == dict(dotenv.dotenv_values(without, interpolate=False))
++    assert from_file == from_stream
++
++
++CR_CORPUS = {
++    "crlf terminators": b"A=1\r\nB=2\r\n",
++    "lone cr terminators": b"A=1\rB=2\r",
++    "crlf inside a quoted value": b"A='x\r\ny'\r\n",
++    "lone cr inside a quoted value": b"A='x\ry'\n",
++    "multi-line secret authored on windows": (
++        b"KEY='-----BEGIN-----\r\nline2\r\n-----END-----'\r\nAFTER=1\r\n"
++    ),
++}
++
++
++@pytest.mark.parametrize("label", sorted(CR_CORPUS))
++def test_file_and_stream_read_the_same_bytes_the_same_way(tmp_path, label):
++    """The two documented sources must not disagree about the same bytes.
++
++    Opening with the default `newline=None` translates every CR the file holds,
++    including the ones inside a quoted value, where a CR is data rather than
++    line structure. `io.StringIO` does no such translation, so the same content
++    read through `stream=` came back different. The parser recognises all three
++    terminators itself, so the translation was never needed for line structure.
++    """
++    raw = CR_CORPUS[label]
++    (tmp_path / ".env").write_bytes(raw)
++
++    from_file = dotenv.dotenv_values(tmp_path / ".env", interpolate=False)
++    from_stream = dotenv.dotenv_values(
++        stream=io.StringIO(raw.decode()), interpolate=False
++    )
++
++    assert dict(from_file) == dict(from_stream)
++
++
++@pytest.mark.parametrize("label", sorted(CR_CORPUS))
++def test_set_key_and_unset_key_keep_the_files_line_endings(tmp_path, label):
++    raw = CR_CORPUS[label]
++    dotenv_path = tmp_path / ".env"
++    dotenv_path.write_bytes(raw)
++    before = dict(dotenv.dotenv_values(dotenv_path, interpolate=False))
++
++    dotenv.set_key(dotenv_path, "NEW", "v")
++    added = dotenv_path.read_bytes()
++
++    # Every original byte still there, in order, and the appended binding wears
++    # the terminator the file already used rather than this module's default.
++    assert added.startswith(raw)
++    terminator = next(t for t in (b"\r\n", b"\n", b"\r") if raw.endswith(t))
++    assert added == raw + b"NEW='v'" + terminator
++    assert dict(dotenv.dotenv_values(dotenv_path, interpolate=False)) == {
++        **before,
++        "NEW": "v",
++    }
++
++    dotenv.unset_key(dotenv_path, "NEW")
++    assert dotenv_path.read_bytes() == raw
++
++
++@pytest.mark.parametrize(
++    "raw,expected",
++    [
++        (b"", b"NEW='v'\n"),
++        (b"A=1", b"A=1\nNEW='v'\n"),
++        (b"A=1\r\n", b"A=1\r\nNEW='v'\r\n"),
++        (b"A=1\r", b"A=1\rNEW='v'\r"),
++        (b"A=1\r\nB=2", b"A=1\r\nB=2\r\nNEW='v'\r\n"),
++        (b"bad line\r\nA=1\r\n", b"bad line\r\nA=1\r\nNEW='v'\r\n"),
++        # A file holding only a mark is a file with no lines, so the appended
++        # binding opens line 1 and no terminator goes in front of it.
++        (BOM.encode(), BOM.encode() + b"NEW='v'\n"),
++        # The same character as the whole of a final line is a key, not a mark,
++        # and still has to be terminated or the two fuse into one binding.
++        (b"A=1\n" + BOM.encode(), b"A=1\n" + BOM.encode() + b"\nNEW='v'\n"),
++    ],
++)
++def test_appended_binding_uses_the_terminator_already_in_the_file(
++    tmp_path, raw, expected
++):
++    """A file with no terminator of its own gets `\n`; otherwise it gets its own.
++
++    The last case is the one the old `missing_newline` check got wrong once the
++    reads stopped translating: the file ends without a terminator, so one has to
++    be supplied, and supplying `\n` to a CRLF file is what this avoids.
++    """
++    dotenv_path = tmp_path / ".env"
++    dotenv_path.write_bytes(raw)
++
++    dotenv.set_key(dotenv_path, "NEW", "v")
++
++    assert dotenv_path.read_bytes() == expected
++
++
++def test_replacing_a_binding_keeps_the_files_line_endings(tmp_path):
++    dotenv_path = tmp_path / ".env"
++    dotenv_path.write_bytes(b"A=1\r\nB=2\r\n")
++
++    dotenv.set_key(dotenv_path, "A", "z")
++
++    assert dotenv_path.read_bytes() == b"A='z'\r\nB=2\r\n"
++
++
++@pytest.mark.skipif(
++    sys.platform == "win32", reason="a deleted working directory is a POSIX state"
++)
++@pytest.mark.parametrize("follow_symlinks", [False, True])
++def test_a_deleted_working_directory_reports_the_path_that_was_passed(
++    tmp_path, monkeypatch, follow_symlinks
++):
++    """`os.path.realpath` raises, whatever its documentation suggests.
++
++    It ends in `abspath`, which calls `os.getcwd`, so resolving a relative path
++    from a directory that has been removed fails with `filename=None`. That step
++    sat above `rewrite`'s guarded region, so the guarantee that an error names
++    the path the caller passed held at one value of `follow_symlinks` and not the
++    other - which is why both values are driven here.
++    """
++    doomed = tmp_path / "doomed"
++    doomed.mkdir()
++    monkeypatch.chdir(doomed)
++    doomed.rmdir()
++
++    with pytest.raises(FileNotFoundError) as excinfo:
++        dotenv.set_key(".env", "a", "b", follow_symlinks=follow_symlinks)
++
++    assert excinfo.value.filename == ".env"
++    assert ".tmp_" not in str(excinfo.value)
++
++
++def _set_key_following_symlinks(path):
++    return dotenv.set_key(path, "a", "b", follow_symlinks=True)
++
++
++def _unset_key_following_symlinks(path):
++    return dotenv.unset_key(path, "a", follow_symlinks=True)
++
++
++@pytest.mark.skipif(
++    sys.platform == "win32", reason="symlinks require elevated privileges on Windows"
++)
++@pytest.mark.parametrize(
++    "write", [_set_key_following_symlinks, _unset_key_following_symlinks]
++)
++def test_follow_symlinks_to_a_directory_reports_the_path_that_was_passed(
++    tmp_path, write
++):
++    # The `open` that reads the current contents runs after the symlink has been
++    # resolved, so it is the resolved target the operating system names. No
++    # permissions are involved on this route, which is why it survived the
++    # unwritable-directory checks written for the other ones.
++    (tmp_path / "conf").mkdir()
++    link = tmp_path / ".env"
++    link.symlink_to(tmp_path / "conf")
++
++    with pytest.raises(IsADirectoryError) as excinfo:
++        write(link)
++
++    assert excinfo.value.filename == str(link)
++    assert ".tmp_" not in str(excinfo.value)
++    assert list(tmp_path.glob(".tmp_*")) == []
++
++
++@pytest.mark.skipif(
++    sys.platform == "win32" or os.geteuid() == 0,
++    reason="POSIX file permissions, and root reads regardless of them.",
++)
++def test_follow_symlinks_to_an_unreadable_file_reports_the_path_that_was_passed(
++    tmp_path,
++):
++    target = tmp_path / "real.env"
++    target.write_text("a=1\n")
++    target.chmod(0o000)
++    link = tmp_path / ".env"
++    link.symlink_to(target)
++
++    try:
++        with pytest.raises(PermissionError) as excinfo:
++            dotenv.set_key(link, "a", "b", follow_symlinks=True)
++    finally:
++        target.chmod(0o600)
++
++    assert excinfo.value.filename == str(link)
++    assert ".tmp_" not in str(excinfo.value)
++    assert list(tmp_path.glob(".tmp_*")) == []
++
++
++@pytest.mark.skipif(
++    sys.platform == "win32", reason="RLIMIT_FSIZE is a POSIX resource limit."
++)
++def test_set_key_interrupted_write_reports_the_path_and_leaves_no_temporary(tmp_path):
++    """A write that fails inside the temporary file's own close.
++
++    `RLIMIT_FSIZE` is the deterministic stand-in for a full or quota-limited
++    filesystem: it fails at the same place, the buffered close that flushes the
++    rewritten contents. Nothing in `rewrite` mentions that step - there is no
++    syscall written for it - so it used to escape every cleanup arm, raising an
++    error naming nothing at all and leaving a partial `.tmp_` file behind in the
++    caller's directory. It runs in a child process because the limit and the
++    SIGXFSZ handler are process-global.
++    """
++    (tmp_path / ".env").write_text("SECRET=hunter2\nOTHER=v\nB='xxxxxxxxxxxxxxxx'\n")
++
++    result = _run_under(
++        {},
++        """
++        import json, os, resource, signal
++        from dotenv import set_key
++
++        signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
++        resource.setrlimit(resource.RLIMIT_FSIZE, (32, resource.RLIM_INFINITY))
++        try:
++            set_key(".env", "NEW", "value")
++            raised = None
++        except OSError as exc:
++            raised = {"errno": exc.errno, "filename": exc.filename}
++        resource.setrlimit(resource.RLIMIT_FSIZE, (resource.RLIM_INFINITY,) * 2)
++        print(json.dumps({
++            "raised": raised,
++            "leftovers": sorted(n for n in os.listdir(".") if n.startswith(".tmp_")),
++            "original": open(".env").read(),
++        }))
++        """,
++        tmp_path,
++    )
++
++    assert result.returncode == 0, result.stderr
++    observed = json.loads(result.stdout)
++    assert observed["raised"] == {"errno": errno.EFBIG, "filename": ".env"}
++    assert observed["leftovers"] == []
++    assert observed["original"] == "SECRET=hunter2\nOTHER=v\nB='xxxxxxxxxxxxxxxx'\n"
++
++
+ def test_get_key_no_file(tmp_path):
+     nx_path = tmp_path / "nx"
+     logger = logging.getLogger("dotenv.main")
+@@ -177,14 +751,15 @@ def test_get_key_no_file(tmp_path):
+         result = dotenv.get_key(nx_path, "foo")
+ 
+     assert result is None
+-    mock_info.assert_has_calls(
++    # `get_key` passes verbose=True, so both messages reach the caller, and both
++    # are warnings: the missing file explains the missing key.
++    mock_info.assert_not_called()
++    mock_warning.assert_has_calls(
+         calls=[
+-            mock.call("python-dotenv could not find configuration file %s.", nx_path)
++            mock.call("python-dotenv could not find configuration file %s.", nx_path),
++            mock.call("Key %s not found in %s.", "foo", nx_path),
+         ],
+     )
+-    mock_warning.assert_has_calls(
+-        calls=[mock.call("Key %s not found in %s.", "foo", nx_path)],
+-    )
+ 
+ 
+ def test_get_key_not_found(dotenv_path):
+@@ -534,15 +1109,28 @@ def test_load_dotenv_doesnt_disable_itself(dotenv_path):
+ def test_load_dotenv_no_file_verbose():
+     logger = logging.getLogger("dotenv.main")
+ 
+-    with mock.patch.object(logger, "info") as mock_info:
++    with mock.patch.object(logger, "warning") as mock_warning:
+         result = dotenv.load_dotenv(".does_not_exist", verbose=True)
+ 
+     assert result is False
+-    mock_info.assert_called_once_with(
++    # WARNING, not INFO: the docstring promises a warning, and a logger with no
++    # handler configured emits nothing below WARNING, which made `verbose=True`
++    # silent for every caller that had not configured logging.
++    mock_warning.assert_called_once_with(
+         "python-dotenv could not find configuration file %s.", ".does_not_exist"
+     )
+ 
+ 
++def test_load_dotenv_no_file_not_verbose():
++    logger = logging.getLogger("dotenv.main")
++
++    with mock.patch.object(logger, "warning") as mock_warning:
++        result = dotenv.load_dotenv(".does_not_exist", verbose=False)
++
++    assert result is False
++    mock_warning.assert_not_called()
++
++
+ @pytest.mark.skipif(
+     sys.platform == "win32", reason="This test assumes case-sensitive variable names"
+ )
+@@ -655,6 +1243,80 @@ def test_dotenv_values_file(dotenv_path):
      assert result == {"a": "b"}
  
  
-+def test_dotenv_values_without_path_finds_the_file(tmp_path, monkeypatch):
++def test_dotenv_values_without_path_uses_cwd_when_interactive(tmp_path, monkeypatch):
++    """A REPL has no calling file to search from, so the lookup starts at the working
++    directory. `sys.ps1` is what marks the interpreter interactive, and it is set here
++    explicitly: inheriting it from whichever module ran earlier pins nothing."""
 +    (tmp_path / ".env").write_text("a=b")
 +    monkeypatch.chdir(tmp_path)
++    monkeypatch.setattr(sys, "ps1", ">>> ", raising=False)
 +
 +    result = dotenv.dotenv_values()
 +
 +    assert result == {"a": "b"}
++
++
++def test_dotenv_values_without_path_searches_from_the_script(tmp_path):
++    """An ordinary script searches upward from its own directory, not from the working
++    directory. Both directories hold a `.env` here, so the value that comes back names
++    which branch ran - an assertion that only the script one satisfies."""
++    (tmp_path / ".env").write_text("a=beside_the_script")
++    elsewhere = tmp_path / "elsewhere"
++    elsewhere.mkdir()
++    (elsewhere / ".env").write_text("a=in_the_working_directory")
++    sub = tmp_path / "sub"
++    sub.mkdir()
++    code_path = sub / "code.py"
++    code_path.write_text(
++        textwrap.dedent("""
++        import dotenv
++
++        print(dict(dotenv.dotenv_values()), dotenv.find_dotenv(), sep="|")
++    """)
++    )
++
++    result = subprocess.run(
++        [sys.executable, str(code_path)],
++        cwd=elsewhere,
++        capture_output=True,
++        text=True,
++        check=True,
++    )
++
++    expected = {"a": "beside_the_script"}
++    assert result.stdout == f"{expected}|{tmp_path / '.env'}\n"
 +
 +
 +@pytest.mark.parametrize(
@@ -1380,7 +2516,7 @@ index 1c33c80..87f7b87 100644
  @pytest.mark.skipif(
      sys.platform == "win32", reason="This test assumes case-sensitive variable names"
  )
-@@ -678,6 +872,13 @@ def test_dotenv_values_file(dotenv_path):
+@@ -678,6 +1340,13 @@ def test_dotenv_values_file(dotenv_path):
          ({"b": "c"}, "a='${b}'", True, {"a": "c"}),
          # With surrounding text
          ({"b": "c"}, "a=x${b}y", True, {"a": "xcy"}),
@@ -1394,7 +2530,7 @@ index 1c33c80..87f7b87 100644
          # Self-referential
          ({"a": "b"}, "a=${a}", True, {"a": "b"}),
          ({}, "a=${a}", True, {"a": ""}),
-@@ -708,3 +909,176 @@ def test_dotenv_values_file_stream(dotenv_path):
+@@ -708,3 +1377,235 @@ def test_dotenv_values_file_stream(dotenv_path):
          result = dotenv.dotenv_values(stream=f)
  
      assert result == {"a": "b"}
@@ -1571,6 +2707,166 @@ index 1c33c80..87f7b87 100644
 +
 +    assert "BAD" in caplog.text
 +    assert "utf-8" in caplog.text
++
++
++class _CountingEnviron(MutableMapping):
++    """An `os.environ` stand-in that counts whole traversals of itself.
++
++    Mutable because pytest writes `PYTEST_CURRENT_TEST` into the real
++    `os.environ` around every test, and a read-only stand-in breaks setup.
++    Only traversals are counted; single-key reads and writes are not.
++    """
++
++    def __init__(self, data):
++        self._data = dict(data)
++        self.traversals = 0
++
++    def keys(self):
++        self.traversals += 1
++        return self._data.keys()
++
++    def __iter__(self):
++        self.traversals += 1
++        return iter(self._data)
++
++    def __getitem__(self, key):
++        return self._data[key]
++
++    def __setitem__(self, key, value):
++        self._data[key] = value
++
++    def __delitem__(self, key):
++        del self._data[key]
++
++    def __len__(self):
++        return len(self._data)
++
++
++@pytest.mark.parametrize("override", [True, False])
++def test_the_environment_is_read_once_per_call_not_once_per_binding(
++    tmp_path, monkeypatch, override
++):
++    """Interpolation used to copy the whole environment for every binding.
++
++    That made resolution quadratic in the number of keys while parsing stayed
++    linear: a 20000-key file took 3.9s to interpolate against 0.16s to parse,
++    and `dotenv list` on it took 4s. Counted rather than timed, because a
++    timing assertion is flaky and does not say what regressed.
++    """
++    dotenv_path = tmp_path / ".env"
++    dotenv_path.write_text(
++        "A0=v\n" + "".join(f"A{i}=${{A{i - 1}}}{i}\n" for i in range(1, 50))
++    )
++    counting = _CountingEnviron({"SET_IN_ENV": "x"})
++    monkeypatch.setattr(os, "environ", counting)
++
++    values = DotEnv(
++        dotenv_path, interpolate=True, override=override, encoding="utf-8"
++    ).dict()
++
++    assert values["A49"] == "v" + "".join(str(i) for i in range(1, 50))
++    assert counting.traversals == 1
+diff --git a/tests/test_parser.py b/tests/test_parser.py
+index 4ec5a5a..064738b 100644
+--- a/tests/test_parser.py
++++ b/tests/test_parser.py
+@@ -452,6 +452,57 @@ from dotenv.parser import Binding, Original, parse_stream
+                 ),
+             ],
+         ),
++        (
++            # The terminator of an unparseable line has to be matched
++            # longest-first, or a CRLF file gives the error binding the `\r` and
++            # the next binding the `\n`: `_terminator_used_by` then reads the
++            # file's terminator as a bare `\r`, and every later line counts one
++            # newline too many.
++            "a: b\r\nc=d\r\n",
++            [
++                Binding(
++                    key=None,
++                    value=None,
++                    original=Original(string="a: b\r\n", line=1),
++                    error=True,
++                ),
++                Binding(
++                    key="c",
++                    value="d",
++                    original=Original(string="c=d\r\n", line=2),
++                    error=False,
++                ),
++            ],
++        ),
++        (
++            "bad one\r\nA=1\r\nbad two\r\nB=2\r\n",
++            [
++                Binding(
++                    key=None,
++                    value=None,
++                    original=Original(string="bad one\r\n", line=1),
++                    error=True,
++                ),
++                Binding(
++                    key="A",
++                    value="1",
++                    original=Original(string="A=1\r\n", line=2),
++                    error=False,
++                ),
++                Binding(
++                    key=None,
++                    value=None,
++                    original=Original(string="bad two\r\n", line=3),
++                    error=True,
++                ),
++                Binding(
++                    key="B",
++                    value="2",
++                    original=Original(string="B=2\r\n", line=4),
++                    error=False,
++                ),
++            ],
++        ),
+         (
+             'a="\nb=c',
+             [
+@@ -545,21 +596,36 @@ from dotenv.parser import Binding, Original, parse_stream
+                 ),
+             ],
+         ),
+-        # UTF-8 BOM at the start of the file should be stripped
++        # A UTF-8 BOM is stripped from the value it precedes, but it is still
++        # yielded as a binding of its own - no key, no value, like a comment -
++        # so that the originals join back to the whole input. A mark no binding
++        # carried was a mark every rewrite silently dropped (F44).
+         (
+             "\ufeffa=b",
+             [
++                Binding(
++                    key=None,
++                    value=None,
++                    original=Original(string="\ufeff", line=1),
++                    error=False,
++                ),
+                 Binding(
+                     key="a",
+                     value="b",
+                     original=Original(string="a=b", line=1),
+                     error=False,
+-                )
++                ),
+             ],
+         ),
+         (
+             "\ufeffa=b\nc=d",
+             [
++                Binding(
++                    key=None,
++                    value=None,
++                    original=Original(string="\ufeff", line=1),
++                    error=False,
++                ),
+                 Binding(
+                     key="a",
+                     value="b",
 diff --git a/tests/test_utils.py b/tests/test_utils.py
 index 93b8bae..ed5581b 100644
 --- a/tests/test_utils.py
