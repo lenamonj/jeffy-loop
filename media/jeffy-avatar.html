@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<!-- Source for the Reddit profile avatar. Render both themes at deviceScaleFactor 2,
+     viewport 1024x1024: media/jeffy-avatar-dark.png (default) and
+     media/jeffy-avatar-light.png (?theme=light). ?crop=1 overlays a circle mask to
+     preview Reddit's crop; never render the shipped PNGs with it. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg: #0d1117; --fg: #e6edf3; --accent: #d97757; }
+  body.light { --bg: #ffffff; --fg: #1f2937; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1024px; height: 1024px; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
+    overflow: hidden;
+  }
+  /* Everything lives inside the circle-crop safe zone */
+  .row { display: flex; align-items: center; gap: 44px; }
+  .glyph { width: 330px; height: 330px; flex: none; }
+  .word { line-height: 0.92; font-weight: 800; font-size: 158px; letter-spacing: -4px; color: var(--fg); }
+  .word .loop { color: var(--accent); }
+  /* preview-only circle mask, enabled with ?crop=1 */
+  body.crop::after {
+    content: ""; position: fixed; inset: 0;
+    border-radius: 50%; box-shadow: 0 0 0 600px rgba(0,0,0,0.85);
+  }
+</style>
+</head>
+<body>
+  <div class="row">
+    <svg class="glyph" viewBox="0 0 100 100" fill="none">
+      <path d="M 50 12 A 38 38 0 1 1 16.5 31" stroke="#d97757" stroke-width="11" stroke-linecap="round"/>
+      <path d="M 8 12 L 16.5 31 L 35 22 Z" fill="#d97757"/>
+    </svg>
+    <div class="word">JEFFY<br><span class="loop">LOOP</span></div>
+  </div>
+  <script>
+    const p = new URLSearchParams(location.search);
+    if (p.get('theme') === 'light') document.body.classList.add('light');
+    if (p.get('crop') === '1') document.body.classList.add('crop');
+  </script>
+</body>
+</html>
