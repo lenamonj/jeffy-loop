@@ -55,9 +55,9 @@ flowchart TD
         CHECKS -->|"a check failed - the violation<br/>rides the budget test"| BUDGET
         BUDGET -->|"yes"| STALL
         BUDGET -->|"no - budget spent"| EXTEND
-        EXTEND -->|"yes - one-time +2, once per run"| REFILL
-        REFILL -->|"no - only the convergence<br/>sequence remains"| REFEED
-        STALL -->|"no"| REFEED
+        EXTEND -->|"yes - one-time +2, once per run"| REFEED
+        REFILL -->|"no"| REFEED
+        STALL -->|"no"| REFILL
     end
 
     RECORD -->|"turn ends"| ENGINE
@@ -69,7 +69,7 @@ flowchart TD
 
     CHECKS -->|"every check holds -<br/>converged"| REPORT
     EXTEND -->|"no - the run is over"| REPORT
-    REFILL -->|"yes"| OOB
+    REFILL -->|"yes - inside the granted window"| OOB
     STALL -->|"yes - ended as stalled"| REPORT
     RECORD -->|"needs your decision"| REPORT
 
