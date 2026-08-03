@@ -20,6 +20,13 @@ body:
       description: Output of `claude --version`
     validations:
       required: true
+  - type: input
+    id: jeffy-version
+    attributes:
+      label: Jeffy version
+      description: Printed at the end of every RUN STATE line during a run, or run `grep JEFFY_VERSION ~/.claude/skills/jeffy/hooks/stop-hook.sh`
+    validations:
+      required: true
   - type: textarea
     id: what-happened
     attributes:

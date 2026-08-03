@@ -10,6 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
+JEFFY_VERSION="1.5.0"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -523,6 +524,7 @@ fi
 if [ -n "$unswept_rows" ]; then
   run_state="$run_state; unswept rows $unswept_rows"
 fi
+run_state="$run_state; jeffy v$JEFFY_VERSION"
 reason="$reason $run_state."
 # An empty ledger over a swept surface is not a finished run: the closing
 # audit, the evaluator gate and the declaration are still to come, and runs

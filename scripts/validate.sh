@@ -233,7 +233,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
 # them.
 check_markers skills/jeffy/hooks/stop-hook.sh \
   "RUN STATE" \
-  "CLOSING EXTENSION"
+  "CLOSING EXTENSION" \
+  "JEFFY_VERSION"
 # The launch-time lint is the whole malformed-Verify-command class caught at
 # zero iteration cost: the hook's parser runs only on the convergence branch,
 # so without this check a line written at launch waits a whole run to fire.
@@ -251,6 +252,19 @@ check_markers skills/jeffy/SKILL.md \
   "mode \`120000\`"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
+fi
+
+# I. The product states its version, and it cannot drift from the release
+#    record: the hook's JEFFY_VERSION must equal the newest release heading
+#    in CHANGELOG.md. Both are bumped in the same release commit.
+hook_ver="$(sed -n 's/^JEFFY_VERSION="\([0-9][0-9.]*\)"$/\1/p' skills/jeffy/hooks/stop-hook.sh | head -n 1)"
+cl_ver="$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' CHANGELOG.md | head -n 1)"
+if [ -z "$hook_ver" ]; then
+  fault "stop-hook.sh carries no JEFFY_VERSION=\"x.y.z\" line"
+elif [ "$hook_ver" = "$cl_ver" ]; then
+  pass "JEFFY_VERSION $hook_ver matches the newest CHANGELOG release heading"
+else
+  fault "JEFFY_VERSION $hook_ver does not match the newest CHANGELOG release [$cl_ver]; bump them together"
 fi
 
 # 6b. The iteration prompt's shape invariants: one single line, no double
@@ -1785,6 +1799,7 @@ if command -v jq >/dev/null 2>&1; then
       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 2 of 3; 1 remain after it' \
       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'open tasks Now 2 Next 1 Later 0' \
       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'unswept rows 3' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'jeffy v' \
       && grep -q '^iteration: 2$' "$hb_state"; then
       pass "stop hook states the run arithmetic on a mid-budget re-feed (iterations, open tasks per section, unswept rows)"
     else

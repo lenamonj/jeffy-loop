@@ -76,6 +76,8 @@ grep -n "session_id\|iteration:" "$PR/.claude/jeffy-loop.local.md"
 
 Verify the write: the grep output must show the current session id and `iteration: 1`. If the session id line is empty or wrong, delete the file, report the failure, and stop. The iteration prompt itself is a single line stored at `$REF/iteration-prompt.txt`; the hook reads it from disk at every turn end and JSON-encodes it with jq, so its content never needs to be injected through the shell. Never edit iteration-prompt.txt casually: the loop's journal grammar, checkpoint discipline, run report, and closing rule all live in it, and it must stay a single line.
 
+Then announce the launch in one line - Jeffy v<version>, N iterations, and the focus or enhance topic if one was given - reading the version from the installed hook with `sed -n 's/^JEFFY_VERSION="\(.*\)"/\1/p' <home>/.claude/skills/jeffy/hooks/stop-hook.sh`, so every run's transcript opens by naming the engine version a bug report needs.
+
 ## Step 4: Begin iteration 1
 
 Read "<REF>/iteration-prompt.txt" now (REF as resolved in Step 2), its only in-context load, and immediately start following it yourself. Do not wait for input. Every later turn end triggers the Stop hook, which re-feeds the same prompt until N iterations complete, the promise fires, or the state file is deleted.
