@@ -55,7 +55,8 @@ flowchart TD
         CHECKS -->|"a check failed - the violation<br/>rides the budget test"| BUDGET
         BUDGET -->|"yes"| STALL
         BUDGET -->|"no - budget spent"| EXTEND
-        EXTEND -->|"yes - one-time +2, once per run"| REFEED
+        EXTEND -->|"yes - one-time +2, once per run"| REFILL
+        REFILL -->|"no - only the convergence<br/>sequence remains"| REFEED
         STALL -->|"no"| REFEED
     end
 
@@ -67,9 +68,8 @@ flowchart TD
     OOB["Run ends - out of budget<br/>tasks kept"]
 
     CHECKS -->|"every check holds -<br/>converged"| REPORT
-    EXTEND -->|"no - the extension is spent"| REFILL
+    EXTEND -->|"no - the run is over"| REPORT
     REFILL -->|"yes"| OOB
-    REFILL -->|"no - only evaluator-filed<br/>tasks remain"| OPEN
     STALL -->|"yes - ended as stalled"| REPORT
     RECORD -->|"needs your decision"| REPORT
 
