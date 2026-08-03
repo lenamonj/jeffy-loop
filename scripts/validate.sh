@@ -262,7 +262,10 @@ check_markers skills/jeffy/SKILL.md \
   "core.autocrlf false" \
   "show-toplevel" \
   "Nested Jeffy project:" \
-  "mode \`120000\`"
+  "mode \`120000\`" \
+  "enhance <topic>" \
+  "Mode guard:" \
+  "whose mode is Enhance"
 check_markers skills/jeffy/references/enhance-plan-default.md \
   "## Mode" \
   "Enhance." \

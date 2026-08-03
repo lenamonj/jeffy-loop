@@ -13,7 +13,7 @@ Project root means the directory Claude Code was started in - the session's prim
 
 ## Arguments
 
-Parse $ARGUMENTS: if the first token is an integer, it is the iteration budget N, default 10. All remaining text is a focus directive for this run. On a fresh project, iteration 1 is always consumed by the audit that generates the backlog, so N=2 executes exactly one task; if the user picks N below 5, proceed but note that larger budgets make materially more progress.
+Parse $ARGUMENTS: if the first token is an integer, it is the iteration budget N, default 10. If the next token is exactly `enhance`, this is an Enhance run and all remaining text is the topic; otherwise all remaining text is a focus directive for this run. An Enhance run with no topic is refused: report the usage `/jeffy [N] enhance <topic>` and stop, because an unbounded make-it-better run is exactly the invented work the standard envelope exists to prevent. The topic is carried in the loop state's focus field, so the hook and the ratchet treat it as a focus directive, which is what it is. On a fresh project, iteration 1 is always consumed by the audit that generates the backlog - in an Enhance run, the opportunity audit - so N=2 executes exactly one task; if the user picks N below 5, proceed but note that larger budgets make materially more progress.
 
 ## Step 1: Pre-flight
 
@@ -38,13 +38,20 @@ Create each file at the project root only if it is missing. The default contents
 
 First resolve REF, the absolute path of this skill's references directory. Glob for `<home>/.claude/skills/jeffy/references/iteration-prompt.txt`, substituting the absolute home directory with forward slashes as in pre-flight check 2. REF is the directory of the match. If nothing matches, stop and report a broken install: the references directory is missing, so re-run the installer. Substitute the resolved REF below and wherever later steps say REF.
 
+Mode guard: when PLAN.md already exists at the project root, read the first word of its `## Mode` section body. An Enhance launch over a PLAN.md whose mode is not Enhance, and a standard launch over one whose mode is Enhance, are both refused: the two modes rank work differently and their ledgers and convergence records must never mix in one set of state files. Tell the user to finish or archive the other mode's state files first - commit them and delete them, or use a separate branch or checkout - and stop. A matching mode proceeds and reuses the existing state files exactly as any relaunch does; a PLAN.md with no `## Mode` section is a user-authored plan and is treated as standard.
+
 ```bash
 REF="<resolved references dir>"
 PR="<PROJECT_ROOT>"
+# Standard launch:
 [ -f "$PR/PLAN.md" ]    || cp "$REF/plan-default.md"    "$PR/PLAN.md"
+# Enhance launch instead copies the enhance template:
+# [ -f "$PR/PLAN.md" ]  || cp "$REF/enhance-plan-default.md" "$PR/PLAN.md"
 [ -f "$PR/BACKLOG.md" ] || cp "$REF/backlog-default.md" "$PR/BACKLOG.md"
 [ -f "$PR/JOURNAL.md" ] || cp "$REF/journal-default.md" "$PR/JOURNAL.md"
 ```
+
+On an Enhance launch, copy `enhance-plan-default.md` as PLAN.md instead of `plan-default.md`; BACKLOG.md and JOURNAL.md are shared shapes and copy identically. After copying an Enhance PLAN.md, replace its placeholder line `<filled at bootstrap with the sanitized topic>` with the sanitized topic text - the same sanitation Step 3 applies to the focus - so the plan states what it is for.
 
 The templates define Improvement mode (PLAN.md with the Goal, Operating envelope, Method, severity rubric, and Definition of done), the BACKLOG.md ledger sections (Now, Next, Later, Proposed, Settled classes, Declined, Converged), and the append-only JOURNAL.md heading grammar. Edit the copies in the project to customize one run; edit the templates in references/ only to change every future run.
 
@@ -52,7 +59,7 @@ All work happens directly in the current project folder on the current branch. W
 
 ## Step 3: Launch the loop
 
-Write the loop state file yourself, at the project root, with an absolute path. If focus text was given, sanitize it first: remove double quotes, backticks, dollar signs, and newlines, which would break the heredoc or the frontmatter, then substitute it below; with no focus, leave the value empty (the line stays, its value blank). Substitute PROJECT_ROOT, REF (resolved in Step 2), and N. The heredoc terminator EOF must stay at column 0.
+Write the loop state file yourself, at the project root, with an absolute path. If focus text was given, sanitize it first: remove double quotes, backticks, dollar signs, and newlines, which would break the heredoc or the frontmatter, then substitute it below; with no focus, leave the value empty (the line stays, its value blank). In an Enhance run, the focus value is the sanitized topic. Substitute PROJECT_ROOT, REF (resolved in Step 2), and N. The heredoc terminator EOF must stay at column 0.
 
 ```bash
 PR="<PROJECT_ROOT>"
