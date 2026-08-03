@@ -49,6 +49,7 @@ flowchart TD
         EXTEND{"Nothing left but the<br/>convergence sequence?<br/>ledger empty, every row swept,<br/>no extension granted yet"}
         STALL{"Second flat iteration?<br/>no commit and no ledger change,<br/>twice in a row"}
         REFEED["Block the stop and re-feed<br/>the iteration prompt, with any focus, the<br/>evidence of a rejected convergence, hygiene<br/>notes when the finished iteration skipped its<br/>journal entry or its checkpoint, and the RUN STATE<br/>line - iterations left, open tasks, unswept rows"]
+        REFILL{"Ledger refilled by<br/>non-evaluator work?"}
         PROM -->|"no"| BUDGET
         PROM -->|"yes"| CHECKS
         CHECKS -->|"a check failed - the violation<br/>rides the budget test"| BUDGET
@@ -63,9 +64,12 @@ flowchart TD
     REFEED -->|"iteration i+1, context intact"| LOAD
 
     REPORT["Run report<br/>iterations spent, tasks closed with severities,<br/>the diffstat, blocked items, decisions waiting on you;<br/>JOURNAL.md and git log hold the full record"]
+    OOB["Run ends - out of budget<br/>tasks kept"]
 
     CHECKS -->|"every check holds -<br/>converged"| REPORT
-    EXTEND -->|"no - the run is over"| REPORT
+    EXTEND -->|"no - the extension is spent"| REFILL
+    REFILL -->|"yes"| OOB
+    REFILL -->|"no - only evaluator-filed<br/>tasks remain"| OPEN
     STALL -->|"yes - ended as stalled"| REPORT
     RECORD -->|"needs your decision"| REPORT
 
@@ -84,8 +88,8 @@ flowchart TD
     %% as the control-plane panel they land in - so they read as file writes
     %% at a glance instead of hiding among the slate control-flow edges.
     %% linkStyle is INDEX-based over edge declaration order: these are edges
-    %% 31-34. Adding any edge earlier in the file shifts them - recount.
-    linkStyle 31,32,33,34 stroke:#CA8A04,stroke-width:2.5px,stroke-dasharray:7 5
+    %% 33-36. Adding any edge earlier in the file shifts them - recount.
+    linkStyle 33,34,35,36 stroke:#CA8A04,stroke-width:2.5px,stroke-dasharray:7 5
 
     classDef entry fill:#BAE6FD,stroke:#0EA5E9,color:#0C4A6E
     classDef launch fill:#E0F2FE,stroke:#0EA5E9,color:#0C4A6E
@@ -97,9 +101,9 @@ flowchart TD
     class USER entry
     class PRE,WRITE launch
     class LOAD,OPEN,AUDIT,CLEAN,EXEC,GATE,REVERT,RECORD,EVAL work
-    class PROM,CHECKS,BUDGET,EXTEND,STALL,REFEED engine
+    class PROM,CHECKS,BUDGET,EXTEND,STALL,REFEED,REFILL engine
     class SF,MEM,GIT file
-    class REPORT,PROMISE good
+    class REPORT,PROMISE,OOB good
 
     style LAUNCH fill:#F0F9FF,stroke:#0EA5E9,stroke-width:2px,color:#0C4A6E
     style WORK fill:#FFF8F4,stroke:#D97757,stroke-width:2px,color:#7C2D12
