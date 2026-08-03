@@ -74,6 +74,7 @@ for required in skills/jeffy/SKILL.md skills/cancel-jeffy/SKILL.md \
   skills/jeffy/references/backlog-default.md \
   skills/jeffy/references/journal-default.md \
   skills/jeffy/references/iteration-prompt.txt \
+  skills/jeffy/references/enhance-plan-default.md \
   skills/jeffy/hooks/stop-hook.sh; do
   if [ -f "$required" ]; then
     pass "referenced path exists: $required"
@@ -262,6 +263,23 @@ check_markers skills/jeffy/SKILL.md \
   "show-toplevel" \
   "Nested Jeffy project:" \
   "mode \`120000\`"
+check_markers skills/jeffy/references/enhance-plan-default.md \
+  "## Mode" \
+  "Enhance." \
+  "## Topic" \
+  "<filled at bootstrap with the sanitized topic>" \
+  "never files defect findings at severity" \
+  "## Impact ranking" \
+  "cost: exceeds one iteration" \
+  "## Surface inventory" \
+  "lists no unswept row" \
+  "## Verify command" \
+  "Command: " \
+  "an acceptance check that can fail" \
+  "adversarial evaluator gate" \
+  "Evaluator: unavailable" \
+  "recorded in the run report for a standard run" \
+  "## Lessons"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
