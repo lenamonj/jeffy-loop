@@ -183,7 +183,10 @@ check_markers skills/jeffy/references/plan-default.md \
   "re-invoked at the declaration" \
   "(<Severity>, <class>, <dimension>)" \
   "one glob per line" \
-  "run at least one test module in isolation"
+  "run at least one test module in isolation" \
+  "provoking a failure at every step" \
+  "re-executes the claims it invalidates" \
+  "write a line number into a state file"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
@@ -230,7 +233,10 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "or AUDIT or EVALUATOR or RATCHET" \
   ".jeffy/probes/" \
   "never run an audit inside it" \
-  "Battery ownership:"
+  "Battery ownership:" \
+  "provoking a failure at every step" \
+  "re-executes the claims it invalidates" \
+  "write a line number into a state file"
 # The hook's two named notes. The model is taught to read both by name - the
 # run-state arithmetic on every re-feed, the one-time closing extension at the
 # budget boundary - so the names are an interface, not internal wording, and
