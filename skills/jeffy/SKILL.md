@@ -2,7 +2,7 @@
 name: jeffy
 description: Use when the user runs /jeffy to start an autonomous Jeffy improvement loop on the current project
 disable-model-invocation: true
-argument-hint: "[N] [focus...]"
+argument-hint: "[N] [enhance <topic> | focus...]"
 ---
 
 # Jeffy
@@ -13,7 +13,7 @@ Project root means the directory Claude Code was started in - the session's prim
 
 ## Arguments
 
-Parse $ARGUMENTS: if the first token is an integer, it is the iteration budget N, default 10. If the next token is exactly `enhance`, this is an Enhance run and all remaining text is the topic; otherwise all remaining text is a focus directive for this run. An Enhance run with no topic is refused: report the usage `/jeffy [N] enhance <topic>` and stop, because an unbounded make-it-better run is exactly the invented work the standard envelope exists to prevent. The topic is carried in the loop state's focus field, so the hook and the ratchet treat it as a focus directive, which is what it is. On a fresh project, iteration 1 is always consumed by the audit that generates the backlog - in an Enhance run, the opportunity audit - so N=2 executes exactly one task; if the user picks N below 5, proceed but note that larger budgets make materially more progress.
+Parse $ARGUMENTS: if the first token is an integer, it is the iteration budget N, default 10. If the token after the optional budget is exactly `enhance`, this is an Enhance run and all remaining text is the topic; otherwise all remaining text is a focus directive for this run. An Enhance run with no topic is refused: report the usage `/jeffy [N] enhance <topic>` and stop, because an unbounded make-it-better run is exactly the invented work the standard envelope exists to prevent. The topic is carried in the loop state's focus field, so the hook and the ratchet treat it as a focus directive, which is what it is. On a fresh project, iteration 1 is always consumed by the audit that generates the backlog - in an Enhance run, the opportunity audit - so N=2 executes exactly one task; if the user picks N below 5, proceed but note that larger budgets make materially more progress.
 
 ## Step 1: Pre-flight
 
@@ -43,15 +43,16 @@ Mode guard: when PLAN.md already exists at the project root, read the first word
 ```bash
 REF="<resolved references dir>"
 PR="<PROJECT_ROOT>"
-# Standard launch:
-[ -f "$PR/PLAN.md" ]    || cp "$REF/plan-default.md"    "$PR/PLAN.md"
-# Enhance launch instead copies the enhance template:
-# [ -f "$PR/PLAN.md" ]  || cp "$REF/enhance-plan-default.md" "$PR/PLAN.md"
+# PLAN.md template is chosen by mode: enhance-plan-default.md on an Enhance
+# launch, plan-default.md otherwise.
+TPL="plan-default.md"            # standard launch
+# TPL="enhance-plan-default.md"  # Enhance launch: use this line instead
+[ -f "$PR/PLAN.md" ]    || cp "$REF/$TPL"                "$PR/PLAN.md"
 [ -f "$PR/BACKLOG.md" ] || cp "$REF/backlog-default.md" "$PR/BACKLOG.md"
 [ -f "$PR/JOURNAL.md" ] || cp "$REF/journal-default.md" "$PR/JOURNAL.md"
 ```
 
-On an Enhance launch, copy `enhance-plan-default.md` as PLAN.md instead of `plan-default.md`; BACKLOG.md and JOURNAL.md are shared shapes and copy identically. After copying an Enhance PLAN.md, replace its placeholder line `<filled at bootstrap with the sanitized topic>` with the sanitized topic text - the same sanitation Step 3 applies to the focus - so the plan states what it is for.
+On an Enhance launch, set TPL to `enhance-plan-default.md` as the block shows; BACKLOG.md and JOURNAL.md are shared shapes and copy identically regardless of mode. After copying an Enhance PLAN.md, replace its placeholder line `<filled at bootstrap with the sanitized topic>` with the sanitized topic text - the same sanitation Step 3 applies to the focus - so the plan states what it is for.
 
 The templates define Improvement mode (PLAN.md with the Goal, Operating envelope, Method, severity rubric, and Definition of done), the BACKLOG.md ledger sections (Now, Next, Later, Proposed, Settled classes, Declined, Converged), and the append-only JOURNAL.md heading grammar. Edit the copies in the project to customize one run; edit the templates in references/ only to change every future run.
 
