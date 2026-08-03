@@ -193,14 +193,35 @@ if [ -n "$promise" ]; then
             if ! verify_syntax="$(printf '%s\n' "$verify_cmd" | bash -n 2>&1)"; then
               violation="the Verify command line ($verify_cmd) is not runnable shell (bash -n: $(printf '%s' "$verify_syntax" | head -n 1)); make the Command line a pure runnable command with no annotation, then re-declare convergence"
             else
-              vt="$(fm verify_timeout_seconds)"
-              case "$vt" in '' | *[!0-9]*) vt=240 ;; esac
-              ( cd "$root" && timeout "$vt" bash -c "$verify_cmd" ) >/dev/null 2>&1
-              vrc=$?
-              if [ "$vrc" -eq 124 ]; then
-                violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; get it green, then re-declare convergence"
-              elif [ "$vrc" -ne 0 ]; then
-                violation="the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence"
+              # A pipeline's exit status is its last stage's. A gate ending in
+              # a pager or truncator therefore reports head/tail/cat, not the
+              # suite - observed twice in one day (python-dotenv, libuv), 13
+              # failing tests behind an exit 0. Lint only when a pipe exists:
+              # a pipe-free 'cat file' is the user's own command.
+              vc_lint=""
+              case "$verify_cmd" in
+                *'|'*)
+                  vc_last="${verify_cmd##*|}"
+                  vc_last="${vc_last#"${vc_last%%[![:space:]]*}"}"
+                  case "$vc_last" in
+                    head|head\ *|tail|tail\ *|less|less\ *|more|more\ *|cat|cat\ *)
+                      vc_lint="${vc_last%% *}"
+                      ;;
+                  esac
+                  ;;
+              esac
+              if [ -n "$vc_lint" ]; then
+                violation="the Verify command ($verify_cmd) ends in $vc_lint, so its exit status is the truncator's, not the suite's; drop the trailing stage, then re-declare convergence"
+              else
+                vt="$(fm verify_timeout_seconds)"
+                case "$vt" in '' | *[!0-9]*) vt=240 ;; esac
+                ( cd "$root" && timeout "$vt" bash -c "$verify_cmd" ) >/dev/null 2>&1
+                vrc=$?
+                if [ "$vrc" -eq 124 ]; then
+                  violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; get it green, then re-declare convergence"
+                elif [ "$vrc" -ne 0 ]; then
+                  violation="the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence"
+                fi
               fi
             fi
           fi

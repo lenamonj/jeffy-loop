@@ -244,6 +244,7 @@ check_markers skills/jeffy/hooks/stop-hook.sh \
 check_markers skills/jeffy/SKILL.md \
   "Verify command lint:" \
   "nor an unfilled \`<...>\` placeholder" \
+  "a pager or truncator" \
   "core.autocrlf false" \
   "show-toplevel" \
   "Nested Jeffy project:" \
@@ -1992,6 +1993,36 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook did not round-trip max_iterations and extension_granted after granting the extension"
     fi
     rm -f "$hb_state"
+
+    # B: a Verify command ending in a truncator reports the truncator's exit
+    # status, not the suite's - libuv's first suite run reported exit 0 over
+    # 13 failing tests. The hook must refuse the declaration and name it.
+    hb_proj="$hb_tmp/proj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+    hb_write_journal 2 3
+    hb_write_backlog "" ""
+    hb_write_plan 'false | tail -n 1'
+    hb_write_state sess-1 2 3
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ends in tail' \
+      && [ -f "$hb_state" ]; then
+      pass "stop hook rejects a Verify command whose last pipeline stage is a truncator"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a truncator-terminated Verify command (exit status is tail's, not the suite's)"
+    fi
+    # The lint fires only when a pipe exists: a bare 'cat file' gate is the
+    # user's own legitimate command and its exit status is its own.
+    hb_write_journal 2 3
+    hb_write_plan 'true'
+    hb_write_state sess-1 2 3
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ ! -f "$hb_state" ]; then
+      pass "stop hook still accepts a pipe-free Verify command at the converged stop"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook rejected a clean pipe-free Verify command"
+    fi
 
     # E5: the hook contains no notion of the evaluator gate, and six of
     # thirteen corpus convergences carried no evaluator verdict at all. The
