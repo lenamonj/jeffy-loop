@@ -243,7 +243,11 @@ check_markers skills/jeffy/hooks/stop-hook.sh \
 # relaunch whose first iteration was interrupted before the audit filled it.
 check_markers skills/jeffy/SKILL.md \
   "Verify command lint:" \
-  "nor an unfilled \`<...>\` placeholder"
+  "nor an unfilled \`<...>\` placeholder" \
+  "core.autocrlf false" \
+  "show-toplevel" \
+  "Nested Jeffy project:" \
+  "mode \`120000\`"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
