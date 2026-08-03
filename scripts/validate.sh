@@ -267,6 +267,30 @@ else
   fault "JEFFY_VERSION $hook_ver does not match the newest CHANGELOG release [$cl_ver]; bump them together"
 fi
 
+# J. Counts the README states are derived, never transcribed - the class
+#    that produced three drift incidents in one day across two codebases.
+#    Source of truth is the eval table: one row per evals/*/REPORT.md, the
+#    Run column says **converged**, the Language column feeds the distinct
+#    count. On failure, remember the surfaces grep cannot see: the GitHub
+#    About text, release bodies, and any live article state the same numbers.
+receipts="$(ls evals/*/REPORT.md 2>/dev/null | wc -l | tr -d ' ')"
+tbl_rows="$(grep -c '^| \[.*(evals/.*/REPORT\.md)' README.md)"
+tbl_conv="$(grep -c '^| \[.*(evals/.*/REPORT\.md).*\*\*converged\*\*' README.md)"
+tbl_langs="$(awk -F'|' '/^\| \[/ && /\*\*converged\*\*/ { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 }' README.md | sort -u | wc -l | tr -d ' ')"
+claim_conv="$(sed -n 's/.*<!-- count:converged -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
+claim_langs="$(sed -n 's/.*<!-- count:languages -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
+if [ "$tbl_rows" != "$receipts" ]; then
+  fault "README eval table has $tbl_rows rows but evals/ holds $receipts REPORT.md receipts; a new eval landed without its row (and the About text and live articles need the same edit)"
+elif [ -z "$claim_conv" ] || [ -z "$claim_langs" ]; then
+  fault "README prose counts are not marker-anchored (<!-- count:converged --> / <!-- count:languages -->); an unanchored count is an untracked claim"
+elif [ "$claim_conv" != "$tbl_conv" ]; then
+  fault "README claims $claim_conv converged but the eval table shows $tbl_conv (and the About text and live articles need the same edit)"
+elif [ "$claim_langs" != "$tbl_langs" ]; then
+  fault "README claims $claim_langs languages but the converged rows span $tbl_langs"
+else
+  pass "README counts are derived from the eval table ($tbl_conv converged of $receipts, $tbl_langs languages)"
+fi
+
 # 6b. The iteration prompt's shape invariants: one single line, no double
 #     quotes, no CR bytes. The Stop hook cats the file into its block reason
 #     and jq handles the JSON encoding, so nothing breaks mechanically - these
