@@ -180,6 +180,7 @@ check_markers skills/jeffy/references/plan-default.md \
   ".jeffy/probes/" \
   "scope line names the enumeration command" \
   "recording its second occurrence is marked" \
+  "re-invoked at the declaration" \
   "(<Severity>, <class>, <dimension>)"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
@@ -225,7 +226,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "copy the fixed files aside" \
   "or a test run through head or tail" \
   "or AUDIT or EVALUATOR or RATCHET" \
-  ".jeffy/probes/"
+  ".jeffy/probes/" \
+  "never run an audit inside it"
 # The hook's two named notes. The model is taught to read both by name - the
 # run-state arithmetic on every re-feed, the one-time closing extension at the
 # budget boundary - so the names are an interface, not internal wording, and
@@ -234,7 +236,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
 check_markers skills/jeffy/hooks/stop-hook.sh \
   "RUN STATE" \
   "CLOSING EXTENSION" \
-  "JEFFY_VERSION"
+  "JEFFY_VERSION" \
+  "refilled inside the closing extension"
 # The launch-time lint is the whole malformed-Verify-command class caught at
 # zero iteration cost: the hook's parser runs only on the convergence branch,
 # so without this check a line written at launch waits a whole run to fire.
@@ -2061,6 +2064,40 @@ if command -v jq >/dev/null 2>&1; then
     else
       printf '%s\n' "$hb_out"
       fault "stop hook rejected a clean pipe-free Verify command"
+    fi
+
+    # F: the +2 exists for the convergence sequence, not new work. In the
+    # python-dotenv run that first fired it live, an audit inside the window
+    # filed a Medium, the fix consumed the window, the gate was never
+    # reached, and the run ended unconverged anyway. If the ledger refills
+    # inside the window from anything but the evaluator gate's own filings,
+    # the hook ends the run honestly: out of budget, tasks kept for next run.
+    hb_proj="$hb_tmp/proj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+    hb_write_journal_entries '## iter 4/5 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Task: audit filed F1.'
+    hb_write_backlog '- [ ] F1 (Medium, runtime, correctness): filed inside the extension window. Acceptance: x.' ''
+    hb_write_plan_full none '- [x] core: swept at abc1234 - probed'
+    hb_write_state_extra sess-1 4 5 'extension_granted: 1'
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/f_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+      && grep -qF 'refilled inside the closing extension' "$hb_tmp/f_err.txt"; then
+      pass "stop hook ends the run when non-evaluator work refills the ledger inside the closing extension"
+    else
+      printf '%s\n' "$hb_out"; cat "$hb_tmp/f_err.txt"
+      fault "stop hook let the closing extension be consumed by new work (the budget signal went dishonest)"
+    fi
+    # The exception: tasks the evaluator gate itself filed are what the
+    # one-transaction endgame exists for, and the window must let them run.
+    hb_write_journal_entries '## iter 4/5 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Task: gate REJECT filed E1.'
+    hb_write_backlog '- [ ] E1 (Medium, runtime, correctness): filed by the evaluator gate. Acceptance: x.' ''
+    hb_write_plan_full none '- [x] core: swept at abc1234 - probed'
+    hb_write_state_extra sess-1 4 5 'extension_granted: 1'
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^iteration: 5$' "$hb_state"; then
+      pass "stop hook lets evaluator-filed tasks proceed inside the extension window (one-transaction endgame)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook killed the extension window on the evaluator gate's own filings"
     fi
 
     # E5: the hook contains no notion of the evaluator gate, and six of

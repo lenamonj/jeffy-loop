@@ -304,6 +304,33 @@ if [ -f "$root/PLAN.md" ] && grep -q '^## Surface inventory' "$root/PLAN.md"; th
   unswept_rows="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { n++ } END { printf "%d", n }' "$root/PLAN.md")"
 fi
 
+# Extension honesty: the +2 window buys the convergence sequence - the gate,
+# fixes for tasks that gate filed, the declaration - never new work. A ledger
+# that refills inside the window from any other source ends the run at once,
+# honestly out of budget, with the filed tasks kept for the next run. The
+# exception is read from the journal: when the last primary entry for this
+# run is the EVALUATOR gate, its filings ride the one-transaction endgame.
+if [ "$(fm extension_granted)" = "1" ] && [ "$iter" -ge $((max - 1)) ] \
+  && [ -n "$open_now" ] \
+  && { [ "$open_now" != "0" ] || [ "$open_next" != "0" ] || [ "$open_later" != "0" ]; }; then
+  last_type=""
+  if [ -f "$root/JOURNAL.md" ]; then
+    last_type="$(awk -v tok="| $runid8 |" '
+      { sub(/\r$/, "") }
+      /^## iter / && index($0, tok) {
+        split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+        if (t != "ROTATION" && t != "SALVAGE") type = t
+      }
+      END { print type }
+    ' "$root/JOURNAL.md")"
+  fi
+  if [ "$last_type" != "EVALUATOR" ]; then
+    echo "jeffy stop hook: the ledger refilled inside the closing extension (open tasks Now $open_now Next $open_next Later $open_later; last entry $last_type); the extension buys the convergence sequence, not new work. Ending the run out of budget; the filed tasks stay on the ledger for the next run." >&2
+    rm -f "$state"
+    exit 0
+  fi
+fi
+
 # Budget spent: end the run and let the session stop. A convergence claim
 # whose checks failed gets a stderr note instead of a silent swallow.
 # One exception, taken once: a run whose ledger is empty and whose inventory
