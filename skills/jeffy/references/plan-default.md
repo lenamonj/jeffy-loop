@@ -64,6 +64,8 @@ Closeout: a run that has produced one full fresh-evidence audit scoring zero Hig
 
 Audit discipline: the audit procedure is exactly what this Method prescribes. Never escalate rigor unilaterally - no improvised sub-auditor panels, no fuzzing campaigns, no dimensions beyond the Goal's list; the single convergence evaluator defined in the Definition of done is the only sub-agent review this Method authorizes. A case for more rigor is a Proposed item naming its cost; the user decides. Never file a finding inside a class recorded under Settled classes unless the code implementing that class changed after settlement. A finding a previous full audit scored clean, on code unchanged since, needs new evidence - a reproduced failure - not a deeper reading of the same lines.
 
+Before scoring Testing clean, run at least one test module in isolation, the cheapest first: a suite that is only ever run whole hides both order dependence and tests that pass on state a different module leaked, and neither shows up in coverage, in the pass count, or in a reverse-order run. A finding filed from an isolated run is about the test, not the runtime, unless new runtime evidence appears.
+
 ## Constraints
 - Do not change public interfaces or observable behavior without recording the rationale in JOURNAL.md.
 - Do not weaken security, weaken or delete tests, or remove features to make a metric pass.

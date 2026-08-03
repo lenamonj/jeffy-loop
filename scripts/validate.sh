@@ -182,7 +182,8 @@ check_markers skills/jeffy/references/plan-default.md \
   "recording its second occurrence is marked" \
   "re-invoked at the declaration" \
   "(<Severity>, <class>, <dimension>)" \
-  "one glob per line"
+  "one glob per line" \
+  "run at least one test module in isolation"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
