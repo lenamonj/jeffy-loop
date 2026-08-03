@@ -181,7 +181,8 @@ check_markers skills/jeffy/references/plan-default.md \
   "scope line names the enumeration command" \
   "recording its second occurrence is marked" \
   "re-invoked at the declaration" \
-  "(<Severity>, <class>, <dimension>)"
+  "(<Severity>, <class>, <dimension>)" \
+  "one glob per line"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
@@ -227,7 +228,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "or a test run through head or tail" \
   "or AUDIT or EVALUATOR or RATCHET" \
   ".jeffy/probes/" \
-  "never run an audit inside it"
+  "never run an audit inside it" \
+  "Battery ownership:"
 # The hook's two named notes. The model is taught to read both by name - the
 # run-state arithmetic on every re-feed, the one-time closing extension at the
 # budget boundary - so the names are an interface, not internal wording, and
