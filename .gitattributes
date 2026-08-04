@@ -9,3 +9,12 @@ skills/jeffy/references/** text eol=lf
 # Validator check 10 extracts fenced bash blocks from SKILL.md with $-anchored
 # patterns; pin to LF so the check does not depend on CR-stripping tooling.
 skills/*/SKILL.md text eol=lf
+# The eval receipts ship fixes.patch files meant for git apply against the
+# projects they audit; a CRLF checkout corrupts every hunk, so pin them.
+*.patch text eol=lf
+# Media are opaque bytes: never diffed, merged, or eol-converted.
+*.png binary
+*.gif binary
+*.mp4 binary
+*.jpg binary
+*.webp binary
