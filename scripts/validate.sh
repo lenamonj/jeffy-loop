@@ -290,14 +290,24 @@ fi
 # I. The product states its version, and it cannot drift from the release
 #    record: the hook's JEFFY_VERSION must equal the newest release heading
 #    in CHANGELOG.md. Both are bumped in the same release commit.
+#
+#    CHANGELOG.md is a maintainer file and is not published (see .gitignore),
+#    so a clone of this repository does not carry one. The pairing is enforced
+#    where the release is actually cut - the maintainer's tree - and skipped
+#    elsewhere; faulting on its absence would make every CI leg red on a file
+#    the repository is designed never to ship.
 hook_ver="$(sed -n 's/^JEFFY_VERSION="\([0-9][0-9.]*\)"$/\1/p' skills/jeffy/hooks/stop-hook.sh | head -n 1)"
-cl_ver="$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' CHANGELOG.md | head -n 1)"
 if [ -z "$hook_ver" ]; then
   fault "stop-hook.sh carries no JEFFY_VERSION=\"x.y.z\" line"
-elif [ "$hook_ver" = "$cl_ver" ]; then
-  pass "JEFFY_VERSION $hook_ver matches the newest CHANGELOG release heading"
+elif [ ! -f CHANGELOG.md ]; then
+  echo "[SKIP] JEFFY_VERSION/CHANGELOG pairing (no CHANGELOG.md; maintainer-only file)"
 else
-  fault "JEFFY_VERSION $hook_ver does not match the newest CHANGELOG release [$cl_ver]; bump them together"
+  cl_ver="$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' CHANGELOG.md | head -n 1)"
+  if [ "$hook_ver" = "$cl_ver" ]; then
+    pass "JEFFY_VERSION $hook_ver matches the newest CHANGELOG release heading"
+  else
+    fault "JEFFY_VERSION $hook_ver does not match the newest CHANGELOG release [$cl_ver]; bump them together"
+  fi
 fi
 
 # J. Counts the README states are derived, never transcribed - the class

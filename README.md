@@ -86,16 +86,50 @@ The installer verifies the Claude Code CLI and `jq` (offering to install it via 
 
 ```
 /jeffy [N] [focus...]
+/jeffy [N] enhance <topic>
 ```
 
 - `N` - iteration budget, default 10. Sizing is low-stakes in both directions: the loop ends itself at convergence, so unused budget costs nothing, and a budget that runs dry loses no work - the next `/jeffy` picks up where the run stopped. The floor for converging in one run is the opening audit, one iteration per expected finding, and a closing audit; when that arithmetic outgrows the default, prefer a second run over a bigger number (see [Good to know](#good-to-know)).
 - `focus` - optional directive for the run, e.g. `/jeffy 8 test coverage and error handling`.
+- `enhance <topic>` - runs the loop in Enhance mode against the stated topic instead of hunting defects. See [Enhance mode](#enhance-mode).
 
 ```
 /jeffy                                     # 10 iterations, full-spectrum improvement
 /jeffy 5                                   # 5 iterations
 /jeffy 12 accessibility and performance    # 12 iterations with a focus directive
+/jeffy 8 enhance the CLI's error messages  # 8 iterations building on one topic
 ```
+
+### Enhance mode
+
+Jeffy's default loop finds what is wrong and fixes it. Some work is not a defect: a capability the project stops short of, a workflow that takes five steps where a peer tool takes one, a platform the installers support but nothing exercises. `enhance` points the same machinery at that work.
+
+The keyword goes after the optional budget, and everything after it is the topic:
+
+```
+/jeffy 10                                                    # find defects and fix them
+/jeffy 8 enhance test coverage for the modules with no tests # design and build the tests
+```
+
+The first returns a ledger of findings worked worst-severity-first, each with a reproduction. The second returns an opportunity audit of the topic's surface, then ranked improvements built one per iteration, each with an acceptance check observed to fail against the unimproved tree before it passes against the new one.
+
+Everything else is the same loop:
+
+| | Default (Improvement) | Enhance |
+|---|---|---|
+| **What generates the backlog** | An audit against the rubric, filing defects | An opportunity audit of the topic's surface, filing enhancements |
+| **How work is ranked** | Rubric severity | Impact - what users and maintainers would notice and value. Same Now/Next/Later sections, same line grammar, rank sits in the severity slot |
+| **What bounds the run** | The Operating envelope | The topic. A task you cannot tie to it in one sentence does not get filed |
+| **A defect found mid-run** | Filed at severity and worked | Recorded to Proposed for a standard run to take, never filed at severity - unless it blocks the task in flight, which makes it one ordinary task |
+| **Convergence** | Ledger empty, surface swept, verify green, evaluator PASS | Identical, over the topic's surface instead of the whole project |
+| **Ratchet** | Skips a re-audit on an unchanged converged tree | Never applies. The topic rides the loop state's focus field, and the ratchet does not fire on a run carrying a focus directive |
+
+Two refusals you will meet:
+
+- **`enhance` with no topic is refused.** An unbounded make-it-better run is exactly the invented work the envelope exists to prevent, so the skill reports the usage and stops.
+- **The modes never share state files.** An Enhance launch over a standard `PLAN.md`, or a standard launch over an Enhance one, is refused - the two rank work differently and their ledgers and convergence records must not mix. Finish or archive the other mode's state files first: commit them and delete them, or use a separate branch or checkout. A `PLAN.md` with no `## Mode` section is a user-authored plan and counts as standard.
+
+What Enhance does not change: the Stop hook, the verify gate, the checkpoint commits, the journal, and the adversarial evaluator gate are identical in both modes. Convergence is earned the same way or not at all.
 
 **Scoped mode.** By default `/jeffy` runs in Improvement mode: an open-ended audit-and-fix loop. To run it against a concrete target instead, edit `PLAN.md` - replace the Goal and Definition of done with the target, seed `BACKLOG.md` with the finite tasks, then run `/jeffy`. Everything else (envelope, verify gate, checkpoints, journal, report) behaves the same.
 
@@ -126,7 +160,7 @@ The installer verifies the Claude Code CLI and `jq` (offering to install it via 
 
 - **Convergence needs a second signature.** An agent grading its own work praises it. So before the loop may claim convergence, **the adversarial evaluator** - a fresh-context sub-agent carrying none of the run's self-persuasion - re-runs the verify gate and the closed tasks' acceptance checks, hunts for missed findings, and must return PASS. A rejection files its evidence as new tasks; a second ends the run as a hard blocker. The gate fires while its verdict can still be answered - the iteration the ledger first empties with a clean full audit already on the record and three or more iterations left, not only at the finish line, with up to three reviews when that first one lands before the budget's midpoint. And the verdict has to be on the record: the Stop hook refuses a declaration whose closing journal entry carries no evaluator verdict, PASS or a stated `unavailable`.
 
-- **The stop is machine-checked, and the machine is tested.** The Stop hook - plain shell, not a model - refuses the converged stop unless the backlog is empty, the Converged commit still certifies the tree, no inventory row is unswept, and the project's own verify command exits green when the hook re-runs it. A failed check re-feeds the loop with the evidence, and when the budget expires with the ledger empty and the surface swept - the shape where runs used to die with the work done - the hook grants one +2 closing extension, once per run, so the convergence sequence has room to finish. The engine itself is held to <!-- count:checks -->**119 behavioural checks** on each CI leg, Linux and Windows, with a shellcheck lint pass riding the Linux leg on top.
+- **The stop is machine-checked, and the machine is tested.** The Stop hook - plain shell, not a model - refuses the converged stop unless the backlog is empty, the Converged commit still certifies the tree, no inventory row is unswept, and the project's own verify command exits green when the hook re-runs it. A failed check re-feeds the loop with the evidence, and when the budget expires with the ledger empty and the surface swept - the shape where runs used to die with the work done - the hook grants one +2 closing extension, once per run, so the convergence sequence has room to finish. The engine itself is held to <!-- count:checks -->**125 behavioural checks** on each CI leg, Linux, Windows, and macOS, with a shellcheck lint pass riding the Linux leg on top.
 
 - **It stops on purpose, and it shows its work.** Budget spent, convergence reached, progress stalled, or a decision only you can make - the loop ends itself and says why, instead of burning budget spinning. The run report lists iterations used, tasks closed with severities, the diffstat, anything blocked, and decisions waiting on you; an append-only journal and the checkpoint commits hold the full, greppable record.
 
@@ -420,7 +454,7 @@ Both installers run non-interactively against sandboxed profiles (skills and eng
 
 </details>
 
-Core checks need only bash and coreutils; shellcheck, PowerShell, and jq passes skip cleanly when absent. CI runs the same validator on Linux and Windows.
+Core checks need only bash and coreutils; shellcheck, PowerShell, and jq passes skip cleanly when absent. CI runs the same validator on Linux, Windows, and macOS - the macOS leg exists because BSD userland differs from GNU in `sed`, `grep`, and `stat`, and nothing exercised it before.
 
 ## License
 

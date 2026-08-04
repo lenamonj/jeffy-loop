@@ -10,7 +10,7 @@ Run the repo validator and make sure it is green:
 bash scripts/validate.sh
 ```
 
-It gates installer syntax and behavior, skill integrity, the governance markers, and the Stop hook's full lifecycle - the README's [Contributing](README.md#contributing) section describes what each pass covers. CI runs the same validator on Linux and Windows.
+It gates installer syntax and behavior, skill integrity, the governance markers, and the Stop hook's full lifecycle - the README's [Contributing](README.md#contributing) section describes what each pass covers. CI runs the same validator on Linux, Windows, and macOS.
 
 ## Ground rules
 
