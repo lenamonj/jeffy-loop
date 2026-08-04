@@ -141,8 +141,6 @@ if [ -n "$promise" ]; then
         # an infrastructure defect: skip with a stderr note, never trap.
         if [ ! -f "$root/PLAN.md" ]; then
           echo "jeffy stop hook: PLAN.md missing at $root; skipping the verify check." >&2
-        elif ! command -v timeout >/dev/null 2>&1; then
-          echo "jeffy stop hook: coreutils timeout not found; skipping the verify check." >&2
         else
           # The template writes prose under the heading and the command on a
           # "Command: <cmd>" line, and only that labeled line is ever run.
@@ -213,6 +211,12 @@ if [ -n "$promise" ]; then
               esac
               if [ -n "$vc_lint" ]; then
                 violation="the Verify command ($verify_cmd) ends in $vc_lint, so its exit status is the truncator's, not the suite's; drop the trailing stage, then re-declare convergence"
+              elif ! command -v timeout >/dev/null 2>&1; then
+                # Only the run needs a timeout binary. The parse and the
+                # truncator lint above are static and must not ride on it:
+                # stock macOS ships no coreutils timeout, so gating the whole
+                # section on it silently disarmed both gates on every Mac.
+                echo "jeffy stop hook: coreutils timeout not found; skipping the verify run (the Command line was still parsed and linted)." >&2
               else
                 vt="$(fm verify_timeout_seconds)"
                 case "$vt" in '' | *[!0-9]*) vt=240 ;; esac

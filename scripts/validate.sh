@@ -316,7 +316,12 @@ fi
 #    Run column says **converged**, the Language column feeds the distinct
 #    count. On failure, remember the surfaces grep cannot see: the GitHub
 #    About text, release bodies, and any live article state the same numbers.
-receipts="$(ls evals/*/REPORT.md 2>/dev/null | wc -l | tr -d ' ')"
+receipts=0
+for receipt in evals/*/REPORT.md; do
+  # An unmatched glob arrives as the literal pattern, so the -f test is what
+  # makes an empty evals/ count zero rather than one.
+  if [ -f "$receipt" ]; then receipts=$((receipts + 1)); fi
+done
 tbl_rows="$(grep -c '^| \[.*(evals/.*/REPORT\.md)' README.md)"
 tbl_conv="$(grep -c '^| \[.*(evals/.*/REPORT\.md).*\*\*converged\*\*' README.md)"
 tbl_langs="$(awk -F'|' '/^\| \[/ && /\*\*converged\*\*/ { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 }' README.md | sort -u | wc -l | tr -d ' ')"
