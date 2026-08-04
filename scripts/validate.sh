@@ -1029,97 +1029,93 @@ if command -v jq >/dev/null 2>&1; then
     # Verify-command check: the project's own gate runs at the converged
     # stop under a timeout; none skips it, a red or overrunning gate blocks
     # the promise, and a missing ledger fails open with a stderr note.
-    if command -v timeout >/dev/null 2>&1; then
-      hb_write_state sess-1 1 3
-      hb_write_backlog ''
-      hb_write_plan 'exit 0'
-      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
-        pass "stop hook accepts the promise when the Verify command is green"
-      else
-        fault "stop hook rejected a convergence promise with a green Verify command"
-      fi
-
-      hb_write_state sess-1 1 3
-      hb_write_backlog ''
-      hb_write_plan 'exit 3'
-      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 3' \
-        && grep -q '^iteration: 2$' "$hb_state"; then
-        pass "stop hook rejects the promise when the Verify command fails"
-      else
-        printf '%s\n' "$hb_out"
-        fault "stop hook accepted a convergence promise with a failing Verify command"
-      fi
-
-      hb_write_state sess-1 1 3 1
-      hb_write_backlog ''
-      hb_write_plan 'sleep 5'
-      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exceeded the 1s timeout' \
-        && grep -q '^iteration: 2$' "$hb_state"; then
-        pass "stop hook rejects the promise when the Verify command exceeds verify_timeout_seconds"
-      else
-        printf '%s\n' "$hb_out"
-        fault "stop hook mishandled a Verify command overrunning its timeout"
-      fi
-
-      hb_write_state sess-1 1 3
-      hb_write_backlog ''
-      hb_write_plan none
-      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
-        pass "stop hook skips the verify check when the Verify command is none"
-      else
-        fault "stop hook ran a Verify command declared none"
-      fi
-
-      # Template-shape contract: plan-default.md writes prose under the
-      # heading and the command on a "Command:" line. The hook must run
-      # that line, never the prose - live-reproduced when the prose parsed
-      # as the command and exited 127, rejecting a legitimate convergence.
-      hb_write_plan_templated() { # $1 command for the Command: line
-        printf '# Plan\n\n## Verify command\nOne runnable command that must exit 0 for this project to count as unbroken.\n\nCommand: %s\n' "$1" > "$hb_proj/PLAN.md"
-      }
-      hb_write_state sess-1 1 3
-      hb_write_backlog ''
-      hb_write_plan_templated 'exit 0'
-      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
-        pass "stop hook parses the template-shaped Verify section (Command: line, not prose)"
-      else
-        printf '%s\n' "$hb_out"
-        fault "stop hook mishandled a template-shaped Verify section with a green command"
-      fi
-
-      hb_write_state sess-1 1 3
-      hb_write_backlog ''
-      hb_write_plan_templated 'exit 3'
-      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 3' \
-        && grep -q '^iteration: 2$' "$hb_state"; then
-        pass "stop hook runs the Command: line of a template-shaped Verify section"
-      else
-        printf '%s\n' "$hb_out"
-        fault "stop hook did not run the Command: line of a template-shaped Verify section"
-      fi
-
-      hb_write_state sess-1 1 3
-      hb_write_backlog ''
-      hb_write_plan_templated none
-      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
-        pass "stop hook skips a template-shaped Verify command declared none"
-      else
-        fault "stop hook ran a template-shaped Verify command declared none"
-      fi
-      hb_write_plan none
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    hb_write_plan 'exit 0'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook accepts the promise when the Verify command is green"
     else
-      echo "[SKIP] verify-command scenarios (coreutils timeout not on PATH)"
+      fault "stop hook rejected a convergence promise with a green Verify command"
     fi
+
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    hb_write_plan 'exit 3'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 3' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook rejects the promise when the Verify command fails"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a convergence promise with a failing Verify command"
+    fi
+
+    hb_write_state sess-1 1 3 1
+    hb_write_backlog ''
+    hb_write_plan 'sleep 5'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exceeded the 1s timeout' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook rejects the promise when the Verify command exceeds verify_timeout_seconds"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook mishandled a Verify command overrunning its timeout"
+    fi
+
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    hb_write_plan none
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook skips the verify check when the Verify command is none"
+    else
+      fault "stop hook ran a Verify command declared none"
+    fi
+
+    # Template-shape contract: plan-default.md writes prose under the
+    # heading and the command on a "Command:" line. The hook must run
+    # that line, never the prose - live-reproduced when the prose parsed
+    # as the command and exited 127, rejecting a legitimate convergence.
+    hb_write_plan_templated() { # $1 command for the Command: line
+      printf '# Plan\n\n## Verify command\nOne runnable command that must exit 0 for this project to count as unbroken.\n\nCommand: %s\n' "$1" > "$hb_proj/PLAN.md"
+    }
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    hb_write_plan_templated 'exit 0'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook parses the template-shaped Verify section (Command: line, not prose)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook mishandled a template-shaped Verify section with a green command"
+    fi
+
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    hb_write_plan_templated 'exit 3'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 3' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook runs the Command: line of a template-shaped Verify section"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook did not run the Command: line of a template-shaped Verify section"
+    fi
+
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    hb_write_plan_templated none
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook skips a template-shaped Verify command declared none"
+    else
+      fault "stop hook ran a template-shaped Verify command declared none"
+    fi
+    hb_write_plan none
 
     # Fail-open contract: a missing PLAN.md is an infrastructure defect,
     # not a red gate - the hook skips the verify check with a stderr note
@@ -1520,149 +1516,145 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook rejected a Converged line combining a list marker with a backticked hash"
       fi
 
-      if command -v timeout >/dev/null 2>&1; then
-        # E1: a backticked Command payload reaches bash -c as command
-        # substitution, which runs the command's own output as a command -
-        # exit 127, and the shape that killed declarations on bat, dayjs,
-        # fasthttp, and pyportfolioopt. The wrapping pair is stripped.
-        hb_write_state sess-1 1 3
-        # The backticks are the fixture, not an expansion: the payload has to
-        # reach the hook wrapped in literal backticks, exactly as written.
-        # shellcheck disable=SC2016
-        hb_write_plan_full '`echo ok`' "$hb_p1_row"
-        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
-        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
-          pass "stop hook strips wrapping backticks from the Command line and runs the command"
-        else
-          printf '%s\n' "$hb_out"
-          fault "stop hook fed a backticked Command line to bash -c as command substitution"
-        fi
-
-        # E1: a Command line carrying an annotation is not runnable shell.
-        # The hook must say so instead of executing it and reporting the
-        # syntax error as a mystery exit 2 (ta, yfinance, bat), and must
-        # never guess which trailing text was annotation - so nothing runs.
-        rm -f "$hb_proj/p1-side.txt"
-        hb_write_state sess-1 1 3
-        hb_write_plan_full 'printf p1 > p1-side.txt (419 tests)' "$hb_p1_row"
-        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
-        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-        if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'not runnable shell' \
-          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'bash -n' \
-          && [ ! -f "$hb_proj/p1-side.txt" ] \
-          && grep -q '^iteration: 2$' "$hb_state"; then
-          pass "stop hook reports a non-runnable Command line as a bash -n violation without executing it"
-        else
-          printf '%s\n' "$hb_out"
-          fault "stop hook executed a Command line that is not runnable shell"
-        fi
-
-        # E1: with the bare-first-line fallback deleted, a Verify section
-        # that names no Command line skips the check with a stderr note the
-        # way every other infrastructure defect does. Prose is never shell.
-        hb_write_state sess-1 1 3
-        printf '# Plan\n\n## Verify command\nRun the full suite before declaring; see CONTRIBUTING.md.\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
-        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
-        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
-          && grep -q 'carries no Command line' "$hb_tmp/hb_err.txt" \
-          && grep -q 'skipping the verify check' "$hb_tmp/hb_err.txt"; then
-          pass "stop hook skips the verify check when the Verify section has no Command line (stderr note)"
-        else
-          printf '%s\n' "$hb_out"
-          cat "$hb_tmp/hb_err.txt"
-          fault "stop hook ran the prose of a Verify section that names no Command line"
-        fi
-
-        # The other empty payload: a Command line holding a bare pair of
-        # backticks is empty only after the strip, and it is a different edit
-        # to PLAN.md than a section with no Command line at all, so the note
-        # has to name the line rather than deny it exists.
-        hb_write_state sess-1 1 3
-        # shellcheck disable=SC2016
-        hb_write_plan_full '``' "$hb_p1_row"
-        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
-        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
-          && grep -q 'carries an empty Command line' "$hb_tmp/hb_err.txt" \
-          && grep -q 'skipping the verify check' "$hb_tmp/hb_err.txt"; then
-          pass "stop hook reports a Command line emptied by the backtick strip as an empty Command line"
-        else
-          printf '%s\n' "$hb_out"
-          cat "$hb_tmp/hb_err.txt"
-          fault "stop hook misdiagnosed a Command line emptied by the backtick strip"
-        fi
-
-        # The fallback's own target shape - a bare command as the section's
-        # first non-empty line - proves the deletion: the marker must not
-        # exist afterwards, so nothing was executed.
-        rm -f "$hb_proj/p1-prose-ran.txt"
-        hb_write_state sess-1 1 3
-        printf '# Plan\n\n## Verify command\ntouch p1-prose-ran.txt\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
-        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
-        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && [ ! -f "$hb_proj/p1-prose-ran.txt" ]; then
-          pass "stop hook no longer executes a bare first line as the Verify command (fallback deleted)"
-        else
-          printf '%s\n' "$hb_out"
-          fault "stop hook executed an unlabeled first line as the Verify command"
-        fi
-        rm -f "$hb_proj/p1-prose-ran.txt"
-
-        # Regression guard for the bash -n check: parentheses inside quotes
-        # are legitimate shell and must still run. The check rejects
-        # unparsable lines, not lines that merely look annotated.
-        hb_write_state sess-1 1 3
-        hb_write_plan_full "test -n 'ok (419 tests)'" "$hb_p1_row"
-        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
-        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
-          pass "stop hook still runs a Command line whose parentheses are quoted"
-        else
-          printf '%s\n' "$hb_out"
-          fault "stop hook rejected a runnable Command line carrying quoted parentheses"
-        fi
-
-        # Trailing spaces are a markdown hard break, a shape real PLAN.md
-        # files carry, and they sit outside the closing backtick where they
-        # defeat a strip anchored on both ends. The payload is trimmed first.
-        hb_write_state sess-1 1 3
-        # shellcheck disable=SC2016
-        hb_write_plan_full '`echo ok` ' "$hb_p1_row"
-        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
-        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
-          pass "stop hook trims whitespace around the Command payload before stripping backticks"
-        else
-          printf '%s\n' "$hb_out"
-          fault "stop hook let trailing whitespace defeat the Command-line backtick strip"
-        fi
-
-        # The strip pairs the two ends, so a payload whose first and last
-        # backticks belong to two different substitutions must be left alone:
-        # stripping re-pairs them into a command nobody wrote, and it parses,
-        # so bash -n cannot catch it. Written as-is the payload creates
-        # p1-tick.txt; re-paired it creates a differently named file instead
-        # and still exits 0, so only the marker tells the two apart.
-        rm -f "$hb_proj"/p1-tick.txt*
-        hb_write_state sess-1 1 3
-        # shellcheck disable=SC2016
-        hb_write_plan_full '`touch p1-tick.txt` true `true`' "$hb_p1_row"
-        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
-        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && [ -f "$hb_proj/p1-tick.txt" ]; then
-          pass "stop hook leaves a Command payload with interior backticks exactly as written"
-        else
-          printf '%s\n' "$hb_out"
-          ls "$hb_proj"
-          fault "stop hook re-paired backticks belonging to two different substitutions"
-        fi
-        rm -f "$hb_proj"/p1-tick.txt*
+      # E1: a backticked Command payload reaches bash -c as command
+      # substitution, which runs the command's own output as a command -
+      # exit 127, and the shape that killed declarations on bat, dayjs,
+      # fasthttp, and pyportfolioopt. The wrapping pair is stripped.
+      hb_write_state sess-1 1 3
+      # The backticks are the fixture, not an expansion: the payload has to
+      # reach the hook wrapped in literal backticks, exactly as written.
+      # shellcheck disable=SC2016
+      hb_write_plan_full '`echo ok`' "$hb_p1_row"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook strips wrapping backticks from the Command line and runs the command"
       else
-        echo "[SKIP] Command-line sanitation scenarios (coreutils timeout not on PATH)"
+        printf '%s\n' "$hb_out"
+        fault "stop hook fed a backticked Command line to bash -c as command substitution"
       fi
+
+      # E1: a Command line carrying an annotation is not runnable shell.
+      # The hook must say so instead of executing it and reporting the
+      # syntax error as a mystery exit 2 (ta, yfinance, bat), and must
+      # never guess which trailing text was annotation - so nothing runs.
+      rm -f "$hb_proj/p1-side.txt"
+      hb_write_state sess-1 1 3
+      hb_write_plan_full 'printf p1 > p1-side.txt (419 tests)' "$hb_p1_row"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'not runnable shell' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'bash -n' \
+        && [ ! -f "$hb_proj/p1-side.txt" ] \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook reports a non-runnable Command line as a bash -n violation without executing it"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook executed a Command line that is not runnable shell"
+      fi
+
+      # E1: with the bare-first-line fallback deleted, a Verify section
+      # that names no Command line skips the check with a stderr note the
+      # way every other infrastructure defect does. Prose is never shell.
+      hb_write_state sess-1 1 3
+      printf '# Plan\n\n## Verify command\nRun the full suite before declaring; see CONTRIBUTING.md.\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'carries no Command line' "$hb_tmp/hb_err.txt" \
+        && grep -q 'skipping the verify check' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook skips the verify check when the Verify section has no Command line (stderr note)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt"
+        fault "stop hook ran the prose of a Verify section that names no Command line"
+      fi
+
+      # The other empty payload: a Command line holding a bare pair of
+      # backticks is empty only after the strip, and it is a different edit
+      # to PLAN.md than a section with no Command line at all, so the note
+      # has to name the line rather than deny it exists.
+      hb_write_state sess-1 1 3
+      # shellcheck disable=SC2016
+      hb_write_plan_full '``' "$hb_p1_row"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'carries an empty Command line' "$hb_tmp/hb_err.txt" \
+        && grep -q 'skipping the verify check' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook reports a Command line emptied by the backtick strip as an empty Command line"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt"
+        fault "stop hook misdiagnosed a Command line emptied by the backtick strip"
+      fi
+
+      # The fallback's own target shape - a bare command as the section's
+      # first non-empty line - proves the deletion: the marker must not
+      # exist afterwards, so nothing was executed.
+      rm -f "$hb_proj/p1-prose-ran.txt"
+      hb_write_state sess-1 1 3
+      printf '# Plan\n\n## Verify command\ntouch p1-prose-ran.txt\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && [ ! -f "$hb_proj/p1-prose-ran.txt" ]; then
+        pass "stop hook no longer executes a bare first line as the Verify command (fallback deleted)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook executed an unlabeled first line as the Verify command"
+      fi
+      rm -f "$hb_proj/p1-prose-ran.txt"
+
+      # Regression guard for the bash -n check: parentheses inside quotes
+      # are legitimate shell and must still run. The check rejects
+      # unparsable lines, not lines that merely look annotated.
+      hb_write_state sess-1 1 3
+      hb_write_plan_full "test -n 'ok (419 tests)'" "$hb_p1_row"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook still runs a Command line whose parentheses are quoted"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a runnable Command line carrying quoted parentheses"
+      fi
+
+      # Trailing spaces are a markdown hard break, a shape real PLAN.md
+      # files carry, and they sit outside the closing backtick where they
+      # defeat a strip anchored on both ends. The payload is trimmed first.
+      hb_write_state sess-1 1 3
+      # shellcheck disable=SC2016
+      hb_write_plan_full '`echo ok` ' "$hb_p1_row"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook trims whitespace around the Command payload before stripping backticks"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let trailing whitespace defeat the Command-line backtick strip"
+      fi
+
+      # The strip pairs the two ends, so a payload whose first and last
+      # backticks belong to two different substitutions must be left alone:
+      # stripping re-pairs them into a command nobody wrote, and it parses,
+      # so bash -n cannot catch it. Written as-is the payload creates
+      # p1-tick.txt; re-paired it creates a differently named file instead
+      # and still exits 0, so only the marker tells the two apart.
+      rm -f "$hb_proj"/p1-tick.txt*
+      hb_write_state sess-1 1 3
+      # shellcheck disable=SC2016
+      hb_write_plan_full '`touch p1-tick.txt` true `true`' "$hb_p1_row"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && [ -f "$hb_proj/p1-tick.txt" ]; then
+        pass "stop hook leaves a Command payload with interior backticks exactly as written"
+      else
+        printf '%s\n' "$hb_out"
+        ls "$hb_proj"
+        fault "stop hook re-paired backticks belonging to two different substitutions"
+      fi
+      rm -f "$hb_proj"/p1-tick.txt*
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
@@ -2026,29 +2018,25 @@ if command -v jq >/dev/null 2>&1; then
     # last iteration and a check rejects it, so today the run ends with the
     # rejection on stderr and nobody to read it. The violation and the
     # extension ride the same re-feed.
-    if command -v timeout >/dev/null 2>&1; then
-      hb_write_journal 3 3
-      hb_write_backlog_counts 0 0 0
-      hb_write_plan_full 'exit 3' '- [x] core: swept at abc1234 - all entry points probed'
-      hb_write_state sess-1 3 3
-      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 3' \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CLOSING EXTENSION' \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 4 of 5' \
-        && ! grep -q 'budget is spent' "$hb_tmp/hb_err.txt" \
-        && grep -q '^iteration: 4$' "$hb_state" \
-        && grep -q '^max_iterations: 5$' "$hb_state" \
-        && grep -q '^extension_granted: 1$' "$hb_state"; then
-        pass "stop hook grants the closing extension when a promise is rejected at the last iteration (violation rides the re-feed)"
-      else
-        printf '%s\n' "$hb_out"
-        cat "$hb_tmp/hb_err.txt"
-        fault "stop hook discarded a repairable convergence rejection at the budget"
-      fi
+    hb_write_journal 3 3
+    hb_write_backlog_counts 0 0 0
+    hb_write_plan_full 'exit 3' '- [x] core: swept at abc1234 - all entry points probed'
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 3' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CLOSING EXTENSION' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 4 of 5' \
+      && ! grep -q 'budget is spent' "$hb_tmp/hb_err.txt" \
+      && grep -q '^iteration: 4$' "$hb_state" \
+      && grep -q '^max_iterations: 5$' "$hb_state" \
+      && grep -q '^extension_granted: 1$' "$hb_state"; then
+      pass "stop hook grants the closing extension when a promise is rejected at the last iteration (violation rides the re-feed)"
     else
-      echo "[SKIP] closing extension on the rejected-promise path (coreutils timeout not on PATH)"
+      printf '%s\n' "$hb_out"
+      cat "$hb_tmp/hb_err.txt"
+      fault "stop hook discarded a repairable convergence rejection at the budget"
     fi
 
     # E8 round trip: the extension writes two keys the rewriter now owns,

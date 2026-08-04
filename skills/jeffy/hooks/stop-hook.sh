@@ -211,17 +211,63 @@ if [ -n "$promise" ]; then
               esac
               if [ -n "$vc_lint" ]; then
                 violation="the Verify command ($verify_cmd) ends in $vc_lint, so its exit status is the truncator's, not the suite's; drop the trailing stage, then re-declare convergence"
-              elif ! command -v timeout >/dev/null 2>&1; then
-                # Only the run needs a timeout binary. The parse and the
-                # truncator lint above are static and must not ride on it:
-                # stock macOS ships no coreutils timeout, so gating the whole
-                # section on it silently disarmed both gates on every Mac.
-                echo "jeffy stop hook: coreutils timeout not found; skipping the verify run (the Command line was still parsed and linted)." >&2
               else
                 vt="$(fm verify_timeout_seconds)"
                 case "$vt" in '' | *[!0-9]*) vt=240 ;; esac
-                ( cd "$root" && timeout "$vt" bash -c "$verify_cmd" ) >/dev/null 2>&1
-                vrc=$?
+                # The gate has to run everywhere it is claimed to run. A stock
+                # macOS ships no GNU timeout, and skipping the run there left
+                # the loudest promise in the README - the hook re-runs your
+                # verify command - quietly false on a whole platform. Resolve
+                # timeout, then gtimeout (Homebrew coreutils), then fall back
+                # to a shell watchdog so the run always happens under a bound.
+                vto=""
+                if command -v timeout >/dev/null 2>&1; then
+                  vto=timeout
+                elif command -v gtimeout >/dev/null 2>&1; then
+                  vto=gtimeout
+                fi
+                if [ -n "$vto" ]; then
+                  ( cd "$root" && "$vto" "$vt" bash -c "$verify_cmd" ) >/dev/null 2>&1
+                  vrc=$?
+                else
+                  # Watchdog: run the gate in the background and arm a killer
+                  # that leaves a sentinel behind before it fires. The sentinel
+                  # is what tells a timeout apart from a suite that took a
+                  # SIGTERM of its own, which a bare exit status cannot.
+                  vsent="${TMPDIR:-/tmp}/jeffy-verify-timeout-$$"
+                  rm -f "$vsent"
+                  ( cd "$root" && bash -c "$verify_cmd" ) >/dev/null 2>&1 &
+                  vpid=$!
+                  # Both background jobs must hold no inherited descriptor.
+                  # The caller reads this hook through a pipe, and a pipe is
+                  # closed by its last writer, not by the hook exiting: a
+                  # watchdog still sleeping out its budget would keep that
+                  # pipe open and hang the reader long after the gate had
+                  # finished. Detach stdout and stderr on both.
+                  # Poll in one-second steps rather than sleeping the whole
+                  # budget: the watchdog then exits as soon as the gate does,
+                  # instead of outliving the hook as an orphan holding a
+                  # four-minute sleep.
+                  ( vwaited=0
+                    while [ "$vwaited" -lt "$vt" ]; do
+                      sleep 1
+                      kill -0 "$vpid" 2>/dev/null || exit 0
+                      vwaited=$((vwaited + 1))
+                    done
+                    : > "$vsent"
+                    kill -TERM "$vpid" 2>/dev/null
+                    sleep 5
+                    kill -KILL "$vpid" 2>/dev/null ) >/dev/null 2>&1 &
+                  vwpid=$!
+                  wait "$vpid" 2>/dev/null
+                  vrc=$?
+                  kill "$vwpid" 2>/dev/null
+                  wait "$vwpid" 2>/dev/null
+                  if [ -f "$vsent" ]; then
+                    vrc=124
+                  fi
+                  rm -f "$vsent"
+                fi
                 if [ "$vrc" -eq 124 ]; then
                   violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; get it green, then re-declare convergence"
                 elif [ "$vrc" -ne 0 ]; then
