@@ -18,3 +18,4 @@ skills/*/SKILL.md text eol=lf
 *.mp4 binary
 *.jpg binary
 *.webp binary
+*.pdf binary
