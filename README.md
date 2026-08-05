@@ -21,7 +21,7 @@ Run `/jeffy 10` and walk away. Jeffy maps your project's whole public surface, a
 
 It has receipts. Widely used open-source libraries have been run to convergence, surfacing shipped, reproducible bugs - many hiding behind green test suites. [The receipts are below.](#external-validation-public-open-source-projects)
 
-New to autonomous agent loops, or want the full argument? **[The Jeffy Loop](The-Jeffy-Loop.pdf)** is a 25-page white paper written for readers with no prior knowledge of agents: how loops got here from ReAct to AutoGPT to the Ralph Loop, what Anthropic recommends and what that guidance leaves open, then every rule below explained from first principles - including an honest account of what this method still cannot do.
+New to autonomous agent loops, or want the full argument? **[The Jeffy Loop](The-Jeffy-Loop.pdf)** is a 25-page white paper written for readers with no prior knowledge of agents: how loops got here from ReAct to AutoGPT to the Ralph Loop, what Anthropic recommends and what that guidance leaves open, then every rule below explained from first principles - including an honest account of what this method still cannot do. It cites 25 sources, all linked. GitHub's in-browser preview flattens a PDF to images, so [download it](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf) if you want the citation links, the contents navigation and the bookmark sidebar live.
 
 <div align="center">
 
