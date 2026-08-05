@@ -349,6 +349,8 @@ The TOML decoder's zero measurement was the suite failing because the binary did
 
 Stated as narrowly as the result deserves: the same engine, unmodified, converged on builds whose completeness was decided by judges it did not write. Not claimed: any completion rate (two chosen targets are not a sample), or invention (both formats have many public implementations). The gitignore corpus is self-authored - frozen at 53 cases, grown monotonically to 106, never shrunk - and the white paper weighs that honestly against the TOML target's fully external 679. Both repositories ship their complete run record - pre-registration, journal, backlog, every iteration commit - because for a greenfield build the process is the evidence.
 
+## How a run works
+
 <div align="center">
 
 <picture>
