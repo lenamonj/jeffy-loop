@@ -44,10 +44,10 @@ flowchart TD
 
     subgraph ENGINE ["<b>THE ENGINE</b> - a Stop hook at every turn end, plain shell"]
         PROM{"Promise phrase in the<br/>last assistant message?"}
-        CHECKS{"The stop is machine-checked<br/>no open task left in the ledger, the Converged<br/>line certifies this tree, no surface inventory row<br/>is unswept, the closing journal entry records an<br/>evaluator verdict, and the project's own verify<br/>command exits 0 when the hook re-runs it"}
+        CHECKS{"The stop is machine-checked<br/>no open task left in the ledger, the Converged<br/>line certifies this tree, no surface inventory row<br/>is unswept, the closing journal entry records an<br/>evaluator PASS backed by its committed artifact,<br/>and the project's own verify command<br/>exits 0 when the hook re-runs it"}
         BUDGET{"Iterations left?"}
         EXTEND{"Nothing left but the<br/>convergence sequence?<br/>ledger empty, every row swept,<br/>no extension granted yet"}
-        STALL{"Second flat iteration?<br/>no commit and no ledger change,<br/>twice in a row"}
+        STALL{"Second flat iteration?<br/>nothing changed outside the loop's<br/>own files, twice in a row -<br/>ceremony iterations exempt"}
         REFEED["Block the stop and re-feed<br/>the iteration prompt, with any focus, the<br/>evidence of a rejected convergence, hygiene<br/>notes when the finished iteration skipped its<br/>journal entry or its checkpoint, and the RUN STATE<br/>line - iterations left, open tasks, unswept rows"]
         REFILL{"Ledger refilled by<br/>non-evaluator work?"}
         PROM -->|"no"| BUDGET
