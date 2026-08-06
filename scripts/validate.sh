@@ -2981,6 +2981,27 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook read a committed probe battery as a product change"
       fi
 
+      # The harness's own two files under .claude/ ride the same exclusion at
+      # the converged stop, for the same reason they ride it in the stall
+      # gate: settings.local.json is written when the run's work draws a
+      # permission grant, and the loop state file is tracked wherever the
+      # bootstrap gitignore step did not run. Naming either one as a changed
+      # product path rejects a declaration over the harness, not the project.
+      # Staged by hand because a maintainer's global git ignore file may carry
+      # the settings path, which would make this fixture prove nothing.
+      mkdir -p "$hb_proj/.claude"
+      printf '{ "permissions": { "allow": ["Bash(ls:*)"] } }\n' > "$hb_proj/.claude/settings.local.json"
+      hb_git add -f .claude/settings.local.json >/dev/null 2>&1
+      hb_git commit -q -m harness-files >/dev/null 2>&1
+      hb_write_state sess-1 1 3
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a commit after the Converged hash touching the harness's own files under .claude/"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook named a harness file under .claude/ as a changed product path"
+      fi
+
       # The companion bound: excluding .jeffy/ excuses the probes, never the
       # tree around them. A commit carrying a refreshed battery and a source
       # edit is still an uncertified tree, and the violation names the source.

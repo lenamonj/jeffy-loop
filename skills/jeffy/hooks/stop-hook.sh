@@ -607,8 +607,9 @@ esac
 # unreachable in all of them, the note as much as the stop. So when the heads
 # differ the hook asks what moved, filtering the diff against the same loop
 # memory the converged-tree test excludes: PLAN.md, BACKLOG.md, JOURNAL.md,
-# JOURNAL-archive.md, and .jeffy/, which holds the probe batteries. The
-# iteration prompt's own stall rule carries that list too, aligned here.
+# JOURNAL-archive.md, .jeffy/ which holds the probe batteries, and the two
+# files under .claude/ that the loop and the harness write for themselves.
+# The iteration prompt's own stall rule carries that list too, aligned here.
 # A recorded head this repository cannot resolve - a state file carried from
 # another checkout, a rewritten history - is an infrastructure gap rather than
 # evidence of a stall, and fails open as progress. A project that has no git
