@@ -266,6 +266,9 @@ check_markers skills/jeffy/hooks/stop-hook.sh \
 # `Command: <first audit fills this in>`, which no sanitation makes parse, so
 # a lint that reads the template's own line as a defect hard-stops every
 # relaunch whose first iteration was interrupted before the audit filled it.
+# Single quotes on the base_head marker are intentional: it pins a literal
+# command-substitution line in the launch heredoc and must not expand here.
+# shellcheck disable=SC2016
 check_markers skills/jeffy/SKILL.md \
   "Verify command lint:" \
   "nor an unfilled \`<...>\` placeholder" \
@@ -276,7 +279,9 @@ check_markers skills/jeffy/SKILL.md \
   "mode \`120000\`" \
   "enhance <topic>" \
   "Mode guard:" \
-  "whose mode is Enhance"
+  "whose mode is Enhance" \
+  'base_head: $(git -C ' \
+  "the Stop hook uses it to tell a genuine convergence ratchet"
 check_markers skills/jeffy/references/enhance-plan-default.md \
   "## Mode" \
   "Enhance." \
