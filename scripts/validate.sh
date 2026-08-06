@@ -210,6 +210,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Severity discipline:" \
   "Backlog discipline:" \
   "Stall check:" \
+  "or a path under .jeffy/ and no BACKLOG.md item changed state" \
+  "are ceremony, not stalls" \
   "Checkpoint:" \
   "Lessons:" \
   "Run report:" \
@@ -1180,10 +1182,11 @@ if command -v jq >/dev/null 2>&1; then
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     fi
 
-    # Stall gate: progress on either recorded signal (HEAD, ledger cksum)
-    # stays silent and refreshes the baseline; a flat iteration rides a
-    # STALL note and arms the flag. Baseline initialization is asserted in
-    # the first mid-budget check above (state with no stall fields, no note).
+    # Stall gate: progress on either recorded signal (a product path moved,
+    # ledger cksum changed) stays silent and refreshes the baseline; a flat
+    # iteration rides a STALL note and arms the flag. Baseline initialization
+    # is asserted in the first mid-budget check above (state with no stall
+    # fields, no note).
     if [ -d "$hb_tmp/gitproj/.git" ]; then
       hb_saved_proj="$hb_proj"; hb_saved_state="$hb_state"
       hb_proj="$hb_tmp/gitproj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
@@ -1191,17 +1194,25 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_journal 1 3
       hb_git add -A >/dev/null 2>&1
       hb_git commit -q -m stall-baseline >/dev/null 2>&1 || true
+      hb_prev_head="$(hb_git rev-parse HEAD)"
+      # The recorded baseline has to be a commit this repository holds, and
+      # the commit after it has to carry a product path: from 1.7.0 a HEAD
+      # that moved for loop bookkeeping alone is not progress, so a fixture
+      # that only moves HEAD proves nothing about the progress branch.
+      printf 'v-stall\n' > "$hb_proj/product.txt"
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m stall-product >/dev/null 2>&1 || true
       hb_head="$(hb_git rev-parse HEAD)"
       hb_ck="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
 
-      hb_write_state_stall sess-1 1 3 stale-head "$hb_ck" 0
+      hb_write_state_stall sess-1 1 3 "$hb_prev_head" "$hb_ck" 0
       hb_out="$(hb_run sess-1 'still working' '')"
       if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
         && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
         && grep -q "^last_head: $hb_head\$" "$hb_state" \
         && grep -q '^stall: 0$' "$hb_state" \
         && grep -q '^iteration: 2$' "$hb_state"; then
-        pass "stop hook stays silent when HEAD moved since the last re-feed (baseline refreshed)"
+        pass "stop hook stays silent when a product path moved since the last re-feed (baseline refreshed)"
       else
         printf '%s\n' "$hb_out"
         fault "stop hook mishandled a committing iteration in the stall gate"
@@ -1246,7 +1257,7 @@ if command -v jq >/dev/null 2>&1; then
       # Progress with the flag armed clears it; a later flat iteration is
       # strike 1 again, not strike 2 - proven on the hook's own state
       # rewrites across two consecutive invocations.
-      hb_write_state_stall sess-1 1 3 stale-head "$hb_ck" 1
+      hb_write_state_stall sess-1 1 3 "$hb_prev_head" "$hb_ck" 1
       hb_out="$(hb_run sess-1 'still working' '')"
       hb_out2=""
       if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
@@ -1405,6 +1416,159 @@ if command -v jq >/dev/null 2>&1; then
     else
       printf '%s\n' "$hb_out"
       fault "stop hook let the stall gate interfere with the promise-accept path"
+    fi
+
+    # --- P1-1: the stall gate against the engine's own commit behaviour ----
+    # Every scenario above drove the gate with synthetic state. The engine
+    # does not behave that way: the iteration prompt mandates a checkpoint
+    # commit and a bookkeeping commit every iteration, so HEAD moves at every
+    # turn end of every git project - which is every project in the corpus -
+    # and both strikes were unreachable in all of them. These cases drive
+    # real iterations with real commits, and the progress signal they hold
+    # the hook to is a path outside the loop's own state files.
+    if command -v git >/dev/null 2>&1; then
+      hb_saved_proj="$hb_proj"; hb_saved_state="$hb_state"
+      hb_proj="$hb_tmp/p11proj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      mkdir -p "$hb_proj/.claude" "$hb_proj/.jeffy/probes/core"
+      hb_git init -q -b main
+      hb_write_plan none
+      hb_write_backlog ''
+      printf 'v1\n' > "$hb_proj/product.txt"
+      printf '#!/bin/sh\nexit 0\n' > "$hb_proj/.jeffy/probes/core/run.sh"
+      # Bootstrap gitignores the loop state file, because the checkpoint's
+      # git add -A would otherwise commit transient session state every
+      # iteration - and a state file inside the tree is a path outside the
+      # exclusion list, so it would read as product progress at every single
+      # turn and hand the gate back exactly the tautology it just lost.
+      printf '.claude/jeffy-loop.local.md\n' > "$hb_proj/.gitignore"
+      hb_write_journal_entries
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m p11-base >/dev/null 2>&1
+      hb_p11_ck="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
+      # One real iteration: write the journal entry this iteration is
+      # supposed to have written, commit it the way the checkpoint does, and
+      # hand the hook the head it recorded at the previous turn end.
+      hb_p11_iter() { # $1 iteration, $2 heading suffix (type | status), $3 what else the iteration touched
+        hb_p11_prev="$(hb_git rev-parse HEAD)"
+        case "${3:-}" in
+          product) printf 'v-%s\n' "$1" > "$hb_proj/product.txt" ;;
+          battery) printf '#!/bin/sh\n# refreshed at %s\nexit 0\n' "$1" > "$hb_proj/.jeffy/probes/core/run.sh" ;;
+        esac
+        hb_write_journal_entries "## iter $1/9 | sess-1-000000 | 2026-01-01 | $2"
+        hb_git add -A >/dev/null 2>&1
+        hb_git commit -q -m "jeffy: iter $1/9" >/dev/null 2>&1
+      }
+
+      # (1) Two journal-only task iterations. Each one commits, so the old
+      # gate read both as progress and neither strike could ever land.
+      hb_p11_iter 1 'T1 | done'
+      hb_write_state_stall sess-1 1 9 "$hb_p11_prev" "$hb_p11_ck" 0
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no progress' \
+        && grep -q '^stall: 1$' "$hb_state"; then
+        pass "stop hook flags a journal-only iteration that committed (the engine's own commits are not progress)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read the mandated checkpoint commit as progress - the first strike is dead in git projects"
+      fi
+
+      hb_p11_iter 2 'T2 | done'
+      hb_write_state_stall sess-1 2 9 "$hb_p11_prev" "$hb_p11_ck" 1
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook ends the run on a second committing journal-only iteration (the second strike lands in a git project)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook could not end a stalled run in a git repository"
+      fi
+
+      # (2) The shape the naive fix would kill: a closeout audit that files
+      # nothing, then the evaluator gate. Both legitimately change state
+      # files only, and two in a row are the correct convergence sequence.
+      # The flag is armed going in, so without the exemption the audit ends
+      # the run on the spot; it must survive, and the flag must survive with
+      # it - an exempt iteration is transparent to the gate, neither strike
+      # nor absolution.
+      hb_p11_iter 3 'AUDIT | audit'
+      hb_write_state_stall sess-1 3 9 "$hb_p11_prev" "$hb_p11_ck" 1
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && ! grep -q 'stalled' "$hb_tmp/hb_err.txt" \
+        && grep -q '^stall: 1$' "$hb_state"; then
+        pass "stop hook exempts a closeout AUDIT iteration from the strike and preserves the flag"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook struck a closeout audit that changed only state files"
+      fi
+
+      hb_p11_iter 4 'EVALUATOR | audit'
+      hb_write_state_stall sess-1 4 9 "$hb_p11_prev" "$hb_p11_ck" 1
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && ! grep -q 'stalled' "$hb_tmp/hb_err.txt" \
+        && grep -q '^stall: 1$' "$hb_state"; then
+        pass "stop hook exempts an EVALUATOR iteration from the strike (the convergence sequence is not a stall)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook ended a converging run on its own evaluator gate"
+      fi
+
+      # (3) A one-line source change alongside the state files is progress,
+      # and it clears the armed flag.
+      hb_p11_iter 5 'T5 | done' product
+      hb_write_state_stall sess-1 5 9 "$hb_p11_prev" "$hb_p11_ck" 1
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q '^stall: 0$' "$hb_state"; then
+        pass "stop hook counts a source change committed with the state files as progress"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook missed a real product change in the stall gate"
+      fi
+
+      # (4) A battery-only iteration draws the note: .jeffy/ is loop memory
+      # in the converged-tree test, so it is loop memory here too, and the
+      # iteration prompt's own stall rule carries the same list.
+      hb_p11_iter 6 'T6 | done' battery
+      hb_write_state_stall sess-1 6 9 "$hb_p11_prev" "$hb_p11_ck" 0
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q '^stall: 1$' "$hb_state"; then
+        pass "stop hook flags a battery-only iteration (.jeffy/ is loop memory on both lists)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a .jeffy/ write as product progress"
+      fi
+
+      # The bound on the diff: a recorded head this repository cannot resolve
+      # - a state file carried from another checkout, a rewritten history -
+      # is an infrastructure gap, not evidence of a stall, and fails open.
+      hb_write_state_stall sess-1 6 9 deadbeefdeadbeefdeadbeefdeadbeefdeadbeef "$hb_p11_ck" 1
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && ! grep -q 'stalled' "$hb_tmp/hb_err.txt" \
+        && grep -q '^stall: 0$' "$hb_state"; then
+        pass "stop hook fails open when the recorded head is not a commit in this repository"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook struck a run over a baseline it could not resolve"
+      fi
+
+      hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
+    else
+      echo "[SKIP] stall-gate commit scenarios (git not on PATH)"
     fi
 
     hb_write_state sess-other 1 3

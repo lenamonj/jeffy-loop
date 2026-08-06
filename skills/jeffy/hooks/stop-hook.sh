@@ -535,10 +535,21 @@ case "$last_archive" in
     ;;
 esac
 
-# Stall gate: progress since the previous turn end means HEAD moved or
-# BACKLOG.md changed - an audit that files tasks is progress even without a
-# commit, and journal-only iterations deliberately count as no progress. The
-# first re-feed initializes the baseline and never fires. A flat iteration
+# Stall gate: progress since the previous turn end means a path outside the
+# loop's own state moved, or BACKLOG.md changed - an audit that files tasks is
+# progress even without a commit. HEAD moving is NOT the signal, though it was
+# until 1.7.0: the iteration prompt mandates a checkpoint commit and a
+# bookkeeping commit every iteration, so HEAD moves at every turn end of every
+# git project - which is every project in the corpus - and both strikes were
+# unreachable in all of them, the note as much as the stop. So when the heads
+# differ the hook asks what moved, filtering the diff against the same loop
+# memory the converged-tree test excludes: PLAN.md, BACKLOG.md, JOURNAL.md,
+# JOURNAL-archive.md, and .jeffy/, which holds the probe batteries. The
+# iteration prompt's own stall rule carries that list too, aligned here.
+# A recorded head this repository cannot resolve - a state file carried from
+# another checkout, a rewritten history - is an infrastructure gap rather than
+# evidence of a stall, and fails open as progress.
+# The first re-feed initializes the baseline and never fires. A flat iteration
 # rides a STALL note; the stall flag arms the second-strike stop. With no
 # git HEAD and no ledger there is no signal at all: skip with a stderr note.
 stall_note=""
@@ -554,20 +565,61 @@ fi
 last_head="$(fm last_head)"
 last_backlog="$(fm last_backlog)"
 stall_flag="$(fm stall)"
+case "$stall_flag" in 1) stall_flag=1 ;; *) stall_flag=0 ;; esac
 if [ "$cur_head" = "none" ] && [ "$cur_backlog" = "none" ]; then
   echo "jeffy stop hook: no git HEAD and no BACKLOG.md; skipping the stall check." >&2
 elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
-  if [ "$cur_head" = "$last_head" ] && [ "$cur_backlog" = "$last_backlog" ]; then
-    if [ "$stall_flag" = "1" ]; then
+  progress=0
+  if [ "$cur_backlog" != "$last_backlog" ]; then
+    progress=1
+  elif [ "$cur_head" != "none" ] && [ "$cur_head" != "$last_head" ]; then
+    if [ -n "$last_head" ] && [ "$last_head" != "none" ] \
+      && git -C "$root" rev-parse --verify --quiet "$last_head^{commit}" >/dev/null 2>&1; then
+      moved="$(git -C "$root" diff --name-only "$last_head" "$cur_head" 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*)$' | head -n 1)"
+      [ -n "$moved" ] && progress=1
+    else
+      progress=1
+    fi
+  fi
+  if [ "$progress" = "1" ]; then
+    new_stall=0
+  else
+    # Two iteration types are exempt from the strike. A closeout audit that
+    # files nothing legitimately changes state files only, and so does the
+    # evaluator gate; two of them in a row are the correct shape of the
+    # convergence sequence, not a stall, and a gate that ended the run there
+    # would kill converging runs at the finish line. An exempt iteration is
+    # transparent: no note, no strike, and the flag carried through
+    # unchanged, so a flat task iteration on either side of the ceremony
+    # still counts. The prompt's own stall rule keeps covering these types.
+    stall_exempt=""
+    if [ -f "$root/JOURNAL.md" ]; then
+      stall_type="$(awk -v tok="| $runid8 |" -v it="$iter" '
+        { sub(/\r$/, "") }
+        /^## iter / && index($0, tok) {
+          split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+          if (t == "ROTATION" || t == "SALVAGE") next
+          n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n)
+          if (n + 0 == it + 0) { print t; exit }
+        }
+      ' "$root/JOURNAL.md")"
+      case "$stall_type" in
+        AUDIT | EVALUATOR) stall_exempt="$stall_type" ;;
+      esac
+    fi
+    if [ -n "$stall_exempt" ]; then
+      new_stall="$stall_flag"
+    elif [ "$stall_flag" = "1" ]; then
       # Second strike: the prompted hard-blocker close-out did not happen,
       # so the hook ends the stalled run itself, the way budget exhaustion
       # does - state deleted, stop allowed, evidence on stderr.
-      echo "jeffy stop hook: two consecutive flat iterations (latest: iteration $iter) with HEAD and BACKLOG.md unchanged; ending the run as stalled." >&2
+      echo "jeffy stop hook: two consecutive flat iterations (latest: iteration $iter) with nothing changed outside the loop state files; ending the run as stalled." >&2
       rm -f "$state"
       exit 0
+    else
+      new_stall=1
+      stall_note="iteration $iter made no progress (nothing changed since the previous turn end outside PLAN.md, BACKLOG.md, JOURNAL.md, JOURNAL-archive.md, and .jeffy/, and BACKLOG.md is byte-identical); a second consecutive flat iteration ends the run"
     fi
-    new_stall=1
-    stall_note="iteration $iter made no progress (HEAD and BACKLOG.md unchanged since the previous turn end); a second consecutive flat iteration ends the run"
   fi
 fi
 
