@@ -145,7 +145,20 @@ if [ -n "$promise" ]; then
           # run that kept its instruments fails the nothing-but-state test
           # that the run which threw them away and rebuilt them passes, and
           # the persistence the probes exist for costs a declaration.
-          nonstate="$(git -C "$root" diff --name-only "$conv_hash" HEAD 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*)$' | head -n 1)"
+          # Two files under .claude/ are named for the same reason and no
+          # more of that directory than those two, because a Claude Code
+          # plugin project has real product there. jeffy-loop.local.md is
+          # this hook's own transient state, gitignored at bootstrap but
+          # tracked wherever that step did not run, and it changes at every
+          # turn; settings.local.json is written by the harness whenever the
+          # run's work draws a permission grant. Neither is the project.
+          # --relative is what makes any of this hold in a project that is a
+          # subdirectory of a larger repository - a shape the launch
+          # pre-flight explicitly permits - because git reports paths from
+          # the repository root and every filename here is anchored at the
+          # project root, so without it the exclusion matched nothing and the
+          # gate rejected every declaration it saw.
+          nonstate="$(git -C "$root" diff --name-only --relative "$conv_hash" HEAD 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*|\.claude/jeffy-loop\.local\.md|\.claude/settings\.local\.json)$' | head -n 1)"
           if [ -n "$nonstate" ]; then
             violation="product path $nonstate changed after the Converged hash $conv_hash; certify the current tree before declaring"
           fi
@@ -598,7 +611,9 @@ esac
 # iteration prompt's own stall rule carries that list too, aligned here.
 # A recorded head this repository cannot resolve - a state file carried from
 # another checkout, a rewritten history - is an infrastructure gap rather than
-# evidence of a stall, and fails open as progress.
+# evidence of a stall, and fails open as progress. A project that has no git
+# HEAD at all, whether it never had one or lost it mid-run, falls back to the
+# ledger signal alone, exactly as a non-git project does.
 # The first re-feed initializes the baseline and never fires. A flat iteration
 # rides a STALL note; the stall flag arms the second-strike stop. With no
 # git HEAD and no ledger there is no signal at all: skip with a stderr note.
@@ -616,6 +631,10 @@ last_head="$(fm last_head)"
 last_backlog="$(fm last_backlog)"
 stall_flag="$(fm stall)"
 case "$stall_flag" in 1) stall_flag=1 ;; *) stall_flag=0 ;; esac
+# Consecutive ceremony iterations, counted so the exemption below is bounded.
+ceremony_n="$(fm stall_ceremony)"
+case "$ceremony_n" in '' | *[!0-9]*) ceremony_n=0 ;; esac
+new_ceremony=0
 if [ "$cur_head" = "none" ] && [ "$cur_backlog" = "none" ]; then
   echo "jeffy stop hook: no git HEAD and no BACKLOG.md; skipping the stall check." >&2
 elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
@@ -625,7 +644,7 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
   elif [ "$cur_head" != "none" ] && [ "$cur_head" != "$last_head" ]; then
     if [ -n "$last_head" ] && [ "$last_head" != "none" ] \
       && git -C "$root" rev-parse --verify --quiet "$last_head^{commit}" >/dev/null 2>&1; then
-      moved="$(git -C "$root" diff --name-only "$last_head" "$cur_head" 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*)$' | head -n 1)"
+      moved="$(git -C "$root" diff --name-only --relative "$last_head" "$cur_head" 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*|\.claude/jeffy-loop\.local\.md|\.claude/settings\.local\.json)$' | head -n 1)"
       [ -n "$moved" ] && progress=1
     else
       progress=1
@@ -634,41 +653,68 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
   if [ "$progress" = "1" ]; then
     new_stall=0
   else
-    # Two iteration types are exempt from the strike. A closeout audit that
-    # files nothing legitimately changes state files only, and so does the
-    # evaluator gate; two of them in a row are the correct shape of the
-    # convergence sequence, not a stall, and a gate that ended the run there
-    # would kill converging runs at the finish line. An exempt iteration is
-    # transparent: no note, no strike, and the flag carried through
-    # unchanged, so a flat task iteration on either side of the ceremony
-    # still counts. The prompt's own stall rule keeps covering these types.
+    # The ceremony types are exempt from the strike. A closeout audit that
+    # files nothing legitimately changes state files only, and so do the
+    # evaluator gate, a ratchet re-declaration and a wrapup; a run of them is
+    # the correct shape of the convergence sequence, not a stall, and a gate
+    # that ended the run there would kill converging runs at the finish line.
+    # Every other primary type is a task id and gets no exemption.
+    # An exempt iteration is transparent: no note, no strike, and the flag
+    # carried through unchanged, so a flat task iteration on either side of
+    # the ceremony still counts. The prompt's own stall rule matches.
+    # Bounded, though, because the type is eleven characters the graded party
+    # types into its own journal, and every other model-authored claim in
+    # this hook is re-derived rather than believed. The prompt puts the
+    # convergence sequence at two to three iterations, so three consecutive
+    # exemptions is the whole legitimate ceremony and a fourth is a run
+    # typing AUDIT at a wall: past the cap the ordinary strike logic resumes.
+    # The lookup needs a run token to mean anything. Without started_at the
+    # run id is the bare session prefix every run of the session shares, and
+    # an earlier run's audit at the same index would exempt this run's flat
+    # task iteration - the same reason the duplicate-index check above is
+    # disabled there. No token, no exemption.
     stall_exempt=""
-    if [ -f "$root/JOURNAL.md" ]; then
+    if [ -f "$root/JOURNAL.md" ] && [ -n "$run_tok" ]; then
+      # Last match wins, not first: the journal is append-only and a user
+      # interrupt can leave two primary entries at one index (the hygiene
+      # check above warns about exactly that), where the current entry is the
+      # later one. The evaluator and ledger-refill scans read it the same way.
       stall_type="$(awk -v tok="| $runid8 |" -v it="$iter" '
         { sub(/\r$/, "") }
         /^## iter / && index($0, tok) {
           split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
           if (t == "ROTATION" || t == "SALVAGE") next
           n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n)
-          if (n + 0 == it + 0) { print t; exit }
+          if (n + 0 == it + 0) { type = t }
         }
+        END { print type }
       ' "$root/JOURNAL.md")"
       case "$stall_type" in
-        AUDIT | EVALUATOR) stall_exempt="$stall_type" ;;
+        AUDIT | EVALUATOR | RATCHET | WRAPUP) stall_exempt="$stall_type" ;;
       esac
     fi
-    if [ -n "$stall_exempt" ]; then
+    if [ -n "$stall_exempt" ] && [ "$ceremony_n" -lt 3 ]; then
+      new_ceremony=$((ceremony_n + 1))
       new_stall="$stall_flag"
     elif [ "$stall_flag" = "1" ]; then
       # Second strike: the prompted hard-blocker close-out did not happen,
       # so the hook ends the stalled run itself, the way budget exhaustion
-      # does - state deleted, stop allowed, evidence on stderr.
-      echo "jeffy stop hook: two consecutive flat iterations (latest: iteration $iter) with nothing changed outside the loop state files; ending the run as stalled." >&2
+      # does - state deleted, stop allowed, evidence on stderr. A closing
+      # extension decided earlier this turn is written by the rewrite below,
+      # which this path never reaches, so the grant is forfeited: say so
+      # rather than let the run die one iteration from the finish line with
+      # no account of the two it was just given.
+      stall_ext=""
+      if [ -n "$extension" ]; then
+        stall_ext=" the closing extension decided this turn is forfeited with it;"
+      fi
+      echo "jeffy stop hook: two consecutive flat iterations (latest: iteration $iter) with nothing changed outside the loop state files;$stall_ext ending the run as stalled." >&2
       rm -f "$state"
       exit 0
     else
+      [ -n "$stall_exempt" ] && new_ceremony=$((ceremony_n + 1))
       new_stall=1
-      stall_note="iteration $iter made no progress (nothing changed since the previous turn end outside PLAN.md, BACKLOG.md, JOURNAL.md, JOURNAL-archive.md, and .jeffy/, and BACKLOG.md is byte-identical); a second consecutive flat iteration ends the run"
+      stall_note="iteration $iter made no progress (nothing changed since the previous turn end outside PLAN.md, BACKLOG.md, JOURNAL.md, JOURNAL-archive.md, .jeffy/ and the loop's own files under .claude/, and BACKLOG.md is byte-identical); a second consecutive flat iteration ends the run"
     fi
   fi
 fi
@@ -690,14 +736,15 @@ tmp="$state.tmp"
 # archive_migrated rides along with the strict archive baseline it certifies:
 # the baseline this rewrite stores is strict, so the naive escape above has
 # done its one job and must never be taken again.
-if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v la="$cur_archive" -v mx="$max" -v ex="$extension" '
-  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (ex && !sex) print "extension_granted: 1" } print; next }
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" '
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (ex && !sex) print "extension_granted: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
   fmc == 1 && ex && /^max_iterations: / { print "max_iterations: " mx; next }
   fmc == 1 && ex && /^extension_granted: / { print "extension_granted: 1"; sex = 1; next }
   fmc == 1 && /^last_head: / { print "last_head: " lh; slh = 1; next }
   fmc == 1 && /^last_backlog: / { print "last_backlog: " lb; slb = 1; next }
   fmc == 1 && /^stall: / { print "stall: " sf; ssf = 1; next }
+  fmc == 1 && /^stall_ceremony: / { print "stall_ceremony: " sc; ssc = 1; next }
   fmc == 1 && /^last_archive: / { print "last_archive: " la; sla = 1; next }
   fmc == 1 && /^archive_migrated: / { print "archive_migrated: 1"; sam = 1; next }
   { print }

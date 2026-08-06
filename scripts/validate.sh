@@ -15,7 +15,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root" || exit 1
 
 fail=0
-pass() { echo "[OK] $1"; }
+ok_n=0
+pass() { echo "[OK] $1"; ok_n=$((ok_n + 1)); }
 fault() { echo "[FAIL] $1"; fail=1; }
 
 # Interrupt safety: the runtime checks (8 and 9) build mktemp sandboxes; an
@@ -214,7 +215,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Backlog discipline:" \
   "Stall check:" \
   "or a path under .jeffy/ and no BACKLOG.md item changed state" \
-  "are ceremony, not stalls" \
+  "for at most three consecutive iterations" \
   "Checkpoint:" \
   "Lessons:" \
   "Run report:" \
@@ -1608,9 +1609,271 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook struck a run over a baseline it could not resolve"
       fi
 
+      # All four ceremony types, each exempt with the count fresh, and each
+      # leaving the armed flag exactly as it found it. AUDIT and EVALUATOR
+      # are proven above; RATCHET re-declares an unchanged tree and WRAPUP
+      # tidies the ledger and writes a handoff, and both are journal-only by
+      # design, so a rejected declaration that reaches this gate must not
+      # strike either.
+      hb_write_state_ceremony() { # $1 iteration, $2 last_head, $3 stall, $4 ceremony count
+        {
+          printf -- '---\n'
+          printf 'session_id: sess-1\niteration: %s\nmax_iterations: 12\n' "$1"
+          printf 'prompt_path: %s\n' "$hb_tmp/prompt.txt"
+          printf 'focus: speed\ncompletion_promise: JEFFY CONVERGED\n'
+          printf 'last_head: %s\nlast_backlog: %s\nstall: %s\nstall_ceremony: %s\n' "$2" "$hb_p11_ck" "$3" "$4"
+          printf 'started_at: 2026-01-01T00:00:00Z\n'
+          printf -- '---\nJeffy loop state.\n'
+        } > "$hb_state"
+      }
+      hb_p11_types_ok=1
+      for hb_p11_t in AUDIT EVALUATOR RATCHET WRAPUP; do
+        hb_p11_iter 7 "$hb_p11_t | audit"
+        hb_write_state_ceremony 7 "$hb_p11_prev" 1 0
+        hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+        if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+          && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+          && grep -q '^stall: 1$' "$hb_state" \
+          && grep -q '^stall_ceremony: 1$' "$hb_state"; then
+          :
+        else
+          printf 'type %s: %s\n' "$hb_p11_t" "$hb_out"
+          hb_p11_types_ok=0
+        fi
+      done
+      if [ "$hb_p11_types_ok" = "1" ]; then
+        pass "stop hook exempts every ceremony type (AUDIT, EVALUATOR, RATCHET, WRAPUP) and counts each one"
+      else
+        fault "stop hook struck a ceremony iteration that legitimately touches state files only"
+      fi
+
+      # And the exemption is bounded, because the type is eleven characters
+      # the graded party types into its own journal. Three consecutive
+      # ceremony iterations are the whole convergence sequence the prompt
+      # describes; at the cap the ordinary strike logic resumes.
+      hb_p11_iter 7 'AUDIT | audit'
+      hb_write_state_ceremony 7 "$hb_p11_prev" 0 3
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q '^stall: 1$' "$hb_state"; then
+        pass "stop hook draws the note on a fourth consecutive ceremony iteration (the exemption is capped)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let a run type AUDIT indefinitely to hold the stall gate off"
+      fi
+
+      hb_p11_iter 7 'AUDIT | audit'
+      hb_write_state_ceremony 7 "$hb_p11_prev" 1 3
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook ends a run that kept typing a ceremony type past the cap"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook could not end a run hiding behind the ceremony exemption"
+      fi
+
+      # A user interrupt can leave two primary entries at one index, which
+      # the hygiene check above already warns about. The journal is
+      # append-only, so the current entry is the later one: a stale AUDIT
+      # heading in front of the real task entry must not exempt it.
+      hb_p11_prev="$(hb_git rev-parse HEAD)"
+      hb_write_journal_entries \
+        '## iter 6/9 | sess-1-000000 | 2026-01-01 | AUDIT | audit' \
+        '## iter 6/9 | sess-1-000000 | 2026-01-01 | T6 | done'
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: iter 6/9' >/dev/null 2>&1
+      hb_write_state_stall sess-1 6 9 "$hb_p11_prev" "$hb_p11_ck" 1
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook reads the last primary entry at a desynced index, not a stale AUDIT heading in front of it"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let a superseded AUDIT heading exempt the entry that replaced it"
+      fi
+
+      # Without started_at the run id is the bare session prefix every run of
+      # the session shares, so an earlier run's audit at this index would
+      # exempt this run's flat task iteration. The duplicate-index check is
+      # disabled on exactly that state file; so is this.
+      hb_p11_prev="$(hb_git rev-parse HEAD)"
+      hb_write_journal_entries '## iter 7/9 | sess-1 | 2026-01-01 | AUDIT | audit'
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: iter 7/9' >/dev/null 2>&1
+      {
+        printf -- '---\n'
+        printf 'session_id: sess-1\niteration: 7\nmax_iterations: 9\n'
+        printf 'prompt_path: %s\n' "$hb_tmp/prompt.txt"
+        printf 'focus: speed\ncompletion_promise: JEFFY CONVERGED\n'
+        printf 'last_head: %s\nlast_backlog: %s\nstall: 1\n' "$hb_p11_prev" "$hb_p11_ck"
+        printf -- '---\nJeffy loop state.\n'
+      } > "$hb_state"
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook withholds the ceremony exemption from a state file carrying no run token"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let an earlier run's audit exempt this run through a shared session prefix"
+      fi
+
+      # The harness writes .claude/settings.local.json whenever the run's own
+      # work draws a permission grant, and the checkpoint's git add -A commits
+      # it wherever the project does not ignore it. That is the loop's own
+      # tooling moving, not the project, and reading it as progress hands the
+      # gate back the tautology it just lost.
+      hb_p11_prev="$(hb_git rev-parse HEAD)"
+      mkdir -p "$hb_proj/.claude"
+      printf '{ "permissions": { "allow": ["Bash(ls:*)"] } }\n' > "$hb_proj/.claude/settings.local.json"
+      hb_write_journal_entries '## iter 8/9 | sess-1-000000 | 2026-01-01 | T8 | done'
+      # Forced: a maintainer whose global git ignore file carries
+      # **/.claude/settings.local.json never commits the file, and the
+      # scenario then passes against a hook with no exclusion at all. That is
+      # a check the defect also satisfies, so the fixture stages it by hand
+      # and the case means the same thing on every machine.
+      hb_git add -f .claude/settings.local.json >/dev/null 2>&1
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: iter 8/9' >/dev/null 2>&1
+      hb_write_state_stall sess-1 8 9 "$hb_p11_prev" "$hb_p11_ck" 0
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q '^stall: 1$' "$hb_state"; then
+        pass "stop hook reads a committed .claude/settings.local.json as harness churn, not product progress"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let the harness's own permission file count as an iteration's progress"
+      fi
+
+      # And the loop state file itself, wherever the bootstrap gitignore step
+      # did not run: the hook rewrites it at every turn end, so a tracked copy
+      # differs at every checkpoint and the gate would never fire again.
+      hb_p11_prev="$(hb_git rev-parse HEAD)"
+      hb_write_journal_entries '## iter 9/12 | sess-1-000000 | 2026-01-01 | T9 | done'
+      hb_write_state_stall sess-1 9 12 "$hb_p11_prev" "$hb_p11_ck" 0
+      hb_git add -A -f .claude >/dev/null 2>&1
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: iter 9/12' >/dev/null 2>&1
+      hb_write_state_stall sess-1 9 12 "$hb_p11_prev" "$hb_p11_ck" 0
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q '^stall: 1$' "$hb_state"; then
+        pass "stop hook reads a tracked .claude/jeffy-loop.local.md as loop state, not product progress"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let its own state file, committed where bootstrap did not ignore it, defeat the gate"
+      fi
+
+      # A run whose git HEAD disappears mid-run - a repository re-inited
+      # underneath it - has no head signal at all and falls back to the
+      # ledger, exactly as a project that never had git does. Deliberate:
+      # the alternative reads a repository that vanished as an iteration's
+      # work. Pinned because it was an unannounced change otherwise.
+      hb_p11_prev="$(hb_git rev-parse HEAD)"
+      mv "$hb_proj/.git" "$hb_tmp/p11-git-aside"
+      hb_write_state_stall sess-1 9 12 "$hb_p11_prev" "$hb_p11_ck" 1
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook falls back to the ledger signal when the git HEAD it recorded is gone"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook mishandled a repository that disappeared mid-run"
+      fi
+      mv "$hb_tmp/p11-git-aside" "$hb_proj/.git"
+
+      # A closing extension decided this turn is written by the state rewrite
+      # the stall stop never reaches, so the grant evaporates. Ending the run
+      # there is right - two flat task iterations are a stall whatever the
+      # budget says - but the operator has to be told the +2 went with it.
+      hb_p11_prev="$(hb_git rev-parse HEAD)"
+      hb_write_journal_entries '## iter 9/9 | sess-1-000000 | 2026-01-01 | T9 | done'
+      hb_write_plan_full none '- [x] core: swept at abc1234 - probed'
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: iter 9/9' >/dev/null 2>&1
+      hb_p11_ck2="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
+      hb_write_state_stall sess-1 9 9 "$hb_p11_prev" "$hb_p11_ck2" 1
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt" \
+        && grep -q 'closing extension decided this turn is forfeited' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook names the closing extension it forfeits when the second strike ends the run"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook discarded a granted closing extension silently"
+      fi
+
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
       echo "[SKIP] stall-gate commit scenarios (git not on PATH)"
+    fi
+
+    # --- P1-1b: both tree gates in a project below the repository root ----
+    # git reports paths from the repository root, and every filename in the
+    # two exclusion lists is anchored at the project root. In a project that
+    # is a subdirectory of a larger repository - a shape the launch pre-flight
+    # states plainly and permits - nothing matched: the stall gate read every
+    # iteration as progress, exactly the defect it had just been fixed for,
+    # and the converged-tree test rejected every declaration by naming a state
+    # file as a product path. --relative on both diffs is the whole fix.
+    if command -v git >/dev/null 2>&1; then
+      hb_saved_proj="$hb_proj"; hb_saved_state="$hb_state"
+      hb_sub_root="$hb_tmp/subrepo"
+      hb_proj="$hb_sub_root/pkg"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      mkdir -p "$hb_proj/.claude"
+      git -C "$hb_sub_root" init -q -b main
+      hb_subgit() { git -C "$hb_sub_root" -c user.email=jeffy@test -c user.name=jeffy -c core.autocrlf=false "$@"; }
+      printf 'outer\n' > "$hb_sub_root/outer.txt"
+      printf 'v1\n' > "$hb_proj/product.txt"
+      printf '.claude/jeffy-loop.local.md\n' > "$hb_sub_root/.gitignore"
+      hb_write_plan_full none '- [x] core: swept at abc1234 - probed'
+      hb_write_backlog ''
+      hb_write_evaluator_artifact
+      hb_write_journal_entries
+      hb_subgit add -A >/dev/null 2>&1
+      hb_subgit commit -q -m sub-base >/dev/null 2>&1
+      hb_sub_ck="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
+
+      hb_sub_prev="$(hb_subgit rev-parse HEAD)"
+      hb_write_journal_entries '## iter 1/9 | sess-1-000000 | 2026-01-01 | T1 | done'
+      hb_subgit add -A >/dev/null 2>&1
+      hb_subgit commit -q -m 'jeffy: iter 1/9' >/dev/null 2>&1
+      hb_write_state_stall sess-1 1 9 "$hb_sub_prev" "$hb_sub_ck" 0
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q '^stall: 1$' "$hb_state"; then
+        pass "stop hook flags a journal-only iteration in a project below the repository root"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read repository-root-relative paths against project-root filenames (the gate is dead in a subdirectory project)"
+      fi
+
+      # The same fix on the converged-tree test: state files committed after
+      # the Converged hash must not read as product paths here either.
+      hb_sub_conv="$(hb_subgit rev-parse HEAD)"
+      hb_write_journal_entries '## iter 2/9 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
+      hb_write_backlog '' "Converged: $hb_sub_conv - 2026-01-01"
+      hb_subgit add -A >/dev/null 2>&1
+      hb_subgit commit -q -m 'jeffy: iter 2/9' >/dev/null 2>&1
+      hb_write_state sess-1 2 9
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a declaration in a project below the repository root (state files are still state files)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook named a loop state file as a changed product path in a subdirectory project"
+      fi
+
+      hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
+    else
+      echo "[SKIP] subdirectory-project scenarios (git not on PATH)"
     fi
 
     hb_write_state sess-other 1 3
@@ -2743,6 +3006,33 @@ if command -v jq >/dev/null 2>&1; then
   fi
 else
   echo "[SKIP] stop hook behavior checks (jq not on PATH)"
+fi
+
+# K. The check count the README publishes is derived from this run, never
+#    transcribed. Every other number in the README already had a guard - the
+#    eval receipts, the converged count, the language count - and this one did
+#    not, which made the engine's own headline figure the last hand-typed
+#    claim in the file and the only one that could go stale in silence.
+#    Published means what a clone runs, so the derivation subtracts what only
+#    a maintainer tree adds: the CHANGELOG pairing above, this check itself,
+#    and a shellcheck lint where the linter is installed. It asserts only in
+#    that maintainer tree, which is where releases are cut and where the
+#    marker is authored; a clone or a CI leg has nothing to author and skips.
+claim_checks="$(sed -n 's/.*<!-- count:checks -->\*\*\([0-9][0-9]*\) behavioural checks\*\*<!-- \/count -->.*/\1/p' README.md | head -n 1)"
+if [ -z "$claim_checks" ]; then
+  fault "README carries no <!-- count:checks -->N behavioural checks<!-- /count --> marker; the engine's own check count is then an untracked claim"
+elif [ ! -f CHANGELOG.md ] || [ -z "$ps" ] \
+  || ! command -v jq >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
+  echo "[SKIP] README check-count derivation (asserts in a maintainer tree with jq, git and PowerShell, where the marker is written)"
+else
+  cc_extra=2
+  if command -v shellcheck >/dev/null 2>&1; then cc_extra=$((cc_extra + 1)); fi
+  cc_derived=$((ok_n + 1 - cc_extra))
+  if [ "$cc_derived" -eq "$claim_checks" ]; then
+    pass "README check count is derived, not transcribed ($claim_checks on a clone, $((ok_n + 1)) in this tree)"
+  else
+    fault "README claims $claim_checks behavioural checks but this run derives $cc_derived; the marker ships in the same commit as the scenarios that moved it"
+  fi
 fi
 
 echo ""
