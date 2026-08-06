@@ -2105,8 +2105,12 @@ if command -v jq >/dev/null 2>&1; then
     # reached, and the run ended unconverged anyway. If the ledger refills
     # inside the window from anything but the evaluator gate's own filings,
     # the hook ends the run honestly: out of budget, tasks kept for next run.
+    # The refill source here is a task entry: an AUDIT inside the window now
+    # ends the run one check earlier with its own message (the P1-14
+    # scenarios below own that shape), so this fixture keeps the refill path
+    # independently covered.
     hb_proj="$hb_tmp/proj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
-    hb_write_journal_entries '## iter 4/5 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Task: audit filed F1.'
+    hb_write_journal_entries '## iter 4/5 | sess-1-000000 | 2026-01-01 | T7 | done:::Task: closed T7, filed discovered subtask F1.'
     hb_write_backlog '- [ ] F1 (Medium, runtime, correctness): filed inside the extension window. Acceptance: x.' ''
     hb_write_plan_full none '- [x] core: swept at abc1234 - probed'
     hb_write_state_extra sess-1 4 5 'extension_granted: 1'
@@ -2278,6 +2282,82 @@ if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt"
         fault "stop hook rejected a declaration over a journal carrying no entry for this run"
+      fi
+
+      # --- P1-14: the +2 window never buys an audit ----------------------
+      # TOML-M iteration 13 ran a full fresh-evidence audit inside the
+      # closing extension and iteration 14's declaration cited it as the
+      # clean-audit precondition; dotenv run 3 had already proven the shape.
+      # Every other gate is blind to it - the ledger stays empty, the rows
+      # stay swept, the verdict reads PASS - so the hook must end the run
+      # the moment an AUDIT primary entry for this run sits at an iteration
+      # inside the window, whether or not a promise follows.
+      hb_write_journal_entries \
+        '## iter 2/4 | sess-1-000000 | 2026-01-01 | T2 | done:::Verification: green.' \
+        '## iter 3/4 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit, filed nothing.'
+      hb_p2_fixture
+      hb_write_state_extra sess-1 3 4 'extension_granted: 1'
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'never an audit' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook ends the run when an AUDIT entry lands inside the closing extension window"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook let a full audit run inside the closing extension window"
+      fi
+
+      # The declaration variant: the same journal one turn later, promise
+      # attached. The convergence must be refused for the same reason, not
+      # accepted because the ledger is empty and the verdict reads PASS.
+      hb_write_journal_entries \
+        '## iter 2/4 | sess-1-000000 | 2026-01-01 | T2 | done:::Verification: green.' \
+        '## iter 3/4 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit, filed nothing.' \
+        '## iter 4/4 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
+      hb_p2_fixture
+      hb_write_state_extra sess-1 4 4 'extension_granted: 1'
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'never an audit' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook refuses a declaration whose clean audit was manufactured inside the extension window"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook accepted a convergence resting on an extension-window audit"
+      fi
+
+      # The legal window shape stays legal: clean audit BEFORE the window,
+      # gate and declaration inside it. That is the sequence the extension
+      # exists to buy, and the new bound must not tax it.
+      hb_write_journal_entries \
+        '## iter 2/4 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit before the window.' \
+        '## iter 4/4 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
+      hb_p2_fixture
+      hb_write_state_extra sess-1 4 4 'extension_granted: 1'
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && ! grep -q 'never an audit' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook accepts the gate-only extension window with the clean audit before it"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook rejected the legal extension shape - clean audit pre-window, gate inside"
+      fi
+
+      # The key-off bound: without an extension there is no window, and an
+      # audit at max-1 is an ordinary audit. The rule must read the flag,
+      # never the arithmetic alone.
+      hb_write_journal_entries \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit at the budget edge.'
+      hb_p2_fixture
+      hb_write_state sess-1 2 3
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! grep -q 'never an audit' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook leaves an audit at the budget edge alone when no extension was granted"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook applied the extension-window audit rule to a run with no extension"
       fi
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"

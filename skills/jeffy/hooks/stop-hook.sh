@@ -67,6 +67,38 @@ if [ -n "$run_tok" ]; then
   runid8="$runid8-$run_tok"
 fi
 
+# Extension honesty, first half: the +2 window buys the convergence sequence
+# and never an audit. A full audit run inside the window manufactures the
+# clean-audit precondition the declaration cites, and every other gate here
+# is blind to it - the ledger stays empty, the rows stay swept, the verdict
+# reads PASS. Observed twice before this check existed: python-dotenv run 3,
+# then the TOML-M receipt, whose iteration-13 audit its declaration cited.
+# The window is the last two iterations of the extended budget, so an AUDIT
+# primary entry for this run numbered max-1 or higher ends the run out of
+# budget on the spot - before any promise below can be read - and
+# convergence falls to the next run's fresh audit, which is what the
+# prompt's "never run an audit inside it" always meant. The second half of
+# the honesty pair, the ledger-refill check, lives below the promise path.
+if [ "$(fm extension_granted)" = "1" ] && [ -f "$root/JOURNAL.md" ]; then
+  ext_max="$(fm max_iterations)"
+  case "$ext_max" in ''|*[!0-9]*) ext_max="" ;; esac
+  if [ -n "$ext_max" ]; then
+    ext_audit="$(awk -v tok="| $runid8 |" -v lo=$((ext_max - 1)) '
+      { sub(/\r$/, "") }
+      /^## iter / && index($0, tok) {
+        split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+        n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n)
+        if (t == "AUDIT" && n + 0 >= lo) { print n + 0; exit }
+      }
+    ' "$root/JOURNAL.md")"
+    if [ -n "$ext_audit" ]; then
+      echo "jeffy stop hook: an AUDIT entry sits at iteration $ext_audit, inside the closing extension window; the extension buys the convergence sequence and never an audit, so a clean audit produced there is not a precondition a declaration may cite. Ending the run out of budget; convergence falls to the next run's fresh audit." >&2
+      rm -f "$state"
+      exit 0
+    fi
+  fi
+fi
+
 # Completion promise: prefer the last_assistant_message field newer CLIs put
 # on stdin; fall back to the last assistant entry of the JSONL transcript.
 violation=""
