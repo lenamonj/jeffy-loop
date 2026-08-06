@@ -186,6 +186,7 @@ check_markers skills/jeffy/references/plan-default.md \
   ".jeffy/evaluator/<run-id>.md" \
   "committed and unmodified" \
   "and ends blocked" \
+  "one convergence shape is legal and only one" \
   "(<Severity>, <class>, <dimension>)" \
   "one glob per line" \
   "run at least one test module in isolation" \
@@ -240,6 +241,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "or AUDIT or EVALUATOR or RATCHET" \
   ".jeffy/probes/" \
   "never run an audit inside it" \
+  "One convergence shape is legal inside the window and only one" \
   "write the artifact .jeffy/evaluator/<run-id>.md" \
   "end the run under the hard blocker rule and never declare" \
   "Battery ownership:" \
