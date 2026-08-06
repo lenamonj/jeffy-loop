@@ -79,7 +79,11 @@ fi
 # convergence falls to the next run's fresh audit, which is what the
 # prompt's "never run an audit inside it" always meant. The second half of
 # the honesty pair, the ledger-refill check, lives below the promise path.
-if [ "$(fm extension_granted)" = "1" ] && [ -f "$root/JOURNAL.md" ]; then
+# No token, no scan: on a state file with no started_at the run id is the
+# bare session prefix every run of the session shares, and a PRIOR run's
+# audit at a high iteration would end THIS run out of budget - the same
+# bound the ceremony exemption and the duplicate-index check carry.
+if [ "$(fm extension_granted)" = "1" ] && [ -n "$run_tok" ] && [ -f "$root/JOURNAL.md" ]; then
   ext_max="$(fm max_iterations)"
   case "$ext_max" in ''|*[!0-9]*) ext_max="" ;; esac
   if [ -n "$ext_max" ]; then
@@ -325,7 +329,7 @@ if [ -n "$promise" ]; then
                   violation="the evaluator artifact $ev_art in the working tree differs from the copy committed in HEAD; the artifact the gate wrote is the one that has to stand, so restore or checkpoint it and re-declare"
                 elif [ -n "$conv_hash" ] && [ -n "$ev_art_commit" ] \
                   && ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_art_commit" 2>/dev/null; then
-                  violation="the evaluator artifact $ev_art was last committed at $ev_art_commit, which predates the Converged hash $conv_hash; a PASS answers the tree the gate actually examined, so re-invoke the gate in the declaring iteration and re-declare"
+                  violation="the evaluator artifact $ev_art was last committed at $ev_art_commit, which predates the Converged hash $conv_hash; a PASS answers the tree the gate actually examined, so re-invoke the gate in the declaring iteration - its artifact opens with the run id and the number of the declaring iteration, so a re-invocation is a distinct file the checkpoint commits - and re-declare"
                 fi
               fi
               ;;

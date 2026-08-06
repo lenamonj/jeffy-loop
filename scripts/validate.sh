@@ -243,6 +243,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "never run an audit inside it" \
   "One convergence shape is legal inside the window and only one" \
   "write the artifact .jeffy/evaluator/<run-id>.md" \
+  "opening with one line naming that run-id and the iteration i of N that invoked you" \
   "end the run under the hard blocker rule and never declare" \
   "Battery ownership:" \
   "provoking a failure at every step" \
@@ -2861,6 +2862,32 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook applied the extension-window audit rule to a run with no extension"
       fi
 
+      # The run-token bound, the same one the ceremony exemption and the
+      # duplicate-index check already carry: on a state file with no
+      # started_at the run id is the bare session prefix every run of the
+      # session shares, so a PRIOR run's audit at a high iteration would end
+      # THIS run out of budget. No token, no scan.
+      hb_write_journal_entries \
+        '## iter 3/4 | sess-1 | 2026-01-01 | AUDIT | audit:::Verification: an earlier run of this session.'
+      hb_p2_fixture
+      {
+        printf -- '---\n'
+        printf 'session_id: sess-1\niteration: 3\nmax_iterations: 4\n'
+        printf 'prompt_path: %s\n' "$hb_tmp/prompt.txt"
+        printf 'focus: speed\ncompletion_promise: JEFFY CONVERGED\n'
+        printf 'extension_granted: 1\n'
+        printf -- '---\nJeffy loop state.\n'
+      } > "$hb_state"
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! grep -q 'never an audit' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook withholds the extension-window audit scan from a state file carrying no run token"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook let a prior run's audit end this run through a shared session prefix"
+      fi
+
       # --- P1-2: a PASS has to point at something ------------------------
       # Through 1.6.0 the verdict was a substring in a file the graded party
       # writes, and nothing distinguished a real invocation from eleven typed
@@ -3033,8 +3060,9 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_backlog '' "Converged: $hb_p2_late - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
       if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'predates the Converged hash'; then
-        pass "stop hook refuses a PASS whose artifact predates the commit the Converged line certifies"
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'predates the Converged hash' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'opens with the run id and the number of the declaring iteration'; then
+        pass "stop hook refuses a PASS whose artifact predates the commit the Converged line certifies, naming the ordinal remedy"
       else
         printf '%s\n' "$hb_out"
         printf 'artifact commit %s, converged %s\n' "$hb_p2_stale_art" "$hb_p2_late"
