@@ -49,7 +49,7 @@ flowchart TD
         EXTEND{"Nothing left but the<br/>convergence sequence?<br/>ledger empty, every row swept,<br/>no extension granted yet"}
         STALL{"Second flat iteration?<br/>nothing changed outside the loop's<br/>own files, twice in a row -<br/>ceremony iterations exempt"}
         REFEED["Block the stop and re-feed<br/>the iteration prompt, with any focus, the<br/>evidence of a rejected convergence, hygiene<br/>notes when the finished iteration skipped its<br/>journal entry or its checkpoint, and the RUN STATE<br/>line - iterations left, open tasks, unswept rows"]
-        REFILL{"Ledger refilled by<br/>non-evaluator work?"}
+        REFILL{"Ledger refilled by non-evaluator<br/>work, or an audit run<br/>inside the window?"}
         PROM -->|"no"| BUDGET
         PROM -->|"yes"| CHECKS
         CHECKS -->|"a check failed - the violation<br/>rides the budget test"| BUDGET
@@ -75,7 +75,7 @@ flowchart TD
 
     subgraph FILES ["<b>THE CONTROL PLANE</b> - files, not vibes"]
         SF[("jeffy-loop.local.md<br/>transient loop state, written at launch:<br/>owner session, iteration i of N;<br/>deleted when the run ends")]
-        MEM[("PLAN.md, BACKLOG.md, JOURNAL.md<br/>persistent memory between runs:<br/>envelope, surface inventory and lessons,<br/>task ledger, append-only record;<br/>.jeffy/probes holds the kept known-answer batteries")]
+        MEM[("PLAN.md, BACKLOG.md, JOURNAL.md<br/>persistent memory between runs:<br/>envelope, surface inventory and lessons,<br/>task ledger, append-only record;<br/>.jeffy/ holds the kept known-answer batteries<br/>and the evaluator gate's committed artifacts")]
         GIT[("git checkpoints<br/>one jeffy: commit per iteration,<br/>the revert and recovery unit")]
     end
 

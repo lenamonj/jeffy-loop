@@ -215,7 +215,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Severity discipline:" \
   "Backlog discipline:" \
   "Stall check:" \
-  "or a path under .jeffy/ and no BACKLOG.md item changed state" \
+  "the harness-written .claude/jeffy-loop.local.md and .claude/settings.local.json, and no BACKLOG.md item changed state" \
   "for at most three consecutive iterations" \
   "Checkpoint:" \
   "Lessons:" \
@@ -716,10 +716,6 @@ if command -v jq >/dev/null 2>&1; then
       # wants its command run writes it here.
       printf '# Plan\n\n## Verify command\nCommand: %s\n' "$1" > "$hb_proj/PLAN.md"
     }
-    # The three hb_*_full / _extra / _entries variants below are staged for the
-    # 1.5.0 cases (Command-line sanitation, inventory rows, state schema
-    # growth, multi-entry journals) and are deliberately not called yet.
-    # shellcheck disable=SC2329
     hb_write_plan_full() { # $1 Command: payload, $2... Surface inventory rows, one per line
       hb_cmd="$1"; shift
       {
@@ -727,7 +723,6 @@ if command -v jq >/dev/null 2>&1; then
         for hb_row in "$@"; do printf '%s\n' "$hb_row"; done
       } > "$hb_proj/PLAN.md"
     }
-    # shellcheck disable=SC2329
     hb_write_state_extra() { # $1 session_id, $2 iteration, $3 max_iterations, $4... raw frontmatter lines placed before started_at
       hb_sid="$1"; hb_it="$2"; hb_max="$3"; shift 3
       {
@@ -744,7 +739,6 @@ if command -v jq >/dev/null 2>&1; then
         printf 'Jeffy loop state.\n'
       } > "$hb_state"
     }
-    # shellcheck disable=SC2329
     hb_write_journal_entries() { # $1... full entry heading lines, each optionally <heading>:::<body line>
       # The preamble carries journal-default's unfenced grammar example so the
       # counting and rotation anchors are exercised against the same decoy the
