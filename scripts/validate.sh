@@ -791,14 +791,27 @@ if command -v jq >/dev/null 2>&1; then
     # artifact the gate wrote, so every sandbox that declares needs one, and
     # in a git sandbox it must be committed the way the checkpoint commits it.
     # Run token 000000 comes from the harness started_at, as everywhere else.
+    hb_art_n=0
     hb_write_evaluator_artifact() { # $1 optional run id (default sess-1-000000)
       hb_art_id="${1:-sess-1-000000}"
+      hb_art_n=$((hb_art_n + 1))
       mkdir -p "$hb_proj/.jeffy/evaluator"
       {
-        printf '# Evaluator gate - run %s\n\n' "$hb_art_id"
+        printf '# Evaluator gate - run %s, invocation %s\n\n' "$hb_art_id" "$hb_art_n"
         printf 'Command: bash -c true\nExit: 0\n\n'
         printf 'Verdict: PASS\n'
       } > "$hb_proj/.jeffy/evaluator/$hb_art_id.md"
+    }
+    # A PASS is dated against the Converged hash, because the contract
+    # re-invokes the gate in the iteration that declares. A fixture whose
+    # Converged line names a commit made after the sandbox was built has to
+    # re-invoke too, and the nonce above is what makes each refresh a real
+    # commit rather than a no-op.
+    # shellcheck disable=SC2329
+    hb_recommit_artifact() {
+      hb_write_evaluator_artifact
+      hb_git add -A -- .jeffy >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: evaluator artifact' >/dev/null 2>&1
     }
     hb_run() { # $1 session_id, $2 last_assistant_message, $3 transcript_path
       # Feed the hook from a file, not a pipe: the no-state fast path exits
@@ -1044,9 +1057,13 @@ if command -v jq >/dev/null 2>&1; then
       fi
 
       hb_c2="$(hb_git rev-parse HEAD)"
-      printf 'entry\n' > "$hb_proj/JOURNAL.md"
+      # A state-only commit after the certified hash, and the gate re-invoked
+      # in the declaring iteration the way the contract requires - both are
+      # loop memory, and neither may read as a product change.
+      hb_write_journal_entries '## iter 1/3 | sess-1-000000 | 2026-01-01 | T1 | done:::Verification: Evaluator: PASS - clean sweep.'
       hb_git add JOURNAL.md >/dev/null
       hb_git commit -q -m state-only
+      hb_recommit_artifact
       hb_write_state sess-1 1 3
       hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
@@ -1862,6 +1879,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_sub_conv="$(hb_subgit rev-parse HEAD)"
       hb_write_journal_entries '## iter 2/9 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
       hb_write_backlog '' "Converged: $hb_sub_conv - 2026-01-01"
+      hb_write_evaluator_artifact
       hb_subgit add -A >/dev/null 2>&1
       hb_subgit commit -q -m 'jeffy: iter 2/9' >/dev/null 2>&1
       hb_write_state sess-1 2 9
@@ -2717,50 +2735,54 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook rejected a declaration because a rotation entry followed it"
       fi
 
-      # The companion bound: skipping those headings must not invent an
-      # anchor where there is none. A run holding only rotation entries has
-      # no primary entry to read a verdict from, which is the rotated-away
-      # shape, and that fails open with the note rather than rejecting.
+      # The three shapes that used to fail open here, and no longer do. Each
+      # one let the run decide whether the gate applied to it by choosing what
+      # it wrote in its own journal - stamp the wrong id, omit the heading,
+      # delete the file - and the converged-tree test cannot see any of it,
+      # because JOURNAL.md is loop state there. The rotation rule keeps the
+      # last ten entries, so a closing entry written this turn is never among
+      # the rotated, which is what the fail-open was for. All three now
+      # re-feed with the evidence rather than ending anything, so a genuine
+      # heading defect is repairable inside the budget.
       hb_write_journal_entries \
         '## iter 2/3 | sess-1-000000 | 2026-01-01 | ROTATION | rotation:::Task: moved 40 entries to JOURNAL-archive.md.'
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
-        && grep -q 'skipping the evaluator check' "$hb_tmp/hb_err.txt"; then
-        pass "stop hook fails open when this run's only journal entries are ROTATION entries"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'holds no primary entry headed with the run id' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook refuses a declaration whose run wrote only ROTATION entries (no primary entry, no verdict)"
       else
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt"
-        fault "stop hook rejected a declaration over a journal holding only rotation entries for this run"
+        fault "stop hook let a run with no primary journal entry skip the evaluator check"
       fi
 
-      # Fail-open contract: an infrastructure defect skips the check with a
-      # stderr note, a discipline defect rejects. A missing journal and a
-      # journal holding no entry for this run (rotated, or a legacy run id)
-      # are both the former.
       rm -f "$hb_proj/JOURNAL.md"
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
-        && grep -q 'skipping the evaluator check' "$hb_tmp/hb_err.txt"; then
-        pass "stop hook fails open on a missing JOURNAL.md at the evaluator check (stderr note)"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'JOURNAL.md is missing' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook refuses a declaration with JOURNAL.md deleted (the journal is not an optional file at the stop)"
       else
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt"
-        fault "stop hook mishandled a missing JOURNAL.md at the evaluator check"
+        fault "stop hook accepted a convergence over a deleted journal"
       fi
 
       hb_write_journal_entries \
-        '## iter 9/9 | sess-9-999999 | 2026-01-01 | T9 | done:::Verification: an earlier run, rotated away.'
+        '## iter 9/9 | sess-9-999999 | 2026-01-01 | T9 | done:::Verification: Evaluator: PASS - a different run entirely.'
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
-        && grep -q 'skipping the evaluator check' "$hb_tmp/hb_err.txt"; then
-        pass "stop hook fails open when JOURNAL.md holds no entry for this run (rotated or legacy)"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'holds no primary entry headed with the run id' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook refuses a declaration whose journal carries no entry under this run's id"
       else
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt"
-        fault "stop hook rejected a declaration over a journal carrying no entry for this run"
+        fault "stop hook let a heading stamped with another run's id skip the evaluator check"
       fi
 
       # --- P1-14: the +2 window never buys an audit ----------------------
@@ -2858,7 +2880,7 @@ if command -v jq >/dev/null 2>&1; then
       mv "$hb_proj/.jeffy/evaluator/sess-1-000000.md" "$hb_tmp/p2-artifact.md"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
       if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'holds no artifact for this run' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is not a file with content' \
         && grep -q '^iteration: 3$' "$hb_state"; then
         pass "stop hook rejects Evaluator: PASS with no evaluator artifact for this run"
       else
@@ -2876,7 +2898,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
       if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'holds no artifact for this run' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is not a file with content' \
         && grep -q '^iteration: 3$' "$hb_state"; then
         pass "stop hook rejects an evaluator artifact filed under another run's id"
       else
@@ -2897,7 +2919,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
       if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is not committed' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is not committed in HEAD' \
         && grep -q '^iteration: 3$' "$hb_state"; then
         pass "stop hook rejects an evaluator artifact left uncommitted in the working tree"
       else
@@ -2919,25 +2941,241 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook rejected a declaration whose evaluator artifact was committed"
       fi
 
-      # The bound: a project that ignores .jeffy/ can never commit the
-      # artifact, and that is the project's choice rather than a discipline
-      # failure. Skip the committed check with a note; the artifact itself is
-      # still required. The rule goes in .git/info/exclude rather than a
-      # tracked .gitignore, because a new tracked file here would be a real
-      # product change after the Converged hash and the wrong gate would fire.
+      # The escape hatch that is not one. An earlier draft skipped the
+      # committed check wherever git said the artifact was ignored, on the
+      # reasoning that a project which ignores .jeffy/ cannot commit it - but
+      # .git/info/exclude is writable by the run itself, is tracked by
+      # nothing, and shows up in no diff, so the graded party could open that
+      # hatch mid-run and walk through it. The requirement is unconditional:
+      # the artifact is in HEAD or the declaration is refused, and a project
+      # that ignores .jeffy/ un-ignores this one directory. The rule goes in
+      # .git/info/exclude here rather than a tracked .gitignore precisely
+      # because that is the shape a run could arrange for itself.
       printf '.jeffy/\n' >> "$hb_proj/.git/info/exclude"
       hb_git rm -q -r --cached .jeffy >/dev/null 2>&1
       hb_git commit -q -m untrack-jeffy >/dev/null 2>&1
       hb_p2_pass_journal
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
-        && grep -q "skipping the artifact's committed check" "$hb_tmp/hb_err.txt"; then
-        pass "stop hook skips the artifact's committed check where the project ignores .jeffy/ (stderr note)"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is not committed in HEAD' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'un-ignore .jeffy/evaluator/' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook refuses an artifact the run put beyond git's reach through .git/info/exclude"
       else
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt" 2>/dev/null
-        fault "stop hook demanded a commit for an artifact the project cannot commit"
+        fault "stop hook let a run open its own escape hatch by ignoring the artifact it had to commit"
+      fi
+      # Put the artifact back in the index for the cases below.
+      hb_git rm -q -r --cached . >/dev/null 2>&1
+      : > "$hb_proj/.git/info/exclude"
+      hb_recommit_artifact
+      hb_git add -f product.txt >/dev/null 2>&1
+      hb_git commit -q -m retrack >/dev/null 2>&1
+
+      # --- P1-2b: what "an artifact" and "a verdict" have to mean ----------
+      # An adversarial pass over the first cut found four ways to satisfy the
+      # gate without one, and each of these is one of them.
+
+      # A directory. test -s is true of a directory wherever directories
+      # carry a nonzero size, which is every Linux and macOS filesystem the
+      # corpus runs on, and git status says nothing about an untracked
+      # directory with no files in it - so mkdir passed both halves. The
+      # regular-file test is what makes the case read the same everywhere.
+      hb_p2_art_dir="$hb_proj/.jeffy/evaluator/sess-1-000000.md"
+      rm -f "$hb_p2_art_dir"; mkdir -p "$hb_p2_art_dir"
+      hb_p2_pass_journal
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is not a file with content'; then
+        pass "stop hook refuses a directory standing in for the evaluator artifact"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted mkdir as an evaluator artifact"
+      fi
+      rmdir "$hb_p2_art_dir"
+      hb_recommit_artifact
+
+      # Committed, then rewritten. The test is byte-identity against the copy
+      # in HEAD rather than the absence of a git status line, because git is
+      # silent about a path it has been told to ignore, a path inside a nested
+      # repository, and a path marked assume-unchanged - three ways to rewrite
+      # the evidence with the negative test none the wiser.
+      printf 'rewritten after the gate ran\n' > "$hb_proj/.jeffy/evaluator/sess-1-000000.md"
+      hb_git update-index --assume-unchanged .jeffy/evaluator/sess-1-000000.md >/dev/null 2>&1
+      hb_p2_pass_journal
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'differs from the copy committed in HEAD'; then
+        pass "stop hook refuses an evaluator artifact rewritten after it was committed, even under assume-unchanged"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a tampered artifact as committed because git stayed quiet about it"
+      fi
+      hb_git update-index --no-assume-unchanged .jeffy/evaluator/sess-1-000000.md >/dev/null 2>&1
+      hb_git checkout -q -- .jeffy/evaluator/sess-1-000000.md 2>/dev/null
+
+      # An artifact older than the tree it certifies. The contract re-invokes
+      # the gate in the iteration that declares - a PASS that does not declare
+      # in its own iteration does not carry forward - so a gate run three
+      # iterations and two product commits ago answers a tree that is gone.
+      hb_p2_stale_art="$(hb_git rev-parse HEAD)"
+      printf 'v2\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: later product work' >/dev/null 2>&1
+      hb_p2_late="$(hb_git rev-parse HEAD)"
+      hb_p2_pass_journal
+      hb_write_state sess-1 2 3
+      hb_write_plan_full 'exit 0' "$hb_p2_row"
+      hb_write_backlog '' "Converged: $hb_p2_late - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'predates the Converged hash'; then
+        pass "stop hook refuses a PASS whose artifact predates the commit the Converged line certifies"
+      else
+        printf '%s\n' "$hb_out"
+        printf 'artifact commit %s, converged %s\n' "$hb_p2_stale_art" "$hb_p2_late"
+        fault "stop hook let a stale evaluator artifact certify work committed after it"
+      fi
+      hb_recommit_artifact
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts the same declaration once the gate is re-invoked in the declaring iteration"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a declaration whose artifact postdates the Converged hash"
+      fi
+
+      # The evaluator check runs before the Verify command, because the
+      # Verify command is a model-authored shell line the hook executes: a
+      # PLAN.md planted at iteration 1 could write and commit the very
+      # artifact the next check was about to read. The marker proves the
+      # ordering - it must not exist, because verify must never have run.
+      rm -f "$hb_proj/p2-verify-ran.txt"
+      hb_write_journal_entries \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: the suite is green.'
+      hb_write_state sess-1 2 3
+      hb_write_plan_full 'touch p2-verify-ran.txt' "$hb_p2_row"
+      hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'records no Evaluator verdict' \
+        && [ ! -f "$hb_proj/p2-verify-ran.txt" ]; then
+        pass "stop hook reads the evaluator verdict before it executes the model's Verify command"
+      else
+        printf '%s\n' "$hb_out"
+        ls "$hb_proj"
+        fault "stop hook ran a model-authored command before the check that command could satisfy"
+      fi
+      rm -f "$hb_proj/p2-verify-ran.txt"
+
+      # A ROTATION entry appended after a verdict-less closing entry must not
+      # supply the verdict. The scan skips those headings, and skipping them
+      # has to mean stopping, not reading on through their bodies as if they
+      # belonged to the entry above.
+      hb_write_journal_entries \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | T2 | converged:::Verification: the suite is green. No gate was run.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | ROTATION | rotation:::Task: rotated. Evaluator: PASS was recorded back at iteration 1.'
+      hb_p2_fixture
+      hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'records no Evaluator verdict'; then
+        pass "stop hook does not let a ROTATION entry's prose supply the closing entry's verdict"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a skipped rotation entry as part of the entry it followed"
+      fi
+
+      # An honest REJECT is a verdict, and it is not one a run declares on.
+      # Diagnosing it as "no verdict recorded" told the run to re-invoke a
+      # gate whose cap it may already have spent.
+      hb_write_journal_entries \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: REJECT - two findings stand.'
+      hb_p2_fixture
+      hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'not a verdict a run declares on'; then
+        pass "stop hook names an Evaluator: REJECT for what it is instead of calling it a missing verdict"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook told a rejected run to re-run the gate and re-declare"
+      fi
+
+      # --- P1-2c: the ratchet's own precondition ---------------------------
+      # RATCHET exempts the closing entry from the gate, because a ratchet
+      # re-declares a tree an earlier run already certified. Nothing checked
+      # that: seven characters in a heading turned the whole evaluator block
+      # off, cheaper than the eleven this release just closed. base_head is
+      # written by the launch and names the commit the run started on, which
+      # is the one thing about its own history a run cannot restate.
+      hb_write_state_base() { # $1 iteration, $2 max, $3 base_head
+        {
+          printf -- '---\n'
+          printf 'session_id: sess-1\niteration: %s\nmax_iterations: %s\n' "$1" "$2"
+          printf 'prompt_path: %s\n' "$hb_tmp/prompt.txt"
+          printf 'focus: speed\ncompletion_promise: JEFFY CONVERGED\n'
+          printf 'started_at: 2026-01-01T00:00:00Z\nbase_head: %s\n' "$3"
+          printf -- '---\nJeffy loop state.\n'
+        } > "$hb_state"
+      }
+      hb_p2_ratchet_journal() {
+        hb_write_journal_entries \
+          '## iter 1/3 | sess-1-000000 | 2026-01-01 | RATCHET | converged:::Task: re-declared an unchanged tree.'
+      }
+
+      hb_p2_base="$(hb_git rev-parse HEAD)"
+      hb_p2_ratchet_journal
+      hb_write_plan_full none "$hb_p2_row"
+      hb_write_backlog '' "Converged: $hb_p2_base - 2026-01-01"
+      hb_write_state_base 1 3 "$hb_p2_base"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a genuine ratchet whose Converged hash predates the run"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook rejected a ratchet re-declaring the tree its run started on"
+      fi
+
+      printf 'v3\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: work this run did itself' >/dev/null 2>&1
+      hb_p2_own="$(hb_git rev-parse HEAD)"
+      hb_p2_ratchet_journal
+      hb_write_plan_full none "$hb_p2_row"
+      hb_write_backlog '' "Converged: $hb_p2_own - 2026-01-01"
+      hb_write_state_base 1 3 "$hb_p2_base"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is not an ancestor of the commit this run started on'; then
+        pass "stop hook refuses a RATCHET over work the run committed itself (the cheapest bypass in the hook)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let seven characters in a heading turn the evaluator gate off"
+      fi
+
+      # The bound: a state file written before base_head existed cannot be
+      # dated, and the hook says so rather than refusing every legacy ratchet.
+      hb_p2_ratchet_journal
+      hb_write_plan_full none "$hb_p2_row"
+      hb_write_backlog '' "Converged: $hb_p2_own - 2026-01-01"
+      hb_write_state sess-1 1 3
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'no resolvable base_head' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook fails open on a ratchet whose state file predates base_head (stderr note)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook mishandled a legacy state file at the ratchet check"
       fi
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"

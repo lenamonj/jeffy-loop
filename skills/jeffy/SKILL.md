@@ -60,7 +60,7 @@ All work happens directly in the current project folder on the current branch. W
 
 ## Step 3: Launch the loop
 
-Write the loop state file yourself, at the project root, with an absolute path. If focus text was given, sanitize it first: remove double quotes, backticks, dollar signs, and newlines, which would break the heredoc or the frontmatter, then substitute it below; with no focus, leave the value empty (the line stays, its value blank). In an Enhance run, the focus value is the sanitized topic. Substitute PROJECT_ROOT, REF (resolved in Step 2), and N. The heredoc terminator EOF must stay at column 0.
+Write the loop state file yourself, at the project root, with an absolute path. If focus text was given, sanitize it first: remove double quotes, backticks, dollar signs, and newlines, which would break the heredoc or the frontmatter, then substitute it below; with no focus, leave the value empty (the line stays, its value blank). In an Enhance run, the focus value is the sanitized topic. Substitute PROJECT_ROOT, REF (resolved in Step 2), and N. `base_head` records the commit the run starts on, or `none` outside a repository; the Stop hook uses it to tell a genuine convergence ratchet, which re-declares a tree an earlier run certified, from a run that did the work itself and typed RATCHET over it. The heredoc terminator EOF must stay at column 0.
 
 ```bash
 PR="<PROJECT_ROOT>"
@@ -75,6 +75,7 @@ prompt_path: $REF/iteration-prompt.txt
 focus: <sanitized focus, or empty>
 completion_promise: JEFFY CONVERGED
 started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+base_head: $(git -C "$PR" rev-parse HEAD 2>/dev/null || echo none)
 ---
 Jeffy loop state. Session-scoped and transient: the Stop hook deletes it when
 the run ends. Cancel with /cancel-jeffy, or delete this file to end the loop.

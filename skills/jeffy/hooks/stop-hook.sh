@@ -102,6 +102,10 @@ fi
 # Completion promise: prefer the last_assistant_message field newer CLIs put
 # on stdin; fall back to the last assistant entry of the JSONL transcript.
 violation=""
+# Set by the converged-hash check below, read by the two evaluator checks that
+# date their evidence against it. Declared here because a non-git project
+# never reaches that branch and set -u would take the difference personally.
+conv_hash=""
 if [ -n "$promise" ]; then
   last="$(printf '%s' "$input" | jq -r '.last_assistant_message // empty')"
   if [ -z "$last" ]; then
@@ -178,6 +182,154 @@ if [ -n "$promise" ]; then
           fi
         else
           echo "jeffy stop hook: PLAN.md has no Surface inventory section; skipping the inventory check." >&2
+        fi
+      fi
+      # Evaluator check: the adversarial gate is where the audits' misses were
+      # found, and six of thirteen corpus convergences recorded no verdict at
+      # all. The closing entry of this run is what must carry it - an earlier
+      # entry's PASS answered an earlier tree - so the scan anchors on the last
+      # primary heading stamped with this run id and reads that entry's body.
+      # ROTATION and SALVAGE are additional entries rather than closing ones:
+      # a closing iteration that pushes JOURNAL.md past 500 lines appends its
+      # ROTATION entry after the declaration, and a scan anchored at the last
+      # heading would then read a window holding no verdict and reject a
+      # declaration that carries one. They are skipped, and the scan stops at
+      # any heading that is not this run's primary entry rather than reading
+      # on through it - otherwise a rotation entry's prose, or another run's,
+      # supplies the verdict the closing entry never recorded.
+      # The verdict is matched as a substring inside that entry: it normally
+      # lives in the Verification field per journal-default, and a
+      # field-anchored match would reject every legacy journal instead.
+      # A substring in a model-written file is not evidence on its own, which
+      # is why a PASS has to point at something from 1.7.0. The gate writes
+      # .jeffy/evaluator/<run-id>.md naming every command it ran and that
+      # command's real exit status, and a PASS is refused unless a regular
+      # file is there for this run id, byte-identical to a copy committed in
+      # HEAD, in a commit at or after the one the Converged line certifies.
+      # Who wrote that file is UNENFORCEABLE at the shell layer and this check
+      # does not pretend otherwise: a nominated command proves nothing and
+      # re-executing one would only add a second model-authored command
+      # execution. What it changes is the price of a false PASS - from eleven
+      # typed characters to a fabricated forensic record that the checkpoint
+      # commits and the repository then keeps, where a human reading the
+      # receipt can find it.
+      # Each clause of that test answers a way the negative form was silent.
+      # A regular file, because test -s is true of a directory on every
+      # filesystem that gives directories a size, so mkdir would have passed.
+      # Committed and byte-identical against HEAD rather than git status said
+      # nothing, because git says nothing about a path it has been told to
+      # ignore, a path inside a nested repository, or a path marked
+      # assume-unchanged - and the run itself can write .git/info/exclude, so
+      # skipping the check wherever the artifact is ignored was an escape
+      # hatch the graded party could open for itself. A project that ignores
+      # .jeffy/ therefore has to un-ignore this one directory, and the
+      # violation says so. And at or after the Converged hash, because the
+      # contract re-invokes the gate in the iteration that declares - an
+      # artifact from an invocation three iterations and two product commits
+      # ago certifies a tree that no longer exists.
+      # Second, Evaluator: unavailable no longer satisfies the stop. It let
+      # the graded party certify the gate away in one line, and ta used it in
+      # production; the run now ends blocked with the reason and convergence
+      # waits for a relaunch where a sub-agent can be spawned.
+      # Third, a journal that carries no entry for this run no longer fails
+      # open here. It did through 1.6.0, for a rotated-away run id, but the
+      # rotation rule keeps the last ten entries so a closing entry written
+      # this turn is never among the rotated - and the fail-open let the run
+      # decide whether the gate applied to it by choosing what it stamped on
+      # its own heading. It is a violation now, and it re-feeds with the
+      # evidence rather than ending anything, so a genuine heading defect is
+      # repairable inside the budget.
+      # One bound, stated rather than papered over: on a state file with no
+      # started_at the run id degrades to the bare session prefix that every
+      # run of the session shares, so a second run in that session could be
+      # satisfied by the first run's artifact. Every /jeffy launch since
+      # 1.5.0 writes started_at, so this reaches only state files older than
+      # that, and the requirement is kept rather than waived there - waiving
+      # it would turn a missing key into the bypass this check just closed.
+      if [ -z "$violation" ]; then
+        if [ ! -f "$root/JOURNAL.md" ]; then
+          violation="JOURNAL.md is missing at $root, and the closing entry is where the evaluator verdict lives; restore the journal, record the verdict, then re-declare"
+        else
+          ev_verdict="$(awk -v tok="| $runid8 |" '
+            { sub(/\r$/, "") }
+            /^## iter / {
+              split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+              if (index($0, tok) && t != "ROTATION" && t != "SALVAGE") {
+                found = 1; ev = 0; un = 0; rj = 0; skip = 0; type = t
+              } else {
+                skip = 1
+              }
+              next
+            }
+            found && !skip && index($0, "Evaluator: PASS") { ev = 1 }
+            found && !skip && index($0, "Evaluator: unavailable") { un = 1 }
+            found && !skip && index($0, "Evaluator: REJECT") { rj = 1 }
+            END {
+              if (!found) print "none"
+              else if (type == "RATCHET") print "ratchet"
+              else if (ev) print "pass"
+              else if (un) print "unavailable"
+              else if (rj) print "reject"
+              else print "missing"
+            }
+          ' "$root/JOURNAL.md")"
+          ev_art=".jeffy/evaluator/$runid8.md"
+          case "$ev_verdict" in
+            none)
+              violation="JOURNAL.md holds no primary entry headed with the run id $runid8, and that entry is the only place the evaluator verdict is read from; write the closing entry under the run's own heading grammar, then re-declare"
+              ;;
+            ratchet)
+              # The ratchet re-declares a tree an earlier run already
+              # certified and never invokes the gate, which is why its type
+              # exempts it from everything below - and that made the type the
+              # cheapest bypass in the hook, seven characters where
+              # unavailable took eleven, because nothing checked that the
+              # certified commit predated this run. base_head, written by the
+              # launch, is what a run cannot forge from inside itself: a
+              # genuine ratchet names a commit at or before the tree the run
+              # started on. A state file without the key predates this and
+              # fails open with a note.
+              ev_base="$(fm base_head)"
+              if [ -z "$conv_hash" ]; then
+                echo "jeffy stop hook: no Converged hash to date the ratchet against; skipping the ratchet's own check." >&2
+              elif [ -z "$ev_base" ] || [ "$ev_base" = "none" ] \
+                || ! git -C "$root" rev-parse --verify --quiet "$ev_base^{commit}" >/dev/null 2>&1; then
+                echo "jeffy stop hook: the loop state carries no resolvable base_head; skipping the ratchet's own check." >&2
+              elif ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_base" 2>/dev/null; then
+                violation="the closing entry is typed RATCHET but the Converged hash $conv_hash is not an ancestor of the commit this run started on; a ratchet re-declares a tree an earlier run certified and never invokes the evaluator, so work committed during this run has to converge the ordinary way, through a fresh audit and the gate"
+              fi
+              ;;
+            missing)
+              violation="the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare"
+              ;;
+            reject)
+              violation="the closing entry records Evaluator: REJECT, which is not a verdict a run declares on; file each reason this run can reproduce, work them, and declare on a later PASS - or end the run under the hard blocker rule if no invocation remains"
+              ;;
+            unavailable)
+              violation="the closing entry records Evaluator: unavailable; the adversarial gate is not optional and no convergence rests on its absence, so end the run with that reason and relaunch in a session where a sub-agent can be spawned"
+              ;;
+            pass)
+              if [ ! -f "$root/$ev_art" ] || [ ! -s "$root/$ev_art" ]; then
+                violation="the closing entry records Evaluator: PASS but $ev_art is not a file with content; the gate writes there every command it ran and that command's real exit status, and a PASS with nothing behind it is eleven typed characters"
+              elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+                ev_head_blob="$(git -C "$root" rev-parse --quiet --verify "HEAD:./$ev_art" 2>/dev/null || true)"
+                ev_work_blob="$(git -C "$root" hash-object -- "$ev_art" 2>/dev/null || true)"
+                ev_art_commit="$(git -C "$root" log -1 --format=%H -- "$ev_art" 2>/dev/null || true)"
+                # HEAD:<path> resolves from the repository root, not from the
+                # working directory, so the ./ prefix is what keeps this
+                # correct in a project below the root - the same shape that
+                # left both tree gates dead until --relative.
+                if [ -z "$ev_head_blob" ]; then
+                  violation="the evaluator artifact $ev_art is not committed in HEAD; the checkpoint commits it, which is what makes it evidence rather than a scratch file a later turn can rewrite unseen, so a project that ignores .jeffy/ has to un-ignore .jeffy/evaluator/ - then checkpoint it and re-declare"
+                elif [ -z "$ev_work_blob" ] || [ "$ev_head_blob" != "$ev_work_blob" ]; then
+                  violation="the evaluator artifact $ev_art in the working tree differs from the copy committed in HEAD; the artifact the gate wrote is the one that has to stand, so restore or checkpoint it and re-declare"
+                elif [ -n "$conv_hash" ] && [ -n "$ev_art_commit" ] \
+                  && ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_art_commit" 2>/dev/null; then
+                  violation="the evaluator artifact $ev_art was last committed at $ev_art_commit, which predates the Converged hash $conv_hash; a PASS answers the tree the gate actually examined, so re-invoke the gate in the declaring iteration and re-declare"
+                fi
+              fi
+              ;;
+          esac
         fi
       fi
       if [ -z "$violation" ]; then
@@ -321,97 +473,6 @@ if [ -n "$promise" ]; then
               fi
             fi
           fi
-        fi
-      fi
-      # Evaluator check: the adversarial gate is where the audits' misses were
-      # found, and six of thirteen corpus convergences recorded no verdict at
-      # all. The closing entry of this run is what must carry it - an earlier
-      # entry's PASS answered an earlier tree - so the search starts at the
-      # last primary heading stamped with this run id and reads to end of
-      # file. A
-      # RATCHET re-declares an unchanged tree and never invokes the gate by
-      # design, so its type field exempts it. A missing journal, or one
-      # holding no entry for this run (rotated away, or a run id predating the
-      # started_at token), is an infrastructure defect and fails open.
-      # ROTATION and SALVAGE are additional entries rather than closing ones:
-      # a closing iteration that pushes JOURNAL.md past 500 lines appends its
-      # ROTATION entry after the declaration, and a scan anchored at the last
-      # heading would then read a window holding no verdict and reject a
-      # declaration that carries one. The anchor is the last primary entry,
-      # and a run whose only entries are those types has no anchor at all.
-      # The verdict is matched as a substring anywhere after the anchor: it
-      # normally lives in the entry's Verification field per journal-default,
-      # and a field-anchored match would reject every legacy journal instead.
-      # A substring in a model-written file is not evidence on its own, which
-      # is why a PASS now has to point at something. Two changes from 1.7.0.
-      # First, the gate writes .jeffy/evaluator/<run-id>.md naming every
-      # command it ran and that command's real exit status, and a PASS whose
-      # artifact for this run id is missing, or sits uncommitted in the tree,
-      # is refused. Who wrote that file is UNENFORCEABLE at the shell layer
-      # and this check does not pretend otherwise: a nominated command proves
-      # nothing and re-executing one would only add a second model-authored
-      # command execution. What it changes is the price of a false PASS -
-      # from eleven typed characters to a fabricated forensic record that the
-      # checkpoint commits and the repository then keeps, where a human
-      # reading the receipt can find it. Requiring the commit is what makes
-      # it durable: .jeffy/ is excluded from the converged-tree test above,
-      # so an artifact left loose in the working tree could be rewritten with
-      # nothing in the record to show for it.
-      # Second, Evaluator: unavailable no longer satisfies the stop. It let
-      # the graded party certify the gate away in one line, and ta used it in
-      # production; the run now ends blocked with the reason and convergence
-      # waits for a relaunch where a sub-agent can be spawned.
-      if [ -z "$violation" ]; then
-        if [ ! -f "$root/JOURNAL.md" ]; then
-          echo "jeffy stop hook: JOURNAL.md missing at $root; skipping the evaluator check." >&2
-        else
-          ev_verdict="$(awk -v tok="| $runid8 |" '
-            { sub(/\r$/, "") }
-            /^## iter / && index($0, tok) {
-              split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
-              if (t == "ROTATION" || t == "SALVAGE") next
-              found = 1; ev = 0; un = 0; type = t; next
-            }
-            found && index($0, "Evaluator: PASS") { ev = 1 }
-            found && index($0, "Evaluator: unavailable") { un = 1 }
-            END {
-              if (!found) print "none"
-              else if (type == "RATCHET") print "ratchet"
-              else if (ev) print "pass"
-              else if (un) print "unavailable"
-              else print "missing"
-            }
-          ' "$root/JOURNAL.md")"
-          ev_art=".jeffy/evaluator/$runid8.md"
-          case "$ev_verdict" in
-            none)
-              echo "jeffy stop hook: JOURNAL.md holds no entry headed with the run id $runid8; skipping the evaluator check." >&2
-              ;;
-            ratchet) ;;
-            missing)
-              violation="the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare"
-              ;;
-            unavailable)
-              violation="the closing entry records Evaluator: unavailable; the adversarial gate is not optional and no convergence rests on its absence, so end the run with that reason and relaunch in a session where a sub-agent can be spawned"
-              ;;
-            pass)
-              if [ ! -s "$root/$ev_art" ]; then
-                violation="the closing entry records Evaluator: PASS but $ev_art holds no artifact for this run; the gate writes there every command it ran and that command's real exit status, and a PASS with nothing behind it is eleven typed characters"
-              elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
-                # An artifact under a .jeffy/ the project itself gitignores
-                # can never be committed, and that is the project's choice
-                # rather than a discipline failure: skip with a note.
-                if git -C "$root" check-ignore -q -- "$ev_art" 2>/dev/null; then
-                  echo "jeffy stop hook: $ev_art is gitignored in this project; skipping the artifact's committed check." >&2
-                else
-                  ev_dirty="$(git -C "$root" status --porcelain --untracked-files=all -- "$ev_art" 2>/dev/null | head -n 1)"
-                  if [ -n "$ev_dirty" ]; then
-                    violation="the evaluator artifact $ev_art is not committed (git reports $ev_dirty); the checkpoint commits it, which is what makes it evidence rather than a scratch file, so checkpoint it and re-declare"
-                  fi
-                fi
-              fi
-              ;;
-          esac
         fi
       fi
       if [ -z "$violation" ]; then
