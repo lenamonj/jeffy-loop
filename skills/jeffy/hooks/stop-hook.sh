@@ -328,8 +328,26 @@ if [ -n "$promise" ]; then
       # and a run whose only entries are those types has no anchor at all.
       # The verdict is matched as a substring anywhere after the anchor: it
       # normally lives in the entry's Verification field per journal-default,
-      # a prose false-accept is bounded by the run report a human reads, and
-      # a field-anchored match would reject every legacy journal instead.
+      # and a field-anchored match would reject every legacy journal instead.
+      # A substring in a model-written file is not evidence on its own, which
+      # is why a PASS now has to point at something. Two changes from 1.7.0.
+      # First, the gate writes .jeffy/evaluator/<run-id>.md naming every
+      # command it ran and that command's real exit status, and a PASS whose
+      # artifact for this run id is missing, or sits uncommitted in the tree,
+      # is refused. Who wrote that file is UNENFORCEABLE at the shell layer
+      # and this check does not pretend otherwise: a nominated command proves
+      # nothing and re-executing one would only add a second model-authored
+      # command execution. What it changes is the price of a false PASS -
+      # from eleven typed characters to a fabricated forensic record that the
+      # checkpoint commits and the repository then keeps, where a human
+      # reading the receipt can find it. Requiring the commit is what makes
+      # it durable: .jeffy/ is excluded from the converged-tree test above,
+      # so an artifact left loose in the working tree could be rewritten with
+      # nothing in the record to show for it.
+      # Second, Evaluator: unavailable no longer satisfies the stop. It let
+      # the graded party certify the gate away in one line, and ta used it in
+      # production; the run now ends blocked with the reason and convergence
+      # waits for a relaunch where a sub-agent can be spawned.
       if [ -z "$violation" ]; then
         if [ ! -f "$root/JOURNAL.md" ]; then
           echo "jeffy stop hook: JOURNAL.md missing at $root; skipping the evaluator check." >&2
@@ -339,16 +357,48 @@ if [ -n "$promise" ]; then
             /^## iter / && index($0, tok) {
               split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
               if (t == "ROTATION" || t == "SALVAGE") next
-              found = 1; ev = 0; type = t; next
+              found = 1; ev = 0; un = 0; type = t; next
             }
-            found && (index($0, "Evaluator: PASS") || index($0, "Evaluator: unavailable")) { ev = 1 }
-            END { if (!found) print "none"; else if (type == "RATCHET" || ev) print "ok"; else print "missing" }
+            found && index($0, "Evaluator: PASS") { ev = 1 }
+            found && index($0, "Evaluator: unavailable") { un = 1 }
+            END {
+              if (!found) print "none"
+              else if (type == "RATCHET") print "ratchet"
+              else if (ev) print "pass"
+              else if (un) print "unavailable"
+              else print "missing"
+            }
           ' "$root/JOURNAL.md")"
-          if [ "$ev_verdict" = "none" ]; then
-            echo "jeffy stop hook: JOURNAL.md holds no entry headed with the run id $runid8; skipping the evaluator check." >&2
-          elif [ "$ev_verdict" = "missing" ]; then
-            violation="the closing entry records no Evaluator verdict; run the adversarial evaluator gate (or record Evaluator: unavailable with the reason), then re-declare"
-          fi
+          ev_art=".jeffy/evaluator/$runid8.md"
+          case "$ev_verdict" in
+            none)
+              echo "jeffy stop hook: JOURNAL.md holds no entry headed with the run id $runid8; skipping the evaluator check." >&2
+              ;;
+            ratchet) ;;
+            missing)
+              violation="the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare"
+              ;;
+            unavailable)
+              violation="the closing entry records Evaluator: unavailable; the adversarial gate is not optional and no convergence rests on its absence, so end the run with that reason and relaunch in a session where a sub-agent can be spawned"
+              ;;
+            pass)
+              if [ ! -s "$root/$ev_art" ]; then
+                violation="the closing entry records Evaluator: PASS but $ev_art holds no artifact for this run; the gate writes there every command it ran and that command's real exit status, and a PASS with nothing behind it is eleven typed characters"
+              elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+                # An artifact under a .jeffy/ the project itself gitignores
+                # can never be committed, and that is the project's choice
+                # rather than a discipline failure: skip with a note.
+                if git -C "$root" check-ignore -q -- "$ev_art" 2>/dev/null; then
+                  echo "jeffy stop hook: $ev_art is gitignored in this project; skipping the artifact's committed check." >&2
+                else
+                  ev_dirty="$(git -C "$root" status --porcelain --untracked-files=all -- "$ev_art" 2>/dev/null | head -n 1)"
+                  if [ -n "$ev_dirty" ]; then
+                    violation="the evaluator artifact $ev_art is not committed (git reports $ev_dirty); the checkpoint commits it, which is what makes it evidence rather than a scratch file, so checkpoint it and re-declare"
+                  fi
+                fi
+              fi
+              ;;
+          esac
         fi
       fi
       if [ -z "$violation" ]; then

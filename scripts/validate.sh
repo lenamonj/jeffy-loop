@@ -182,6 +182,9 @@ check_markers skills/jeffy/references/plan-default.md \
   "scope line names the enumeration command" \
   "recording its second occurrence is marked" \
   "re-invoked at the declaration" \
+  ".jeffy/evaluator/<run-id>.md" \
+  "committed and unmodified" \
+  "and ends blocked" \
   "(<Severity>, <class>, <dimension>)" \
   "one glob per line" \
   "run at least one test module in isolation" \
@@ -236,6 +239,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "or AUDIT or EVALUATOR or RATCHET" \
   ".jeffy/probes/" \
   "never run an audit inside it" \
+  "write the artifact .jeffy/evaluator/<run-id>.md" \
+  "end the run under the hard blocker rule and never declare" \
   "Battery ownership:" \
   "provoking a failure at every step" \
   "re-executes the claims it invalidates" \
@@ -283,6 +288,8 @@ check_markers skills/jeffy/references/enhance-plan-default.md \
   "an acceptance check that can fail" \
   "adversarial evaluator gate" \
   "Evaluator: unavailable" \
+  "ends blocked, because the gate is not optional in either mode" \
+  ".jeffy/evaluator/<run-id>.md" \
   "recorded in the run report for a standard run" \
   "## Lessons"
 if [ "$gm_missing" -eq 0 ]; then
@@ -391,6 +398,26 @@ if [ -f "$prompt_file" ]; then
   else
     fault "one-transaction exemption count is $ot_count, expected exactly 1 (a second copy licenses batching)"
   fi
+fi
+
+# 6e. The evaluator bypass is gone from every reference file. Through 1.6.0 a
+#     run that could not spawn the sub-agent recorded `Evaluator: unavailable`
+#     and converged anyway - the graded party certifying its own gate away in
+#     eleven characters, and ta used it in production. The rule lived in three
+#     files and a copy left behind in any one of them teaches the bypass back
+#     into existence, so the clause is asserted absent by name rather than
+#     trusted to have been edited everywhere. Dependency-free (grep).
+bypass_left=""
+for ref_src in skills/jeffy/references/*.md skills/jeffy/references/*.txt skills/jeffy/SKILL.md; do
+  [ -f "$ref_src" ] || continue
+  if grep -qF -- "converge under the remaining conditions" "$ref_src"; then
+    bypass_left="$bypass_left $ref_src"
+  fi
+done
+if [ -z "$bypass_left" ]; then
+  pass "no reference file still lets an unavailable evaluator converge the run"
+else
+  fault "the evaluator bypass clause survives in:$bypass_left (an unavailable gate must end the run blocked)"
 fi
 
 # 7. De-echo guard: the Stop hook pattern-matches promise tags in assistant
@@ -757,6 +784,19 @@ if command -v jq >/dev/null 2>&1; then
         if [ -n "${2:-}" ]; then printf '%s\n' "$2"; fi
       } > "$hb_proj/BACKLOG.md"
     }
+    # From 1.7.0 a declaration carrying Evaluator: PASS must point at the
+    # artifact the gate wrote, so every sandbox that declares needs one, and
+    # in a git sandbox it must be committed the way the checkpoint commits it.
+    # Run token 000000 comes from the harness started_at, as everywhere else.
+    hb_write_evaluator_artifact() { # $1 optional run id (default sess-1-000000)
+      hb_art_id="${1:-sess-1-000000}"
+      mkdir -p "$hb_proj/.jeffy/evaluator"
+      {
+        printf '# Evaluator gate - run %s\n\n' "$hb_art_id"
+        printf 'Command: bash -c true\nExit: 0\n\n'
+        printf 'Verdict: PASS\n'
+      } > "$hb_proj/.jeffy/evaluator/$hb_art_id.md"
+    }
     hb_run() { # $1 session_id, $2 last_assistant_message, $3 transcript_path
       # Feed the hook from a file, not a pipe: the no-state fast path exits
       # before reading stdin, and a pipe writer would take a noisy EPIPE for
@@ -767,6 +807,7 @@ if command -v jq >/dev/null 2>&1; then
       CLAUDE_PROJECT_DIR="$hb_proj" bash "$hb_hook" < "$hb_tmp/stdin.json"
     }
 
+    hb_write_evaluator_artifact
     hb_write_state sess-1 1 3
     hb_write_journal 1 3
     hb_out="$(hb_run sess-1 'still working' '')"
@@ -971,7 +1012,8 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_plan none
       hb_write_journal 1 3
       printf 'v1\n' > "$hb_proj/product.txt"
-      hb_git add product.txt >/dev/null
+      hb_write_evaluator_artifact
+      hb_git add product.txt .jeffy >/dev/null
       hb_git commit -q -m c1
       hb_c1="$(hb_git rev-parse HEAD)"
 
@@ -1626,7 +1668,8 @@ if command -v jq >/dev/null 2>&1; then
       mkdir -p "$hb_proj/.claude"
       hb_git init -q -b main
       printf 'v1\n' > "$hb_proj/product.txt"
-      hb_git add product.txt >/dev/null
+      hb_write_evaluator_artifact
+      hb_git add product.txt .jeffy >/dev/null
       hb_git commit -q -m c1
       hb_p1_c1="$(hb_git rev-parse HEAD)"
       hb_p1_row='- [x] core: swept at abc1234 - all entry points probed'
@@ -2312,7 +2355,8 @@ if command -v jq >/dev/null 2>&1; then
       mkdir -p "$hb_proj/.claude"
       hb_git init -q -b main
       printf 'v1\n' > "$hb_proj/product.txt"
-      hb_git add product.txt >/dev/null
+      hb_write_evaluator_artifact
+      hb_git add product.txt .jeffy >/dev/null
       hb_git commit -q -m c1
       hb_p2_c1="$(hb_git rev-parse HEAD)"
       hb_p2_row='- [x] core: swept at abc1234 - all entry points probed'
@@ -2355,18 +2399,24 @@ if command -v jq >/dev/null 2>&1; then
       fi
 
       # ta recorded the gate unavailable twice under a session constraint
-      # that forbade sub-agents. A disclosed unavailability is a verdict;
-      # silence is not.
+      # that forbade sub-agents, and converged on it. Through 1.6.0 that
+      # satisfied the stop, which let the graded party certify its own gate
+      # away in eleven characters. From 1.7.0 a disclosed unavailability is
+      # still a verdict the run must record - and it ends the run blocked
+      # rather than converging it.
       hb_write_journal_entries \
         '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: audit only.' \
         '## iter 2/3 | sess-1-000000 | 2026-01-01 | T2 | converged:::Verification: Evaluator: unavailable (no sub-agents in this session)'
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
-        pass "stop hook accepts a declaration recording Evaluator: unavailable with a reason"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'the adversarial gate is not optional' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook refuses to converge on Evaluator: unavailable (the self-certified bypass is closed)"
       else
         printf '%s\n' "$hb_out"
-        fault "stop hook rejected a disclosed evaluator unavailability"
+        fault "stop hook let a run certify its own evaluator gate away as unavailable"
       fi
 
       # The ratchet never invokes the gate by design - it re-declares an
@@ -2524,6 +2574,107 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook applied the extension-window audit rule to a run with no extension"
       fi
 
+      # --- P1-2: a PASS has to point at something ------------------------
+      # Through 1.6.0 the verdict was a substring in a file the graded party
+      # writes, and nothing distinguished a real invocation from eleven typed
+      # characters. The gate now leaves .jeffy/evaluator/<run-id>.md naming
+      # the commands it ran and their real exit statuses. Authorship is
+      # unenforceable at the shell layer and this does not pretend otherwise;
+      # what it buys is that faking a PASS costs a fabricated forensic record
+      # the checkpoint commits and the repository keeps.
+      hb_p2_pass_journal() {
+        hb_write_journal_entries \
+          '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit.' \
+          '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
+      }
+
+      hb_p2_pass_journal
+      hb_p2_fixture
+      mv "$hb_proj/.jeffy/evaluator/sess-1-000000.md" "$hb_tmp/p2-artifact.md"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'holds no artifact for this run' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook rejects Evaluator: PASS with no evaluator artifact for this run"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a PASS that pointed at nothing"
+      fi
+
+      # An artifact belonging to some other run is not this run's evidence.
+      # The gate's verdict answers the tree this run produced, so the file
+      # the hook demands is keyed to the run id its journal headings carry.
+      hb_write_evaluator_artifact sess-9-999999
+      hb_git add .jeffy >/dev/null 2>&1
+      hb_git commit -q -m foreign-artifact >/dev/null 2>&1
+      hb_p2_pass_journal
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'holds no artifact for this run' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook rejects an evaluator artifact filed under another run's id"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted another run's evaluator artifact as this run's evidence"
+      fi
+      rm -f "$hb_proj/.jeffy/evaluator/sess-9-999999.md"
+      hb_git add -A .jeffy >/dev/null 2>&1
+      hb_git commit -q -m drop-foreign-artifact >/dev/null 2>&1
+
+      # Uncommitted is not evidence. .jeffy/ is excluded from the
+      # converged-tree test above - deliberately, so a refreshed probe
+      # battery is not read as a product change - which means an artifact
+      # left loose in the working tree can be rewritten with nothing in the
+      # record to show for it. The checkpoint is what makes it durable.
+      cp "$hb_tmp/p2-artifact.md" "$hb_proj/.jeffy/evaluator/sess-1-000000.md"
+      hb_p2_pass_journal
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is not committed' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook rejects an evaluator artifact left uncommitted in the working tree"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a PASS whose artifact was never checkpointed"
+      fi
+
+      # Committed and clean is the accepting shape, and it is the one every
+      # other declaration in this file now rides on.
+      hb_git add .jeffy >/dev/null 2>&1
+      hb_git commit -q -m evaluator-artifact >/dev/null 2>&1
+      hb_p2_pass_journal
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a PASS backed by this run's committed evaluator artifact"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a declaration whose evaluator artifact was committed"
+      fi
+
+      # The bound: a project that ignores .jeffy/ can never commit the
+      # artifact, and that is the project's choice rather than a discipline
+      # failure. Skip the committed check with a note; the artifact itself is
+      # still required. The rule goes in .git/info/exclude rather than a
+      # tracked .gitignore, because a new tracked file here would be a real
+      # product change after the Converged hash and the wrong gate would fire.
+      printf '.jeffy/\n' >> "$hb_proj/.git/info/exclude"
+      hb_git rm -q -r --cached .jeffy >/dev/null 2>&1
+      hb_git commit -q -m untrack-jeffy >/dev/null 2>&1
+      hb_p2_pass_journal
+      hb_p2_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q "skipping the artifact's committed check" "$hb_tmp/hb_err.txt"; then
+        pass "stop hook skips the artifact's committed check where the project ignores .jeffy/ (stderr note)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook demanded a commit for an artifact the project cannot commit"
+      fi
+
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
       echo "[SKIP] evaluator-verdict scenarios (git not on PATH)"
@@ -2542,7 +2693,8 @@ if command -v jq >/dev/null 2>&1; then
       mkdir -p "$hb_proj/.claude" "$hb_proj/.jeffy/probes"
       hb_git init -q -b main
       printf 'v1\n' > "$hb_proj/product.txt"
-      hb_git add product.txt >/dev/null
+      hb_write_evaluator_artifact
+      hb_git add product.txt .jeffy >/dev/null
       hb_git commit -q -m c1
       hb_p3_c1="$(hb_git rev-parse HEAD)"
       hb_p3_row='- [x] core: swept at abc1234 - all entry points probed'
