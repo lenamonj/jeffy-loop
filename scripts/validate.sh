@@ -187,6 +187,7 @@ check_markers skills/jeffy/references/plan-default.md \
   "committed and unmodified" \
   "and ends blocked" \
   "one convergence shape is legal and only one" \
+  "a fix after a PASS invalidates the PASS" \
   "(<Severity>, <class>, <dimension>)" \
   "one glob per line" \
   "run at least one test module in isolation" \
@@ -244,6 +245,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "One convergence shape is legal inside the window and only one" \
   "write the artifact .jeffy/evaluator/<run-id>.md" \
   "opening with one line naming that run-id and the iteration i of N that invoked you" \
+  "never fixed inside the convergence sequence" \
+  "the combination is for when the budget forces it" \
   "end the run under the hard blocker rule and never declare" \
   "Battery ownership:" \
   "provoking a failure at every step" \
