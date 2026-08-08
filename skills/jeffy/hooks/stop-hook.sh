@@ -124,13 +124,23 @@ if [ -n "$promise" ]; then
       # run; the closing claims must verify. A missing ledger is an
       # infrastructure defect and fails open; a discipline violation falls
       # through to the re-feed below with the evidence appended.
-      if [ ! -f "$root/BACKLOG.md" ]; then
-        echo "jeffy stop hook: BACKLOG.md missing at $root; accepting the promise unchecked." >&2
-        rm -f "$state"
-        exit 0
+      # A missing ledger was the broadest fail-open left in this hook, and it
+      # sat in front of every gate rather than beside one. A missing PLAN.md
+      # costs exactly one check and the note says so; a missing BACKLOG.md
+      # cost all of them - the open-task test, the Converged hash that
+      # certifies the tree, and both gates 1.7.0 added read that file, and the
+      # promise was accepted before any of them ran. It was the one shape
+      # where the machine-checked stop was not checked at all, and deleting
+      # one file was the whole price. Closed the way the journal fail-opens
+      # were closed in 1.7.0, and as a violation rather than an end, so a
+      # ledger lost to a bad rotation is repairable inside the budget.
+      open_tasks=""
+      if [ -f "$root/BACKLOG.md" ]; then
+        open_tasks="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { print }' "$root/BACKLOG.md")"
       fi
-      open_tasks="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { print }' "$root/BACKLOG.md")"
-      if [ -n "$open_tasks" ]; then
+      if [ ! -f "$root/BACKLOG.md" ]; then
+        violation="BACKLOG.md is missing at $root, and every convergence gate reads it - the open-task test, the Converged hash that certifies the tree, and the ratchet all live in that file; restore the ledger with its Now, Next, Later, and Converged sections, then re-declare"
+      elif [ -n "$open_tasks" ]; then
         violation="BACKLOG.md still lists open tasks in Now, Next, or Later, first: $(printf '%s' "$open_tasks" | head -n 1)"
       elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
         # Converged-hash check: the latest Converged line must name a commit

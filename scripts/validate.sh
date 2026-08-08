@@ -1199,14 +1199,28 @@ if command -v jq >/dev/null 2>&1; then
     fi
     hb_write_plan none
 
+    # A missing BACKLOG.md is NOT the same fail-open shape as a missing
+    # PLAN.md above, and 1.8.0 separates them. PLAN.md's absence costs one
+    # check, the verify gate, and the hook says so. BACKLOG.md's absence cost
+    # every check: the open-task test, the Converged hash, the surface
+    # inventory's sibling, and both gates 1.7.0 added all read it, and the
+    # hook accepted the promise before any of them ran. It was the broadest
+    # fail-open left in the engine and the only shape where "the stop is
+    # machine-checked" was untrue. It re-feeds rather than ending the run, so
+    # a ledger lost to a bad rotation is repairable inside the budget.
     hb_write_state sess-1 1 3
     rm -f "$hb_proj/BACKLOG.md"
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'BACKLOG.md missing' "$hb_tmp/hb_err.txt"; then
-      pass "stop hook fails open on a missing BACKLOG.md at promise time (stderr note)"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'BACKLOG.md is missing' \
+      && [ -f "$hb_state" ] && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook refuses a promise with no BACKLOG.md in the tree (the broadest 1.7.0 fail-open)"
     else
-      fault "stop hook mishandled a missing BACKLOG.md at promise time"
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a convergence promise with no ledger in the tree"
     fi
+    hb_write_backlog ''
 
     # Iteration hygiene, tracked-tree check: a modified tracked file rides
     # the re-feed as evidence; untracked files never fire it - salvage and
