@@ -1,0 +1,1333 @@
+diff --git a/.gitignore b/.gitignore
+index 47952bd..e0d6659 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,13 @@
+ bin/
+ .idea/
+ cover.out
++
++# Build and profiling artifacts. `go test -c`, `-memprofile` and friends drop
++# these in the working directory, where a checkpoint running `git add -A` will
++# commit them: a 5.8MB test binary reached HEAD that way.
++*.test
++*.test.exe
++*.prof
++*.pprof
++
++.claude/jeffy-loop.local.md
+diff --git a/ast/ast.go b/ast/ast.go
+index a8078a5..48ecd73 100644
+--- a/ast/ast.go
++++ b/ast/ast.go
+@@ -61,9 +61,18 @@ const (
+ 	DirectiveType
+ 	// TagType type identifier for tag node
+ 	TagType
+-	// CommentType type identifier for comment node
++	// CommentType type identifier for comment node.
++	//
++	// CommentGroupNode reports this type too, so a traversal finds a comment
++	// whether or not it is grouped. Walk visits the group rather than the
++	// comments inside it, which makes CommentType the type to filter on when
++	// collecting comments from a parsed document.
+ 	CommentType
+-	// CommentGroupType type identifier for comment group node
++	// CommentGroupType type identifier for comment group node.
++	//
++	// No node returns this type: CommentGroupNode reports CommentType, for the
++	// reason above. Filtering on CommentGroupType therefore matches nothing;
++	// filter on CommentType instead.
+ 	CommentGroupType
+ )
+ 
+@@ -223,6 +232,16 @@ func addCommentString(base string, node *CommentGroupNode) string {
+ 	return fmt.Sprintf("%s %s", base, node.String())
+ }
+ 
++// indentSpace returns num spaces, treating a negative count as none. Indent
++// widths are derived from a token's column, and AddColumn can drive a column
++// to zero or below, which strings.Repeat answers with a panic.
++func indentSpace(num int) string {
++	if num < 0 {
++		return ""
++	}
++	return strings.Repeat(" ", num)
++}
++
+ func (n *BaseNode) readLen() int {
+ 	return n.read
+ }
+@@ -829,8 +848,8 @@ func (n *StringNode) String() string {
+ 		// This block assumes that the line breaks in this inside scalar content and the Outside scalar content are the same.
+ 		// It works mostly, but inconsistencies occur if line break characters are mixed.
+ 		header := token.LiteralBlockHeader(n.Value)
+-		space := strings.Repeat(" ", n.Token.Position.Column-1)
+-		indent := strings.Repeat(" ", n.Token.Position.IndentNum)
++		space := indentSpace(n.Token.Position.Column - 1)
++		indent := indentSpace(n.Token.Position.IndentNum)
+ 		values := []string{}
+ 		for _, v := range strings.Split(n.Value, lbc) {
+ 			values = append(values, fmt.Sprintf("%s%s%s", space, indent, v))
+@@ -861,8 +880,8 @@ func (n *StringNode) stringWithoutComment() string {
+ 		// This block assumes that the line breaks in this inside scalar content and the Outside scalar content are the same.
+ 		// It works mostly, but inconsistencies occur if line break characters are mixed.
+ 		header := token.LiteralBlockHeader(n.Value)
+-		space := strings.Repeat(" ", n.Token.Position.Column-1)
+-		indent := strings.Repeat(" ", n.Token.Position.IndentNum)
++		space := indentSpace(n.Token.Position.Column - 1)
++		indent := indentSpace(n.Token.Position.IndentNum)
+ 		values := []string{}
+ 		for _, v := range strings.Split(n.Value, lbc) {
+ 			values = append(values, fmt.Sprintf("%s%s%s", space, indent, v))
+@@ -1435,7 +1454,7 @@ func (n *MappingValueNode) String() string {
+ }
+ 
+ func (n *MappingValueNode) toString() string {
+-	space := strings.Repeat(" ", n.Key.GetToken().Position.Column-1)
++	space := indentSpace(n.Key.GetToken().Position.Column - 1)
+ 	if checkLineBreak(n.Key.GetToken()) {
+ 		space = fmt.Sprintf("%s%s", "\n", space)
+ 	}
+@@ -1453,10 +1472,10 @@ func (n *MappingValueNode) toString() string {
+ 		valueStr := n.Value.String()
+ 		// For flow-style values indented on the next line, we need to add the proper indentation
+ 		if m, ok := n.Value.(*MappingNode); ok && m.IsFlowStyle {
+-			valueIndent := strings.Repeat(" ", n.Value.GetToken().Position.Column-1)
++			valueIndent := indentSpace(n.Value.GetToken().Position.Column - 1)
+ 			valueStr = valueIndent + valueStr
+ 		} else if s, ok := n.Value.(*SequenceNode); ok && s.IsFlowStyle {
+-			valueIndent := strings.Repeat(" ", n.Value.GetToken().Position.Column-1)
++			valueIndent := indentSpace(n.Value.GetToken().Position.Column - 1)
+ 			valueStr = valueIndent + valueStr
+ 		}
+ 		if keyComment != nil {
+@@ -1616,6 +1635,18 @@ func (n *SequenceNode) AddColumn(col int) {
+ 	for _, value := range n.Values {
+ 		value.AddColumn(col)
+ 	}
++	for _, entry := range n.Entries {
++		if entry == nil || entry.Start == nil {
++			continue
++		}
++		if entry.Start == n.Start || entry.Start == n.End {
++			// A block sequence hands its own start token to its first entry,
++			// which the lines above have already moved; shifting it again here
++			// would move that entry twice as far as the rest.
++			continue
++		}
++		entry.Start.AddColumn(col)
++	}
+ }
+ 
+ func (n *SequenceNode) flowStyleString() string {
+@@ -1630,8 +1661,43 @@ func (n *SequenceNode) flowStyleString() string {
+ 	return seqText
+ }
+ 
++// sequenceEntryValueString renders value as it appears after the "- " of a block
++// sequence entry whose dash sits at the column that produced space, re-indenting
++// the value's continuation lines onto that entry. It returns the rendered value
++// and the line break the value asked to be preceded by, which the caller places
++// before any head comment rather than after it.
++func sequenceEntryValueString(value Node, space string) (string, string) {
++	valueStr := value.String()
++	newLinePrefix := ""
++	if strings.HasPrefix(valueStr, "\n") {
++		valueStr = valueStr[1:]
++		newLinePrefix = "\n"
++	}
++	splittedValues := strings.Split(valueStr, "\n")
++	trimmedFirstValue := strings.TrimLeft(splittedValues[0], " ")
++	diffLength := len(splittedValues[0]) - len(trimmedFirstValue)
++	if len(splittedValues) > 1 && value.Type() == StringType || value.Type() == LiteralType {
++		// If multi-line string, the space characters for indent have already been added, so delete them.
++		prefix := space + "  "
++		for i := 1; i < len(splittedValues); i++ {
++			splittedValues[i] = strings.TrimPrefix(splittedValues[i], prefix)
++		}
++	}
++	newValues := []string{trimmedFirstValue}
++	for i := 1; i < len(splittedValues); i++ {
++		if len(splittedValues[i]) <= diffLength {
++			// this line is \n or white space only
++			newValues = append(newValues, "")
++			continue
++		}
++		trimmed := splittedValues[i][diffLength:]
++		newValues = append(newValues, fmt.Sprintf("%s  %s", space, trimmed))
++	}
++	return strings.Join(newValues, "\n"), newLinePrefix
++}
++
+ func (n *SequenceNode) blockStyleString() string {
+-	space := strings.Repeat(" ", n.Start.Position.Column-1)
++	space := indentSpace(n.Start.Position.Column - 1)
+ 	values := []string{}
+ 	if n.Comment != nil {
+ 		values = append(values, n.Comment.StringWithSpace(n.Start.Position.Column-1))
+@@ -1641,33 +1707,7 @@ func (n *SequenceNode) blockStyleString() string {
+ 		if value == nil {
+ 			continue
+ 		}
+-		valueStr := value.String()
+-		newLinePrefix := ""
+-		if strings.HasPrefix(valueStr, "\n") {
+-			valueStr = valueStr[1:]
+-			newLinePrefix = "\n"
+-		}
+-		splittedValues := strings.Split(valueStr, "\n")
+-		trimmedFirstValue := strings.TrimLeft(splittedValues[0], " ")
+-		diffLength := len(splittedValues[0]) - len(trimmedFirstValue)
+-		if len(splittedValues) > 1 && value.Type() == StringType || value.Type() == LiteralType {
+-			// If multi-line string, the space characters for indent have already been added, so delete them.
+-			prefix := space + "  "
+-			for i := 1; i < len(splittedValues); i++ {
+-				splittedValues[i] = strings.TrimPrefix(splittedValues[i], prefix)
+-			}
+-		}
+-		newValues := []string{trimmedFirstValue}
+-		for i := 1; i < len(splittedValues); i++ {
+-			if len(splittedValues[i]) <= diffLength {
+-				// this line is \n or white space only
+-				newValues = append(newValues, "")
+-				continue
+-			}
+-			trimmed := splittedValues[i][diffLength:]
+-			newValues = append(newValues, fmt.Sprintf("%s  %s", space, trimmed))
+-		}
+-		newValue := strings.Join(newValues, "\n")
++		newValue, newLinePrefix := sequenceEntryValueString(value, space)
+ 		if len(n.ValueHeadComments) == len(n.Values) && n.ValueHeadComments[idx] != nil {
+ 			values = append(values, fmt.Sprintf("%s%s", newLinePrefix, n.ValueHeadComments[idx].StringWithSpace(n.Start.Position.Column-1)))
+ 			newLinePrefix = ""
+@@ -1710,14 +1750,48 @@ type SequenceEntryNode struct {
+ 	Value       Node              // value node.
+ }
+ 
+-// String node to text
++// String node to text.
++//
++// A block entry renders as its dash at its own indentation followed by its
++// value, with the head comment on the line above and the line comment appended.
++// An entry of a flow sequence renders as its value alone, because there the
++// brackets and separators belong to the sequence rather than to the entry. The
++// parser marks those entries by what it puts in Start: the "," that precedes the
++// entry, or nothing at all for the first one. Every other Start is a block
++// entry's dash.
+ func (n *SequenceEntryNode) String() string {
+-	return "" // TODO
++	if n.Value == nil {
++		return ""
++	}
++	if n.Start == nil || n.Start.Type == token.CollectEntryType {
++		return n.Value.String()
++	}
++	column := n.Start.Position.Column
++	space := indentSpace(column - 1)
++	value, newLinePrefix := sequenceEntryValueString(n.Value, space)
++	entry := fmt.Sprintf("%s%s- %s", newLinePrefix, space, value)
++	if n.LineComment != nil {
++		entry = addCommentString(entry, n.LineComment)
++	}
++	if n.HeadComment != nil {
++		return fmt.Sprintf("%s\n%s", n.HeadComment.StringWithSpace(column-1), entry)
++	}
++	return entry
+ }
+ 
+-// GetToken returns token instance
++// GetToken returns token instance.
++//
++// The first entry of a flow sequence has no Start: the parser gives an entry the
++// "," that precedes it, and there is none before the first. That entry is still
++// somewhere in the source, so its value's token locates it.
+ func (n *SequenceEntryNode) GetToken() *token.Token {
+-	return n.Start
++	if n.Start != nil {
++		return n.Start
++	}
++	if n.Value != nil {
++		return n.Value.GetToken()
++	}
++	return nil
+ }
+ 
+ // Type returns type of node
+@@ -2131,7 +2205,7 @@ func (n *CommentGroupNode) String() string {
+ 
+ func (n *CommentGroupNode) StringWithSpace(col int) string {
+ 	values := []string{}
+-	space := strings.Repeat(" ", col)
++	space := indentSpace(col)
+ 	for _, comment := range n.Comments {
+ 		space := space
+ 		if checkLineBreak(comment.Token) {
+diff --git a/cmd/ycat/ycat.go b/cmd/ycat/ycat.go
+index 7f679f1..1f4ec59 100644
+--- a/cmd/ycat/ycat.go
++++ b/cmd/ycat/ycat.go
+@@ -84,6 +84,10 @@ func _main(args []string) error {
+ 
+ func main() {
+ 	if err := _main(os.Args); err != nil {
+-		fmt.Printf("%v\n", yaml.FormatError(err, true, true))
++		// Errors belong on stderr and must set a failing status: stdout carries
++		// the rendered document, and a caller chaining on ycat has nothing but
++		// the exit code to tell a failure from an empty file.
++		fmt.Fprintf(os.Stderr, "%v\n", yaml.FormatError(err, true, true))
++		os.Exit(1)
+ 	}
+ }
+diff --git a/decode.go b/decode.go
+index 1ac4272..dfd70a8 100644
+--- a/decode.go
++++ b/decode.go
+@@ -1793,12 +1793,19 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
+ 	return nil
+ }
+ 
++// fileToReader reads file into memory and hands back a reader over its
++// contents. It deliberately does not return the open *os.File: the readers it
++// produces are pooled into d.referenceReaders alongside readers the caller
++// supplied through ReferenceReaders, which the decoder does not own and must
++// not close, so there is no point at which closing the pool would be correct.
++// resolveReference reads every one of them with io.ReadAll anyway, so nothing
++// is streamed and no descriptor needs to outlive this call.
+ func (d *Decoder) fileToReader(file string) (io.Reader, error) {
+-	reader, err := os.Open(file)
++	content, err := os.ReadFile(file)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return reader, nil
++	return bytes.NewReader(content), nil
+ }
+ 
+ func (d *Decoder) isYAMLFile(file string) bool {
+@@ -1986,6 +1993,13 @@ func (d *Decoder) Decode(v interface{}) error {
+ 
+ // DecodeContext reads the next YAML-encoded value from its input
+ // and stores it in the value pointed to by v with context.Context.
++//
++// The context is carried to any context-taking unmarshaler hook reached while
++// decoding: the BytesUnmarshalerContext, InterfaceUnmarshalerContext and
++// NodeUnmarshalerContext interfaces, and any unmarshaler registered with
++// CustomUnmarshalerContext or RegisterCustomUnmarshalerContext. It is not
++// checked for cancellation: decoding a document runs to completion even when
++// ctx is already done.
+ func (d *Decoder) DecodeContext(ctx context.Context, v interface{}) error {
+ 	rv := reflect.ValueOf(v)
+ 	if !rv.IsValid() || rv.Type().Kind() != reflect.Ptr {
+@@ -2012,6 +2026,13 @@ func (d *Decoder) DecodeFromNode(node ast.Node, v interface{}) error {
+ }
+ 
+ // DecodeFromNodeContext decodes node into the value pointed to by v with context.Context.
++//
++// The context is carried to any context-taking unmarshaler hook reached while
++// decoding: the BytesUnmarshalerContext, InterfaceUnmarshalerContext and
++// NodeUnmarshalerContext interfaces, and any unmarshaler registered with
++// CustomUnmarshalerContext or RegisterCustomUnmarshalerContext. It is not
++// checked for cancellation: decoding a document runs to completion even when
++// ctx is already done.
+ func (d *Decoder) DecodeFromNodeContext(ctx context.Context, node ast.Node, v interface{}) error {
+ 	rv := reflect.ValueOf(v)
+ 	if rv.Type().Kind() != reflect.Ptr {
+diff --git a/encode.go b/encode.go
+index 030ce5a..4d55be2 100644
+--- a/encode.go
++++ b/encode.go
+@@ -11,6 +11,8 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"time"
++	"unicode"
++	"unicode/utf8"
+ 
+ 	"github.com/goccy/go-yaml/ast"
+ 	"github.com/goccy/go-yaml/internal/errors"
+@@ -87,6 +89,12 @@ func (e *Encoder) Encode(v interface{}) error {
+ }
+ 
+ // EncodeContext writes the YAML encoding of v to the stream with context.Context.
++//
++// The context is carried to any context-taking marshaler hook reached while
++// encoding: the BytesMarshalerContext and InterfaceMarshalerContext interfaces,
++// and any marshaler registered with CustomMarshalerContext or
++// RegisterCustomMarshalerContext. It is not checked for cancellation: encoding a
++// value runs to completion even when ctx is already done.
+ func (e *Encoder) EncodeContext(ctx context.Context, v interface{}) error {
+ 	node, err := e.EncodeToNodeContext(ctx, v)
+ 	if err != nil {
+@@ -112,6 +120,12 @@ func (e *Encoder) EncodeToNode(v interface{}) (ast.Node, error) {
+ }
+ 
+ // EncodeToNodeContext convert v to ast.Node with context.Context.
++//
++// The context is carried to any context-taking marshaler hook reached while
++// encoding: the BytesMarshalerContext and InterfaceMarshalerContext interfaces,
++// and any marshaler registered with CustomMarshalerContext or
++// RegisterCustomMarshalerContext. It is not checked for cancellation: encoding a
++// value runs to completion even when ctx is already done.
+ func (e *Encoder) EncodeToNodeContext(ctx context.Context, v interface{}) (ast.Node, error) {
+ 	for _, opt := range e.opts {
+ 		if err := opt(e); err != nil {
+@@ -560,10 +574,73 @@ func (e *Encoder) encodeFloat(v float64, bitSize int) ast.Node {
+ 	return ast.Float(token.New(value, value, e.pos(e.column)))
+ }
+ 
++// canUseBlockStyle reports whether a literal block scalar can carry v without
++// changing it. A block scalar normalizes every line break to "\n", takes its
++// indentation from the first non-empty line, and drops the white space that
++// trails its final line, so several ordinary Go strings cannot be written in
++// that style at all. Those must be quoted instead, or Marshal emits a document
++// that decodes to a different string - or, when the first line is indented, one
++// that does not parse.
++func canUseBlockStyle(v string) bool {
++	if strings.ContainsRune(v, '\r') {
++		// Line breaks are normalized on parse, so a CR never survives.
++		return false
++	}
++	if strings.Trim(v, "\n") == "" {
++		// Nothing but line breaks leaves the block with no content lines.
++		return false
++	}
++	if rest := strings.TrimLeft(v, "\n"); strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, "\t") {
++		// The first non-empty line fixes the block indent, so its own leading
++		// white space is swallowed unless an explicit indentation indicator is
++		// emitted with it.
++		return false
++	}
++	if strings.HasSuffix(v, " ") || strings.HasSuffix(v, "\t") {
++		// Trailing white space on the final line is chomped away with the
++		// final line break.
++		return false
++	}
++	return true
++}
++
++// canUseSingleQuote reports whether v can be written as a YAML single-quoted
++// scalar without loss. That style defines exactly one escape - '' for a literal
++// quote - so every other character has to stand for itself. A value holding a
++// line break, a control character, or any other non-printable rune therefore
++// cannot be written this way and must be double-quoted, which is the only style
++// with escape sequences to express it.
++// https://yaml.org/spec/1.2.2/#732-single-quoted-style
++func canUseSingleQuote(v string) bool {
++	if !utf8.ValidString(v) {
++		// Invalid bytes need \x escapes, which single-quoted style lacks.
++		return false
++	}
++	for _, r := range v {
++		if !unicode.IsPrint(r) {
++			return false
++		}
++	}
++	return true
++}
++
++// singleQuoted renders v as a YAML single-quoted scalar. Only the quote itself
++// is special, and it is written twice; callers must check canUseSingleQuote
++// first, because nothing else here can be escaped.
++func singleQuoted(v string) string {
++	return "'" + strings.ReplaceAll(v, "'", "''") + "'"
++}
++
+ func (e *Encoder) isNeedQuoted(v string) bool {
+ 	if e.isJSONStyle {
+ 		return true
+ 	}
++	if strings.ContainsAny(v, "\n\r") && !canUseBlockStyle(v) {
++		// Checked before the literal-style option below, because the option
++		// selects block style for every multiline string and block style is
++		// exactly what these values cannot survive.
++		return true
++	}
+ 	if e.useLiteralStyleIfMultiline && strings.ContainsAny(v, "\n\r") {
+ 		return false
+ 	}
+@@ -587,13 +664,22 @@ func (e *Encoder) isNeedQuoted(v string) bool {
+ 	return false
+ }
+ 
++// quotedString builds a quoted-scalar node for v the way the parser builds one:
++// the token's value is the raw string and only its origin carries the quotes,
++// with the quote style recorded in the token type so ast.StringNode.String
++// re-applies it when the document is rendered. Writing the quoted text into the
++// token's value instead would put the quote characters into the node's Value,
++// where NodeToValue and DecodeFromNode read them back as part of the string.
++func (e *Encoder) quotedString(v string, column int) *ast.StringNode {
++	if e.singleQuote && canUseSingleQuote(v) {
++		return ast.String(token.SingleQuote(v, singleQuoted(v), e.pos(column)))
++	}
++	return ast.String(token.DoubleQuote(v, strconv.Quote(v), e.pos(column)))
++}
++
+ func (e *Encoder) encodeString(v string, column int) *ast.StringNode {
+ 	if e.isNeedQuoted(v) {
+-		if e.singleQuote {
+-			v = quoteWith(v, '\'')
+-		} else {
+-			v = strconv.Quote(v)
+-		}
++		return e.quotedString(v, column)
+ 	}
+ 	return ast.String(token.New(v, v, e.pos(column)))
+ }
+@@ -705,12 +791,17 @@ func (e *Encoder) encodeMap(ctx context.Context, value reflect.Value, column int
+ 		vRef := e.toPointer(v)
+ 
+ 		// during the second encoding, an anchor is assigned if it is found to be used by an alias.
+-		if aliasName, exists := e.getSmartAlias(vRef); exists {
+-			anchorName := aliasName
+-			anchorNode := ast.Anchor(token.New("&", "&", e.pos(column)))
+-			anchorNode.Name = ast.String(token.New(anchorName, anchorName, e.pos(column)))
+-			anchorNode.Value = encoded
+-			encoded = anchorNode
++		// A value already encoded as an alias is a later occurrence and must stay a bare
++		// alias: anchoring it too would define the same anchor name twice and emit
++		// "&a *a", which is not a value the parser accepts.
++		if _, isAlias := encoded.(*ast.AliasNode); !isAlias {
++			if aliasName, exists := e.getSmartAlias(vRef); exists {
++				anchorName := aliasName
++				anchorNode := ast.Anchor(token.New("&", "&", e.pos(column)))
++				anchorNode.Name = ast.String(token.New(anchorName, anchorName, e.pos(column)))
++				anchorNode.Value = encoded
++				encoded = anchorNode
++			}
+ 		}
+ 
+ 		kn, err := e.encodeValue(ctx, reflect.ValueOf(key), column)
+@@ -841,7 +932,9 @@ func (e *Encoder) isOmittedByOmitEmptyTag(v reflect.Value) bool {
+ func (e *Encoder) encodeTime(v time.Time, column int) *ast.StringNode {
+ 	value := v.Format(time.RFC3339Nano)
+ 	if e.isJSONStyle {
+-		value = strconv.Quote(value)
++		// Double quoted rather than routed through quotedString, which would
++		// honour the single quote option and emit invalid JSON here.
++		return ast.String(token.DoubleQuote(value, strconv.Quote(value), e.pos(column)))
+ 	}
+ 	return ast.String(token.New(value, value, e.pos(column)))
+ }
+@@ -849,7 +942,7 @@ func (e *Encoder) encodeTime(v time.Time, column int) *ast.StringNode {
+ func (e *Encoder) encodeDuration(v time.Duration, column int) *ast.StringNode {
+ 	value := v.String()
+ 	if e.isJSONStyle {
+-		value = strconv.Quote(value)
++		return ast.String(token.DoubleQuote(value, strconv.Quote(value), e.pos(column)))
+ 	}
+ 	return ast.String(token.New(value, value, e.pos(column)))
+ }
+@@ -1027,6 +1120,13 @@ func (e *Encoder) setSmartAnchor(ptr uintptr, name string) {
+ 	if !e.enableSmartAnchor {
+ 		return
+ 	}
++	if _, exists := e.anchorRefToName[ptr]; exists {
++		// The first occurrence owns the anchor name, as documented; every later
++		// key holding the same pointer becomes an alias to it. Re-registering
++		// here would rename the anchor after a later key while the aliases
++		// already emitted still refer to the earlier name.
++		return
++	}
+ 	e.setAnchor(ptr, e.generateAnchorName(name))
+ }
+ 
+diff --git a/encode_test.go b/encode_test.go
+index 3a1de32..e50ba34 100644
+--- a/encode_test.go
++++ b/encode_test.go
+@@ -240,12 +240,16 @@ func TestEncoder(t *testing.T) {
+ 			nil,
+ 		},
+ 		{
+-			"hello: |\r  hello\r  world\n",
++			// A block scalar cannot carry a carriage return: parsing normalizes
++			// every line break to "\n", so the block forms these cases used to
++			// expect both decoded back to "hello\nworld\n". Double-quoted style
++			// escapes the CR and round trips.
++			"hello: \"hello\\rworld\\r\"\n",
+ 			map[string]string{"hello": "hello\rworld\r"},
+ 			nil,
+ 		},
+ 		{
+-			"hello: |\r\n  hello\r\n  world\n",
++			"hello: \"hello\\r\\nworld\\r\\n\"\n",
+ 			map[string]string{"hello": "hello\r\nworld\r\n"},
+ 			nil,
+ 		},
+diff --git a/internal/format/format.go b/internal/format/format.go
+index 461dc36..f39b683 100644
+--- a/internal/format/format.go
++++ b/internal/format/format.go
+@@ -25,26 +25,6 @@ func FormatNode(n ast.Node) string {
+ 	return newFormatter(tk, hasComment(n)).format(n)
+ }
+ 
+-func FormatFile(file *ast.File) string {
+-	if len(file.Docs) == 0 {
+-		return ""
+-	}
+-	tk := getFirstToken(file.Docs[0])
+-	if tk == nil {
+-		return ""
+-	}
+-	return newFormatter(tk, hasCommentFile(file)).formatFile(file)
+-}
+-
+-func hasCommentFile(f *ast.File) bool {
+-	for _, doc := range f.Docs {
+-		if hasComment(doc.Body) {
+-			return true
+-		}
+-	}
+-	return false
+-}
+-
+ func hasComment(n ast.Node) bool {
+ 	if n == nil {
+ 		return false
+@@ -272,17 +252,6 @@ func (f *Formatter) format(n ast.Node) string {
+ 	)
+ }
+ 
+-func (f *Formatter) formatFile(file *ast.File) string {
+-	if len(file.Docs) == 0 {
+-		return ""
+-	}
+-	var ret string
+-	for _, doc := range file.Docs {
+-		ret += f.formatDocument(doc)
+-	}
+-	return ret
+-}
+-
+ func (f *Formatter) origin(tk *token.Token) string {
+ 	if tk == nil {
+ 		return ""
+diff --git a/option.go b/option.go
+index 12b8f27..1f650e1 100644
+--- a/option.go
++++ b/option.go
+@@ -96,7 +96,7 @@ func UseOrderedMap() DecodeOption {
+ }
+ 
+ // UseJSONUnmarshaler if neither `BytesUnmarshaler` nor `InterfaceUnmarshaler` is implemented
+-// and `UnmashalJSON([]byte)error` is implemented, convert the argument from `YAML` to `JSON` and then call it.
++// and `UnmarshalJSON([]byte) error` is implemented, convert the argument from `YAML` to `JSON` and then call it.
+ func UseJSONUnmarshaler() DecodeOption {
+ 	return func(d *Decoder) error {
+ 		d.useJSONUnmarshaler = true
+@@ -150,6 +150,10 @@ func IndentSequence(indent bool) EncodeOption {
+ }
+ 
+ // UseSingleQuote determines if single or double quotes should be preferred for strings.
++// YAML single-quoted style defines exactly one escape, '' for a literal quote,
++// so a value that cannot be written literally - one holding a line break, a
++// control character, or any other non-printable rune - is double-quoted
++// regardless, that being the only style with escape sequences to express it.
+ func UseSingleQuote(sq bool) EncodeOption {
+ 	return func(e *Encoder) error {
+ 		e.singleQuote = sq
+@@ -178,7 +182,11 @@ func WithSmartAnchor() EncodeOption {
+ }
+ 
+ // UseLiteralStyleIfMultiline causes encoding multiline strings with a literal syntax,
+-// no matter what characters they include
++// whatever characters they include, with one exception: a value a literal block
++// scalar cannot carry unchanged is double-quoted instead, because block style
++// would silently alter it. That covers a value holding a carriage return, one
++// whose first non-empty line is indented, one that is nothing but line breaks,
++// and one ending in white space.
+ func UseLiteralStyleIfMultiline(useLiteralStyleIfMultiline bool) EncodeOption {
+ 	return func(e *Encoder) error {
+ 		e.useLiteralStyleIfMultiline = useLiteralStyleIfMultiline
+diff --git a/parser/context.go b/parser/context.go
+index 1584b3e..7943fe5 100644
+--- a/parser/context.go
++++ b/parser/context.go
+@@ -7,11 +7,20 @@ import (
+ 	"github.com/goccy/go-yaml/token"
+ )
+ 
++// maxNestingDepth bounds how deeply a document may nest. Each node keeps the
++// absolute path it was parsed at, so the tree retains the sum of every node's
++// depth and a document nested without limit exhausts memory long before it
++// finishes parsing. The bound is orders of magnitude beyond any hand-written or
++// generated document; it exists to refuse the cost of a hostile one rather than
++// to constrain a real one.
++const maxNestingDepth = 1000
++
+ // context context at parsing
+ type context struct {
+ 	tokenRef *tokenRef
+ 	path     string
+ 	isFlow   bool
++	depth    uint
+ }
+ 
+ type tokenRef struct {
+@@ -85,15 +94,21 @@ func (c *context) withGroup(g *TokenGroup) *context {
+ func (c *context) withChild(path string) *context {
+ 	ctx := *c
+ 	ctx.path = c.path + "." + normalizePath(path)
++	ctx.depth = c.depth + 1
+ 	return &ctx
+ }
+ 
+ func (c *context) withIndex(idx uint) *context {
+ 	ctx := *c
+ 	ctx.path = c.path + "[" + fmt.Sprint(idx) + "]"
++	ctx.depth = c.depth + 1
+ 	return &ctx
+ }
+ 
++func (c *context) exceededMaxDepth() bool {
++	return c.depth > maxNestingDepth
++}
++
+ func (c *context) withFlow(isFlow bool) *context {
+ 	ctx := *c
+ 	ctx.isFlow = isFlow
+diff --git a/parser/parser.go b/parser/parser.go
+index 5d79907..c3ac518 100644
+--- a/parser/parser.go
++++ b/parser/parser.go
+@@ -1,3 +1,11 @@
++// Package parser builds an ast.File from YAML source or from a token stream.
++//
++// Nesting is bounded: a document nesting deeper than maxNestingDepth is
++// rejected with a syntax error naming the position where the bound was passed,
++// rather than parsed. Each node retains the absolute path it was parsed at, so
++// an unbounded document costs memory quadratic in its nesting depth and a small
++// hostile input can exhaust a process. The bound is far above any real
++// document - the deepest in the YAML test suite nests 5.
+ package parser
+ 
+ import (
+@@ -174,6 +182,12 @@ func (p *parser) parseDocumentBody(ctx *context) (ast.Node, error) {
+ }
+ 
+ func (p *parser) parseToken(ctx *context, tk *Token) (ast.Node, error) {
++	// Every structural descent reaches this dispatch, and the check sits before
++	// the node is built so the cost of a pathologically nested document is
++	// refused rather than paid and then reported.
++	if ctx.exceededMaxDepth() {
++		return nil, errors.ErrSyntax("exceeded max nesting depth", tk.RawToken())
++	}
+ 	switch tk.GroupType() {
+ 	case TokenGroupMapKey, TokenGroupMapKeyValue:
+ 		return p.parseMap(ctx)
+diff --git a/path.go b/path.go
+index 568c4b4..eeb4c0d 100644
+--- a/path.go
++++ b/path.go
+@@ -278,7 +278,7 @@ func (p *Path) FilterNode(node ast.Node) (ast.Node, error) {
+ 	if node == nil {
+ 		return nil, nil
+ 	}
+-	n, err := p.node.filter(node)
++	n, err := p.node.filter(newPathCtx(node), node)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -363,7 +363,7 @@ func (p *Path) ReplaceWithNode(dst *ast.File, node ast.Node) error {
+ 		if node.Type() == ast.DocumentType {
+ 			node = node.(*ast.DocumentNode).Body
+ 		}
+-		if err := p.node.replace(doc.Body, node); err != nil {
++		if err := p.node.replace(newPathCtx(doc.Body), doc.Body, node); err != nil {
+ 			return err
+ 		}
+ 	}
+@@ -458,8 +458,8 @@ func (b *PathBuilder) Build() *Path {
+ type pathNode interface {
+ 	fmt.Stringer
+ 	chain(pathNode) pathNode
+-	filter(ast.Node) (ast.Node, error)
+-	replace(ast.Node, ast.Node) error
++	filter(*pathCtx, ast.Node) (ast.Node, error)
++	replace(*pathCtx, ast.Node, ast.Node) error
+ }
+ 
+ type basePathNode struct {
+@@ -487,22 +487,22 @@ func (n *rootNode) String() string {
+ 	return s
+ }
+ 
+-func (n *rootNode) filter(node ast.Node) (ast.Node, error) {
++func (n *rootNode) filter(ctx *pathCtx, node ast.Node) (ast.Node, error) {
+ 	if n.child == nil {
+ 		return node, nil
+ 	}
+-	filtered, err := n.child.filter(node)
++	filtered, err := n.child.filter(ctx, node)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	return filtered, nil
+ }
+ 
+-func (n *rootNode) replace(node ast.Node, target ast.Node) error {
++func (n *rootNode) replace(ctx *pathCtx, node ast.Node, target ast.Node) error {
+ 	if n.child == nil {
+ 		return nil
+ 	}
+-	if err := n.child.replace(node, target); err != nil {
++	if err := n.child.replace(ctx, node, target); err != nil {
+ 		return err
+ 	}
+ 	return nil
+@@ -520,7 +520,94 @@ func newSelectorNode(selector string) *selectorNode {
+ 	}
+ }
+ 
+-func (n *selectorNode) filter(node ast.Node) (ast.Node, error) {
++// pathCtx carries the state a traversal needs beyond the node it is visiting.
++type pathCtx struct {
++	// anchors maps an anchor name to the node it defines, so an alias met
++	// during traversal can be resolved to the value it refers to. It is built
++	// from the node the traversal starts at, so an anchor defined outside that
++	// subtree is not found and its alias is left unresolved rather than guessed.
++	anchors map[string]ast.Node
++}
++
++// newPathCtx collects every anchor reachable from node.
++func newPathCtx(node ast.Node) *pathCtx {
++	ctx := &pathCtx{anchors: make(map[string]ast.Node)}
++	if node != nil {
++		ast.Walk(anchorCollector{anchors: ctx.anchors}, node)
++	}
++	return ctx
++}
++
++type anchorCollector struct {
++	anchors map[string]ast.Node
++}
++
++func (c anchorCollector) Visit(node ast.Node) ast.Visitor {
++	if anchor, ok := node.(*ast.AnchorNode); ok && anchor.Name != nil && anchor.Value != nil {
++		c.anchors[anchor.Name.GetToken().Value] = anchor.Value
++	}
++	return c
++}
++
++// unwrapNode steps past the wrapper nodes YAML puts in front of a value, so a
++// path selector traverses into what they hold rather than stopping at them. An
++// anchor definition and a tag carry their real value underneath, and an alias
++// names a value defined elsewhere in the document; none of the three changes
++// the shape a query addresses.
++//
++// For an anchor or a tag the wrapper stays in the document, because this
++// returns the inner node itself rather than a copy, so replace mutates in place
++// and the wrapper survives a replacement made through it. An alias resolves to
++// the anchored node, which is shared: replacing through one edits the anchored
++// value that every other alias to it also sees.
++//
++// An alias whose anchor is not reachable from the traversal root, and an alias
++// chain that loops back on itself, are both returned unresolved so the caller
++// reports an ordinary invalid-query error instead of spinning.
++func unwrapNode(ctx *pathCtx, node ast.Node) ast.Node {
++	var seen map[string]struct{}
++	for {
++		switch n := node.(type) {
++		case *ast.AnchorNode:
++			node = n.Value
++		case *ast.TagNode:
++			node = n.Value
++		case *ast.AliasNode:
++			if ctx == nil || n.Value == nil {
++				return node
++			}
++			name := n.Value.GetToken().Value
++			if _, ok := seen[name]; ok {
++				return node
++			}
++			resolved, ok := ctx.anchors[name]
++			if !ok {
++				return node
++			}
++			if seen == nil {
++				seen = make(map[string]struct{})
++			}
++			seen[name] = struct{}{}
++			node = resolved
++		default:
++			return node
++		}
++	}
++}
++
++// resolveAliasNode resolves a node that is itself an alias, so a query landing
++// on one yields the value it refers to. A bare "*name" reference means nothing
++// once it is lifted out of the document that defines its anchor, and Path.Read
++// unmarshals exactly that fragment.
++func resolveAliasNode(ctx *pathCtx, node ast.Node) ast.Node {
++	if _, ok := node.(*ast.AliasNode); !ok {
++		return node
++	}
++	return unwrapNode(ctx, node)
++}
++
++func (n *selectorNode) filter(ctx *pathCtx, node ast.Node) (ast.Node, error) {
++	node = unwrapNode(ctx, node)
+ 	selector := n.selector
+ 	if len(selector) > 1 && selector[0] == '\'' && selector[len(selector)-1] == '\'' {
+ 		selector = selector[1 : len(selector)-1]
+@@ -528,26 +615,16 @@ func (n *selectorNode) filter(node ast.Node) (ast.Node, error) {
+ 	switch node.Type() {
+ 	case ast.MappingType:
+ 		for _, value := range node.(*ast.MappingNode).Values {
++			// The token's value is the key itself, for a parsed document and for
++			// an encoder-built one alike: quoting lives in the token's origin and
++			// its type, never in its value. The four other sites in this file that
++			// match a key against a selector compare it raw, and so does this one.
+ 			key := value.Key.GetToken().Value
+-			if len(key) > 0 {
+-				switch key[0] {
+-				case '"':
+-					var err error
+-					key, err = strconv.Unquote(key)
+-					if err != nil {
+-						return nil, err
+-					}
+-				case '\'':
+-					if len(key) > 1 && key[len(key)-1] == '\'' {
+-						key = key[1 : len(key)-1]
+-					}
+-				}
+-			}
+ 			if key == selector {
+ 				if n.child == nil {
+-					return value.Value, nil
++					return resolveAliasNode(ctx, value.Value), nil
+ 				}
+-				filtered, err := n.child.filter(value.Value)
++				filtered, err := n.child.filter(ctx, value.Value)
+ 				if err != nil {
+ 					return nil, err
+ 				}
+@@ -559,9 +636,9 @@ func (n *selectorNode) filter(node ast.Node) (ast.Node, error) {
+ 		key := value.Key.GetToken().Value
+ 		if key == selector {
+ 			if n.child == nil {
+-				return value.Value, nil
++				return resolveAliasNode(ctx, value.Value), nil
+ 			}
+-			filtered, err := n.child.filter(value.Value)
++			filtered, err := n.child.filter(ctx, value.Value)
+ 			if err != nil {
+ 				return nil, err
+ 			}
+@@ -573,7 +650,7 @@ func (n *selectorNode) filter(node ast.Node) (ast.Node, error) {
+ 	return nil, nil
+ }
+ 
+-func (n *selectorNode) replaceMapValue(value *ast.MappingValueNode, target ast.Node) error {
++func (n *selectorNode) replaceMapValue(ctx *pathCtx, value *ast.MappingValueNode, target ast.Node) error {
+ 	key := value.Key.GetToken().Value
+ 	if key != n.selector {
+ 		return nil
+@@ -583,24 +660,25 @@ func (n *selectorNode) replaceMapValue(value *ast.MappingValueNode, target ast.N
+ 			return err
+ 		}
+ 	} else {
+-		if err := n.child.replace(value.Value, target); err != nil {
++		if err := n.child.replace(ctx, value.Value, target); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+-func (n *selectorNode) replace(node ast.Node, target ast.Node) error {
++func (n *selectorNode) replace(ctx *pathCtx, node ast.Node, target ast.Node) error {
++	node = unwrapNode(ctx, node)
+ 	switch node.Type() {
+ 	case ast.MappingType:
+ 		for _, value := range node.(*ast.MappingNode).Values {
+-			if err := n.replaceMapValue(value, target); err != nil {
++			if err := n.replaceMapValue(ctx, value, target); err != nil {
+ 				return err
+ 			}
+ 		}
+ 	case ast.MappingValueType:
+ 		value, _ := node.(*ast.MappingValueNode)
+-		if err := n.replaceMapValue(value, target); err != nil {
++		if err := n.replaceMapValue(ctx, value, target); err != nil {
+ 			return err
+ 		}
+ 	default:
+@@ -631,7 +709,8 @@ func newIndexNode(selector uint) *indexNode {
+ 	}
+ }
+ 
+-func (n *indexNode) filter(node ast.Node) (ast.Node, error) {
++func (n *indexNode) filter(ctx *pathCtx, node ast.Node) (ast.Node, error) {
++	node = unwrapNode(ctx, node)
+ 	if node.Type() != ast.SequenceType {
+ 		return nil, fmt.Errorf("expected sequence type node. but got %s: %w", node.Type(), ErrInvalidQuery)
+ 	}
+@@ -641,16 +720,17 @@ func (n *indexNode) filter(node ast.Node) (ast.Node, error) {
+ 	}
+ 	value := sequence.Values[n.selector]
+ 	if n.child == nil {
+-		return value, nil
++		return resolveAliasNode(ctx, value), nil
+ 	}
+-	filtered, err := n.child.filter(value)
++	filtered, err := n.child.filter(ctx, value)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	return filtered, nil
+ }
+ 
+-func (n *indexNode) replace(node ast.Node, target ast.Node) error {
++func (n *indexNode) replace(ctx *pathCtx, node ast.Node, target ast.Node) error {
++	node = unwrapNode(ctx, node)
+ 	if node.Type() != ast.SequenceType {
+ 		return fmt.Errorf("expected sequence type node. but got %s: %w", node.Type(), ErrInvalidQuery)
+ 	}
+@@ -664,7 +744,7 @@ func (n *indexNode) replace(node ast.Node, target ast.Node) error {
+ 		}
+ 		return nil
+ 	}
+-	if err := n.child.replace(sequence.Values[n.selector], target); err != nil {
++	if err := n.child.replace(ctx, sequence.Values[n.selector], target); err != nil {
+ 		return err
+ 	}
+ 	return nil
+@@ -696,7 +776,8 @@ func (n *indexAllNode) String() string {
+ 	return s
+ }
+ 
+-func (n *indexAllNode) filter(node ast.Node) (ast.Node, error) {
++func (n *indexAllNode) filter(ctx *pathCtx, node ast.Node) (ast.Node, error) {
++	node = unwrapNode(ctx, node)
+ 	if node.Type() != ast.SequenceType {
+ 		return nil, fmt.Errorf("expected sequence type node. but got %s: %w", node.Type(), ErrInvalidQuery)
+ 	}
+@@ -707,7 +788,7 @@ func (n *indexAllNode) filter(node ast.Node) (ast.Node, error) {
+ 	out := *sequence
+ 	out.Values = []ast.Node{}
+ 	for _, value := range sequence.Values {
+-		filtered, err := n.child.filter(value)
++		filtered, err := n.child.filter(ctx, value)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+@@ -716,7 +797,8 @@ func (n *indexAllNode) filter(node ast.Node) (ast.Node, error) {
+ 	return &out, nil
+ }
+ 
+-func (n *indexAllNode) replace(node ast.Node, target ast.Node) error {
++func (n *indexAllNode) replace(ctx *pathCtx, node ast.Node, target ast.Node) error {
++	node = unwrapNode(ctx, node)
+ 	if node.Type() != ast.SequenceType {
+ 		return fmt.Errorf("expected sequence type node. but got %s: %w", node.Type(), ErrInvalidQuery)
+ 	}
+@@ -730,7 +812,7 @@ func (n *indexAllNode) replace(node ast.Node, target ast.Node) error {
+ 		return nil
+ 	}
+ 	for _, value := range sequence.Values {
+-		if err := n.child.replace(value, target); err != nil {
++		if err := n.child.replace(ctx, value, target); err != nil {
+ 			return err
+ 		}
+ 	}
+@@ -757,12 +839,13 @@ func (n *recursiveNode) String() string {
+ 	return s
+ }
+ 
+-func (n *recursiveNode) filterNode(node ast.Node) (*ast.SequenceNode, error) {
++func (n *recursiveNode) filterNode(ctx *pathCtx, node ast.Node) (*ast.SequenceNode, error) {
++	node = unwrapNode(ctx, node)
+ 	sequence := &ast.SequenceNode{BaseNode: &ast.BaseNode{}}
+ 	switch typedNode := node.(type) {
+ 	case *ast.MappingNode:
+ 		for _, value := range typedNode.Values {
+-			seq, err := n.filterNode(value)
++			seq, err := n.filterNode(ctx, value)
+ 			if err != nil {
+ 				return nil, err
+ 			}
+@@ -771,16 +854,16 @@ func (n *recursiveNode) filterNode(node ast.Node) (*ast.SequenceNode, error) {
+ 	case *ast.MappingValueNode:
+ 		key := typedNode.Key.GetToken().Value
+ 		if n.selector == key {
+-			sequence.Values = append(sequence.Values, typedNode.Value)
++			sequence.Values = append(sequence.Values, resolveAliasNode(ctx, typedNode.Value))
+ 		}
+-		seq, err := n.filterNode(typedNode.Value)
++		seq, err := n.filterNode(ctx, typedNode.Value)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+ 		sequence.Values = append(sequence.Values, seq.Values...)
+ 	case *ast.SequenceNode:
+ 		for _, value := range typedNode.Values {
+-			seq, err := n.filterNode(value)
++			seq, err := n.filterNode(ctx, value)
+ 			if err != nil {
+ 				return nil, err
+ 			}
+@@ -790,8 +873,8 @@ func (n *recursiveNode) filterNode(node ast.Node) (*ast.SequenceNode, error) {
+ 	return sequence, nil
+ }
+ 
+-func (n *recursiveNode) filter(node ast.Node) (ast.Node, error) {
+-	sequence, err := n.filterNode(node)
++func (n *recursiveNode) filter(ctx *pathCtx, node ast.Node) (ast.Node, error) {
++	sequence, err := n.filterNode(ctx, node)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -799,11 +882,12 @@ func (n *recursiveNode) filter(node ast.Node) (ast.Node, error) {
+ 	return sequence, nil
+ }
+ 
+-func (n *recursiveNode) replaceNode(node ast.Node, target ast.Node) error {
++func (n *recursiveNode) replaceNode(ctx *pathCtx, node ast.Node, target ast.Node) error {
++	node = unwrapNode(ctx, node)
+ 	switch typedNode := node.(type) {
+ 	case *ast.MappingNode:
+ 		for _, value := range typedNode.Values {
+-			if err := n.replaceNode(value, target); err != nil {
++			if err := n.replaceNode(ctx, value, target); err != nil {
+ 				return err
+ 			}
+ 		}
+@@ -814,12 +898,12 @@ func (n *recursiveNode) replaceNode(node ast.Node, target ast.Node) error {
+ 				return err
+ 			}
+ 		}
+-		if err := n.replaceNode(typedNode.Value, target); err != nil {
++		if err := n.replaceNode(ctx, typedNode.Value, target); err != nil {
+ 			return err
+ 		}
+ 	case *ast.SequenceNode:
+ 		for _, value := range typedNode.Values {
+-			if err := n.replaceNode(value, target); err != nil {
++			if err := n.replaceNode(ctx, value, target); err != nil {
+ 				return err
+ 			}
+ 		}
+@@ -827,8 +911,8 @@ func (n *recursiveNode) replaceNode(node ast.Node, target ast.Node) error {
+ 	return nil
+ }
+ 
+-func (n *recursiveNode) replace(node ast.Node, target ast.Node) error {
+-	if err := n.replaceNode(node, target); err != nil {
++func (n *recursiveNode) replace(ctx *pathCtx, node ast.Node, target ast.Node) error {
++	if err := n.replaceNode(ctx, node, target); err != nil {
+ 		return err
+ 	}
+ 	return nil
+diff --git a/printer/printer.go b/printer/printer.go
+index 9346983..6993c25 100644
+--- a/printer/printer.go
++++ b/printer/printer.go
+@@ -31,6 +31,17 @@ type Printer struct {
+ 	Comment          PrintFunc
+ }
+ 
++// indentSpace returns num spaces, treating a negative count as none. Widths
++// here are derived from a token's column, and AddColumn can drive a column far
++// enough below the left margin to outrun the row prefix, which strings.Repeat
++// answers with a panic.
++func indentSpace(num int) string {
++	if num < 0 {
++		return ""
++	}
++	return strings.Repeat(" ", num)
++}
++
+ func defaultLineNumberFormat(num int) string {
+ 	return fmt.Sprintf("%2d | ", num)
+ }
+@@ -262,7 +273,7 @@ func (p *Printer) printBeforeTokens(tk *token.Token, minLine, extLine int) token
+ 		// add white spaces to minTk by prev token
+ 		prev := minTk.Prev
+ 		whiteSpaceLen := len(prev.Origin) - len(strings.TrimRight(prev.Origin, " "))
+-		minTk.Origin = strings.Repeat(" ", whiteSpaceLen) + minTk.Origin
++		minTk.Origin = indentSpace(whiteSpaceLen) + minTk.Origin
+ 	}
+ 	minTk.Origin = p.removeLeftSideNewLineChar(minTk.Origin)
+ 	tokens := token.Tokens{minTk}
+@@ -347,7 +358,7 @@ func (p *Printer) PrintErrorToken(tk *token.Token, isColored bool) string {
+ 
+ 	beforeSource := p.PrintTokens(beforeTokens)
+ 	prefixSpaceNum := len(fmt.Sprintf("  %2d | ", curLine))
+-	annotateLine := strings.Repeat(" ", prefixSpaceNum+errToken.Position.Column-1) + "^"
++	annotateLine := indentSpace(prefixSpaceNum+errToken.Position.Column-1) + "^"
+ 	afterSource := p.PrintTokens(afterTokens)
+ 	return fmt.Sprintf("%s\n%s\n%s", beforeSource, annotateLine, afterSource)
+ }
+diff --git a/stdlib_quote.go b/stdlib_quote.go
+deleted file mode 100644
+index 120448d..0000000
+--- a/stdlib_quote.go
++++ /dev/null
+@@ -1,113 +0,0 @@
+-// Copied and trimmed down from https://github.com/golang/go/blob/e3769299cd3484e018e0e2a6e1b95c2b18ce4f41/src/strconv/quote.go
+-// We want to use the standard library's private "quoteWith" function rather than write our own so that we get robust unicode support.
+-// Every private function called by quoteWith was copied.
+-// There are 2 modifications to simplify the code:
+-// 1. The unicode.IsPrint function was substituted for the custom implementation of IsPrint
+-// 2. All code paths reachable only when ASCIIonly or grphicOnly are set to true were removed.
+-
+-// Copyright 2009 The Go Authors. All rights reserved.
+-// Use of this source code is governed by a BSD-style
+-// license that can be found in the LICENSE file.
+-
+-package yaml
+-
+-import (
+-	"unicode"
+-	"unicode/utf8"
+-)
+-
+-const (
+-	lowerhex = "0123456789abcdef"
+-)
+-
+-func quoteWith(s string, quote byte) string {
+-	return string(appendQuotedWith(make([]byte, 0, 3*len(s)/2), s, quote))
+-}
+-
+-func appendQuotedWith(buf []byte, s string, quote byte) []byte {
+-	// Often called with big strings, so preallocate. If there's quoting,
+-	// this is conservative but still helps a lot.
+-	if cap(buf)-len(buf) < len(s) {
+-		nBuf := make([]byte, len(buf), len(buf)+1+len(s)+1)
+-		copy(nBuf, buf)
+-		buf = nBuf
+-	}
+-	buf = append(buf, quote)
+-	for width := 0; len(s) > 0; s = s[width:] {
+-		r := rune(s[0])
+-		width = 1
+-		if r >= utf8.RuneSelf {
+-			r, width = utf8.DecodeRuneInString(s)
+-		}
+-		if width == 1 && r == utf8.RuneError {
+-			buf = append(buf, `\x`...)
+-			buf = append(buf, lowerhex[s[0]>>4])
+-			buf = append(buf, lowerhex[s[0]&0xF])
+-			continue
+-		}
+-		buf = appendEscapedRune(buf, r, quote)
+-	}
+-	buf = append(buf, quote)
+-	return buf
+-}
+-
+-func appendEscapedRune(buf []byte, r rune, quote byte) []byte {
+-	var runeTmp [utf8.UTFMax]byte
+-	// goccy/go-yaml patch on top of the standard library's appendEscapedRune function.
+-	//
+-	// We use this to implement the YAML single-quoted string, where the only escape sequence is '', which represents a single quote.
+-	// The below snippet from the standard library is for escaping e.g. \ with \\, which is not what we want for the single-quoted string.
+-	//
+-	// if r == rune(quote) || r == '\\' { // always backslashed
+-	// 	buf = append(buf, '\\')
+-	// 	buf = append(buf, byte(r))
+-	// 	return buf
+-	// }
+-	if r == rune(quote) {
+-		buf = append(buf, byte(r))
+-		buf = append(buf, byte(r))
+-		return buf
+-	}
+-	if unicode.IsPrint(r) {
+-		n := utf8.EncodeRune(runeTmp[:], r)
+-		buf = append(buf, runeTmp[:n]...)
+-		return buf
+-	}
+-	switch r {
+-	case '\a':
+-		buf = append(buf, `\a`...)
+-	case '\b':
+-		buf = append(buf, `\b`...)
+-	case '\f':
+-		buf = append(buf, `\f`...)
+-	case '\n':
+-		buf = append(buf, `\n`...)
+-	case '\r':
+-		buf = append(buf, `\r`...)
+-	case '\t':
+-		buf = append(buf, `\t`...)
+-	case '\v':
+-		buf = append(buf, `\v`...)
+-	default:
+-		switch {
+-		case r < ' ':
+-			buf = append(buf, `\x`...)
+-			buf = append(buf, lowerhex[byte(r)>>4])
+-			buf = append(buf, lowerhex[byte(r)&0xF])
+-		case r > utf8.MaxRune:
+-			r = 0xFFFD
+-			fallthrough
+-		case r < 0x10000:
+-			buf = append(buf, `\u`...)
+-			for s := 12; s >= 0; s -= 4 {
+-				buf = append(buf, lowerhex[r>>uint(s)&0xF])
+-			}
+-		default:
+-			buf = append(buf, `\U`...)
+-			for s := 28; s >= 0; s -= 4 {
+-				buf = append(buf, lowerhex[r>>uint(s)&0xF])
+-			}
+-		}
+-	}
+-	return buf
+-}
+diff --git a/yaml.go b/yaml.go
+index e1b5fbd..759c522 100644
+--- a/yaml.go
++++ b/yaml.go
+@@ -151,6 +151,12 @@ func MarshalWithOptions(v interface{}, opts ...EncodeOption) ([]byte, error) {
+ }
+ 
+ // MarshalContext serializes the value provided into a YAML document with context.Context and EncodeOptions.
++//
++// The context is carried to any context-taking marshaler hook reached while
++// encoding: the BytesMarshalerContext and InterfaceMarshalerContext interfaces,
++// and any marshaler registered with CustomMarshalerContext or
++// RegisterCustomMarshalerContext. It is not checked for cancellation: encoding a
++// value runs to completion even when ctx is already done.
+ func MarshalContext(ctx context.Context, v interface{}, opts ...EncodeOption) ([]byte, error) {
+ 	var buf bytes.Buffer
+ 	if err := NewEncoder(&buf, opts...).EncodeContext(ctx, v); err != nil {
+@@ -202,6 +208,13 @@ func UnmarshalWithOptions(data []byte, v interface{}, opts ...DecodeOption) erro
+ }
+ 
+ // UnmarshalContext decodes with context.Context and DecodeOptions.
++//
++// The context is carried to any context-taking unmarshaler hook reached while
++// decoding: the BytesUnmarshalerContext, InterfaceUnmarshalerContext and
++// NodeUnmarshalerContext interfaces, and any unmarshaler registered with
++// CustomUnmarshalerContext or RegisterCustomUnmarshalerContext. It is not
++// checked for cancellation: decoding a document runs to completion even when
++// ctx is already done.
+ func UnmarshalContext(ctx context.Context, data []byte, v interface{}, opts ...DecodeOption) error {
+ 	dec := NewDecoder(bytes.NewBuffer(data), opts...)
+ 	if err := dec.DecodeContext(ctx, v); err != nil {
+@@ -287,7 +300,7 @@ func RegisterCustomMarshaler[T any](marshaler func(T) ([]byte, error)) {
+ }
+ 
+ // RegisterCustomMarshalerContext overrides any encoding process for the type specified in generics.
+-// Similar to RegisterCustomMarshalerContext, but allows passing a context to the unmarshaler function.
++// Similar to RegisterCustomMarshaler, but allows passing a context to the marshaler function.
+ func RegisterCustomMarshalerContext[T any](marshaler func(context.Context, T) ([]byte, error)) {
+ 	globalCustomMarshalerMu.Lock()
+ 	defer globalCustomMarshalerMu.Unlock()
+@@ -314,7 +327,7 @@ func RegisterCustomUnmarshaler[T any](unmarshaler func(*T, []byte) error) {
+ }
+ 
+ // RegisterCustomUnmarshalerContext overrides any decoding process for the type specified in generics.
+-// Similar to RegisterCustomUnmarshalerContext, but allows passing a context to the unmarshaler function.
++// Similar to RegisterCustomUnmarshaler, but allows passing a context to the unmarshaler function.
+ func RegisterCustomUnmarshalerContext[T any](unmarshaler func(context.Context, *T, []byte) error) {
+ 	globalCustomUnmarshalerMu.Lock()
+ 	defer globalCustomUnmarshalerMu.Unlock()
