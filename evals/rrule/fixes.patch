@@ -1,0 +1,1325 @@
+diff --git a/.gitignore b/.gitignore
+index 0e9e810..f4fb2e9 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -5,4 +5,5 @@ bower_components/
+ *.log
+ coverage
+ .nyc_output
+-dist/
+\ No newline at end of file
++dist/
++.claude/jeffy-loop.local.md
+diff --git a/.prettierignore b/.prettierignore
+index 0e9e810..cc1f007 100644
+--- a/.prettierignore
++++ b/.prettierignore
+@@ -5,4 +5,16 @@ bower_components/
+ *.log
+ coverage
+ .nyc_output
+-dist/
+\ No newline at end of file
++dist/
++
++# Files written by the jeffy improvement loop, not project sources. They are
++# excluded for two reasons: `yarn format-check` is a step of `yarn build`, so
++# unformatted loop artifacts would fail the build and therefore prepublish;
++# and `yarn format` would otherwise reflow JOURNAL.md, rewriting past entries
++# that are meant to be append-only.
++.jeffy/
++.claude/
++PLAN.md
++BACKLOG.md
++JOURNAL.md
++JOURNAL-archive.md
+diff --git a/README.md b/README.md
+index 344bcc5..0929e7a 100644
+--- a/README.md
++++ b/README.md
+@@ -76,12 +76,12 @@ rule.between(datetime(2012, 8, 1), datetime(2012, 9, 1))
+ // Get an iCalendar RRULE string representation:
+ // The output can be used with RRule.fromString().
+ rule.toString()
+-"DTSTART:20120201T093000Z\nRRULE:FREQ=WEEKLY;INTERVAL=5;UNTIL=20130130T230000Z;BYDAY=MO,FR"
++"DTSTART:20120201T103000Z\nRRULE:FREQ=WEEKLY;INTERVAL=5;BYDAY=MO,FR;UNTIL=20121231T000000Z"
+ 
+ // Get a human-friendly text representation:
+ // The output can be used with RRule.fromText().
+ rule.toText()
+-"every 5 weeks on Monday, Friday until January 31, 2013"
++"every 5 weeks on Monday, Friday until December 31, 2012"
+ ```
+ 
+ **RRuleSet:**
+@@ -119,28 +119,28 @@ rruleSet.exdate(datetime(2012, 5, 1, 10, 30))
+ // Get all occurrence dates (Date instances):
+ rruleSet.all()[
+   ('2012-02-01T10:30:00.000Z',
+-  '2012-05-01T10:30:00.000Z',
++  '2012-06-01T10:30:00.000Z',
+   '2012-07-01T10:30:00.000Z',
+   '2012-07-02T10:30:00.000Z')
+ ]
+ 
+ // Get a slice:
+ rruleSet.between(datetime(2012, 2, 1), datetime(2012, 6, 2))[
+-  ('2012-05-01T10:30:00.000Z', '2012-07-01T10:30:00.000Z')
++  ('2012-02-01T10:30:00.000Z', '2012-06-01T10:30:00.000Z')
+ ]
+ 
+-// To string
++// Get the set as an array of iCalendar content lines
+ rruleSet.valueOf()[
+-  ('DTSTART:20120201T023000Z',
++  ('DTSTART:20120201T103000Z',
+   'RRULE:FREQ=MONTHLY;COUNT=5',
+-  'RDATE:20120701T023000Z,20120702T023000Z',
+   'EXRULE:FREQ=MONTHLY;COUNT=2',
+-  'EXDATE:20120601T023000Z')
++  'RDATE:20120701T103000Z,20120702T103000Z',
++  'EXDATE:20120501T103000Z')
+ ]
+ 
+-// To string
++// To string: the same content lines, joined by newlines
+ rruleSet.toString()
+-;('["DTSTART:20120201T023000Z","RRULE:FREQ=MONTHLY;COUNT=5","RDATE:20120701T023000Z,20120702T023000Z","EXRULE:FREQ=MONTHLY;COUNT=2","EXDATE:20120601T023000Z"]')
++;('DTSTART:20120201T103000Z\nRRULE:FREQ=MONTHLY;COUNT=5\nEXRULE:FREQ=MONTHLY;COUNT=2\nRDATE:20120701T103000Z,20120702T103000Z\nEXDATE:20120501T103000Z')
+ ```
+ 
+ **rrulestr:**
+@@ -266,6 +266,13 @@ new RRule(options[, noCache=false])
+ The `options` argument mostly corresponds to the properties defined for `RRULE` in the
+ iCalendar RFC. Only `freq` is required.
+ 
++The numeric options (`interval`, `count`, `byeaster`, `bysetpos`, `bymonth`,
++`bymonthday`, `byyearday`, `byweekno`, `byhour`, `byminute`, `bysecond`) must be
++integers, or arrays of integers. A value that is not an integer - a string, `NaN`,
++or a fractional number - throws `Invalid options: <name>`, naming the option.
++This applies equally to rules parsed from an RFC string, so a malformed
++`RRULE:FREQ=DAILY;INTERVAL=abc` is rejected rather than silently mis-evaluated.
++
+ <table>
+     <!-- why, markdown... -->
+     <thead>
+@@ -418,9 +425,17 @@ iCalendar RFC. Only `freq` is required.
+     </tr>
+     <tr>
+         <td><code>byeaster</code></td>
+-        <td>This is an extension to the RFC specification which the Python
+-            implementation provides.
+-            <strong>Not implemented in the JavaScript version.</strong>
++        <td>If given, it must be an integer: the offset in days from Western
++            Easter Sunday. <code>0</code> is Easter Sunday itself,
++            <code>-2</code> is Good Friday, <code>1</code> is Easter Monday
++            and <code>-46</code> is Ash Wednesday. Setting it forces
++            <code>freq</code> to <code>RRule.YEARLY</code>, whatever
++            frequency was passed. It is an extension to the RFC specification
++            which the Python implementation provides, and it is implemented
++            here too, including in RFC strings as <code>BYEASTER</code>.
++            <code>toText</code> does not put it into words, so a rule using it
++            is reported as not fully convertible and its text carries the
++            approximation marker.
+         </td>
+     </tr>
+     </tbody>
+@@ -468,15 +483,15 @@ the result and the iteration is interrupted (possibly prematurely).
+ 
+ ```javascript
+ rule.all()[
+-  ('2012-02-01T10:30:00.000Z',
+-  '2012-05-01T10:30:00.000Z',
+-  '2012-07-01T10:30:00.000Z',
+-  '2012-07-02T10:30:00.000Z')
++  ('2012-02-03T10:30:00.000Z',
++  '2012-03-05T10:30:00.000Z',
++  '2012-03-09T10:30:00.000Z',
++  '2012-04-09T10:30:00.000Z')
+ ]
+ 
+ rule.all(function (date, i) {
+   return i < 2
+-})[('2012-02-01T10:30:00.000Z', '2012-05-01T10:30:00.000Z')]
++})[('2012-02-03T10:30:00.000Z', '2012-03-05T10:30:00.000Z')]
+ ```
+ 
+ ##### `RRule.prototype.between(after, before, inc=false [, iterator])`
+@@ -522,12 +537,20 @@ Only properties explicitly specified in `options` are included:
+ 
+ ```javascript
+ rule.toString()
+-;('DTSTART:20120201T093000Z\nRRULE:FREQ=WEEKLY;INTERVAL=5;UNTIL=20130130T230000Z;BYDAY=MO,FR')
++;('DTSTART:20120201T103000Z\nRRULE:FREQ=WEEKLY;INTERVAL=5;BYDAY=MO,FR;UNTIL=20121231T000000Z')
+ 
+ rule.toString() == RRule.optionsToString(rule.origOptions)
+ true
+ ```
+ 
++The result always parses back through `RRule.fromString`. One case needs help
++to do so: when no specified property survives serialization, as with
++`new RRule({})` or a rule given only a `tzid`, the rule is still yearly by
++default and `toString()` emits `RRULE:FREQ=YEARLY` rather than the empty
++string, since `FREQ` is required by the RFC. That is the one input for which
++`toString()` and `RRule.optionsToString(origOptions)` differ, the latter
++returning `''`.
++
+ ##### `RRule.optionsToString(options)`
+ 
+ Converts `options` to iCalendar RFC `RRULE` string:
+@@ -536,14 +559,14 @@ Converts `options` to iCalendar RFC `RRULE` string:
+ // Get full a string representation of all options,
+ // including the default and inferred ones.
+ RRule.optionsToString(rule.options)
+-;('DTSTART:20120201T093000Z\nRRULE:FREQ=WEEKLY;INTERVAL=5;WKST=0;UNTIL=20130130T230000Z;BYDAY=MO,FR;BYHOUR=10;BYMINUTE=30;BYSECOND=0')
++;('DTSTART:20120201T103000Z\nRRULE:FREQ=WEEKLY;INTERVAL=5;WKST=MO;UNTIL=20121231T000000Z;BYDAY=MO,FR;BYHOUR=10;BYMINUTE=30;BYSECOND=0')
+ 
+ // Cherry-pick only some options from an rrule:
+ RRule.optionsToString({
+   freq: rule.options.freq,
+   dtstart: rule.options.dtstart,
+ })
+-;('DTSTART:20120201T093000Z\nRRULE:FREQ=WEEKLY;')
++;('DTSTART:20120201T103000Z\nRRULE:FREQ=WEEKLY')
+ ```
+ 
+ ##### `RRule.fromString(rfcString)`
+@@ -551,17 +574,31 @@ RRule.optionsToString({
+ Constructs an `RRule` instance from a complete `rfcString`:
+ 
+ ```javascript
+-var rule = RRule.fromString('DTSTART:20120201T093000Z\nRRULE:FREQ=WEEKLY;')
++var rule = RRule.fromString('DTSTART:20120201T093000Z\nRRULE:FREQ=WEEKLY')
+ 
+-// This is equivalent
++// Equivalent for any string that parses to at least one option
+ var rule = new RRule(
+   RRule.parseString('DTSTART:20120201T093000Z\nRRULE:FREQ=WEEKLY')
+ )
+ ```
+ 
++Throws if the string cannot be parsed. Two failure modes are distinct: an
++unrecognised property throws from the parser (`RRule.fromString('nonsense')`
++throws `Unknown RRULE property 'nonsense'`), while a string in which nothing at
++all is recognised throws `Invalid rule string: no rule found in ...`. The empty
++string and whitespace-only input take the second path, so they are rejected
++rather than silently returning the default yearly rule.
++
++A rule line without `FREQ` is not a failure: `toString()` emits such lines, for
++example `RRULE:COUNT=1`, and they parse back to a rule whose frequency is the
++`RRule` default of `YEARLY`.
++
+ ##### `RRule.parseString(rfcString)`
+ 
+-Only parse RFC string and return `options`.
++Only parse RFC string and return `options`. Unlike `fromString`, this never
++throws for input it recognises nothing in; it returns an empty object, so a
++caller that branches on the result should test it rather than pass it straight
++to the constructor.
+ 
+ ```javascript
+ var options = RRule.parseString('FREQ=DAILY;INTERVAL=6')
+@@ -606,17 +643,38 @@ Constructs an `RRule` instance from `text`.
+ rule = RRule.fromText('every day for 3 times')
+ ```
+ 
++Throws if the text cannot be parsed, and the message says which kind of failure
++it was. Text the grammar never recognises throws `Invalid rule text: cannot parse ...`, which covers `'gibberish nonsense'` and the empty string. Text that
++starts parsing and then fails keeps the grammar's own message: `'every'` and
++`'every 0 days'` throw `Unexpected end`, and `'every 2 fortnights'` throws
++`Unknown symbol`.
++
++The date after `until` is handed to the host's `Date.parse`, which has two
++consequences worth knowing before passing user input to it. The month comes
++first in the numeric forms, so `'every day until 3/4/2020'` means March 4 and
++`'every day until 25/12/2020'` throws. And a date with no year is not the
++current year: `Date.parse` supplies 2001, so `'every day until January 1'`
++produces a rule that expired long ago. Always give a year, and prefer a month
++name or the `2020-03-04` form for input you do not control.
++
+ ##### `RRule.parseText(text[, language])`
+ 
+ Parse `text` into `options`:
+ 
+ ```javascript
+ options = RRule.parseText('every day for 3 times')
+-// {freq: 3, count: "3"}
++// {freq: 3, count: 3}
+ options.dtstart = datetime(2000, 2, 1)
+ var rule = new RRule(options)
+ ```
+ 
++This is the non-throwing half of the pair for text the grammar never
++recognises: `RRule.parseText('gibberish nonsense')` and `RRule.parseText('')`
++both return `null`. Text that starts parsing and then fails still throws, with
++the same messages `fromText` reports, so a caller must both test for `null` and
++catch. Passing a `null` result to `new RRule()` produces the default yearly
++rule, which is why `fromText` throws instead of forwarding it.
++
+ ---
+ 
+ #### `RRuleSet` Constructor
+@@ -785,6 +843,44 @@ rruleSet.rdate(start)
+ 
+ - Unlike documented in the RFC, every keyword is valid on every frequency. (The
+   RFC documents that `byweekno` is only valid on yearly frequencies, for example.)
++- Unlike documented in the RFC, an nth-prefixed `byweekday` value does not
++  combine with plain ones as a union. The RFC reads `BYDAY=+2MO,TU,WE,TH,FR` as
++  the 2nd Monday together with every Tuesday, Wednesday, Thursday and Friday;
++  here a date has to satisfy the plain-weekday set and the nth-weekday position
++  at the same time, which no date can, so the rule yields nothing at all rather
++  than raising an error. This is another case of parity with
++  [python-dateutil](https://labix.org/python-dateutil/), which returns the same
++  empty result. Mix the two forms only through an `RRuleSet`, adding one rule
++  for the nth days and another for the plain ones.
++
++```javascript
++var start = new Date(Date.UTC(2020, 0, 1, 9, 0, 0))
++var yearStart = new Date(Date.UTC(2020, 0, 1))
++var yearEnd = new Date(Date.UTC(2021, 0, 1))
++
++// Yields nothing, rather than the 211 dates the RFC describes.
++new RRule({
++  freq: RRule.YEARLY,
++  dtstart: start,
++  byweekday: [RRule.MO.nth(2), RRule.TU, RRule.WE, RRule.TH, RRule.FR],
++}).between(yearStart, yearEnd).length
++// 0
++
++// Each half on its own behaves as expected.
++new RRule({
++  freq: RRule.YEARLY,
++  dtstart: start,
++  byweekday: RRule.MO.nth(2),
++}).between(yearStart, yearEnd).length
++// 1
++
++new RRule({
++  freq: RRule.YEARLY,
++  dtstart: start,
++  byweekday: [RRule.TU, RRule.WE, RRule.TH, RRule.FR],
++}).between(yearStart, yearEnd).length
++// 210
++```
+ 
+ ### Development
+ 
+diff --git a/src/callbackiterresult.ts b/src/callbackiterresult.ts
+index 67c57d7..1cf90f7 100644
+--- a/src/callbackiterresult.ts
++++ b/src/callbackiterresult.ts
+@@ -3,8 +3,11 @@ import IterResult, { IterArgs } from './iterresult'
+ type Iterator = (d: Date, len: number) => boolean
+ 
+ /**
+- * IterResult subclass that calls a callback function on each add,
+- * and stops iterating when the callback returns false.
++ * IterResult subclass that asks a callback whether to keep each candidate
++ * date. The callback decides the add rather than observing it: a truthy return
++ * pushes the date and continues, a false-y return discards that date and ends
++ * the iteration. The callback therefore runs exactly one more time than the
++ * number of dates in the result.
+  */
+ export default class CallbackIterResult extends IterResult<'all' | 'between'> {
+   private iterator: Iterator
+diff --git a/src/dateutil.ts b/src/dateutil.ts
+index b2cd176..910b869 100644
+--- a/src/dateutil.ts
++++ b/src/dateutil.ts
+@@ -1,4 +1,3 @@
+-import { padStart } from './helpers'
+ import { Time } from './datetime'
+ 
+ type Datelike = Pick<Date, 'getTime'>
+@@ -44,23 +43,6 @@ export const ORDINAL_BASE = datetime(1970, 1, 1)
+  */
+ export const PY_WEEKDAYS = [6, 0, 1, 2, 3, 4, 5]
+ 
+-/**
+- * py_date.timetuple()[7]
+- */
+-export const getYearDay = function (date: Date) {
+-  const dateNoTime = new Date(
+-    date.getUTCFullYear(),
+-    date.getUTCMonth(),
+-    date.getUTCDate()
+-  )
+-  return (
+-    Math.ceil(
+-      (dateNoTime.valueOf() - new Date(date.getUTCFullYear(), 0, 1).valueOf()) /
+-        ONE_DAY
+-    ) + 1
+-  )
+-}
+-
+ export const isLeapYear = function (year: number) {
+   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0
+ }
+@@ -174,14 +156,17 @@ export const sort = function <T extends Datelike>(dates: T[]) {
+ 
+ export const timeToUntilString = function (time: number, utc = true) {
+   const date = new Date(time)
++  const pad = (value: number, length: number) =>
++    String(value).padStart(length, '0')
++
+   return [
+-    padStart(date.getUTCFullYear().toString(), 4, '0'),
+-    padStart(date.getUTCMonth() + 1, 2, '0'),
+-    padStart(date.getUTCDate(), 2, '0'),
++    pad(date.getUTCFullYear(), 4),
++    pad(date.getUTCMonth() + 1, 2),
++    pad(date.getUTCDate(), 2),
+     'T',
+-    padStart(date.getUTCHours(), 2, '0'),
+-    padStart(date.getUTCMinutes(), 2, '0'),
+-    padStart(date.getUTCSeconds(), 2, '0'),
++    pad(date.getUTCHours(), 2),
++    pad(date.getUTCMinutes(), 2),
++    pad(date.getUTCSeconds(), 2),
+     utc ? 'Z' : '',
+   ].join('')
+ }
+diff --git a/src/helpers.ts b/src/helpers.ts
+index 37c3ac0..ce354cc 100644
+--- a/src/helpers.ts
++++ b/src/helpers.ts
+@@ -57,25 +57,6 @@ export const toArray = function <T>(item: T | T[]): T[] {
+   return [item]
+ }
+ 
+-export function padStart(
+-  item: string | number,
+-  targetLength: number,
+-  padString = ' '
+-) {
+-  const str = String(item)
+-  targetLength = targetLength >> 0
+-  if (str.length > targetLength) {
+-    return String(str)
+-  }
+-
+-  targetLength = targetLength - str.length
+-  if (targetLength > padString.length) {
+-    padString += repeat(padString, targetLength / padString.length)
+-  }
+-
+-  return padString.slice(0, targetLength) + String(str)
+-}
+-
+ /**
+  * Python like split
+  */
+diff --git a/src/nlp/index.ts b/src/nlp/index.ts
+index f420d72..8376cf6 100644
+--- a/src/nlp/index.ts
++++ b/src/nlp/index.ts
+@@ -80,39 +80,58 @@ import ENGLISH, { Language } from './i18n'
+  * [weekday]: Monday, ... Sunday
+  * [nth-weekday]: first [weekday], 2nd [weekday], ... last [weekday], ...
+  * [monthday]: first, 1., 2., 1st, 2nd, second, ... 31st, last day, 2nd last day, ..
+- * [date]:
+- * - [month] (0-31(,) ([year])),
+- * - (the) 0-31.(1-12.([year])),
+- * - (the) 0-31/(1-12/([year])),
+- * - [weekday]
+- *
+- * [year]: 0000, 0001, ... 01, 02, ..
++ * [date]: the text after `until` is handed to the host's Date.parse and the
++ * result is read as a UTC wall clock, so the accepted set is whatever that
++ * engine accepts rather than a grammar this parser implements. On V8:
++ * - [month] 0-31(,) [year]     January 1, 2020 - also Jan 1 2020
++ * - (the) 1-12.0-31.[year]     3.4.2020 is March 4, the month comes first
++ * - (the) 1-12/0-31/[year]     3/4/2020 is March 4, the month comes first
++ * - [year]-1-12-0-31           2020-03-04
++ * A weekday name is not a date here: `until Monday` throws. Neither is
++ * day-first input: `until 25/12/2020` throws, because 25 is read as a month.
++ *
++ * [year]: always give one. A date without a year does not mean the current
++ * year - Date.parse supplies 2001, so `until January 1` yields a rule that
++ * expired long ago.
+  *
+  * Definitely not supported for parsing:
+  *
+  * [yearday]: first, 1., 2., 1st, 2nd, second, ... 366th, last day, 2nd last day, ..
+  *
+  * @param {String} text
+- * @return {Object, Boolean} the rule, or null.
++ * @return {RRule} the rule described by the text.
++ * @throws {Error} if the text cannot be parsed into a rule. Text the grammar
++ * never recognises throws `Invalid rule text`; text that starts parsing and
++ * then fails keeps the grammar's own message, such as `Unexpected end`.
+  */
+ const fromText = function (text: string, language: Language = ENGLISH) {
+-  return new RRule(parseText(text, language) || undefined)
++  const options = parseText(text, language)
++  // parseText signals "not a rule" with null, and the constructor turns a
++  // null-ish argument into the default yearly rule. Returning that would hand
++  // the caller a plausible recurrence built from text nobody could parse.
++  if (options === null) {
++    throw new Error(`Invalid rule text: cannot parse ${JSON.stringify(text)}`)
++  }
++  return new RRule(options)
+ }
+ 
+-const common = [
+-  'count',
+-  'until',
+-  'interval',
+-  'byweekday',
+-  'bymonthday',
+-  'bymonth',
+-]
++/**
++ * What each frequency's renderer in totext.ts actually puts into words, which
++ * is what `isFullyConvertible` reads to decide whether the text is complete.
++ * The sub-daily renderers emit nothing but the interval and the count or until
++ * clause, so listing the by-parts for them claimed a completeness they never
++ * had; and WEEKLY does render an hour, so omitting byhour there understated
++ * it. `.jeffy/probes/nlp-convertibility` re-derives this table from the
++ * renderers and fails if the two ever drift apart.
++ */
++const timeOnly = ['count', 'until', 'interval']
++const common = timeOnly.concat(['byweekday', 'bymonthday', 'bymonth'])
+ 
+ ToText.IMPLEMENTED = []
+-ToText.IMPLEMENTED[Frequency.HOURLY] = common
+-ToText.IMPLEMENTED[Frequency.MINUTELY] = common
++ToText.IMPLEMENTED[Frequency.HOURLY] = timeOnly
++ToText.IMPLEMENTED[Frequency.MINUTELY] = timeOnly
+ ToText.IMPLEMENTED[Frequency.DAILY] = ['byhour'].concat(common)
+-ToText.IMPLEMENTED[Frequency.WEEKLY] = common
++ToText.IMPLEMENTED[Frequency.WEEKLY] = ['byhour'].concat(common)
+ ToText.IMPLEMENTED[Frequency.MONTHLY] = common
+ ToText.IMPLEMENTED[Frequency.YEARLY] = ['byweekno', 'byyearday'].concat(common)
+ 
+diff --git a/src/nlp/parsetext.ts b/src/nlp/parsetext.ts
+index fbaeccf..96465d6 100644
+--- a/src/nlp/parsetext.ts
++++ b/src/nlp/parsetext.ts
+@@ -426,10 +426,33 @@ export default function parseText(text: string, language: Language = ENGLISH) {
+ 
+   function F() {
+     if (ttr.symbol === 'until') {
+-      const date = Date.parse(ttr.text)
++      const parsed = new Date(Date.parse(ttr.text))
+ 
+-      if (!date) throw new Error('Cannot parse until date:' + ttr.text)
+-      options.until = new Date(date)
++      // Date.parse returns 0 for the epoch, so a falsy test rejects a date it
++      // could parse; only NaN means it could not.
++      if (isNaN(parsed.getTime())) {
++        throw new Error('Cannot parse until date:' + ttr.text)
++      }
++
++      // Every date form this grammar accepts reaches Date.parse's legacy path,
++      // which reads it in local time - even an ISO one, because ttr.text keeps
++      // the space in front of it. The rest of the library treats a Date as a
++      // UTC wall clock, so re-read the local components and rebuild them in
++      // UTC. Without this the same text parses to a different rule per host.
++      // setUTCFullYear carries the year separately because Date.UTC maps years
++      // 0 to 99 onto 1900 plus the year.
++      const until = new Date(
++        Date.UTC(
++          2000,
++          parsed.getMonth(),
++          parsed.getDate(),
++          parsed.getHours(),
++          parsed.getMinutes(),
++          parsed.getSeconds()
++        )
++      )
++      until.setUTCFullYear(parsed.getFullYear())
++      options.until = until
+     } else if (ttr.accept('for')) {
+       options.count = parseInt(ttr.value[0], 10)
+       ttr.expect('number')
+diff --git a/src/nlp/totext.ts b/src/nlp/totext.ts
+index e77fd12..c4f9b37 100644
+--- a/src/nlp/totext.ts
++++ b/src/nlp/totext.ts
+@@ -2,7 +2,7 @@ import ENGLISH, { Language } from './i18n'
+ import { RRule } from '../rrule'
+ import { Options, ByWeekday } from '../types'
+ import { Weekday } from '../weekday'
+-import { isArray, isNumber, isPresent } from '../helpers'
++import { isArray, isNumber, isPresent, isWeekdayStr } from '../helpers'
+ 
+ // =============================================================================
+ // Helper functions
+@@ -15,6 +15,28 @@ const contains = function (arr: string[], val: string) {
+   return arr.indexOf(val) !== -1
+ }
+ 
++/**
++ * A byweekday entry as a Weekday, whichever of the three accepted spellings
++ * the caller used: a Weekday, a plain integer where 0 is Monday, or a
++ * two-letter string. `isWeekdayStr` is the same guard parseOptions applies to
++ * the same input, so the two agree on what a weekday string is.
++ *
++ * Normalizing here, once, is what lets everything below read one shape. The
++ * renderer used to work from the raw entries and from `String(byweekday)`, and
++ * that made the text depend on how the rule was spelled rather than on what it
++ * means: an integer set never collapsed to "weekdays" while the equivalent
++ * Weekday set did, an unsorted integer set listed its days in input order, a
++ * string set threw from `weekdaytext`, and an nth-prefixed entry such as
++ * `+2MO` matched the substring test for plain Monday and collapsed a
++ * Tuesday-to-Friday set into "weekdays".
++ */
++function toWeekday(wday: ByWeekday): Weekday {
++  if (wday instanceof Weekday) return wday
++  if (isNumber(wday)) return new Weekday(wday)
++  if (isWeekdayStr(wday)) return Weekday.fromStr(wday)
++  return wday as Weekday
++}
++
+ // =============================================================================
+ // ToText
+ // =============================================================================
+@@ -49,9 +71,11 @@ export default class ToText {
+   private options: Partial<Options>
+   private origOptions: Partial<Options>
+   private bymonthday: Options['bymonthday'] | null
++  // Normalized by `toWeekday` in the constructor, so every consumer below can
++  // read `.weekday` and `.n` without asking how the caller spelled the rule.
+   private byweekday: {
+-    allWeeks: ByWeekday[] | null
+-    someWeeks: ByWeekday[] | null
++    allWeeks: Weekday[] | null
++    someWeeks: Weekday[] | null
+     isWeekdays: boolean
+     isEveryDay: boolean
+   } | null
+@@ -82,45 +106,33 @@ export default class ToText {
+     }
+ 
+     if (isPresent(this.origOptions.byweekday)) {
+-      const byweekday = !isArray(this.origOptions.byweekday)
++      const raw = !isArray(this.origOptions.byweekday)
+         ? [this.origOptions.byweekday]
+         : this.origOptions.byweekday
+-      const days = String(byweekday)
++      const byweekday = raw.map(toWeekday)
+ 
+-      this.byweekday = {
+-        allWeeks: byweekday.filter(function (weekday: Weekday) {
+-          return !weekday.n
+-        }),
+-        someWeeks: byweekday.filter(function (weekday: Weekday) {
+-          return Boolean(weekday.n)
+-        }),
+-        isWeekdays:
+-          days.indexOf('MO') !== -1 &&
+-          days.indexOf('TU') !== -1 &&
+-          days.indexOf('WE') !== -1 &&
+-          days.indexOf('TH') !== -1 &&
+-          days.indexOf('FR') !== -1 &&
+-          days.indexOf('SA') === -1 &&
+-          days.indexOf('SU') === -1,
+-        isEveryDay:
+-          days.indexOf('MO') !== -1 &&
+-          days.indexOf('TU') !== -1 &&
+-          days.indexOf('WE') !== -1 &&
+-          days.indexOf('TH') !== -1 &&
+-          days.indexOf('FR') !== -1 &&
+-          days.indexOf('SA') !== -1 &&
+-          days.indexOf('SU') !== -1,
+-      }
++      const allWeeks = byweekday.filter((wday) => !wday.n)
++      const someWeeks = byweekday.filter((wday) => Boolean(wday.n))
+ 
+-      const sortWeekDays = function (a: Weekday, b: Weekday) {
+-        return a.weekday - b.weekday
+-      }
++      // The collapse tests read the every-week days only. An nth-prefixed day
++      // is a separate constraint and never contributes to "weekdays" or
++      // "every day", which is what a substring test over the whole set could
++      // not express.
++      const everyWeek = new Set(allWeeks.map((wday) => wday.weekday))
++      const covers = (days: number[]) =>
++        days.length === everyWeek.size &&
++        days.every((day) => everyWeek.has(day))
+ 
+-      this.byweekday.allWeeks.sort(sortWeekDays)
+-      this.byweekday.someWeeks.sort(sortWeekDays)
++      const sortWeekDays = (a: Weekday, b: Weekday) => a.weekday - b.weekday
++      allWeeks.sort(sortWeekDays)
++      someWeeks.sort(sortWeekDays)
+ 
+-      if (!this.byweekday.allWeeks.length) this.byweekday.allWeeks = null
+-      if (!this.byweekday.someWeeks.length) this.byweekday.someWeeks = null
++      this.byweekday = {
++        allWeeks: allWeeks.length ? allWeeks : null,
++        someWeeks: someWeeks.length ? someWeeks : null,
++        isWeekdays: covers([0, 1, 2, 3, 4]),
++        isEveryDay: covers([0, 1, 2, 3, 4, 5, 6]),
++      }
+     } else {
+       this.byweekday = null
+     }
+@@ -133,17 +145,52 @@ export default class ToText {
+    * @return {Boolean}
+    */
+   static isFullyConvertible(rrule: RRule) {
+-    const canConvert = true
+-
+     if (!(rrule.options.freq in ToText.IMPLEMENTED)) return false
+     if (rrule.origOptions.until && rrule.origOptions.count) return false
+ 
+     for (const key in rrule.origOptions) {
+-      if (contains(['dtstart', 'tzid', 'wkst', 'freq'], key)) return true
++      // These four never appear in the text and never make it incomplete, so
++      // they are skipped. This was a `return true`, which ended the loop on
++      // whichever of them came first in key order - and since `freq` is set on
++      // almost every rule, the remaining keys were never examined at all.
++      if (contains(['dtstart', 'tzid', 'wkst', 'freq'], key)) continue
+       if (!contains(ToText.IMPLEMENTED[rrule.options.freq], key)) return false
+     }
+ 
+-    return canConvert
++    // byhour is the one part the per-frequency table cannot answer on its own,
++    // because the DAILY and WEEKLY renderers reach `_byhour()` only for some
++    // shapes of an otherwise identical rule. Ask the same predicate they
++    // branch on, so the text and this flag cannot disagree.
++    if (
++      isPresent(rrule.origOptions.byhour) &&
++      !new ToText(rrule).rendersByhour()
++    ) {
++      return false
++    }
++
++    return true
++  }
++
++  /**
++   * Whether the frequency renderers will put `byhour` into words. DAILY gives
++   * that slot to a monthday or weekday part when either is present, and WEEKLY
++   * skips the hour when its weekday set collapses to "weekdays" or "every
++   * day". Only these two frequencies render an hour at all. Both renderers and
++   * `isFullyConvertible` read this one predicate; the seven shapes it
++   * distinguishes are pinned in `.jeffy/probes/nlp-convertibility`.
++   */
++  rendersByhour() {
++    if (!isPresent(this.origOptions.byhour)) return false
++
++    if (this.options.freq === RRule.DAILY) {
++      return !this.bymonthday && !this.byweekday
++    }
++
++    if (this.options.freq === RRule.WEEKLY) {
++      return !this.byweekday?.isWeekdays && !this.byweekday?.isEveryDay
++    }
++
++    return false
+   }
+ 
+   isFullyConvertible() {
+@@ -239,8 +286,11 @@ export default class ToText {
+     if (this.bymonthday) {
+       this._bymonthday()
+     } else if (this.byweekday) {
+-      this._byweekday()
+-    } else if (this.origOptions.byhour) {
++      // The noun above already said "weekday(s)" when the set collapses.
++      this._byweekday(this.byweekday.isWeekdays)
++    }
++
++    if (this.rendersByhour()) {
+       this._byhour()
+     }
+   }
+@@ -264,10 +314,14 @@ export default class ToText {
+       } else {
+         this.add(gettext('on')).add(gettext('weekdays'))
+       }
++      // The collapse is worded above, but the nth days are not, and they used
++      // to be lost here.
++      this._byweekday(true)
+     } else if (this.byweekday && this.byweekday.isEveryDay) {
+       this.add(
+         this.plural(this.options.interval) ? gettext('days') : gettext('day')
+       )
++      this._byweekday(true)
+     } else {
+       if (this.options.interval === 1) this.add(gettext('week'))
+ 
+@@ -279,10 +333,10 @@ export default class ToText {
+       if (this.bymonthday) {
+         this._bymonthday()
+       } else if (this.byweekday) {
+-        this._byweekday()
++        this._byweekday(false)
+       }
+ 
+-      if (this.origOptions.byhour) {
++      if (this.rendersByhour()) {
+         this._byhour()
+       }
+     }
+@@ -311,10 +365,10 @@ export default class ToText {
+     }
+     if (this.bymonthday) {
+       this._bymonthday()
+-    } else if (this.byweekday && this.byweekday.isWeekdays) {
+-      this.add(gettext('on')).add(gettext('weekdays'))
+     } else if (this.byweekday) {
+-      this._byweekday()
++      // This used to carry its own collapse branch that worded "on weekdays"
++      // and then returned, losing any nth days. _byweekday words both.
++      this._byweekday(false)
+     }
+   }
+ 
+@@ -341,7 +395,7 @@ export default class ToText {
+     if (this.bymonthday) {
+       this._bymonthday()
+     } else if (this.byweekday) {
+-      this._byweekday()
++      this._byweekday(false)
+     }
+ 
+     if (this.options.byyearday) {
+@@ -375,15 +429,50 @@ export default class ToText {
+         this.list(this.bymonthday, this.nth, gettext('and'))
+       )
+     }
+-    // this.add(gettext('DAY'))
++
++    // The nth days are a separate constraint from the monthdays and from the
++    // every-week days, and this path used to word neither them nor a mention
++    // that they existed, so a rule combining a monthday with an nth weekday
++    // lost the weekday half entirely.
++    if (this.byweekday && this.byweekday.someWeeks) {
++      this.add(gettext('and'))
++        .add(gettext('on the'))
++        .add(
++          this.list(this.byweekday.someWeeks, this.weekdaytext, gettext('and'))
++        )
++    }
+   }
+ 
+-  private _byweekday() {
++  /**
++   * Word the whole byweekday part: the every-week days and the nth-of-period
++   * days, both of which carry rule meaning and neither of which may be
++   * dropped.
++   *
++   * `weekdaysAlreadyWorded` is the caller's answer to one question: did you
++   * already put the Monday-to-Friday collapse into words yourself? DAILY and
++   * WEEKLY do, folding it into the frequency noun as "every weekday", so they
++   * pass true and this method stays quiet about the every-week days. MONTHLY
++   * and YEARLY do not, so they pass false and get "on weekdays" from here.
++   *
++   * The parameter is required rather than defaulted because that assumption
++   * used to be implicit, and three of the four frequency renderers broke it in
++   * three different ways: YEARLY had no collapse branch at all and so dropped
++   * the whole BYDAY, while WEEKLY and MONTHLY worded the collapse and then
++   * returned without ever asking for the nth days. Requiring an answer makes
++   * the compiler ask a new renderer the question. Pinned across every
++   * frequency and weekday-set shape by `.jeffy/probes/nlp-weekday-shapes`.
++   */
++  private _byweekday(weekdaysAlreadyWorded: boolean) {
+     const gettext = this.gettext
+-    if (this.byweekday.allWeeks && !this.byweekday.isWeekdays) {
+-      this.add(gettext('on')).add(
+-        this.list(this.byweekday.allWeeks, this.weekdaytext)
+-      )
++
++    if (this.byweekday.allWeeks && !weekdaysAlreadyWorded) {
++      if (this.byweekday.isWeekdays) {
++        this.add(gettext('on')).add(gettext('weekdays'))
++      } else {
++        this.add(gettext('on')).add(
++          this.list(this.byweekday.allWeeks, this.weekdaytext)
++        )
++      }
+     }
+ 
+     if (this.byweekday.someWeeks) {
+diff --git a/src/optionstostring.ts b/src/optionstostring.ts
+index 1008669..e9a3528 100644
+--- a/src/optionstostring.ts
++++ b/src/optionstostring.ts
+@@ -1,7 +1,14 @@
+ import { Options } from './types'
+ import { RRule, DEFAULT_OPTIONS } from './rrule'
+-import { includes, isPresent, isArray, isNumber, toArray } from './helpers'
+-import { Weekday } from './weekday'
++import {
++  includes,
++  isPresent,
++  isArray,
++  isNumber,
++  isWeekdayStr,
++  toArray,
++} from './helpers'
++import { Weekday, WeekdayStr } from './weekday'
+ import { timeToUntilString } from './dateutil'
+ import { DateWithZone } from './datewithzone'
+ 
+@@ -45,8 +52,8 @@ export function optionsToString(options: Partial<Options>) {
+ 
+           */
+         key = 'BYDAY'
+-        outValue = toArray<Weekday | number[] | number>(
+-          value as Weekday | number[] | number
++        outValue = toArray<Weekday | number[] | number | WeekdayStr>(
++          value as Weekday | number[] | number | WeekdayStr
+         )
+           .map((wday) => {
+             if (wday instanceof Weekday) {
+@@ -57,6 +64,16 @@ export function optionsToString(options: Partial<Options>) {
+               return new Weekday(wday[0], wday[1])
+             }
+ 
++            // A two-letter string is one of the three spellings `ByWeekday`
++            // accepts, and it used to fall through to the numeric branch, where
++            // `new Weekday('FR')` indexes ALL_WEEKDAYS by a string and
++            // serializes as `BYDAY=undefined`. The same guard parseOptions uses
++            // is used here, so the parser and the serializer agree on what a
++            // weekday string is.
++            if (isWeekdayStr(wday)) {
++              return Weekday.fromStr(wday)
++            }
++
+             return new Weekday(wday)
+           })
+           .toString()
+diff --git a/src/parseoptions.ts b/src/parseoptions.ts
+index 60e2567..a681641 100644
+--- a/src/parseoptions.ts
++++ b/src/parseoptions.ts
+@@ -9,9 +9,38 @@ import {
+ } from './helpers'
+ import { RRule, defaultKeys, DEFAULT_OPTIONS } from './rrule'
+ import { getWeekday, isDate, isValidDate } from './dateutil'
+-import { Weekday } from './weekday'
++import { Weekday, weekdayFromToken } from './weekday'
+ import { Time } from './datetime'
+ 
++/**
++ * Options whose value must be an integer, or an array of integers. These are
++ * validated here rather than at each use site because a non-numeric value that
++ * reaches the iterator does not fail loudly: it either yields silently wrong
++ * results or spins forever.
++ */
++const NUMERIC_OPTIONS: (keyof Options)[] = [
++  'interval',
++  'count',
++  'byeaster',
++  'bysetpos',
++  'bymonth',
++  'bymonthday',
++  'bynmonthday',
++  'byyearday',
++  'byweekno',
++  'byhour',
++  'byminute',
++  'bysecond',
++]
++
++function isInteger(value: unknown): boolean {
++  return isNumber(value) && Number.isInteger(value)
++}
++
++function isValidNumericOption(value: unknown): boolean {
++  return isArray(value) ? value.every(isInteger) : isInteger(value)
++}
++
+ export function initializeOptions(options: Partial<Options>) {
+   const invalid: string[] = []
+   const keys = Object.keys(options) as (keyof Options)[]
+@@ -22,6 +51,13 @@ export function initializeOptions(options: Partial<Options>) {
+     if (isDate(options[key]) && !isValidDate(options[key])) {
+       invalid.push(key)
+     }
++    if (
++      includes(NUMERIC_OPTIONS, key) &&
++      isPresent(options[key]) &&
++      !isValidNumericOption(options[key])
++    ) {
++      invalid.push(key)
++    }
+   }
+ 
+   if (invalid.length) {
+@@ -46,8 +82,16 @@ export function parseOptions(options: Partial<Options>) {
+     opts.wkst = RRule.MO.weekday
+   } else if (isNumber(opts.wkst)) {
+     // cool, just keep it like that
+-  } else {
++  } else if (typeof opts.wkst === 'string') {
++    // A string wkst used to reach the branch below, where `.weekday` is
++    // undefined; `addWeekly` then evaluated `-(getWeekday() - undefined) +
++    // days * 7` to NaN, the day never advanced and `all()` never returned. Any
++    // string now resolves or is refused by name.
++    opts.wkst = weekdayFromToken(opts.wkst).weekday
++  } else if (opts.wkst instanceof Weekday) {
+     opts.wkst = opts.wkst.weekday
++  } else {
++    throw new SyntaxError(`Invalid wkst: ${String(opts.wkst)}`)
+   }
+ 
+   if (isPresent(opts.bysetpos)) {
+@@ -139,8 +183,12 @@ export function parseOptions(options: Partial<Options>) {
+   } else if (isNumber(opts.byweekday)) {
+     opts.byweekday = [opts.byweekday]
+     opts.bynweekday = null
+-  } else if (isWeekdayStr(opts.byweekday)) {
+-    opts.byweekday = [Weekday.fromStr(opts.byweekday).weekday]
++  } else if (typeof opts.byweekday === 'string') {
++    // Every string goes through the guard, not only the ones that already
++    // look valid. An unrecognised token used to fall past this branch into the
++    // array loop below, where a two-character string was iterated as its own
++    // characters and produced [null, null].
++    opts.byweekday = [weekdayFromToken(opts.byweekday).weekday]
+     opts.bynweekday = null
+   } else if (opts.byweekday instanceof Weekday) {
+     if (!opts.byweekday.n || opts.freq > RRule.MONTHLY) {
+@@ -160,11 +208,15 @@ export function parseOptions(options: Partial<Options>) {
+       if (isNumber(wday)) {
+         byweekday.push(wday)
+         continue
+-      } else if (isWeekdayStr(wday)) {
+-        byweekday.push(Weekday.fromStr(wday).weekday)
++      } else if (typeof wday === 'string') {
++        byweekday.push(weekdayFromToken(wday).weekday)
+         continue
+       }
+ 
++      if (!(wday instanceof Weekday)) {
++        throw new SyntaxError(`Invalid weekday: ${String(wday)}`)
++      }
++
+       if (!wday.n || opts.freq > RRule.MONTHLY) {
+         byweekday.push(wday.weekday)
+       } else {
+diff --git a/src/parsestring.ts b/src/parsestring.ts
+index 049de81..15039e4 100644
+--- a/src/parsestring.ts
++++ b/src/parsestring.ts
+@@ -1,14 +1,41 @@
+ import { Options, Frequency } from './types'
+-import { Weekday } from './weekday'
++import { Weekday, weekdayFromToken } from './weekday'
+ import { untilStringToDate } from './dateutil'
+-import { Days } from './rrule'
++
++/**
++ * True for a line that carries only DTSTART. The separator set matches the one
++ * parseDtstart accepts - `DTSTART:v`, `DTSTART=v` and `DTSTART;TZID=z:v` are
++ * all DTSTART lines. The legacy form `RRULE:FREQ=...;DTSTART;TZID=...` is a
++ * rule line, not a DTSTART line, so this anchors at the start of the line.
++ */
++function isDtstartLine(line: string) {
++  return /^DTSTART[;:=]/i.test(line)
++}
+ 
+ export function parseString(rfcString: string): Partial<Options> {
+-  const options = rfcString
++  const lines = rfcString
+     .split('\n')
++    .map((line) => line.trim())
++    .filter((line) => line.length > 0)
++
++  // A single RRule cannot represent more than one rule. Merging the extra
++  // lines would fold an EXRULE's options into the RRULE, and dropping them
++  // loses the caller's input without a word, so reject and name the remedy.
++  const ruleLines = lines.filter((line) => !isDtstartLine(line))
++  if (ruleLines.length > 1) {
++    throw new Error(
++      `Cannot parse ${ruleLines.length} rule lines into a single RRule; ` +
++        'use rrulestr() to parse a set of rules'
++    )
++  }
++
++  return lines
+     .map(parseLine)
+-    .filter((x) => x !== null)
+-  return { ...options[0], ...options[1] }
++    .filter((options): options is Partial<Options> => options !== null)
++    .reduce<Partial<Options>>(
++      (merged, options) => ({ ...merged, ...options }),
++      {}
++    )
+ }
+ 
+ export function parseDtstart(line: string) {
+@@ -32,7 +59,9 @@ export function parseDtstart(line: string) {
+ }
+ 
+ function parseLine(rfcString: string) {
+-  rfcString = rfcString.replace(/^\s+|\s+$/, '')
++  // trim(), not /^\s+|\s+$/: without the global flag that regex replaces only
++  // the first match, so a line padded on both sides keeps its trailing run.
++  rfcString = rfcString.trim()
+   if (!rfcString.length) return null
+ 
+   const header = /^([A-Z]+?)[:;]/.exec(rfcString.toUpperCase())
+@@ -65,7 +94,7 @@ function parseRrule(line: string) {
+         options.freq = Frequency[value.toUpperCase() as keyof typeof Frequency]
+         break
+       case 'WKST':
+-        options.wkst = Days[value.toUpperCase() as keyof typeof Days]
++        options.wkst = weekdayFromToken(value.toUpperCase())
+         break
+       case 'COUNT':
+       case 'INTERVAL':
+@@ -126,12 +155,16 @@ function parseIndividualNumber(value: string) {
+ }
+ 
+ function parseWeekday(value: string) {
+-  const days = value.split(',')
++  // RFC 5545 3.1 makes enumerated values case-insensitive; upper-case before
++  // the lookups, as the WKST branch already does. This covers both token
++  // forms below - the bare lookup and the nth-prefixed regex, which only
++  // matches upper case.
++  const days = value.toUpperCase().split(',')
+ 
+   return days.map((day) => {
+     if (day.length === 2) {
+       // MO, TU, ...
+-      return Days[day as keyof typeof Days] // wday instanceof Weekday
++      return weekdayFromToken(day) // wday instanceof Weekday
+     }
+ 
+     // -1MO, +3FR, 1SO, 13TU ...
+@@ -140,8 +173,7 @@ function parseWeekday(value: string) {
+       throw new SyntaxError(`Invalid weekday string: ${day}`)
+     }
+     const n = Number(parts[1])
+-    const wdaypart = parts[2] as keyof typeof Days
+-    const wday = Days[wdaypart].weekday
++    const wday = weekdayFromToken(parts[2]).weekday
+     return new Weekday(wday, n)
+   })
+ }
+diff --git a/src/rrule.ts b/src/rrule.ts
+index cab2d1d..40a0417 100644
+--- a/src/rrule.ts
++++ b/src/rrule.ts
+@@ -17,22 +17,17 @@ import { parseOptions, initializeOptions } from './parseoptions'
+ import { parseString } from './parsestring'
+ import { optionsToString } from './optionstostring'
+ import { Cache, CacheKeys } from './cache'
+-import { Weekday } from './weekday'
++import { Weekday, WEEKDAYS } from './weekday'
+ import { iter } from './iter/index'
+ 
+ // =============================================================================
+ // RRule
+ // =============================================================================
+ 
+-export const Days = {
+-  MO: new Weekday(0),
+-  TU: new Weekday(1),
+-  WE: new Weekday(2),
+-  TH: new Weekday(3),
+-  FR: new Weekday(4),
+-  SA: new Weekday(5),
+-  SU: new Weekday(6),
+-}
++// The canonical instances live with the type, so the token guard in weekday.ts
++// resolves to these very objects and RRule.MO is identical to a Monday parsed
++// from a string.
++export const Days = WEEKDAYS
+ 
+ export const DEFAULT_OPTIONS: Options = {
+   freq: Frequency.YEARLY,
+@@ -118,7 +113,18 @@ export class RRule implements QueryMethods {
+   static parseString = parseString
+ 
+   static fromString(str: string) {
+-    return new RRule(RRule.parseString(str) || undefined)
++    const options = RRule.parseString(str)
++    // A parse that recognised nothing at all still reaches the constructor,
++    // which fills in the default yearly rule - so unparseable input would come
++    // back as a plausible recurrence nobody asked for. A rule line missing
++    // FREQ is not this case: `toString` emits such lines (`RRULE:COUNT=1`) and
++    // they must keep round-tripping, so the test is emptiness, not FREQ.
++    if (Object.keys(options).length === 0) {
++      throw new Error(
++        `Invalid rule string: no rule found in ${JSON.stringify(str)}`
++      )
++    }
++    return new RRule(options)
+   }
+ 
+   static optionsToString = optionsToString
+@@ -144,9 +150,11 @@ export class RRule implements QueryMethods {
+   }
+ 
+   /**
+-   * @param {Function} iterator - optional function that will be called
+-   * on each date that is added. It can return false
+-   * to stop the iteration.
++   * @param {Function} iterator - optional function called with each candidate
++   * occurrence and the number of occurrences accepted so far. Returning a
++   * truthy value accepts the date and continues; returning a false-y value
++   * discards that date and stops the iteration, so the callback runs exactly
++   * one more time than the length of the returned array.
+    * @return Array containing all recurrences.
+    */
+   all(iterator?: (d: Date, len: number) => boolean): Date[] {
+@@ -168,6 +176,9 @@ export class RRule implements QueryMethods {
+    * themselves occurrences. With inc == True, they will be included in the
+    * list, if they are found in the recurrence set.
+    *
++   * @param {Function} iterator - optional, with the same contract as the one
++   * accepted by all(): a false-y return discards that date and stops the
++   * iteration.
+    * @return Array
+    */
+   between(
+@@ -246,13 +257,25 @@ export class RRule implements QueryMethods {
+   }
+ 
+   /**
+-   * Converts the rrule into its string representation
++   * Converts the rrule into its string representation. The result always
++   * parses back through `RRule.fromString`, so a rule none of whose options
++   * survive serialization still states its frequency rather than serializing
++   * to nothing.
+    *
+    * @see <http://www.ietf.org/rfc/rfc2445.txt>
+    * @return String
+    */
+   toString() {
+-    return optionsToString(this.origOptions)
++    const str = optionsToString(this.origOptions)
++    // Every option can be absent and the rule is still yearly, because that is
++    // the constructor's default. The empty string does not say so, and FREQ is
++    // REQUIRED by RFC 5545 3.3.10, so state the frequency the rule has. The
++    // guard belongs here rather than in optionsToString, which RRuleSet calls
++    // as a fragment serializer and must be free to return nothing.
++    if (str === '') {
++      return `RRULE:FREQ=${RRule.FREQUENCIES[this.options.freq]}`
++    }
++    return str
+   }
+ 
+   /**
+diff --git a/src/rrulestr.ts b/src/rrulestr.ts
+index 61f3707..3cbfd1f 100644
+--- a/src/rrulestr.ts
++++ b/src/rrulestr.ts
+@@ -101,6 +101,23 @@ function buildRule(s: string, options: Partial<RRuleStrOptions>) {
+     options.unfold = true
+   }
+ 
++  // Both options are documented as defaults: each applies only when the parsed
++  // string carries no value of its own. Resolve them once, before the branch,
++  // so the two shapes below cannot disagree about them - they used to, the set
++  // branch ignoring the options outright while the single-rule branch let them
++  // override a DTSTART or TZID the string did carry.
++  //
++  // Every site below that takes a start or a zone reads this resolved pair, and
++  // that is the contract: rset.dtstart, rset.tzid, the RRULE loop, the EXRULE
++  // loop, the compatible-mode rdate, and the single-rule branch. The EXRULE
++  // loop kept reading the raw parsed values for a while after the others moved,
++  // which left a set whose exclusion rule started at the current time and
++  // therefore excluded nothing, invisibly - the two forms serialize the same,
++  // because valueOf drops DTSTART lines from exrules. Pinned by
++  // .jeffy/probes/rrulestr-option-defaults, which drives all six.
++  const defaultDtstart = dtstart || options.dtstart || undefined
++  const defaultTzid = tzid || options.tzid || undefined
++
+   if (
+     options.forceset ||
+     rrulevals.length > 1 ||
+@@ -110,11 +127,13 @@ function buildRule(s: string, options: Partial<RRuleStrOptions>) {
+   ) {
+     const rset = new RRuleSet(noCache)
+ 
+-    rset.dtstart(dtstart)
+-    rset.tzid(tzid || undefined)
++    rset.dtstart(defaultDtstart)
++    rset.tzid(defaultTzid)
+ 
+     rrulevals.forEach((val) => {
+-      rset.rrule(new RRule(groomRruleOptions(val, dtstart, tzid), noCache))
++      rset.rrule(
++        new RRule(groomRruleOptions(val, defaultDtstart, defaultTzid), noCache)
++      )
+     })
+ 
+     rdatevals.forEach((date) => {
+@@ -122,14 +141,19 @@ function buildRule(s: string, options: Partial<RRuleStrOptions>) {
+     })
+ 
+     exrulevals.forEach((val) => {
+-      rset.exrule(new RRule(groomRruleOptions(val, dtstart, tzid), noCache))
++      rset.exrule(
++        new RRule(groomRruleOptions(val, defaultDtstart, defaultTzid), noCache)
++      )
+     })
+ 
+     exdatevals.forEach((date) => {
+       rset.exdate(date)
+     })
+ 
+-    if (options.compatible && options.dtstart) rset.rdate(dtstart)
++    // Compatible mode treats a DTSTART as the first recurrence instance, per
++    // the RFC. The guard used to test the option while passing the parsed
++    // value, so the two could disagree and hand rdate an undefined date.
++    if (options.compatible && defaultDtstart) rset.rdate(defaultDtstart)
+     return rset
+   }
+ 
+@@ -137,8 +161,8 @@ function buildRule(s: string, options: Partial<RRuleStrOptions>) {
+   return new RRule(
+     groomRruleOptions(
+       val,
+-      val.dtstart || options.dtstart || dtstart,
+-      val.tzid || options.tzid || tzid
++      val.dtstart || defaultDtstart,
++      val.tzid || defaultTzid
+     ),
+     noCache
+   )
+diff --git a/src/weekday.ts b/src/weekday.ts
+index dc4d61c..a32a413 100644
+--- a/src/weekday.ts
++++ b/src/weekday.ts
+@@ -49,3 +49,42 @@ export class Weekday {
+     return this.weekday === 6 ? 0 : this.weekday + 1
+   }
+ }
++
++/**
++ * The canonical Weekday instance for each token. `Days` in rrule.ts, and so
++ * `RRule.MO` and its siblings, are these very objects, so a weekday resolved
++ * from a token is identical to the constant a caller would have passed.
++ */
++export const WEEKDAYS = {
++  MO: new Weekday(0),
++  TU: new Weekday(1),
++  WE: new Weekday(2),
++  TH: new Weekday(3),
++  FR: new Weekday(4),
++  SA: new Weekday(5),
++  SU: new Weekday(6),
++}
++
++/**
++ * The one place that decides whether a string is a weekday, for every entry
++ * path. The RFC-string parser has always gone through this and rejected an
++ * unrecognised token; the programmatic options path did not, and the two
++ * disagreed in ways that depended on which option was involved - an
++ * unrecognised `byweekday` was swallowed into an empty occurrence set, while
++ * any string `wkst` became `undefined` and hung the iterator, because
++ * `addWeekly` then computed NaN and the day never advanced.
++ *
++ * Case is significant, matching `WeekdayStr`: callers hand tokens to a typed
++ * API rather than to a parser, so `'mo'` is refused by name rather than
++ * quietly repaired. The RFC-string parser upper-cases its tokens before the
++ * lookup, because RFC 5545 3.1 makes enumerated property values
++ * case-insensitive there; that normalization is the parser's, never this
++ * guard's.
++ */
++export function weekdayFromToken(token: string): Weekday {
++  const day = WEEKDAYS[token as keyof typeof WEEKDAYS]
++  if (!day) {
++    throw new SyntaxError(`Invalid weekday string: ${token}`)
++  }
++  return day
++}

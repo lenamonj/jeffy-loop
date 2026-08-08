@@ -32,6 +32,7 @@ loss rather than hiding it.
 | python-dotenv | 8 | 73 | converged | evaluator countersigned | 1 |
 | quantstats | 4 | 40 | converged | evaluator countersigned | 0 |
 | records | 1 | 7 | converged | pre-evaluator | 0 |
+| rrule | 4 | 33 | converged | evaluator countersigned | 0 |
 | RuboCop | 1 | 7 | converged | evaluator countersigned | 0 |
 | Spectre.Console | 1 | 8 | converged | evaluator countersigned | 0 |
 | speedtest-cli | 1 | 5 | converged | pre-evaluator | 0 |
@@ -50,9 +51,9 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 17 brownfield convergences:
+The engine tightened over time. Of the 18 brownfield convergences:
 
-- **12** were countersigned by the adversarial evaluator, the current standard.
+- **13** were countersigned by the adversarial evaluator, the current standard.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
   standing instruction against sub-agents, and the receipt says so rather than
   working around it.
@@ -60,7 +61,7 @@ The engine tightened over time. Of the 17 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 17 as one number
+Every receipt names the standard its own run met. Pooling all 18 as one number
 would overstate the earliest four.
 
 ## What was started and never published
@@ -89,7 +90,7 @@ Convergence here is per-run, and a blocked run is relaunched from written
 state with a fresh evaluator budget. Under that protocol, persistence raises
 the chance of eventually converging - dotenv took eight runs, dayjs eight,
 gitignore five with three terminal rejections along the way. The run counts
-above are published precisely so that "17 converged" is read with the cost
+above are published precisely so that "18 converged" is read with the cost
 attached rather than as a success rate.
 
 Targets from here on carry a **pre-registered run budget** committed before
@@ -97,4 +98,4 @@ their first iteration, so the stopping rule is fixed in advance rather than
 chosen after seeing the outcome. TOML-M was the first, at five runs; it used
 one. `go-yaml` was the second, also at five runs; it used three and the
 remaining two were not spent, because a budget is a ceiling rather than a
-quota.
+quota. `rrule` was the third, at five runs; it used four.
