@@ -188,6 +188,9 @@ check_markers skills/jeffy/references/plan-default.md \
   "scope line names the enumeration command" \
   "recording its second occurrence is marked" \
   "re-invoked at the declaration" \
+  "files its findings and the run continues" \
+  "gate findings closed, declaration deferred" \
+  "it enters gate salvage" \
   ".jeffy/evaluator/<run-id>-<n>.md" \
   "reads the highest ordinal on record" \
   "committed and unmodified" \
@@ -236,6 +239,9 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Evaluator gate:" \
   "Evaluator: PASS" \
   "at most 2 evaluator invocations per run" \
+  "files its findings and the run continues" \
+  "blocked - N gate findings closed, declaration deferred" \
+  "it enters gate salvage" \
   "never overwriting it" \
   "so two runs in one session are told apart" \
   "Closeout:" \
