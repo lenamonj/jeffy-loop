@@ -29,6 +29,26 @@ This receipt is published with that stated first because it is the most informat
 | `edee2f9` (base) | 355 run, 355 passed, 0 failed, 47 excluded by the suite's own known-failure list |
 | `3fa4016` (converged) | 355 run, 355 passed, 0 failed, same 47 excluded |
 
+Those two rows are reproducible from published artifacts alone, without this
+machine and without the converged tree, which is local and unpublished.
+[`reproduce-conformance.sh`](reproduce-conformance.sh) clones pristine
+upstream twice, measures the corpus, applies this receipt's `fixes.patch` to
+the second copy, and measures again. `fixes.patch` is the run's product diff
+with the loop's state files excluded, so the patched clone and the converged
+tree are identical everywhere the corpus can see. It takes about a minute and
+needs only `git`, `go` and `bash`. It exits nonzero unless both
+measurements match the figures published here, so its exit status is itself
+the verdict rather than a formality. Its scope is exactly the two rows below:
+it re-derives the oracle measurement and nothing else. The 20 findings, the
+surface inventory and the evaluator verdicts still rest on the journal and on
+`fixes.patch`, and the script does not attempt to re-prove them:
+
+```
+tree                ran   passed   failed     exit
+base                355      355        0        0
+base+fixes          355      355        0        0
+```
+
 **The external oracle moved by nothing.** 468 inserted lines of product code changed no conformance outcome in either direction. The 20 findings below may all be real - the evidence for each is in the journal - but none of them was a conformance defect, and the instrument that could have found one was dark for the whole run.
 
 ## What the independent check found that the loop did not
