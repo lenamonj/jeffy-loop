@@ -230,6 +230,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Backlog discipline:" \
   "Stall check:" \
   "the harness-written .claude/jeffy-loop.local.md and .claude/settings.local.json, and no BACKLOG.md item changed state" \
+  "added, removed, edited, or moved between sections" \
   "for at most three consecutive iterations" \
   "Checkpoint:" \
   "Lessons:" \
@@ -278,6 +279,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
 # Phase 2 shipped them pinned by nothing but the behavior fixtures that write
 # them.
 check_markers skills/jeffy/hooks/stop-hook.sh \
+  "added, removed, edited, or moved between sections" \
   "RUN STATE" \
   "CLOSING EXTENSION" \
   "JEFFY_VERSION" \
@@ -817,6 +819,22 @@ if command -v jq >/dev/null 2>&1; then
       # states no verdict is itself the violation. The cases that exercise
       # that check write their own journals with hb_write_journal_entries.
       printf '# Journal\n\n## iter %s/%s | sess-1-000000 | 2026-01-01 | T1 | done\n\nTask: t.\nVerification: Evaluator: PASS - clean sweep.\n' "$1" "$2" > "$hb_proj/JOURNAL.md"
+    }
+    # Mirrors the hook's ledger signal exactly. From 1.8.0 that signal is a
+    # digest of the task lines under Now, Next and Later rather than a cksum
+    # of the whole file, so a fixture still checksumming the file would be
+    # comparing a different quantity and every stall scenario turning on the
+    # ledger would be testing nothing. Reads the current $hb_proj, so it is
+    # correct in whichever sandbox the caller has switched to.
+    hb_backlog_sig() {
+      awk '
+        { sub(/\r$/, "") }
+        /^## Now$/ { sec = "Now"; next }
+        /^## Next$/ { sec = "Next"; next }
+        /^## Later$/ { sec = "Later"; next }
+        /^## / { sec = "" }
+        sec != "" && /^- \[[ b]\]/ { print sec "|" $0 }
+      ' "$hb_proj/BACKLOG.md" | cksum | tr ' \t' '--'
     }
     hb_write_backlog() { # $1 optional open task line, $2 optional Converged line
       {
@@ -1415,7 +1433,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_git add -A >/dev/null 2>&1
       hb_git commit -q -m stall-product >/dev/null 2>&1 || true
       hb_head="$(hb_git rev-parse HEAD)"
-      hb_ck="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
+      hb_ck="$(hb_backlog_sig)"
 
       hb_write_state_stall sess-1 1 3 "$hb_prev_head" "$hb_ck" 0
       hb_out="$(hb_run sess-1 'still working' '')"
@@ -1441,6 +1459,55 @@ if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$hb_out"
         fault "stop hook flagged a backlog-only iteration as flat"
       fi
+
+      # P1-19: the two definitions of ledger progress agreed on task lines
+      # and disagreed on everything else in the file. The hook checksummed
+      # the whole of BACKLOG.md, so a reworded Declined note or a new Settled
+      # classes line read as progress here while the prompt's own stall rule
+      # - no BACKLOG.md item changed state - called the same iteration a
+      # stall. The laxer definition was the one deciding whether a run kept
+      # going. Now both are the task lines under Now, Next and Later.
+      hb_write_backlog ''
+      hb_ck_prose="$(hb_backlog_sig)"
+      printf '\n## Declined\n\nD1: reworded on the way past, no task line touched.\n' >> "$hb_proj/BACKLOG.md"
+      if [ "$(hb_backlog_sig)" = "$hb_ck_prose" ] \
+        && [ "$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')" != "$(printf '' | cksum | tr ' \t' '--')" ]; then
+        hb_write_state_stall sess-1 1 3 "$hb_head" "$hb_ck_prose" 0
+        hb_out="$(hb_run sess-1 'still working' '')"
+        if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+          && grep -q '^stall: 1$' "$hb_state"; then
+          pass "stop hook reads a BACKLOG.md prose edit that moved no task line as a stall, not progress"
+        else
+          printf '%s\n' "$hb_out"
+          fault "stop hook counted a ledger prose edit as progress while the prompt called it a stall"
+        fi
+      else
+        fault "the ledger-signal fixture did not build a prose-only BACKLOG.md change"
+      fi
+
+      # And the other side of the same definition: a task line that moved
+      # between sections is a state change even though the file's task lines
+      # are otherwise identical.
+      hb_write_backlog '- [ ] T9 (Low, docs, documentation): a filed task. Acceptance: the check runs.'
+      hb_ck_moved="$(hb_backlog_sig)"
+      hb_write_backlog ''
+      printf '\n## Declined\n\n- [ ] T9 (Low, docs, documentation): a filed task. Acceptance: the check runs.\n' >> "$hb_proj/BACKLOG.md"
+      hb_write_state_stall sess-1 1 3 "$hb_head" "$hb_ck_moved" 0
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q '^stall: 0$' "$hb_state"; then
+        pass "stop hook counts a task line moved out of Now to Declined as a ledger state change"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook missed a task line leaving the open sections"
+      fi
+      hb_write_backlog ''
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m stall-ledger-reset >/dev/null 2>&1 || true
+      hb_head="$(hb_git rev-parse HEAD)"
+      hb_ck="$(hb_backlog_sig)"
 
       hb_write_state_stall sess-1 1 3 "$hb_head" "$hb_ck" 0
       hb_out="$(hb_run sess-1 'still working' '')"
@@ -1588,7 +1655,7 @@ if command -v jq >/dev/null 2>&1; then
     # stderr note; the budget path ends the run normally even with the
     # flag armed and both signals flat (the budget is the hard stop).
     hb_write_backlog ''
-    hb_ck0="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
+    hb_ck0="$(hb_backlog_sig)"
     hb_write_state_stall sess-1 2 6 none "$hb_ck0" 1
     hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
     if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt"; then
@@ -1656,7 +1723,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_journal_entries
       hb_git add -A >/dev/null 2>&1
       hb_git commit -q -m p11-base >/dev/null 2>&1
-      hb_p11_ck="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
+      hb_p11_ck="$(hb_backlog_sig)"
       # One real iteration: write the journal entry this iteration is
       # supposed to have written, commit it the way the checkpoint does, and
       # hand the hook the head it recorded at the previous turn end.
@@ -1965,7 +2032,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_plan_full none '- [x] core: swept at abc1234 - probed'
       hb_git add -A >/dev/null 2>&1
       hb_git commit -q -m 'jeffy: iter 9/9' >/dev/null 2>&1
-      hb_p11_ck2="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
+      hb_p11_ck2="$(hb_backlog_sig)"
       hb_write_state_stall sess-1 9 9 "$hb_p11_prev" "$hb_p11_ck2" 1
       hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
       if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
@@ -2007,7 +2074,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_journal_entries
       hb_subgit add -A >/dev/null 2>&1
       hb_subgit commit -q -m sub-base >/dev/null 2>&1
-      hb_sub_ck="$(cksum < "$hb_proj/BACKLOG.md" | tr ' \t' '--')"
+      hb_sub_ck="$(hb_backlog_sig)"
 
       hb_sub_prev="$(hb_subgit rev-parse HEAD)"
       hb_write_journal_entries '## iter 1/9 | sess-1-000000 | 2026-01-01 | T1 | done'

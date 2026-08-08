@@ -889,7 +889,31 @@ if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/de
 fi
 cur_backlog="none"
 if [ -f "$root/BACKLOG.md" ]; then
-  cur_backlog="$(cksum < "$root/BACKLOG.md" | tr ' \t' '--')"
+  # One definition of a ledger state change, carried by this hook and by the
+  # iteration prompt in the same words. An item changed state when a task
+  # line under Now, Next, or Later was
+  # added, removed, edited, or moved between sections
+  # - kept on one line because the validator pins that sentence in both
+  # files, and a phrase wrapped across two comment lines is a phrase a
+  # grep-based marker cannot find.
+  # The whole-file cksum this replaces read any byte as
+  # progress - a reworded Declined note, a Settled classes line, a blank line
+  # - so an iteration that touched only prose registered as progress here
+  # while the prompt's own stall rule called the same iteration a stall. Two
+  # definitions of one signal is one definition too many, and it is the
+  # laxer one that decides whether a run keeps going.
+  # Migration is self-healing and costs one free pass: the first turn under
+  # this version compares a stored whole-file cksum against the new digest,
+  # mismatches, and reads a single spurious progress. Never a false stall,
+  # and the next turn compares like with like.
+  cur_backlog="$(awk '
+    { sub(/\r$/, "") }
+    /^## Now$/ { sec = "Now"; next }
+    /^## Next$/ { sec = "Next"; next }
+    /^## Later$/ { sec = "Later"; next }
+    /^## / { sec = "" }
+    sec != "" && /^- \[[ b]\]/ { print sec "|" $0 }
+  ' "$root/BACKLOG.md" | cksum | tr ' \t' '--')"
 fi
 last_head="$(fm last_head)"
 last_backlog="$(fm last_backlog)"
