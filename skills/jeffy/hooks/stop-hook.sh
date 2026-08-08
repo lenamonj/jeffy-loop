@@ -752,6 +752,7 @@ fi
 # with nothing accumulating to stop it. The guard tests the same ^---$ the
 # rewriter counts, because a grant the rewriter cannot stamp is not a grant.
 extension=""
+corrective=""
 if [ "$iter" -ge "$max" ]; then
   fm_close="$(grep -c '^---$' "$state" 2>/dev/null || true)"
   case "$fm_close" in '' | *[!0-9]*) fm_close=0 ;; esac
@@ -767,6 +768,23 @@ if [ "$iter" -ge "$max" ]; then
     && [ "$open_now" = "0" ] && [ "$open_next" = "0" ] && [ "$open_later" = "0" ] \
     && [ "$unswept_rows" = "0" ]; then
     extension=1
+  elif [ -n "$violation" ] && [ "$fm_close" -ge 2 ] \
+    && [ "$(fm corrective_granted)" != "1" ]; then
+    # A rejected convergence at budget exhaustion used to go to stderr and
+    # nowhere else. Nobody reads stderr, and the model's declaration and run
+    # report stand in the transcript uncontradicted - the run looks converged
+    # to the only audience that matters while the hook has already refused
+    # it. The hook's one channel is blocking the stop, so it spends it once:
+    # a single corrective re-feed that tells the run to record the rejection
+    # and close honestly, never to fix and re-declare.
+    # The grant is once per run, flagged on the state file the way the
+    # closing extension is, and the flag can only be stamped where the
+    # frontmatter actually closes - a state file that never closes could
+    # never record it, and the corrective would fire every turn forever.
+    # The closing extension takes precedence, because a rejection at max
+    # with a clean ledger and a swept surface is repairable and the window
+    # is what pays for repairing it. This is for the rejection that is not.
+    corrective=1
   else
     if [ -n "$violation" ]; then
       echo "jeffy stop hook: convergence rejected ($violation) but the budget is spent; ending the run." >&2
@@ -1024,11 +1042,12 @@ tmp="$state.tmp"
 # archive_migrated rides along with the strict archive baseline it certifies:
 # the baseline this rewrite stores is strict, so the naive escape above has
 # done its one job and must never be taken again.
-if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" '
-  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (ex && !sex) print "extension_granted: 1" } print; next }
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" '
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (ex && !sex) print "extension_granted: 1"; if (co && !sco) print "corrective_granted: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
   fmc == 1 && ex && /^max_iterations: / { print "max_iterations: " mx; next }
   fmc == 1 && ex && /^extension_granted: / { print "extension_granted: 1"; sex = 1; next }
+  fmc == 1 && co && /^corrective_granted: / { print "corrective_granted: 1"; sco = 1; next }
   fmc == 1 && /^last_head: / { print "last_head: " lh; slh = 1; next }
   fmc == 1 && /^last_backlog: / { print "last_backlog: " lb; slb = 1; next }
   fmc == 1 && /^stall: / { print "stall: " sf; ssf = 1; next }
@@ -1048,8 +1067,14 @@ if [ -n "$focus" ]; then
   reason="$reason Focus this run on: $focus."
 fi
 reason="$reason This is jeffy iteration $next of $max for this run."
-if [ -n "$violation" ]; then
+if [ -n "$violation" ] && [ -z "$corrective" ]; then
   reason="$reason CONVERGENCE REJECTED by the stop hook: $violation. Fix this, then re-declare convergence with the promise phrase."
+fi
+# The corrective note replaces that one rather than joining it: telling a run
+# with no budget left to fix and re-declare is an instruction it cannot
+# carry out, and the point here is an honest close, not another attempt.
+if [ -n "$corrective" ]; then
+  reason="$reason CORRECTIVE: the convergence you declared this turn was refused ($violation), and the budget is spent, so this run does not converge. Do no further work and do not re-declare: append a journal entry recording the refusal and its reason, then close with a run report that states the run ended out of budget without converging, naming what remains for the next run."
 fi
 if [ -n "$hygiene" ]; then
   reason="$reason ITERATION HYGIENE: $hygiene."

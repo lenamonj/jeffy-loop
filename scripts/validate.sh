@@ -282,6 +282,7 @@ check_markers skills/jeffy/hooks/stop-hook.sh \
   "added, removed, edited, or moved between sections" \
   "RUN STATE" \
   "CLOSING EXTENSION" \
+  "CORRECTIVE" \
   "JEFFY_VERSION" \
   "refilled inside the closing extension"
 # The launch-time lint is the whole malformed-Verify-command class caught at
@@ -1152,13 +1153,38 @@ if command -v jq >/dev/null 2>&1; then
     fi
     hb_write_plan none
 
+    # P1-17: a convergence refused at budget exhaustion used to go to stderr
+    # and nowhere else, and nobody reads stderr. The model's declaration and
+    # its run report stood in the transcript uncontradicted, so the run read
+    # as converged to the only audience that matters while the hook had
+    # already refused it. The hook's one channel is blocking the stop, so it
+    # spends it once: a corrective re-feed that asks for an honest close, not
+    # another attempt - telling a run with no budget left to fix and
+    # re-declare would be an instruction it cannot carry out.
     hb_write_state sess-1 3 3
     hb_write_backlog '- [ ] T1: unfinished task'
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'convergence rejected' "$hb_tmp/hb_err.txt"; then
-      pass "stop hook ends the run at budget exhaustion even with a pending violation (stderr note)"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CORRECTIVE' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'still lists open tasks' \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
+      && [ -f "$hb_state" ] && grep -q '^corrective_granted: 1$' "$hb_state"; then
+      pass "stop hook spends one corrective re-feed on a convergence refused at budget exhaustion"
     else
-      fault "stop hook mishandled a violation at budget exhaustion"
+      printf '%s\n' "$hb_out"
+      fault "stop hook let a refused convergence stand uncontradicted in the transcript"
+    fi
+
+    # The grant is once, ever. The turn after, the same refusal repeated ends
+    # the run rather than buying another corrective, so this cannot become a
+    # budget the run extends by declaring badly.
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+      && grep -q 'convergence rejected' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook ends the run on the turn after its corrective re-feed (the grant is once)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook granted a second corrective re-feed"
     fi
 
     # Converged-hash check: outside a git repository even a stale Converged
