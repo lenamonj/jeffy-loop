@@ -67,6 +67,41 @@ if [ -n "$run_tok" ]; then
   runid8="$runid8-$run_tok"
 fi
 
+# Invocations this run has already spent, derived once because two places
+# need it: the declaration's absolute-bound refusal and the closing
+# extension, which has nothing left to buy for a run that can no longer
+# produce a verdict. Counted inside this run's own primary entries rather
+# than by a file-wide grep, which would count other runs and rotated prose,
+# and at most once per entry, because an entry may quote the word twice.
+# The artifact ordinal is the second reading of the same quantity: the gate
+# writes one path per invocation, so the highest ordinal on record is the
+# number of invocations that actually left evidence.
+ev_rejects=0
+if [ -f "$root/JOURNAL.md" ]; then
+  ev_rejects="$(awk -v tok="| $runid8 |" '
+    { sub(/\r$/, "") }
+    /^## iter / {
+      split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (index($0, tok) && t != "ROTATION" && t != "SALVAGE") { skip = 0; counted = 0 } else { skip = 1 }
+      next
+    }
+    !skip && !counted && index($0, "Evaluator: REJECT") { n++; counted = 1 }
+    END { print n + 0 }
+  ' "$root/JOURNAL.md")"
+  case "$ev_rejects" in '' | *[!0-9]*) ev_rejects=0 ;; esac
+fi
+# The ordinal is parsed off the full "$runid8-" prefix rather than the last
+# hyphen, because the run id carries a hyphen of its own (session prefix,
+# then the started_at HHMMSS token).
+ev_art_ord="$(
+  for ev_cand in "$root/.jeffy/evaluator/$runid8"-*.md; do
+    [ -f "$ev_cand" ] || continue
+    ev_n="${ev_cand##*/}"; ev_n="${ev_n#"$runid8-"}"; ev_n="${ev_n%.md}"
+    case "$ev_n" in '' | *[!0-9]*) continue ;; esac
+    printf '%s\n' "$ev_n"
+  done | sort -n | tail -n 1
+)"
+
 # Extension honesty, first half: the +2 window buys the convergence sequence
 # and never an audit. A full audit run inside the window manufactures the
 # clean-audit precondition the declaration cites, and every other gate here
@@ -404,17 +439,8 @@ if [ -n "$promise" ]; then
           # distinct path no history operation can fold away, and
           # byte-distinctness becomes structural rather than a property of
           # the opening line that 1.7.0 had to patch at the content layer.
-          # The ordinal is parsed off the full "$runid8-" prefix rather than
-          # the last hyphen, because the run id carries a hyphen of its own
-          # (session prefix, then the started_at HHMMSS token).
-          ev_art_ord="$(
-            for ev_cand in "$root/.jeffy/evaluator/$runid8"-*.md; do
-              [ -f "$ev_cand" ] || continue
-              ev_n="${ev_cand##*/}"; ev_n="${ev_n#"$runid8-"}"; ev_n="${ev_n%.md}"
-              case "$ev_n" in '' | *[!0-9]*) continue ;; esac
-              printf '%s\n' "$ev_n"
-            done | sort -n | tail -n 1
-          )"
+          # ev_art_ord is derived once near the run id, because the closing
+          # extension reads it too.
           if [ -n "$ev_art_ord" ]; then
             ev_art=".jeffy/evaluator/$runid8-$ev_art_ord.md"
           else
@@ -425,7 +451,25 @@ if [ -n "$promise" ]; then
             ev_art=".jeffy/evaluator/$runid8.md"
             [ -f "$root/$ev_art" ] && echo "jeffy stop hook: no ordinal-keyed evaluator artifact for run $runid8; reading the pre-1.8.0 single-path artifact $ev_art." >&2
           fi
+          # Absolute invocation bound. The prompt owns the cap arithmetic,
+          # because the midpoint rule turns on when the first invocation
+          # landed and this hook cannot cheaply derive that. What it can
+          # refuse is a declaration past every cap the contract could grant:
+          # three recorded REJECTs, or a fourth artifact ordinal, leave no
+          # invocation to produce the verdict declaring requires, whatever
+          # the closing entry says.
+          # Deliberately NOT enforced at two REJECTs. Where the cap is 3 a
+          # second REJECT legally precedes a third invocation, which is the
+          # path P1-3 opened for the run whose first verdict was REJECT, and
+          # a hook that refused there would close it again. Below this bound
+          # the prompt owns the rule and the artifact price guards it.
+          if [ "$ev_rejects" -ge 3 ] || { [ -n "$ev_art_ord" ] && [ "$ev_art_ord" -ge 4 ]; }; then
+            ev_verdict="capped"
+          fi
           case "$ev_verdict" in
+            capped)
+              violation="this run's journal records $ev_rejects Evaluator: REJECT verdicts and its highest evaluator artifact ordinal is ${ev_art_ord:-none}, past every invocation cap the contract grants - 2, or 3 when the first invocation landed before the midpoint of the budget - so no invocation remains to produce the verdict a declaration requires; spend what budget is left in gate salvage on the findings the gate filed, then end the run blocked as 'blocked - N gate findings closed, declaration deferred', because convergence waits for the next run's fresh gate"
+              ;;
             none)
               violation="JOURNAL.md holds no primary entry headed with the run id $runid8, and that entry is the only place the evaluator verdict is read from; write the closing entry under the run's own heading grammar, then re-declare"
               ;;
@@ -451,10 +495,10 @@ if [ -n "$promise" ]; then
               fi
               ;;
             missing)
-              violation="the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare"
+              violation="the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare - unless this run has spent every invocation its cap allows, in which case it may not re-invoke at all and ends blocked in gate salvage instead"
               ;;
             reject)
-              violation="the closing entry records Evaluator: REJECT, which is not a verdict a run declares on; file each reason this run can reproduce, work them, and declare on a later PASS - or end the run under the hard blocker rule if no invocation remains"
+              violation="the closing entry records Evaluator: REJECT, which is not a verdict a run declares on; file each reason this run can reproduce and work them - with an invocation remaining, declare on a later PASS, and a second REJECT is not terminal while one is left; with none remaining the REJECT is terminal, so spend the rest of the budget in gate salvage on the findings the gate filed and end blocked as 'blocked - N gate findings closed, declaration deferred', never re-invoking and never declaring, because convergence waits for the next run's fresh gate"
               ;;
             unavailable)
               violation="the closing entry records Evaluator: unavailable; the adversarial gate is not optional and no convergence rests on its absence, so end the run with that reason and relaunch in a session where a sub-agent can be spawned"
@@ -711,8 +755,15 @@ extension=""
 if [ "$iter" -ge "$max" ]; then
   fm_close="$(grep -c '^---$' "$state" 2>/dev/null || true)"
   case "$fm_close" in '' | *[!0-9]*) fm_close=0 ;; esac
+  # A run past every invocation cap has no convergence sequence left for the
+  # window to buy: it cannot re-invoke, so it cannot produce the verdict a
+  # declaration needs, and two more iterations would only move the same
+  # blocked ending two turns later. Bounded at the absolute cap for the same
+  # reason the declaration check is - below it, a legal endgame still exists
+  # and the extension is exactly what pays for it.
   if [ "$iter" -eq "$max" ] && [ "$fm_close" -ge 2 ] \
     && [ "$(fm extension_granted)" != "1" ] \
+    && [ "$ev_rejects" -lt 3 ] && { [ -z "$ev_art_ord" ] || [ "$ev_art_ord" -lt 4 ]; } \
     && [ "$open_now" = "0" ] && [ "$open_next" = "0" ] && [ "$open_later" = "0" ] \
     && [ "$unswept_rows" = "0" ]; then
     extension=1

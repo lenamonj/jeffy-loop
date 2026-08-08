@@ -2575,6 +2575,27 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook ended a run that had only its convergence sequence left"
     fi
 
+    # Same shape, but the run has spent every invocation any cap could grant.
+    # There is no convergence sequence left for the window to buy - it cannot
+    # re-invoke, so it cannot produce the verdict a declaration needs - and
+    # two more iterations would only move the same blocked ending two turns
+    # later. Bounded at the absolute cap for the same reason the declaration
+    # check is: below it a legal endgame still exists, and the extension is
+    # exactly what pays for it.
+    hb_write_journal_entries \
+      '## iter 1/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - one.' \
+      '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - two.' \
+      '## iter 3/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - three.'
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook withholds the closing extension from a run past every invocation cap"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook extended a run that could no longer produce a verdict to declare on"
+    fi
+    hb_write_journal 3 3
+
     # The bound: the flag is the whole of it. A run that already took its
     # extension ends at the new budget exactly the way it ended at the old
     # one, so the escape cannot be taken twice.
@@ -3293,6 +3314,88 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_evaluator_artifact
       hb_git add -A .jeffy >/dev/null 2>&1
       hb_git commit -q -m 'jeffy: back to ordinal artifacts' >/dev/null 2>&1
+
+      # --- P1-3 and P1-4: what terminal means, and what follows it ---------
+      # The cap stays absolute, but the hook enforces only the bound it can
+      # actually derive. The midpoint rule turns on when the first
+      # invocation landed, which this hook does not compute, so two REJECTs
+      # are left to the prompt: where the cap is 3 a second REJECT legally
+      # precedes a third invocation, and that is the path opened for the run
+      # whose first verdict was REJECT. Three REJECTs are past every cap the
+      # contract can grant, whatever the closing entry claims.
+      hb_p5_journal() { # $1... extra entries appended before the closing PASS entry
+        hb_write_journal_entries "$@" \
+          '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
+      }
+
+      hb_p5_journal \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit.' \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - one.' \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - two.'
+      hb_p2_ord_fixture_keep_journal() {
+        hb_write_state sess-1 2 3
+        hb_write_plan_full 'exit 0' "$hb_p2_row"
+        hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+      }
+      hb_p2_ord_fixture_keep_journal
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook still accepts a declaration after two REJECTs and a PASS (the cap-3 path stays open)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook closed the third invocation the cap-3 run had earned"
+      fi
+
+      hb_p5_journal \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - one.' \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - two.' \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - three.'
+      hb_p2_ord_fixture_keep_journal
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no invocation remains' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'declaration deferred'; then
+        pass "stop hook refuses a declaration past every invocation cap the contract can grant"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a PASS from a run that had spent every invocation it could have had"
+      fi
+
+      # The same bound read off the artifact set rather than the journal: a
+      # fourth ordinal is a fourth invocation however the entries are typed.
+      hb_write_evaluator_artifact sess-1-000000 4
+      hb_git add .jeffy >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: evaluator artifact, invocation 4' >/dev/null 2>&1
+      hb_p5_journal '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit.'
+      hb_p2_ord_fixture_keep_journal
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no invocation remains'; then
+        pass "stop hook reads a fourth evaluator artifact ordinal as past the cap, whatever the journal says"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let a fourth gate invocation declare because the journal did not admit to it"
+      fi
+      hb_git rm -q .jeffy/evaluator/sess-1-000000-4.md >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: drop the fourth ordinal' >/dev/null 2>&1
+
+      # Gate salvage is a prompt state, not a hook state: mid-budget the hook
+      # keeps re-feeding after a terminal REJECT, which is what gives the run
+      # the iterations it was previously forbidden to use.
+      hb_write_journal_entries \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - one.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - two.'
+      hb_write_state sess-1 2 3
+      hb_write_plan_full 'exit 0' "$hb_p2_row"
+      hb_write_backlog '- [ ] G1 (High, runtime, correctness): a finding the gate filed. Acceptance: the reproduction exits 0.'
+      hb_out="$(hb_run sess-1 'still working the gate findings' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook keeps re-feeding a run working gate findings after a terminal REJECT (budget salvage)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook ended a run that still had budget and gate findings to close"
+      fi
 
       # The evaluator check runs before the Verify command, because the
       # Verify command is a model-authored shell line the hook executes: a
