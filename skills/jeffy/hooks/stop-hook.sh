@@ -151,10 +151,57 @@ if [ -n "$promise" ]; then
         # Converged line itself. Skipped in non-git projects. The line is
         # markdown a model writes, so a leading list marker and backticks
         # around the hash are tolerated; the section anchoring is not.
-        conv_hash="$(awk '{ sub(/\r$/, "") } /^## Converged$/ { take = 1; next } /^## / { take = 0 } take && /^[-*] +Converged: / { sub(/^[-*] +/, "") } take && /^Converged: / { h = $2; gsub(/^`|`$/, "", h) } END { if (h) print h }' "$root/BACKLOG.md")"
+        # The repoint suffix is read off the same line, so one pass yields
+        # both hashes: "<new> <old>" when the line carries the marker, the
+        # new hash alone when it does not.
+        conv_pair="$(awk '{ sub(/\r$/, "") } /^## Converged$/ { take = 1; next } /^## / { take = 0 } take && /^[-*] +Converged: / { sub(/^[-*] +/, "") } take && /^Converged: / { h = $2; gsub(/^`|`$/, "", h); o = ""; if (match($0, /\(repoints [^,)]+/)) { o = substr($0, RSTART + 10, RLENGTH - 10); gsub(/^`|`$|^[ \t]+|[ \t]+$/, "", o) } } END { if (h) print h " " o }' "$root/BACKLOG.md")"
+        conv_hash="${conv_pair%% *}"
+        conv_old="${conv_pair#* }"
+        [ "$conv_old" = "$conv_pair" ] && conv_old=""
         if [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
           violation="the ## Converged section of BACKLOG.md does not name a commit in this repository; append the Converged line for the certified checkpoint"
         else
+          # Reachability first, because an orphaned hash makes the
+          # nothing-but-state comparison below meaningless: git will happily
+          # diff two commits with no ancestry between them and report a
+          # difference that means nothing about this run's work.
+          # Reachability. Through 1.7.0 the hash only had to rev-parse to a
+          # commit object, and any commit object satisfies that: an orphan
+          # left by a rebase, an abandoned branch tip, a commit fetched from
+          # somewhere else. A published receipt whose Converged hash does not
+          # resolve on a clone is one nobody can verify, which is the single
+          # claim this corpus is least able to defend.
+          # The first production tree to meet this went the honest way and
+          # still had to break a rule to do it. 63 checkpoints were squashed
+          # before publication, the certified commit went unreachable, and
+          # because the artifact and ratchet checks both date their evidence
+          # with merge-base against that hash, the only way to keep the tree
+          # legal was to edit a line the template declares un-editable. The
+          # engine offered no legal path, so the operator took an
+          # illegal-looking one and disclosed it. That is fixed here: the
+          # append below is the legal path, and the disclosure travels with
+          # the receipt instead of resting on the operator's goodwill.
+          # What stays unenforceable, stated rather than papered over: a
+          # tree-preserving edit that repoints at a reachable commit without
+          # the marker is indistinguishable from an original line at the
+          # content layer. This does not detect that. What it changes is that
+          # the honest operator now has a legal move, so an edit no longer
+          # has an excuse.
+          if [ -z "$violation" ] && [ -n "$conv_old" ]; then
+            if ! git -C "$root" rev-parse --verify --quiet "$conv_old^{commit}" >/dev/null 2>&1; then
+              violation="the Converged line repoints $conv_old, which no longer resolves to a commit in this repository, so the tree it certified cannot be compared against $conv_hash and the repoint cannot be checked; a repoint is only ever legal against a commit whose tree can still be read, so converge this tree again through a fresh audit and the gate rather than asserting the old one"
+            elif ! printf '%s\n' "$(awk '{ sub(/\r$/, "") } /^## Converged$/ { take = 1; next } /^## / { take = 0 } take && /^[-*] +Converged: / { sub(/^[-*] +/, "") } take && /^Converged: / { h = $2; gsub(/^`|`$/, "", h); a[++n] = h } END { for (i = 1; i < n; i++) print a[i] }' "$root/BACKLOG.md")" \
+              | grep -qix -- "$conv_old"; then
+              violation="the Converged line repoints $conv_old but no earlier Converged line in BACKLOG.md names it; a repoint is appended beneath the line it supersedes and never written over it, because the superseded line is the only evidence that the rewrite happened at all"
+            elif [ "$(git -C "$root" rev-parse --verify --quiet "$conv_old^{tree}" 2>/dev/null)" \
+              != "$(git -C "$root" rev-parse --verify --quiet "$conv_hash^{tree}" 2>/dev/null)" ]; then
+              violation="the Converged line repoints $conv_old to $conv_hash, but those two commits do not carry the same tree; a repoint answers a history rewrite that preserved the tree, and one that changes it is a different convergence claim wearing an old certificate, so converge the current tree through a fresh audit and the gate"
+            fi
+          fi
+          if [ -z "$violation" ] \
+            && ! git -C "$root" merge-base --is-ancestor "$conv_hash" HEAD 2>/dev/null; then
+            violation="the Converged hash $conv_hash resolves but is not reachable from HEAD, so a history rewrite has orphaned the commit this convergence rests on and no clone of this repository can check it; never edit the Converged line - append one beneath it reading Converged: <new hash> - <date> (repoints $conv_hash, tree unchanged), naming a reachable commit whose tree equals the orphaned one, and record the rewrite in a dated Note in JOURNAL.md"
+          fi
           # .jeffy/ is loop memory too, so it joins the state files in the
           # exclusion: a row's known-answer battery lives under
           # .jeffy/probes/ and the checkpoints commit it, which makes a
@@ -176,9 +223,11 @@ if [ -n "$promise" ]; then
           # the repository root and every filename here is anchored at the
           # project root, so without it the exclusion matched nothing and the
           # gate rejected every declaration it saw.
-          nonstate="$(git -C "$root" diff --name-only --relative "$conv_hash" HEAD 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*|\.claude/jeffy-loop\.local\.md|\.claude/settings\.local\.json)$' | head -n 1)"
-          if [ -n "$nonstate" ]; then
-            violation="product path $nonstate changed after the Converged hash $conv_hash; certify the current tree before declaring"
+          if [ -z "$violation" ]; then
+            nonstate="$(git -C "$root" diff --name-only --relative "$conv_hash" HEAD 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*|\.claude/jeffy-loop\.local\.md|\.claude/settings\.local\.json)$' | head -n 1)"
+            if [ -n "$nonstate" ]; then
+              violation="product path $nonstate changed after the Converged hash $conv_hash; certify the current tree before declaring"
+            fi
           fi
         fi
       fi

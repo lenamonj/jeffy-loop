@@ -28,4 +28,6 @@ Findings judged not worth fixing, one line each with the reason. Audits must not
 
 ## Converged
 
-One line per convergence, appended, never rewritten: Converged: <full commit hash> - <date>. The ratchet reads the latest line here.
+One line per convergence, appended, never rewritten: Converged: <full commit hash> - <date>. The ratchet reads the latest line here, and that hash has to stay reachable from HEAD: a commit no clone can reach certifies nothing anyone else is able to check.
+
+A history rewrite that preserves the tree - a squash, a rebase, a filtered export - is answered by appending, never by editing the line it orphaned: `Converged: <new hash> - <date> (repoints <old hash>, tree unchanged)`. That is legal only when `git rev-parse <old>^{tree}` equals `git rev-parse <new>^{tree}`, and the superseded line stays exactly where it is, because it is the only record left in the tree that the rewrite happened at all. The same iteration appends a dated `## Note` to JOURNAL.md naming both hashes and what was rewritten. A repoint across two different trees is a new convergence claim wearing an old certificate, and it is refused.

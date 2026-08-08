@@ -158,6 +158,8 @@ check_markers skills/jeffy/references/plan-default.md \
   "## Operating envelope" \
   "in-envelope" \
   "Convergence ratchet:" \
+  "(repoints <old hash>, tree unchanged)" \
+  "must be reachable from HEAD" \
   "Three-strike rule:" \
   "one structural task" \
   "## Verify command" \
@@ -201,6 +203,8 @@ check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
   "## Settled classes" \
   "## Converged" \
+  "(repoints <old hash>, tree unchanged)" \
+  "reachable from HEAD" \
   "(<Severity>, <class>, <dimension>)"
 # Rotation must append. "Move all but the last 10 entries to JOURNAL-archive.md"
 # reads as "write the archive" to a model that has never seen one, and the
@@ -215,6 +219,8 @@ check_markers skills/jeffy/references/journal-default.md \
 check_markers skills/jeffy/references/iteration-prompt.txt \
   "Salvage first:" \
   "Ratchet next:" \
+  "(repoints <old hash>, tree unchanged)" \
+  "A Converged line is never edited" \
   "Verify gate:" \
   "Severity discipline:" \
   "Backlog discipline:" \
@@ -3407,6 +3413,151 @@ if command -v jq >/dev/null 2>&1; then
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
       echo "[SKIP] probe-battery converged-tree scenarios (git not on PATH)"
+    fi
+
+    # --- P1-15: the Converged hash has to be reachable, and a repoint is
+    # --- appended rather than written over the line it supersedes ----------
+    # Through 1.7.0 the hash only had to rev-parse to a commit object, and
+    # every commit object satisfies that: an orphan left by a rebase, an
+    # abandoned branch tip, a commit fetched from somewhere else. A published
+    # receipt whose Converged hash does not resolve on a clone cannot be
+    # checked by anyone, which is the one claim this corpus is least able to
+    # defend. The first production tree to meet this squashed 63 checkpoints
+    # before publication, orphaned the certified commit, and had to edit a
+    # line the template calls un-editable to keep the tree legal - because
+    # the engine offered no other path. These scenarios build the same shape
+    # on purpose: commit, capture the hash, reset past it, rebuild an
+    # identical tree.
+    if command -v git >/dev/null 2>&1; then
+      hb_saved_proj="$hb_proj"; hb_saved_state="$hb_state"
+      hb_proj="$hb_tmp/p15proj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      mkdir -p "$hb_proj/.claude"
+      hb_git init -q -b main
+      hb_p15_row='- [x] core: swept at abc1234 - all entry points probed'
+      printf 'v1\n' > "$hb_proj/product.txt"
+      hb_write_evaluator_artifact
+      hb_git add product.txt .jeffy >/dev/null
+      hb_git commit -q -m p15-c0
+      hb_p15_c0="$(hb_git rev-parse HEAD)"
+
+      # The commit that gets orphaned, and the tree it certified.
+      printf 'v2\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null
+      hb_git commit -q -m p15-converged
+      hb_p15_orphan="$(hb_git rev-parse HEAD)"
+
+      # Rebuild the identical tree on a fresh commit, the way a squash does.
+      hb_git reset -q --hard "$hb_p15_c0"
+      printf 'v2\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null
+      hb_git commit -q -m p15-squashed
+      hb_p15_new="$(hb_git rev-parse HEAD)"
+
+      # And a commit whose tree genuinely differs, for the laundering case.
+      printf 'v3\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null
+      hb_git commit -q -m p15-different
+      hb_p15_diff="$(hb_git rev-parse HEAD)"
+      hb_git reset -q --hard "$hb_p15_new"
+
+      if [ "$(hb_git rev-parse "$hb_p15_orphan^{tree}")" = "$(hb_git rev-parse "$hb_p15_new^{tree}")" ] \
+        && [ "$(hb_git rev-parse "$hb_p15_orphan^{tree}")" != "$(hb_git rev-parse "$hb_p15_diff^{tree}")" ] \
+        && ! hb_git merge-base --is-ancestor "$hb_p15_orphan" HEAD 2>/dev/null; then
+        pass "converged-hash sandbox built a genuine orphan (resolvable, unreachable, tree-identical to its replacement)"
+      else
+        fault "converged-hash sandbox did not build the orphan shape these scenarios need"
+      fi
+
+      # $1 reset target, then the Converged lines in order. The artifact is
+      # rewritten and committed after the reset so it postdates whatever the
+      # Converged line names, which is what the 1.7.0 recency check wants.
+      hb_p15_fixture() {
+        hb_p15_target="$1"; shift
+        hb_git reset -q --hard "$hb_p15_target"
+        {
+          printf '# Backlog\n\n## Now\n\n## Next\n\n## Later\n\n## Converged\n\n'
+          for hb_p15_line in "$@"; do printf '%s\n' "$hb_p15_line"; done
+        } > "$hb_proj/BACKLOG.md"
+        hb_write_plan_full 'exit 0' "$hb_p15_row"
+        hb_write_journal_entries \
+          '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit.' \
+          '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
+        hb_write_evaluator_artifact
+        hb_git add .jeffy >/dev/null 2>&1
+        hb_git commit -q -m p15-bookkeeping >/dev/null 2>&1
+        hb_write_state sess-1 2 3
+      }
+
+      hb_p15_fixture "$hb_p15_new" "Converged: $hb_p15_orphan - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'not reachable from HEAD' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook refuses a Converged hash that resolves but is unreachable from HEAD"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook certified a convergence on a commit no clone of the repository can reach"
+      fi
+
+      hb_p15_fixture "$hb_p15_new" \
+        "Converged: $hb_p15_orphan - 2026-01-01" \
+        "Converged: $hb_p15_new - 2026-01-02 (repoints $hb_p15_orphan, tree unchanged)"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts an appended repoint whose trees match and whose predecessor still stands"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused the one legal answer to a history rewrite"
+      fi
+
+      # The laundering shape: a repoint marker over two different trees is a
+      # new convergence claim wearing an old certificate.
+      hb_p15_fixture "$hb_p15_diff" \
+        "Converged: $hb_p15_orphan - 2026-01-01" \
+        "Converged: $hb_p15_diff - 2026-01-02 (repoints $hb_p15_orphan, tree unchanged)"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'do not carry the same tree' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook refuses a repoint whose two commits carry different trees"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let a repoint marker launder a different tree past the gate"
+      fi
+
+      # Appended, not written over: the superseded line is the only evidence
+      # in the tree that the rewrite happened at all.
+      hb_p15_fixture "$hb_p15_new" \
+        "Converged: $hb_p15_new - 2026-01-02 (repoints $hb_p15_orphan, tree unchanged)"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no earlier Converged line' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook refuses a repoint written over the line it supersedes instead of beneath it"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a repoint with no surviving record of what it replaced"
+      fi
+
+      # A repoint whose old hash has been collected cannot be checked at all,
+      # and failing open there would reopen the hole this closes.
+      hb_p15_gone=0123456789012345678901234567890123456789
+      hb_p15_fixture "$hb_p15_new" \
+        "Converged: $hb_p15_gone - 2026-01-01" \
+        "Converged: $hb_p15_new - 2026-01-02 (repoints $hb_p15_gone, tree unchanged)"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no longer resolves to a commit' \
+        && grep -q '^iteration: 3$' "$hb_state"; then
+        pass "stop hook refuses a repoint whose superseded commit can no longer be read"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a repoint it had no way to verify"
+      fi
+
+      hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
+    else
+      echo "[SKIP] converged-hash reachability scenarios (git not on PATH)"
     fi
 
     rm -rf "$hb_tmp"
