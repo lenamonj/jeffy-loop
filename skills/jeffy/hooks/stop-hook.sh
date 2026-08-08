@@ -318,7 +318,7 @@ if [ -n "$promise" ]; then
       # field-anchored match would reject every legacy journal instead.
       # A substring in a model-written file is not evidence on its own, which
       # is why a PASS has to point at something from 1.7.0. The gate writes
-      # .jeffy/evaluator/<run-id>.md naming every command it ran and that
+      # .jeffy/evaluator/<run-id>-<n>.md naming every command it ran and that
       # command's real exit status, and a PASS is refused unless a regular
       # file is there for this run id, byte-identical to a copy committed in
       # HEAD, in a commit at or after the one the Converged line certifies.
@@ -389,7 +389,42 @@ if [ -n "$promise" ]; then
               else print "missing"
             }
           ' "$root/JOURNAL.md")"
-          ev_art=".jeffy/evaluator/$runid8.md"
+          # Artifact selection. Through 1.7.0 the path was keyed by run id
+          # alone, so every re-invocation overwrote its predecessor and the
+          # gate's forensic record was one version deep. A run that spent
+          # three invocations published one artifact, the third; the earlier
+          # two survived only as blobs in checkpoint commits, and a squash, a
+          # rebase, a filtered export or a shallow clone reduces the record
+          # to the last verdict. On the tree that made this concrete,
+          # git log on that path returned exactly one commit - the squash -
+          # and the earlier verdicts existed only on a local branch no clone
+          # carries. That is the least durable artifact in the repository,
+          # which is the opposite of what it was shipped for.
+          # Keyed by run id and invocation ordinal, each verdict is a
+          # distinct path no history operation can fold away, and
+          # byte-distinctness becomes structural rather than a property of
+          # the opening line that 1.7.0 had to patch at the content layer.
+          # The ordinal is parsed off the full "$runid8-" prefix rather than
+          # the last hyphen, because the run id carries a hyphen of its own
+          # (session prefix, then the started_at HHMMSS token).
+          ev_art_ord="$(
+            for ev_cand in "$root/.jeffy/evaluator/$runid8"-*.md; do
+              [ -f "$ev_cand" ] || continue
+              ev_n="${ev_cand##*/}"; ev_n="${ev_n#"$runid8-"}"; ev_n="${ev_n%.md}"
+              case "$ev_n" in '' | *[!0-9]*) continue ;; esac
+              printf '%s\n' "$ev_n"
+            done | sort -n | tail -n 1
+          )"
+          if [ -n "$ev_art_ord" ]; then
+            ev_art=".jeffy/evaluator/$runid8-$ev_art_ord.md"
+          else
+            # A run launched under a pre-1.8.0 engine wrote the single path,
+            # and the loop is designed to be relaunched over state files an
+            # older engine left behind. Fall back to it rather than strand
+            # that run; every test below applies to it unchanged.
+            ev_art=".jeffy/evaluator/$runid8.md"
+            [ -f "$root/$ev_art" ] && echo "jeffy stop hook: no ordinal-keyed evaluator artifact for run $runid8; reading the pre-1.8.0 single-path artifact $ev_art." >&2
+          fi
           case "$ev_verdict" in
             none)
               violation="JOURNAL.md holds no primary entry headed with the run id $runid8, and that entry is the only place the evaluator verdict is read from; write the closing entry under the run's own heading grammar, then re-declare"
@@ -426,7 +461,7 @@ if [ -n "$promise" ]; then
               ;;
             pass)
               if [ ! -f "$root/$ev_art" ] || [ ! -s "$root/$ev_art" ]; then
-                violation="the closing entry records Evaluator: PASS but $ev_art is not a file with content; the gate writes there every command it ran and that command's real exit status, and a PASS with nothing behind it is eleven typed characters"
+                violation="the closing entry records Evaluator: PASS but $ev_art is not a file with content; the gate writes .jeffy/evaluator/$runid8-<n>.md, where n is the invocation ordinal, naming every command it ran and that command's real exit status, and a PASS with nothing behind it is eleven typed characters"
               elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
                 ev_head_blob="$(git -C "$root" rev-parse --quiet --verify "HEAD:./$ev_art" 2>/dev/null || true)"
                 ev_work_blob="$(git -C "$root" hash-object -- "$ev_art" 2>/dev/null || true)"
@@ -441,7 +476,7 @@ if [ -n "$promise" ]; then
                   violation="the evaluator artifact $ev_art in the working tree differs from the copy committed in HEAD; the artifact the gate wrote is the one that has to stand, so restore or checkpoint it and re-declare"
                 elif [ -n "$conv_hash" ] && [ -n "$ev_art_commit" ] \
                   && ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_art_commit" 2>/dev/null; then
-                  violation="the evaluator artifact $ev_art was last committed at $ev_art_commit, which predates the Converged hash $conv_hash; a PASS answers the tree the gate actually examined, so re-invoke the gate in the declaring iteration - its artifact opens with the run id and the number of the declaring iteration, so a re-invocation is a distinct file the checkpoint commits - and re-declare"
+                  violation="the evaluator artifact $ev_art was last committed at $ev_art_commit, which predates the Converged hash $conv_hash; a PASS answers the tree the gate actually examined, so re-invoke the gate in the declaring iteration - a re-invocation writes the next ordinal, .jeffy/evaluator/$runid8-<n+1>.md, which the checkpoint commits alongside the one it supersedes - and re-declare"
                 fi
               fi
               ;;

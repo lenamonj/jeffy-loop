@@ -188,7 +188,8 @@ check_markers skills/jeffy/references/plan-default.md \
   "scope line names the enumeration command" \
   "recording its second occurrence is marked" \
   "re-invoked at the declaration" \
-  ".jeffy/evaluator/<run-id>.md" \
+  ".jeffy/evaluator/<run-id>-<n>.md" \
+  "reads the highest ordinal on record" \
   "committed and unmodified" \
   "and ends blocked" \
   "one convergence shape is legal and only one" \
@@ -254,8 +255,10 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   ".jeffy/probes/" \
   "never run an audit inside it" \
   "One convergence shape is legal inside the window and only one" \
-  "write the artifact .jeffy/evaluator/<run-id>.md" \
-  "opening with one line naming that run-id and the iteration i of N that invoked you" \
+  "write the artifact .jeffy/evaluator/<run-id>-<n>.md" \
+  "where n is the invocation ordinal you were told" \
+  "reads the highest invocation ordinal on record" \
+  "opening with one line naming that run-id, that ordinal, and the iteration i of N that invoked you" \
   "never fixed inside the convergence sequence" \
   "the combination is for when the budget forces it" \
   "end the run under the hard blocker rule and never declare" \
@@ -314,7 +317,7 @@ check_markers skills/jeffy/references/enhance-plan-default.md \
   "adversarial evaluator gate" \
   "Evaluator: unavailable" \
   "ends blocked, because the gate is not optional in either mode" \
-  ".jeffy/evaluator/<run-id>.md" \
+  ".jeffy/evaluator/<run-id>-<n>.md" \
   "recorded in the run report for a standard run" \
   "## Lessons"
 if [ "$gm_missing" -eq 0 ]; then
@@ -822,12 +825,28 @@ if command -v jq >/dev/null 2>&1; then
     # in a git sandbox it must be committed the way the checkpoint commits it.
     # Run token 000000 comes from the harness started_at, as everywhere else.
     hb_art_n=0
-    hb_write_evaluator_artifact() { # $1 optional run id (default sess-1-000000)
+    hb_write_evaluator_artifact() { # $1 optional run id (default sess-1-000000), $2 optional invocation ordinal (default 1)
+      # From 1.8.0 the path carries the invocation ordinal, so each verdict
+      # is a distinct path no history operation can fold away. hb_art_n is
+      # kept for content churn alone: a re-commit at the same ordinal has to
+      # differ in bytes for the committed-and-unmodified test to mean
+      # anything.
+      hb_art_id="${1:-sess-1-000000}"
+      hb_art_ord="${2:-1}"
+      hb_art_n=$((hb_art_n + 1))
+      mkdir -p "$hb_proj/.jeffy/evaluator"
+      {
+        printf '# Evaluator gate - run %s, invocation %s, iteration 2 of 3 (write %s)\n\n' "$hb_art_id" "$hb_art_ord" "$hb_art_n"
+        printf 'Command: bash -c true\nExit: 0\n\n'
+        printf 'Verdict: PASS\n'
+      } > "$hb_proj/.jeffy/evaluator/$hb_art_id-$hb_art_ord.md"
+    }
+    hb_write_legacy_artifact() { # $1 optional run id - the pre-1.8.0 single path, for the fallback
       hb_art_id="${1:-sess-1-000000}"
       hb_art_n=$((hb_art_n + 1))
       mkdir -p "$hb_proj/.jeffy/evaluator"
       {
-        printf '# Evaluator gate - run %s, invocation %s\n\n' "$hb_art_id" "$hb_art_n"
+        printf '# Evaluator gate - run %s (pre-1.8.0 single-path artifact, write %s)\n\n' "$hb_art_id" "$hb_art_n"
         printf 'Command: bash -c true\nExit: 0\n\n'
         printf 'Verdict: PASS\n'
       } > "$hb_proj/.jeffy/evaluator/$hb_art_id.md"
@@ -3015,7 +3034,7 @@ if command -v jq >/dev/null 2>&1; then
       # --- P1-2: a PASS has to point at something ------------------------
       # Through 1.6.0 the verdict was a substring in a file the graded party
       # writes, and nothing distinguished a real invocation from eleven typed
-      # characters. The gate now leaves .jeffy/evaluator/<run-id>.md naming
+      # characters. The gate now leaves .jeffy/evaluator/<run-id>-<n>.md naming
       # the commands it ran and their real exit statuses. Authorship is
       # unenforceable at the shell layer and this does not pretend otherwise;
       # what it buys is that faking a PASS costs a fabricated forensic record
@@ -3028,7 +3047,7 @@ if command -v jq >/dev/null 2>&1; then
 
       hb_p2_pass_journal
       hb_p2_fixture
-      mv "$hb_proj/.jeffy/evaluator/sess-1-000000.md" "$hb_tmp/p2-artifact.md"
+      mv "$hb_proj/.jeffy/evaluator/sess-1-000000-1.md" "$hb_tmp/p2-artifact.md"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
       if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
         && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is not a file with content' \
@@ -3056,7 +3075,7 @@ if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$hb_out"
         fault "stop hook accepted another run's evaluator artifact as this run's evidence"
       fi
-      rm -f "$hb_proj/.jeffy/evaluator/sess-9-999999.md"
+      rm -f "$hb_proj/.jeffy/evaluator/sess-9-999999-1.md"
       hb_git add -A .jeffy >/dev/null 2>&1
       hb_git commit -q -m drop-foreign-artifact >/dev/null 2>&1
 
@@ -3065,7 +3084,7 @@ if command -v jq >/dev/null 2>&1; then
       # battery is not read as a product change - which means an artifact
       # left loose in the working tree can be rewritten with nothing in the
       # record to show for it. The checkpoint is what makes it durable.
-      cp "$hb_tmp/p2-artifact.md" "$hb_proj/.jeffy/evaluator/sess-1-000000.md"
+      cp "$hb_tmp/p2-artifact.md" "$hb_proj/.jeffy/evaluator/sess-1-000000-1.md"
       hb_p2_pass_journal
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
@@ -3134,7 +3153,7 @@ if command -v jq >/dev/null 2>&1; then
       # corpus runs on, and git status says nothing about an untracked
       # directory with no files in it - so mkdir passed both halves. The
       # regular-file test is what makes the case read the same everywhere.
-      hb_p2_art_dir="$hb_proj/.jeffy/evaluator/sess-1-000000.md"
+      hb_p2_art_dir="$hb_proj/.jeffy/evaluator/sess-1-000000-1.md"
       rm -f "$hb_p2_art_dir"; mkdir -p "$hb_p2_art_dir"
       hb_p2_pass_journal
       hb_p2_fixture
@@ -3154,8 +3173,8 @@ if command -v jq >/dev/null 2>&1; then
       # silent about a path it has been told to ignore, a path inside a nested
       # repository, and a path marked assume-unchanged - three ways to rewrite
       # the evidence with the negative test none the wiser.
-      printf 'rewritten after the gate ran\n' > "$hb_proj/.jeffy/evaluator/sess-1-000000.md"
-      hb_git update-index --assume-unchanged .jeffy/evaluator/sess-1-000000.md >/dev/null 2>&1
+      printf 'rewritten after the gate ran\n' > "$hb_proj/.jeffy/evaluator/sess-1-000000-1.md"
+      hb_git update-index --assume-unchanged .jeffy/evaluator/sess-1-000000-1.md >/dev/null 2>&1
       hb_p2_pass_journal
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
@@ -3166,8 +3185,8 @@ if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$hb_out"
         fault "stop hook read a tampered artifact as committed because git stayed quiet about it"
       fi
-      hb_git update-index --no-assume-unchanged .jeffy/evaluator/sess-1-000000.md >/dev/null 2>&1
-      hb_git checkout -q -- .jeffy/evaluator/sess-1-000000.md 2>/dev/null
+      hb_git update-index --no-assume-unchanged .jeffy/evaluator/sess-1-000000-1.md >/dev/null 2>&1
+      hb_git checkout -q -- .jeffy/evaluator/sess-1-000000-1.md 2>/dev/null
 
       # An artifact older than the tree it certifies. The contract re-invokes
       # the gate in the iteration that declares - a PASS that does not declare
@@ -3185,7 +3204,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
       if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
         && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'predates the Converged hash' \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'opens with the run id and the number of the declaring iteration'; then
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'a re-invocation writes the next ordinal'; then
         pass "stop hook refuses a PASS whose artifact predates the commit the Converged line certifies, naming the ordinal remedy"
       else
         printf '%s\n' "$hb_out"
@@ -3200,6 +3219,74 @@ if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$hb_out"
         fault "stop hook rejected a declaration whose artifact postdates the Converged hash"
       fi
+
+      # --- P1-16: one path per invocation, so the record survives a squash --
+      # Keyed by run id alone, every re-invocation overwrote its predecessor
+      # and the gate's forensic record was one version deep. A run that spent
+      # three invocations published one verdict, the third; the earlier two
+      # lived only as blobs in checkpoint commits, and a squash, rebase,
+      # filtered export or shallow clone reduced the record to whatever came
+      # last. On the tree that made this concrete, git log on that path
+      # returned exactly one commit - the squash - and the earlier verdicts
+      # survived only on a local branch no clone carries.
+      hb_p2_ord_fixture() {
+        hb_p2_pass_journal
+        hb_write_state sess-1 2 3
+        hb_write_plan_full 'exit 0' "$hb_p2_row"
+        hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+      }
+
+      # The highest ordinal is the verdict that answers this tree, so it is
+      # the one that has to stand up - a committed ordinal 1 does not excuse
+      # an ordinal 2 the checkpoint never captured.
+      hb_write_evaluator_artifact sess-1-000000 2
+      hb_p2_ord_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'sess-1-000000-2.md' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is not committed in HEAD'; then
+        pass "stop hook binds the PASS to the highest evaluator invocation ordinal, not the newest committed one"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read an older committed artifact while a later invocation sat uncommitted"
+      fi
+
+      hb_git add .jeffy >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: evaluator artifact, invocation 2' >/dev/null 2>&1
+      hb_p2_ord_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && [ -f "$hb_proj/.jeffy/evaluator/sess-1-000000-1.md" ] \
+        && [ -f "$hb_proj/.jeffy/evaluator/sess-1-000000-2.md" ]; then
+        pass "stop hook accepts a re-invocation as a second path, leaving the verdict it superseded in the tree"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook mishandled a run whose gate wrote two ordinal-keyed verdicts"
+      fi
+
+      # A run launched under a pre-1.8.0 engine wrote the single path, and
+      # the loop is built to be relaunched over state files an older engine
+      # left behind. Falling back is what keeps that run from being stranded
+      # mid-arc by an upgrade.
+      hb_git rm -q .jeffy/evaluator/sess-1-000000-1.md .jeffy/evaluator/sess-1-000000-2.md >/dev/null 2>&1
+      hb_write_legacy_artifact
+      hb_git add .jeffy >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: pre-1.8.0 single-path artifact' >/dev/null 2>&1
+      hb_p2_ord_fixture
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'pre-1.8.0 single-path artifact' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook falls back to the pre-1.8.0 single-path evaluator artifact (stderr note)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt"
+        fault "stop hook stranded a run whose gate wrote the pre-1.8.0 artifact path"
+      fi
+      rm -f "$hb_proj/.jeffy/evaluator/sess-1-000000.md"
+      hb_git rm -q --cached .jeffy/evaluator/sess-1-000000.md >/dev/null 2>&1
+      hb_write_evaluator_artifact
+      hb_git add -A .jeffy >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: back to ordinal artifacts' >/dev/null 2>&1
 
       # The evaluator check runs before the Verify command, because the
       # Verify command is a model-authored shell line the hook executes: a
