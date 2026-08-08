@@ -162,6 +162,9 @@ check_markers skills/jeffy/references/plan-default.md \
   "one structural task" \
   "## Verify command" \
   "Command: " \
+  "Oracle class: " \
+  "Environment fingerprint: " \
+  "bare assertion that nothing is excluded" \
   "## Lessons" \
   "leaves no open task behind" \
   "run report" \
@@ -235,6 +238,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "never only run-without-crash probes" \
   "newly exposed rather than introduced" \
   "whose value changes nothing" \
+  "Oracle class names what the command actually grades" \
+  "bare assertion that nothing is excluded" \
   "Run the gate while its verdict can still be answered:" \
   "One transaction closes the run:" \
   "copy the fixed files aside" \
@@ -297,6 +302,8 @@ check_markers skills/jeffy/references/enhance-plan-default.md \
   "lists no unswept row" \
   "## Verify command" \
   "Command: " \
+  "Oracle class: " \
+  "Environment fingerprint: " \
   "an acceptance check that can fail" \
   "adversarial evaluator gate" \
   "Evaluator: unavailable" \
@@ -726,6 +733,20 @@ if command -v jq >/dev/null 2>&1; then
         for hb_row in "$@"; do printf '%s\n' "$hb_row"; done
       } > "$hb_proj/PLAN.md"
     }
+    hb_write_plan_oracle() { # $1 Command payload, $2 Oracle class payload or ABSENT, $3 Environment fingerprint payload or ABSENT, $4... Surface inventory rows
+      # ABSENT omits the line entirely, which is the pre-1.8.0 PLAN.md shape;
+      # an empty payload writes the label with nothing after it, which is what
+      # a template copied and never filled looks like once the placeholder is
+      # deleted rather than answered.
+      hb_cmd="$1"; hb_oc="$2"; hb_ef="$3"; shift 3
+      {
+        printf '# Plan\n\n## Verify command\nCommand: %s\n' "$hb_cmd"
+        [ "$hb_oc" = ABSENT ] || printf 'Oracle class: %s\n' "$hb_oc"
+        [ "$hb_ef" = ABSENT ] || printf 'Environment fingerprint: %s\n' "$hb_ef"
+        printf '\n## Surface inventory\n'
+        for hb_row in "$@"; do printf '%s\n' "$hb_row"; done
+      } > "$hb_proj/PLAN.md"
+    }
     hb_write_state_extra() { # $1 session_id, $2 iteration, $3 max_iterations, $4... raw frontmatter lines placed before started_at
       hb_sid="$1"; hb_it="$2"; hb_max="$3"; shift 3
       {
@@ -1000,6 +1021,87 @@ if command -v jq >/dev/null 2>&1; then
       printf '%s\n' "$hb_out"
       fault "stop hook mishandled a pre-inventory PLAN.md at the converged stop"
     fi
+
+    # --- P1-10: the Verify command declares what it grades ----------------
+    # An exit status is the only thing this hook can read from a project's
+    # own gate, and go-yaml showed how little that can mean. That run's
+    # command exited 0 for 29 iterations across three runs while the
+    # repository's 402-case conformance corpus never executed once - the file
+    # holding it is build-tagged for another platform and the command's own
+    # package selection never reached it - and the journal asserted twice
+    # that the corpus was green. Scored independently, the external oracle
+    # moved by nothing across 8,174 inserted lines. The hook cannot judge
+    # whether a command is wide enough; that is a judgement about the
+    # project, and guessing at it is exactly what this engine refuses to do.
+    # What it can refuse is a declaration that never wrote down what the
+    # command grades and what the platform excludes.
+    hb_p10_row='- [x] core: swept at abc1234 - all entry points probed'
+
+    hb_write_state sess-1 1 3
+    hb_write_plan_oracle none '<first audit fills this in>' 'linux, go 1.22, excludes nothing' "$hb_p10_row"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Oracle class' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook rejects a declaration whose Oracle class still carries the template placeholder"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a convergence that never said what its Verify command grades"
+    fi
+
+    # An empty payload is the same defect wearing a different face: the
+    # placeholder deleted rather than answered.
+    hb_write_state sess-1 1 3
+    hb_write_plan_oracle none 'unit tests only' '' "$hb_p10_row"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Environment fingerprint' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook rejects a declaration whose Environment fingerprint is left empty"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a convergence that never named the targets its platform excludes"
+    fi
+
+    # Half-migrated PLAN.md: one line answered, its sibling never added. The
+    # file is 1.8-shaped the moment either line appears, so the missing one
+    # is a defect to name rather than a legacy shape to wave through.
+    hb_write_state sess-1 1 3
+    hb_write_plan_oracle none 'conformance corpus, 402 cases' ABSENT "$hb_p10_row"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Environment fingerprint' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook rejects a PLAN.md carrying one oracle declaration and not its sibling"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let a half-migrated oracle declaration through"
+    fi
+
+    hb_write_state sess-1 1 3
+    hb_write_plan_oracle none 'conformance corpus, 402 cases, run by go test ./...' \
+      'linux, go 1.22.5; excludes yaml_test_suite_test.go (build-tagged !windows), per go list -f' "$hb_p10_row"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook accepts a declaration whose Verify command declares its oracle class and exclusions"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook rejected a fully declared oracle"
+    fi
+
+    # Every project bootstrapped before 1.8.0 carries neither line, and the
+    # loop is designed to be relaunched over state files it wrote under an
+    # older engine. Same fail-open shape the Surface inventory shipped with.
+    hb_write_state sess-1 1 3
+    hb_write_plan_full none "$hb_p10_row"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'no Oracle class' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook fails open on a pre-1.8.0 PLAN.md with no oracle declarations (stderr note)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook stranded a project bootstrapped before the oracle declaration shipped"
+    fi
+    hb_write_plan none
 
     hb_write_state sess-1 3 3
     hb_write_backlog '- [ ] T1: unfinished task'

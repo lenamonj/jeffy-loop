@@ -198,6 +198,59 @@ if [ -n "$promise" ]; then
           echo "jeffy stop hook: PLAN.md has no Surface inventory section; skipping the inventory check." >&2
         fi
       fi
+      # Oracle declaration: the exit status of the project's own gate is the
+      # only correctness signal this hook can read, and go-yaml showed how
+      # little that can be worth. That run's Verify command exited 0 for 29
+      # iterations across three runs while the repository's 402-case
+      # conformance corpus never executed once - the only file importing it
+      # carries a build tag for another platform, and the command's own
+      # package selection never reached it - while the journal asserted twice
+      # that the corpus was green and the evaluator gate countersigned both
+      # claims. Scored independently afterwards, the external oracle moved by
+      # nothing across 71 files and 8,174 inserted lines.
+      # The hook deliberately does not decide whether a Verify command is
+      # wide enough. That is a judgement about the project, and the whole
+      # discipline here is to make the run state what it did rather than have
+      # the shell guess at what it should have done. What it can require is
+      # that the run wrote down what its command grades and what this
+      # platform excludes, so a reader meets the narrowing at the claim
+      # instead of discovering it afterwards. A PLAN.md carrying neither line
+      # predates this and fails open, the way the Surface inventory shipped;
+      # a file carrying one of the two is half-migrated and is named.
+      if [ -z "$violation" ] && [ -f "$root/PLAN.md" ]; then
+        # Prints "=<payload>" when the line exists and nothing when it does
+        # not, so an absent line and an empty one stay distinguishable.
+        oracle_field() { # $1 label
+          awk -v lbl="$1" '
+            { sub(/\r$/, "") }
+            $0 == "## Verify command" { take = 1; next }
+            /^## / { take = 0 }
+            take && index($0, lbl ":") == 1 { print "=" substr($0, length(lbl) + 2); exit }
+          ' "$root/PLAN.md"
+        }
+        oracle_unfilled() { # $1 payload; empty or a <...> placeholder is unanswered
+          case "$1" in '' | '<'*'>') return 0 ;; *) return 1 ;; esac
+        }
+        oc_raw="$(oracle_field 'Oracle class')"
+        ef_raw="$(oracle_field 'Environment fingerprint')"
+        oc_val="${oc_raw#=}"
+        oc_val="${oc_val#"${oc_val%%[![:space:]]*}"}"
+        oc_val="${oc_val%"${oc_val##*[![:space:]]}"}"
+        ef_val="${ef_raw#=}"
+        ef_val="${ef_val#"${ef_val%%[![:space:]]*}"}"
+        ef_val="${ef_val%"${ef_val##*[![:space:]]}"}"
+        if [ -z "$oc_raw" ] && [ -z "$ef_raw" ]; then
+          echo "jeffy stop hook: PLAN.md's Verify command section carries no Oracle class or Environment fingerprint line; skipping the oracle declaration check." >&2
+        elif [ -z "$oc_raw" ]; then
+          violation="PLAN.md's Verify command section carries an Environment fingerprint line but no Oracle class line; both are filled by the first audit and re-read at the declaration, so add the Oracle class line naming what the command actually grades - unit tests, a conformance corpus, a differential comparison, or a build only - then re-declare"
+        elif [ -z "$ef_raw" ]; then
+          violation="PLAN.md's Verify command section carries an Oracle class line but no Environment fingerprint line; add it naming the platform, the toolchain versions, and every test target this platform excludes, with the command that enumerated them, then re-declare"
+        elif oracle_unfilled "$oc_val"; then
+          violation="the Oracle class line in PLAN.md's Verify command section is unfilled; name what the Verify command actually grades - unit tests, a conformance corpus, a differential comparison against a reference implementation, or a build only - then re-declare"
+        elif oracle_unfilled "$ef_val"; then
+          violation="the Environment fingerprint line in PLAN.md's Verify command section is unfilled; name the platform, the toolchain versions, and every test target this platform excludes, enumerated by a command rather than asserted - a run once converged over 29 iterations while a build-tagged conformance corpus its command could not reach never ran at all - then re-declare"
+        fi
+      fi
       # Evaluator check: the adversarial gate is where the audits' misses were
       # found, and six of thirteen corpus convergences recorded no verdict at
       # all. The closing entry of this run is what must carry it - an earlier
