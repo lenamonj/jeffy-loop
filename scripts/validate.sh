@@ -1187,6 +1187,30 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook granted a second corrective re-feed"
     fi
 
+    # The stall gate must not swallow the corrective. Both want to end the
+    # same turn: the budget block grants the corrective, then the stall
+    # gate's second strike - which runs later - deletes the state and allows
+    # the stop, and the refusal lands on stderr where nobody reads it, which
+    # is the exact silence the corrective exists to break. Found in review by
+    # driving a rejected declaration through a run whose stall flag was
+    # already armed and whose closing entry was not ceremony-exempt. The
+    # corrective wins because it is the run's last turn ever - the grant flag
+    # ends everything at the next stop regardless - so yielding costs at most
+    # one turn and buys the honest close.
+    hb_write_plan none
+    hb_write_backlog '- [ ] T1: open task'
+    hb_write_journal 3 3
+    hb_write_state_stall sess-1 3 3 none "$(hb_backlog_sig)" 1
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CORRECTIVE' \
+      && [ -f "$hb_state" ] && grep -q '^corrective_granted: 1$' "$hb_state"; then
+      pass "stop hook lets the corrective re-feed outrank the stall gate's second strike"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let the stall gate swallow the corrective re-feed (the refusal died on stderr)"
+    fi
+
     # Converged-hash check: outside a git repository even a stale Converged
     # line is skipped; inside one, the named commit must resolve and only
     # loop-state paths may differ between it and HEAD.

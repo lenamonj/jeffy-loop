@@ -1002,7 +1002,7 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
     if [ -n "$stall_exempt" ] && [ "$ceremony_n" -lt 3 ]; then
       new_ceremony=$((ceremony_n + 1))
       new_stall="$stall_flag"
-    elif [ "$stall_flag" = "1" ]; then
+    elif [ "$stall_flag" = "1" ] && [ -z "$corrective" ]; then
       # Second strike: the prompted hard-blocker close-out did not happen,
       # so the hook ends the stalled run itself, the way budget exhaustion
       # does - state deleted, stop allowed, evidence on stderr. A closing
@@ -1018,6 +1018,13 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
       rm -f "$state"
       exit 0
     else
+      # The second strike yields to a corrective re-feed decided this turn.
+      # Both want to end the same turn, and letting the stall stop win puts
+      # the refused convergence back on stderr where nobody reads it - the
+      # exact silence the corrective exists to break. Yielding is bounded:
+      # the corrective turn is the run's last turn ever, because the grant
+      # flag ends the run at the next stop whatever that turn did, so the
+      # stall gate concedes at most one turn and the record closes honestly.
       [ -n "$stall_exempt" ] && new_ceremony=$((ceremony_n + 1))
       new_stall=1
       stall_note="iteration $iter made no progress (nothing changed since the previous turn end outside PLAN.md, BACKLOG.md, JOURNAL.md, JOURNAL-archive.md, .jeffy/ and the loop's own files under .claude/, and BACKLOG.md is byte-identical); a second consecutive flat iteration ends the run"
