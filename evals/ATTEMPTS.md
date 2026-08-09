@@ -52,9 +52,9 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 18 brownfield convergences:
+The engine tightened over time. Of the 19 brownfield convergences:
 
-- **13** were countersigned by the adversarial evaluator, the current standard.
+- **14** were countersigned by the adversarial evaluator, the current standard.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
   standing instruction against sub-agents, and the receipt says so rather than
   working around it.
@@ -62,7 +62,7 @@ The engine tightened over time. Of the 18 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 18 as one number
+Every receipt names the standard its own run met. Pooling all 19 as one number
 would overstate the earliest four.
 
 ## What was started and never published
@@ -91,7 +91,7 @@ Convergence here is per-run, and a blocked run is relaunched from written
 state with a fresh evaluator budget. Under that protocol, persistence raises
 the chance of eventually converging - dotenv took eight runs, dayjs eight,
 gitignore five with three terminal rejections along the way. The run counts
-above are published precisely so that "18 converged" is read with the cost
+above are published precisely so that "19 converged" is read with the cost
 attached rather than as a success rate.
 
 Targets from here on carry a **pre-registered run budget** committed before

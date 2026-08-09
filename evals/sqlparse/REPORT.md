@@ -2,7 +2,7 @@
 
 **Target**: [andialbrecht/sqlparse](https://github.com/andialbrecht/sqlparse) (4,009 stars, verified via `gh api repos/andialbrecht/sqlparse --jq '.stargazers_count'` on 2026-08-08) at `e7d95d494cebc66fd220198ea2eb2cf94a8bb5fe`, upstream master at the time of the run and still unmoved at the time this receipt was written. BSD-3-Clause. Python, in a local clone; the loop's work was never pushed anywhere. sqlparse is the non-validating SQL parser and formatter behind Django's debug toolbar, a large share of Python SQL tooling, and the `sqlformat` command line tool.
 
-**This is a full `/jeffy` loop run that reached machine-checked convergence, in five runs of 47 iterations.** **31 findings filed and closed (7 High, 11 Medium, 13 Low)** with **6 more declined on evidence**, of which the shipped-code change is **12 files, +345/-156** under `sqlparse/`, or **20 files, +1,025/-168** counting tests, docs and the CHANGELOG. Converged at `31e851e6704ffacc99a531f9405eb46c5f2e97fb` on 2026-08-08: empty ledger, all **24 surface-inventory rows swept**, the verify command re-run fresh for this receipt, and the adversarial evaluator's PASS on record after **six rejections across the five runs**.
+**This is a full `/jeffy` loop run that reached machine-checked convergence, in five runs of 47 iterations.** **31 findings filed and closed (7 High, 11 Medium, 13 Low)** with **6 more declined on evidence**, of which the shipped-code change is **12 files, +345/-156** under `sqlparse/`, or **20 files, +1,025/-168** counting tests, docs and the CHANGELOG. Converged at `31e851e6704ffacc99a531f9405eb46c5f2e97fb` on 2026-08-08: empty ledger, all **24 surface-inventory rows swept**, the verify command re-run fresh for this receipt, and the adversarial evaluator's PASS on record after **seven rejections across the five runs**.
 
 It is the third target of the cold cohort whose selection rule is an oracle the loop cannot rewrite into agreement. sqlparse's oracle is a documented invariant rather than an external corpus: it promises to be non-validating and to return the input unmodified, so round-trip fidelity and format-idempotence are checkable on arbitrary SQL text the loop did not choose.
 
@@ -25,10 +25,10 @@ A stopping rule only carries evidentiary weight when it was genuinely capable of
 | `ce480904-142056` | 10 | reject | budget spent |
 | `d94c386f-153253` | 10 | reject | budget spent |
 | `74432a21-171900` | 9 | reject, reject | **blocked** |
-| `56471ef3-194330` | 10 | reject | **blocked** |
+| `56471ef3-194330` | 10 | reject, reject | **blocked** |
 | `13b41656-223157` | 8 | reject, **PASS** | **converged** |
 
-Counts derived from the run journals by script, not transcribed: 5 runs, 47 iterations as the sum of per-run maxima, 52 journal entries, 7 evaluator invocations under the journal's own heading grammar. One caveat stated rather than smoothed: the run-4 gate artifact describes itself as *"SECOND invocation of this run"* while the journal records one, so the true invocation count is 7 by journal grammar and 8 by artifact testimony. The table above follows the journal.
+Counts derived from the run journals by script, not transcribed: 5 runs, 47 iterations as the sum of per-run maxima, 52 journal entries, **8 evaluator invocations returning 7 rejections and 1 PASS**. Two entries carry more than one verdict and a per-line count misreads both, so they are stated here: run 3's second gate line is one rejection reported across two files, not two rejections, and run 4's single closing entry covers *"both invocations of this run"* and records *"Evaluator: REJECT, twice"*. An earlier draft of this receipt said six rejections and described run 4's second invocation as attested only by the gate artifact and not the journal; the journal's own entry says otherwise in its Task and Verification lines, and the figures here are the corrected ones.
 
 ## The loop declined its own finding by running it
 
@@ -64,7 +64,7 @@ The shape is consistent and worth naming: this is a library that promises to han
 
 The go-yaml receipt in this corpus had to disclose that all of its regression evidence lived in `.jeffy/probes/`, so a maintainer applying its patch got the fixes with almost none of the tests proving them. This run is the counter-case.
 
-`tests/` went **+506/-7 across five files**, and the project's own suite went from **494 passed, 2 xfailed, 1 xpassed** at the base commit to **663 passed, 1 xfailed, 1 xpassed** at the converged tree. The seven deleted lines are a single `xfail`-marked test, discussed below.
+`tests/` went **+506/-7 across five files**, and the project's own suite went from **494 passed, 2 xfailed, 1 xpassed** at the base commit to **663 passed, 1 xfailed, 1 xpassed** at the converged tree. Of the seven deleted lines, four are an `xfail`-marked placeholder and three are the header of a live test renamed in place, discussed below.
 
 Fifteen probe batteries under `.jeffy/probes/` carry the class-completeness enumerations on top of that, each one built to fail against the exact defective tree it indicts. The batteries are the run's own instrument and are not counted as the project's tests.
 
@@ -90,7 +90,7 @@ On that patched pristine tree, re-measured independently: **21 calls** across se
 
 All three were opened in July 2026, received no maintainer comment, and were closed unmerged by their own author on 2026-07-28. The run was cold in the sense the cohort rule requires, meaning we had no knowledge of them and never pointed the loop at anything, and the loop reached both by its own reproduction. But "found independently" is the accurate claim and "found first" is not, and two parties hitting the same defects is corroboration rather than embarrassment. **Nothing from this run was filed upstream.** The maintainer merged five pull requests on 2026-07-25 while passing over an equivalent fix to the same function, which makes the odds of a third submission poor, and the honest disposition was to publish the finding rather than add to a queue.
 
-**The patch removes a public option.** JF-003 deleted `sqlparse/filters/right_margin.py` and turned `right_margin` from an accepted option into one that raises `SQLParseError` naming itself. Upstream's own file carried `# FIXME: Doesn't work` with the `keep_together` tuple commented out to empty, and with it empty the filter split `schema_name.table_name.column_name_long` across three lines and changed the parse tree. The seven deleted test lines are that feature's `xfail`-marked placeholder, replaced by tests asserting the new contract and one pinning `right_margin=None` as a no-op. This is still a breaking API change decided inside a loop run, and reviving the feature properly was filed as a **Proposed** item for the owner rather than settled by the loop. A maintainer who disagrees should read that as the one hunk to drop.
+**The patch removes a public option.** JF-003 deleted `sqlparse/filters/right_margin.py` and turned `right_margin` from an accepted option into one that raises `SQLParseError` naming itself. Upstream's own file carried `# FIXME: Doesn't work` with the `keep_together` tuple commented out to empty, and with it empty the filter split `schema_name.table_name.column_name_long` across three lines and changed the parse tree. Four of the seven deleted test lines are that feature's `xfail`-marked placeholder; the other three are the header of `test_format_right_margin_invalid_option`, a live test renamed to `test_format_right_margin_rejected` and widened in place rather than removed. Both are replaced by tests asserting the new contract, plus one pinning `right_margin=None` as a no-op. This is still a breaking API change decided inside a loop run, and reviving the feature properly was filed as a **Proposed** item for the owner rather than settled by the loop. A maintainer who disagrees should read that as the one hunk to drop.
 
 **One `xpassed` was inherited and left alone.** The baseline carried a test marked expected-to-fail that passes; it still does. It was never touched and never mentioned to the loop.
 
@@ -105,7 +105,7 @@ Everything below was executed against the converged tree or a pristine clone on 
 | R2 crash class closed | 7 shapes x 3 option sets on the converged tree | 0 of 21 non-`SQLParseError` escapes |
 | CLI no longer tracebacks | `python -m sqlparse -r` on a four-byte `(as)` file | exit 0, prints `(as)` |
 | Suite at converged tree | `pytest tests/ -q` | 663 passed, 1 xfailed, 1 xpassed |
-| Nothing weakened | `git diff --numstat base..HEAD -- tests/` | +506/-7, the 7 being one `xfail` test |
+| Nothing weakened | `git diff --numstat base..HEAD -- tests/` | +506/-7, the 7 being an `xfail` placeholder (4 lines) and a live test's header renamed in place (3) |
 | Ledger empty | `BACKLOG.md` Now / Next / Later | all three empty |
 | Inventory swept | `PLAN.md` row states | 24 rows, 24 swept, 0 unswept, 0 unreachable |
 | Patch is real | apply to pristine `e7d95d4`, run suite | applies clean, 663 passed |
