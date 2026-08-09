@@ -166,6 +166,17 @@ What Enhance does not change: the Stop hook, the verify gate, the checkpoint com
 
 - **It stops on purpose, and it shows its work.** Budget spent, convergence reached, progress stalled, or a decision only you can make - the loop ends itself and says why, instead of burning budget spinning. The run report lists iterations used, tasks closed with severities, the diffstat, anything blocked, and decisions waiting on you; an append-only journal and the checkpoint commits hold the full, greppable record.
 
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
+  <img src="media/language-pie-light.png" alt="Pie chart of the 20 converged public targets by language: Python 8 at 40 percent, JavaScript 3 at 15 percent, Go 2 and Rust 2 at 10 percent each, and one each in C#, C++, Java, Ruby and TypeScript at 5 percent each." width="900">
+</picture>
+
+<sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, so the chart cannot disagree with it. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
+
+</div>
+
 ## External Validation: Public Open-Source Projects
 
 Testing a tool against its own codebase proves little. Jeffy was therefore run against widely-used open-source projects with no connection to this repository. <!-- count:converged -->20<!-- /count --> of those runs converged, across <!-- count:languages -->9<!-- /count --> languages - Python, JavaScript, TypeScript, Java, C#, C++, Go, Rust and Ruby - and that breadth is evidence of something specific rather than decoration: the engine ships no language-specific analyzer, no ruleset, and no per-ecosystem plugin. It works from what a project already has, its own test suite and its own verify command, so what carries from a Rust CLI to a Ruby linter to a C++ parser is the method itself. The findings are correspondingly varied: a security flag that did nothing when output was piped, a documented build configuration that had never compiled on MSVC, a Content-Length no parser should accept becoming a wrong number, a panel header dropped rather than truncated.

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<!-- Source for the README language pie. The slice data is NOT in this file:
+     scripts/render-language-pie.py derives it from README.md's receipts table
+     and passes it in as ?data=<url-encoded json>, so the chart cannot go stale
+     independently of the table. Render both themes at deviceScaleFactor 2:
+     media/language-pie-light.png (?theme=light) and -dark.png (?theme=dark),
+     viewport 1400x700. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2937; --muted: #57606a; --accent: #d97757;
+    --panel: #f6f8fa; --border: #d0d7de; --rule: #e6eaef; --sep: #ffffff;
+    --Python: #3572a5; --JavaScript: #c9a227; --Go: #0097bd; --Rust: #c46a34;
+    --TypeScript: #3178c6; --Cpp: #f34b7d; --Csharp: #178600; --Java: #b07219;
+    --Ruby: #a61b1b; --other: #8b949e;
+  }
+  body.dark {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --accent: #d97757;
+    --panel: #161b22; --border: #30363d; --rule: #21262d; --sep: #0d1117;
+    --Python: #4b8bbe; --JavaScript: #f1e05a; --Go: #29bee0; --Rust: #dea584;
+    --TypeScript: #4c8fd6; --Cpp: #f5678f; --Csharp: #3fb950; --Java: #d19a4a;
+    --Ruby: #e0484f; --other: #8b949e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1400px; height: 700px; background: var(--bg); color: var(--fg);
+    font-family: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header { padding: 36px 60px 0; }
+  h1 { font-size: 44px; font-weight: 800; letter-spacing: -1px; line-height: 1; }
+  h1 .accent { color: var(--accent); }
+  .sub { margin-top: 14px; font-size: 23px; color: var(--muted); font-weight: 400; }
+  main { flex: 1; display: flex; align-items: center; padding: 0 48px 26px; gap: 26px; }
+  svg { display: block; }
+  .lbl-name { font-size: 22px; font-weight: 700; }
+  .lbl-pct { font-size: 20px; font-weight: 600; fill: var(--muted); }
+  aside { width: 388px; flex: none; }
+  .row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .row:last-child { border-bottom: 0; }
+  .dot { width: 18px; height: 18px; border-radius: 5px; flex: none; }
+  .name { font-size: 24px; font-weight: 600; width: 158px; flex: none; }
+  .bar { flex: 1; height: 12px; border-radius: 6px; background: var(--panel); overflow: hidden; }
+  .bar span { display: block; height: 100%; border-radius: 6px; }
+  .num { font-size: 22px; font-weight: 700; width: 86px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+  .num em { font-style: normal; color: var(--muted); font-weight: 500; font-size: 19px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Converged targets by <span class="accent">language</span></h1>
+    <div class="sub" id="sub"></div>
+  </header>
+  <main>
+    <svg id="pie" width="890" height="600" viewBox="0 0 890 600"></svg>
+    <aside id="legend"></aside>
+  </main>
+
+<script>
+const params = new URLSearchParams(location.search);
+if (params.get("theme") === "dark") document.body.classList.add("dark");
+
+const data = JSON.parse(decodeURIComponent(params.get("data") || '{"total":0,"slices":[]}'));
+const slices = data.slices;
+
+const VAR = { "C++": "Cpp", "C#": "Csharp" };
+const colorOf = (name) => `var(--${VAR[name] || name.replace(/[^A-Za-z]/g, "") || "other"}, var(--other))`;
+
+document.getElementById("sub").textContent =
+  `${data.total} converged public targets across ${slices.length} languages, by share of targets`;
+
+const W = 890, H = 600, CY = 296, R = 178, LABEL_R = 214, GUTTER = 34, DOT_GAP = 26;
+const svg = document.getElementById("pie");
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs) => {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+};
+// Wedge mid-angles first, from 12 o'clock clockwise. These do not depend on
+// where the pie ends up, and the label widths decide that.
+let a = -Math.PI / 2;
+const marks = [];
+for (const s of slices) {
+  const sweep = (s.count / data.total) * Math.PI * 2;
+  marks.push({ s, start: a, sweep, mid: a + sweep / 2, side: Math.cos(a + sweep / 2) < 0 ? "left" : "right" });
+  a += sweep;
+}
+
+const wedges = el("g", {});
+const labels = el("g", {});
+svg.appendChild(wedges);
+svg.appendChild(labels);
+
+// Build the label text first and measure it, so the pie can be placed in
+// whatever room is left instead of the labels being clipped at the edges.
+for (const m of marks) {
+  const t = el("text", { class: "lbl-name", fill: "var(--fg)", y: -100 });
+  t.textContent = m.s.name;
+  const p = el("tspan", { class: "lbl-pct" });
+  p.textContent = `  ${m.s.pct}%`;
+  t.appendChild(p);
+  labels.appendChild(t);
+  m.text = t;
+}
+const widest = (side) => marks.filter((m) => m.side === side)
+  .reduce((w, m) => Math.max(w, m.text.getBBox().width), 0);
+const dotL = widest("left") + 16;
+const dotR = W - 16 - widest("right");
+
+const CX = (dotL + dotR) / 2;
+const RR = Math.min(R, (dotR - dotL) / 2 - 46);
+const pt = (angle, r) => [CX + r * Math.cos(angle), CY + r * Math.sin(angle)];
+
+for (const m of marks) {
+  const [x0, y0] = pt(m.start, RR), [x1, y1] = pt(m.start + m.sweep, RR);
+  wedges.appendChild(el("path", {
+    d: `M ${CX} ${CY} L ${x0} ${y0} A ${RR} ${RR} 0 ${m.sweep > Math.PI ? 1 : 0} 1 ${x1} ${y1} Z`,
+    fill: colorOf(m.s.name), stroke: "var(--sep)", "stroke-width": 3, "stroke-linejoin": "round",
+  }));
+}
+
+// Push labels apart vertically within each half so the 5% slices cannot
+// collide, then keep the whole stack inside the canvas.
+for (const side of ["left", "right"]) {
+  const list = marks.filter((m) => m.side === side)
+    .map((m) => ({ ...m, y: CY + Math.min(LABEL_R, RR + 36) * Math.sin(m.mid) }))
+    .sort((p, q) => p.y - q.y);
+  for (let i = 1; i < list.length; i++) {
+    if (list[i].y - list[i - 1].y < GUTTER) list[i].y = list[i - 1].y + GUTTER;
+  }
+  if (list.length) {
+    const over = list[list.length - 1].y - (H - 24);
+    if (over > 0) for (const l of list) l.y -= over;
+    const under = 24 - list[0].y;
+    if (under > 0) for (const l of list) l.y += under;
+  }
+  for (const l of list) {
+    const dotX = side === "left" ? dotL : dotR;
+    const [sx, sy] = pt(l.mid, RR + 6);
+    const [bx, by] = pt(l.mid, RR + 30);
+    labels.insertBefore(el("polyline", {
+      points: `${sx},${sy} ${bx},${by} ${dotX},${l.y}`,
+      fill: "none", stroke: "var(--border)", "stroke-width": 2.5,
+      "stroke-linecap": "round", "stroke-linejoin": "round",
+    }), labels.firstChild);
+    labels.appendChild(el("circle", { cx: dotX, cy: l.y, r: 5, fill: colorOf(l.s.name) }));
+    l.text.setAttribute("x", side === "left" ? dotX - 14 : dotX + 14);
+    l.text.setAttribute("y", l.y + 8);
+    l.text.setAttribute("text-anchor", side === "left" ? "end" : "start");
+  }
+}
+
+// Legend
+const legend = document.getElementById("legend");
+const max = Math.max(...slices.map((s) => s.count));
+for (const s of slices) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML =
+    `<div class="dot" style="background:${colorOf(s.name)}"></div>` +
+    `<div class="name">${s.name}</div>` +
+    `<div class="bar"><span style="width:${(s.count / max) * 100}%;background:${colorOf(s.name)}"></span></div>` +
+    `<div class="num">${s.count} <em>&middot; ${s.pct}%</em></div>`;
+  legend.appendChild(row);
+}
+</script>
+</body>
+</html>
