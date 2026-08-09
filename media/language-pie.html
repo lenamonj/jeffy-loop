@@ -4,7 +4,7 @@
      and passes it in as ?data=<url-encoded json>, so the chart cannot go stale
      independently of the table. Render both themes at deviceScaleFactor 2:
      media/language-pie-light.png (?theme=light) and -dark.png (?theme=dark),
-     viewport 1400x700. -->
+     viewport 1400x740. -->
 <html>
 <head>
 <meta charset="utf-8">
@@ -14,18 +14,18 @@
     --panel: #f6f8fa; --border: #d0d7de; --rule: #e6eaef; --sep: #ffffff;
     --Python: #3572a5; --JavaScript: #c9a227; --Go: #0097bd; --Rust: #c46a34;
     --TypeScript: #3178c6; --Cpp: #f34b7d; --Csharp: #178600; --Java: #b07219;
-    --Ruby: #a61b1b; --other: #8b949e;
+    --Ruby: #a61b1b; --PHP: #4f5d95; --other: #8b949e;
   }
   body.dark {
     --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --accent: #d97757;
     --panel: #161b22; --border: #30363d; --rule: #21262d; --sep: #0d1117;
     --Python: #4b8bbe; --JavaScript: #f1e05a; --Go: #29bee0; --Rust: #dea584;
     --TypeScript: #4c8fd6; --Cpp: #f5678f; --Csharp: #3fb950; --Java: #d19a4a;
-    --Ruby: #e0484f; --other: #8b949e;
+    --Ruby: #e0484f; --PHP: #8892c4; --other: #8b949e;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    width: 1400px; height: 700px; background: var(--bg); color: var(--fg);
+    width: 1400px; height: 740px; background: var(--bg); color: var(--fg);
     font-family: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
     display: flex; flex-direction: column;
   }

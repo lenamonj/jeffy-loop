@@ -1,0 +1,773 @@
+diff --git a/.gitattributes b/.gitattributes
+index 5031accf..7e062746 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -15,3 +15,8 @@ phpstan-baseline.neon   export-ignore
+ phpstan.neon.dist   export-ignore
+ phpunit.xml.dist export-ignore
+ UPGRADE-*.md     export-ignore
++/.jeffy          export-ignore
++PLAN.md          export-ignore
++BACKLOG.md       export-ignore
++JOURNAL.md       export-ignore
++JOURNAL-archive.md  export-ignore
+diff --git a/.gitignore b/.gitignore
+index aad97c0c..ef2bf9f3 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -5,3 +5,4 @@ grammar/kmyacc.exe
+ grammar/y.output
+ .phpunit.result.cache
+ .php-cs-fixer.cache
++.claude/jeffy-loop.local.md
+diff --git a/doc/2_Usage_of_basic_components.markdown b/doc/2_Usage_of_basic_components.markdown
+index 462c8adf..02427872 100644
+--- a/doc/2_Usage_of_basic_components.markdown
++++ b/doc/2_Usage_of_basic_components.markdown
+@@ -485,10 +485,10 @@ class NodeVisitor_NamespaceConverter extends \PhpParser\NodeVisitorAbstract
+         } elseif ($node instanceof Stmt\Class_
+                   || $node instanceof Stmt\Interface_
+                   || $node instanceof Stmt\Function_) {
+-            $node->name = str_replace('\\', '_', $node->namespacedName->toString());
++            $node->name = new Node\Identifier(str_replace('\\', '_', $node->namespacedName->toString()));
+         } elseif ($node instanceof Stmt\Const_) {
+             foreach ($node->consts as $const) {
+-                $const->name = str_replace('\\', '_', $const->namespacedName->toString());
++                $const->name = new Node\Identifier(str_replace('\\', '_', $const->namespacedName->toString()));
+             }
+         }
+     }
+@@ -512,10 +512,10 @@ class NodeVisitor_NamespaceConverter extends \PhpParser\NodeVisitorAbstract
+         } elseif ($node instanceof Stmt\Class_
+                   || $node instanceof Stmt\Interface_
+                   || $node instanceof Stmt\Function_) {
+-            $node->name = str_replace('\\', '_', $node->namespacedName->toString();
++            $node->name = new Node\Identifier(str_replace('\\', '_', $node->namespacedName->toString()));
+         } elseif ($node instanceof Stmt\Const_) {
+             foreach ($node->consts as $const) {
+-                $const->name = str_replace('\\', '_', $const->namespacedName->toString());
++                $const->name = new Node\Identifier(str_replace('\\', '_', $const->namespacedName->toString()));
+             }
+         } elseif ($node instanceof Stmt\Namespace_) {
+             // returning an array merges is into the parent array
+diff --git a/doc/component/Walking_the_AST.markdown b/doc/component/Walking_the_AST.markdown
+index 675d7979..cc4c37e8 100644
+--- a/doc/component/Walking_the_AST.markdown
++++ b/doc/component/Walking_the_AST.markdown
+@@ -275,7 +275,7 @@ Stmt_Return(
+ 
+ the following method calls will be performed:
+ 
+-```php
++```
+ $visitorA->enterNode(Stmt_Return)
+ $visitorB->enterNode(Stmt_Return)
+ $visitorA->enterNode(Expr_Variable)
+diff --git a/lib/PhpParser/Error.php b/lib/PhpParser/Error.php
+index f81f0c42..d51fb5b5 100644
+--- a/lib/PhpParser/Error.php
++++ b/lib/PhpParser/Error.php
+@@ -2,6 +2,8 @@
+ 
+ namespace PhpParser;
+ 
++use PhpParser\Internal\Columns;
++
+ class Error extends \RuntimeException {
+     protected string $rawMessage;
+     /** @var array<string, mixed> */
+@@ -100,26 +102,32 @@ class Error extends \RuntimeException {
+      * Gets the start column (1-based) into the line where the error started.
+      *
+      * @param string $code Source code of the file
++     *
++     * @throws \RuntimeException if there is no column information, or if the recorded position
++     *                           falls outside $code on either side
+      */
+     public function getStartColumn(string $code): int {
+         if (!$this->hasColumnInfo()) {
+             throw new \RuntimeException('Error does not have column information');
+         }
+ 
+-        return $this->toColumn($code, $this->attributes['startFilePos']);
++        return Columns::toColumn($code, $this->attributes['startFilePos']);
+     }
+ 
+     /**
+      * Gets the end column (1-based) into the line where the error ended.
+      *
+      * @param string $code Source code of the file
++     *
++     * @throws \RuntimeException if there is no column information, or if the recorded position
++     *                           falls outside $code on either side
+      */
+     public function getEndColumn(string $code): int {
+         if (!$this->hasColumnInfo()) {
+             throw new \RuntimeException('Error does not have column information');
+         }
+ 
+-        return $this->toColumn($code, $this->attributes['endFilePos']);
++        return Columns::toColumn($code, $this->attributes['endFilePos']);
+     }
+ 
+     /**
+@@ -137,27 +145,6 @@ class Error extends \RuntimeException {
+         );
+     }
+ 
+-    /**
+-     * Converts a file offset into a column.
+-     *
+-     * @param string $code Source code that $pos indexes into
+-     * @param int $pos 0-based position in $code
+-     *
+-     * @return int 1-based column (relative to start of line)
+-     */
+-    private function toColumn(string $code, int $pos): int {
+-        if ($pos > strlen($code)) {
+-            throw new \RuntimeException('Invalid position information');
+-        }
+-
+-        $lineStartPos = strrpos($code, "\n", $pos - strlen($code));
+-        if (false === $lineStartPos) {
+-            $lineStartPos = -1;
+-        }
+-
+-        return $pos - $lineStartPos;
+-    }
+-
+     /**
+      * Updates the exception message after a change to rawMessage or rawLine.
+      */
+diff --git a/lib/PhpParser/Internal/Columns.php b/lib/PhpParser/Internal/Columns.php
+new file mode 100644
+index 00000000..5594f936
+--- /dev/null
++++ b/lib/PhpParser/Internal/Columns.php
+@@ -0,0 +1,77 @@
++<?php declare(strict_types=1);
++
++namespace PhpParser\Internal;
++
++/**
++ * Converts file offsets into 1-based columns.
++ *
++ * A line ends at "\n", "\r\n" or a lone "\r", which is what PHP's own tokenizer counts when it
++ * assigns line numbers, and a line terminator belongs to the line it terminates. The search
++ * therefore starts strictly before $pos: a position that is itself a terminator gets the column
++ * it occupies at the end of its line, not column 0 at the start of the next one.
++ *
++ * @internal
++ */
++class Columns {
++    /**
++     * Converts a file offset into a column.
++     *
++     * @param string $code Source code that $pos indexes into
++     * @param int $pos 0-based position in $code, from 0 to its length. The length itself is
++     *                 allowed, because an end position may sit one past the last byte.
++     *
++     * @return int 1-based column (relative to start of line)
++     *
++     * @throws \RuntimeException if $pos falls outside $code on either side
++     */
++    public static function toColumn(string $code, int $pos): int {
++        if ($pos < 0 || $pos > strlen($code)) {
++            throw new \RuntimeException('Invalid position information');
++        }
++
++        $lineEndPos = self::lastLineTerminatorBefore($code, $pos);
++        if ($lineEndPos >= 0 && $code[$lineEndPos] === "\r"
++            && $lineEndPos + 1 === $pos && substr($code, $pos, 1) === "\n"
++        ) {
++            // $pos is the second byte of a "\r\n" pair, which is a single terminator ending a
++            // single line, so the line it belongs to starts before the "\r".
++            $lineEndPos = self::lastLineTerminatorBefore($code, $lineEndPos);
++        }
++
++        return $pos - $lineEndPos;
++    }
++
++    /**
++     * Largest stretch this copies to look for a "\r" in. Any ordinary line is far below it, and
++     * capping the copy is what keeps the search cheap on a source that is one very long line.
++     */
++    private const CR_SEARCH_LIMIT = 4096;
++
++    /**
++     * Returns the offset of the last "\n" or "\r" strictly before $pos, or -1 if there is none.
++     */
++    private static function lastLineTerminatorBefore(string $code, int $pos): int {
++        if ($pos <= 0) {
++            return -1;
++        }
++
++        $offset = $pos - 1 - strlen($code);
++        $lastLf = strrpos($code, "\n", $offset);
++
++        // A "\r" changes the answer only if it sits after the last "\n", so search that stretch
++        // rather than the whole prefix: most sources hold no "\r" at all, and a search for one
++        // runs back to the start of the file every time it is not there.
++        $from = $lastLf === false ? 0 : $lastLf + 1;
++        if ($from >= $pos) {
++            return $lastLf;
++        }
++        $span = $pos - $from;
++        if ($span <= self::CR_SEARCH_LIMIT) {
++            $lastCr = strrpos(substr($code, $from, $span), "\r");
++            return $lastCr === false ? ($lastLf === false ? -1 : $lastLf) : $from + $lastCr;
++        }
++
++        $lastCr = strrpos($code, "\r", $offset);
++        return max($lastLf === false ? -1 : $lastLf, $lastCr === false ? -1 : $lastCr);
++    }
++}
+diff --git a/lib/PhpParser/Lexer.php b/lib/PhpParser/Lexer.php
+index 5e2ece96..382f869d 100644
+--- a/lib/PhpParser/Lexer.php
++++ b/lib/PhpParser/Lexer.php
+@@ -102,11 +102,16 @@ class Lexer {
+         // Check for unterminated comment
+         $lastToken = $tokens[$numTokens - 1];
+         if ($this->isUnterminatedComment($lastToken)) {
++            // endFilePos is inclusive, unlike the exclusive getEndPos(). An unterminated comment
++            // is the one comment token that can end on a newline, and a range ending on a line
++            // terminator has no column, so the reported range stops at the last content
++            // character instead.
++            $text = \rtrim($lastToken->text, "\r\n");
+             $errorHandler->handleError(new Error('Unterminated comment', [
+                 'startLine' => $lastToken->line,
+-                'endLine' => $lastToken->getEndLine(),
++                'endLine' => $lastToken->line + \substr_count($text, "\n"),
+                 'startFilePos' => $lastToken->pos,
+-                'endFilePos' => $lastToken->getEndPos(),
++                'endFilePos' => $lastToken->pos + \strlen($text) - 1,
+             ]));
+         }
+ 
+diff --git a/lib/PhpParser/NodeDumper.php b/lib/PhpParser/NodeDumper.php
+index 7d62d038..3adce619 100644
+--- a/lib/PhpParser/NodeDumper.php
++++ b/lib/PhpParser/NodeDumper.php
+@@ -2,6 +2,7 @@
+ 
+ namespace PhpParser;
+ 
++use PhpParser\Internal\Columns;
+ use PhpParser\Node\Expr\Array_;
+ use PhpParser\Node\Expr\Include_;
+ use PhpParser\Node\Expr\List_;
+@@ -17,6 +18,8 @@ class NodeDumper {
+     private bool $dumpPositions;
+     private bool $dumpOtherAttributes;
+     private ?string $code;
++    /** @var array<int, int>|null Line number of each line-start offset in $code, built on first use */
++    private ?array $lineStarts;
+     private string $res;
+     private string $nl;
+ 
+@@ -59,6 +62,7 @@ class NodeDumper {
+      */
+     public function dump($node, ?string $code = null): string {
+         $this->code = $code;
++        $this->lineStarts = null;
+         $this->res = '';
+         $this->nl = "\n";
+         $this->dumpRecursive($node, false);
+@@ -263,6 +267,14 @@ class NodeDumper {
+     /**
+      * Dump node position, if possible.
+      *
++     * Without the code, only the startLine and endLine attributes are available and the position
++     * is dumped as lines alone. With the code, both halves of each printed "line:column" are
++     * derived from the file position instead, so the pair names the byte that position points at.
++     * That matters where the two disagree: a node keeps a trailing line terminator, as
++     * ParserAbstract::trimErrorRange records, and endLine is then the line after the one the
++     * terminator ends, so pairing it with the terminator's own column named a byte belonging to
++     * the following line.
++     *
+      * @param Node $node Node for which to dump position
+      *
+      * @return string|null Dump of position, or null if position information not available
+@@ -272,28 +284,41 @@ class NodeDumper {
+             return null;
+         }
+ 
+-        $start = $node->getStartLine();
+-        $end = $node->getEndLine();
+         if ($node->hasAttribute('startFilePos') && $node->hasAttribute('endFilePos')
+             && null !== $this->code
+         ) {
+-            $start .= ':' . $this->toColumn($this->code, $node->getStartFilePos());
+-            $end .= ':' . $this->toColumn($this->code, $node->getEndFilePos());
++            $startPos = $node->getStartFilePos();
++            $endPos = $node->getEndFilePos();
++            $startColumn = Columns::toColumn($this->code, $startPos);
++            $endColumn = Columns::toColumn($this->code, $endPos);
++            $start = $this->toLine($startPos, $startColumn) . ':' . $startColumn;
++            $end = $this->toLine($endPos, $endColumn) . ':' . $endColumn;
++        } else {
++            $start = (string) $node->getStartLine();
++            $end = (string) $node->getEndLine();
+         }
+         return "[$start - $end]";
+     }
+ 
+-    // Copied from Error class
+-    private function toColumn(string $code, int $pos): int {
+-        if ($pos > strlen($code)) {
+-            throw new \RuntimeException('Invalid position information');
+-        }
+-
+-        $lineStartPos = strrpos($code, "\n", $pos - strlen($code));
+-        if (false === $lineStartPos) {
+-            $lineStartPos = -1;
++    /**
++     * Converts a file offset into a 1-based line number, under the same line model as the column:
++     * a line ends at "\n", "\r\n" or a lone "\r", and a terminator belongs to the line it
++     * terminates.
++     *
++     * The column already locates the start of $pos's line, since it counts from there, so this
++     * only has to name that line. The offsets are mapped to line numbers once per dump() and
++     * looked up, which keeps a whole-file dump linear in the file's size.
++     */
++    private function toLine(int $pos, int $column): int {
++        if ($this->lineStarts === null) {
++            $this->lineStarts = [0 => 1];
++            $line = 1;
++            if (preg_match_all('/\r\n|\n|\r/', (string) $this->code, $matches, PREG_OFFSET_CAPTURE)) {
++                foreach ($matches[0] as [$text, $offset]) {
++                    $this->lineStarts[$offset + \strlen($text)] = ++$line;
++                }
++            }
+         }
+-
+-        return $pos - $lineStartPos;
++        return $this->lineStarts[$pos - $column + 1];
+     }
+ }
+diff --git a/lib/PhpParser/ParserAbstract.php b/lib/PhpParser/ParserAbstract.php
+index 73ee2dd7..8420b7a0 100644
+--- a/lib/PhpParser/ParserAbstract.php
++++ b/lib/PhpParser/ParserAbstract.php
+@@ -141,6 +141,8 @@ abstract class ParserAbstract implements Parser {
+     protected array $tokens;
+     /** @var int Current position in token array */
+     protected int $tokenPos;
++    /** @var string Source code of the current parse, used to normalize reported error ranges */
++    protected string $code = '';
+ 
+     /**
+      * Initialize $reduceCallbacks map.
+@@ -189,6 +191,7 @@ abstract class ParserAbstract implements Parser {
+         $this->createdArrays = new \SplObjectStorage();
+         $this->parenthesizedArrowFunctions = new \SplObjectStorage();
+ 
++        $this->code = $code;
+         $this->tokens = $this->lexer->tokenize($code, $this->errorHandler);
+         $result = $this->doParse();
+ 
+@@ -198,7 +201,7 @@ abstract class ParserAbstract implements Parser {
+         foreach ($this->createdArrays as $node) {
+             foreach ($node->items as $item) {
+                 if ($item->value instanceof Expr\Error) {
+-                    $this->errorHandler->handleError(
++                    $this->emitError(
+                         new Error('Cannot use empty array elements in arrays', $item->getAttributes()));
+                 }
+             }
+@@ -212,6 +215,7 @@ abstract class ParserAbstract implements Parser {
+         $this->semValue = null;
+         $this->createdArrays = null;
+         $this->parenthesizedArrowFunctions = null;
++        $this->code = '';
+ 
+         if ($result !== null) {
+             $traverser = new NodeTraverser(new CommentAnnotatingVisitor($this->tokens));
+@@ -334,6 +338,17 @@ abstract class ParserAbstract implements Parser {
+                             $this->semValue = $this->semStack[$stackPos - $ruleLength + 1];
+                         }
+                     } catch (Error $e) {
++                        if ($ruleLength > 0 && [] === $e->getAttributes()) {
++                            // A reduce callback can throw an error that carries no attributes of
++                            // its own, because the code that raised it has no access to them. The
++                            // production being reduced is the construct the error is about, so
++                            // give the error that span rather than let it reach the handler with
++                            // no position at all.
++                            $e->setAttributes($this->getAttributes(
++                                $this->tokenStartStack[$stackPos - $ruleLength + 1],
++                                $this->tokenEndStack[$stackPos]
++                            ));
++                        }
+                         if (-1 === $e->getStartLine()) {
+                             $e->setStartLine($this->tokens[$this->tokenPos]->line);
+                         }
+@@ -423,9 +438,92 @@ abstract class ParserAbstract implements Parser {
+     }
+ 
+     protected function emitError(Error $error): void {
++        $this->trimErrorRange($error);
+         $this->errorHandler->handleError($error);
+     }
+ 
++    /**
++     * Shrinks an error's file range onto the source bytes it actually points at.
++     *
++     * Error ranges are inclusive at both ends, so an end that lands on a line terminator names a
++     * byte the accompanying endLine does not describe: endLine is the line of the byte after the
++     * range, which is the next line once the range ends on a newline, and getEndColumn() then
++     * reports 0 rather than the 1-based column it documents. Node ranges keep the terminator,
++     * because it really is part of the node's source text; an error range is a pointer into the
++     * source for a human to read, so it prefers content bytes. Lexer applies the same trimming to
++     * the unterminated-comment error.
++     *
++     * Which of two things that means depends on what the range holds:
++     *  * With at least one content byte in it, the range shrinks onto content: the start moves
++     *    forward past leading terminators, the end moves back past trailing ones, and startLine
++     *    and endLine are corrected by the line breaks the range gave up.
++     *  * With no content byte at all, the range being nothing but terminators, there is nowhere to
++     *    move to. The bytes stay where they are and only endLine is corrected, down onto the line
++     *    its own last byte terminates, so the reported position names a terminator because that is
++     *    all the range contains.
++     */
++    private function trimErrorRange(Error $error): void {
++        $attrs = $error->getAttributes();
++        if (!isset($attrs['startFilePos'], $attrs['endFilePos'], $attrs['startLine'], $attrs['endLine'])) {
++            return;
++        }
++
++        $start = $attrs['startFilePos'];
++        $end = $attrs['endFilePos'];
++        if ($start < 0 || $end >= \strlen($this->code)) {
++            // Out of range, or the past-the-end position the sentinel token reports at EOF.
++            return;
++        }
++
++        $newStart = $start;
++        while ($newStart <= $end && self::isLineTerminator($this->code[$newStart])) {
++            ++$newStart;
++        }
++        $newEnd = $end;
++        while ($newEnd > $newStart && self::isLineTerminator($this->code[$newEnd])) {
++            --$newEnd;
++        }
++        if ($newStart > $newEnd) {
++            // The range is nothing but line terminators, so there is no content byte to move to.
++            // The bytes stay where they are and only endLine is corrected below.
++            $newStart = $start;
++            $newEnd = $end;
++        }
++
++        // endLine is the line of the byte after the range, so it overshoots by one line for every
++        // line break that ends inside the part being given up. startLine is the line of the range's
++        // own first byte, so it gains one for every break inside the part skipped at the front.
++        $startLineDelta = self::countLineBreakEnds($this->code, $start, $newStart - $start);
++        $endLineDelta = self::countLineBreakEnds($this->code, $newEnd, $end - $newEnd + 1);
++        if ($newStart === $start && $newEnd === $end && $startLineDelta === 0 && $endLineDelta === 0) {
++            return;
++        }
++
++        $attrs['startFilePos'] = $newStart;
++        $attrs['startLine'] += $startLineDelta;
++        $attrs['endFilePos'] = $newEnd;
++        $attrs['endLine'] -= $endLineDelta;
++        $error->setAttributes($attrs);
++    }
++
++    private static function isLineTerminator(string $byte): bool {
++        return $byte === "\n" || $byte === "\r";
++    }
++
++    /**
++     * Counts the line breaks that end within the given byte range, where a break is "\n", "\r\n"
++     * or a lone "\r". A "\r\n" pair ends at its "\n", so it is counted once.
++     */
++    private static function countLineBreakEnds(string $code, int $offset, int $length): int {
++        $count = 0;
++        for ($i = $offset, $limit = $offset + $length; $i < $limit; ++$i) {
++            if ($code[$i] === "\n" || ($code[$i] === "\r" && ($code[$i + 1] ?? '') !== "\n")) {
++                ++$count;
++            }
++        }
++        return $count;
++    }
++
+     /**
+      * Format error message including expected tokens.
+      *
+diff --git a/test/PhpParser/LexerTest.php b/test/PhpParser/LexerTest.php
+index c70d83e2..37b21583 100644
+--- a/test/PhpParser/LexerTest.php
++++ b/test/PhpParser/LexerTest.php
+@@ -31,8 +31,8 @@ class LexerTest extends \PHPUnit\Framework\TestCase {
+ 
+     public static function provideTestError() {
+         return [
+-            ["<?php /*", ["Unterminated comment from 1:7 to 1:9"]],
+-            ["<?php /*\n", ["Unterminated comment from 1:7 to 2:1"]],
++            ["<?php /*", ["Unterminated comment from 1:7 to 1:8"]],
++            ["<?php /*\n", ["Unterminated comment from 1:7 to 1:8"]],
+             ["<?php \1", ["Unexpected character \"\1\" (ASCII 1) from 1:7 to 1:7"]],
+             ["<?php \0", ["Unexpected null byte from 1:7 to 1:7"]],
+             // Error with potentially emulated token
+@@ -40,7 +40,7 @@ class LexerTest extends \PHPUnit\Framework\TestCase {
+             ["<?php\n\0\1 foo /* bar", [
+                 "Unexpected null byte from 2:1 to 2:1",
+                 "Unexpected character \"\1\" (ASCII 1) from 2:2 to 2:2",
+-                "Unterminated comment from 2:8 to 2:14"
++                "Unterminated comment from 2:8 to 2:13"
+             ]],
+         ];
+     }
+diff --git a/test/PhpParser/NodeTraverserTest.php b/test/PhpParser/NodeTraverserTest.php
+index 09ea8143..1731b0a2 100644
+--- a/test/PhpParser/NodeTraverserTest.php
++++ b/test/PhpParser/NodeTraverserTest.php
+@@ -9,6 +9,22 @@ use PhpParser\Node\Stmt\Else_;
+ use PhpParser\Node\Stmt\If_;
+ 
+ class NodeTraverserTest extends \PHPUnit\Framework\TestCase {
++    protected function setUp(): void {
++        // Drop the visitors the data providers built while the suite was assembled. Those are
++        // arguments, not this test's own objects, and the scripted return each of them carries is
++        // pinned by the exception testInvalidReturn expects.
++        NodeVisitorForTesting::takeInstances();
++    }
++
++    protected function assertPostConditions(): void {
++        foreach (NodeVisitorForTesting::takeInstances() as $i => $visitor) {
++            $this->assertFalse(
++                $visitor->hasUnusedReturns(),
++                "visitor #$i was scripted with a return that no event ever consumed"
++            );
++        }
++    }
++
+     public function testNonModifying(): void {
+         $str1Node = new String_('Foo');
+         $str2Node = new String_('Bar');
+diff --git a/test/PhpParser/NodeVisitorForTesting.php b/test/PhpParser/NodeVisitorForTesting.php
+index 4a30c59e..433bbbcc 100644
+--- a/test/PhpParser/NodeVisitorForTesting.php
++++ b/test/PhpParser/NodeVisitorForTesting.php
+@@ -7,9 +7,13 @@ class NodeVisitorForTesting implements NodeVisitor {
+     private $returns;
+     private $returnsPos;
+ 
++    /** @var self[] Instances created since the last takeInstances() call */
++    private static $instances = [];
++
+     public function __construct(array $returns = []) {
+         $this->returns = $returns;
+         $this->returnsPos = 0;
++        self::$instances[] = $this;
+     }
+ 
+     public function beforeTraverse(array $nodes): ?array {
+@@ -40,9 +44,24 @@ class NodeVisitorForTesting implements NodeVisitor {
+         return null;
+     }
+ 
+-    public function __destruct() {
+-        if ($this->returnsPos !== count($this->returns)) {
+-            throw new \Exception("Expected event did not occur");
+-        }
++    public function hasUnusedReturns(): bool {
++        return $this->returnsPos !== count($this->returns);
++    }
++
++    /**
++     * Returns every instance created since the last call and forgets them.
++     *
++     * The unused-return check used to live in __destruct(), which fires whenever PHP happens to
++     * collect the object. PHPUnit builds every data provider while assembling the suite, so a
++     * filtered run left the provider's visitors unconsumed and their destructors turned a passing
++     * run into a shutdown fatal. NodeTraverserTest drives the check from setUp and
++     * assertPostConditions instead, where a failure belongs to the test that caused it.
++     *
++     * @return self[]
++     */
++    public static function takeInstances(): array {
++        $instances = self::$instances;
++        self::$instances = [];
++        return $instances;
+     }
+ }
+diff --git a/test/code/parser/errorHandling/errorRangeOnNewline.test b/test/code/parser/errorHandling/errorRangeOnNewline.test
+new file mode 100644
+index 00000000..9ccac816
+--- /dev/null
++++ b/test/code/parser/errorHandling/errorRangeOnNewline.test
+@@ -0,0 +1,53 @@
++Error ranges start and end on a content character, never on a line terminator
++-----
++<?php a<<<X
++foo
++-----
++Syntax error, unexpected T_START_HEREDOC from 1:8 to 1:11
++array(
++    0: Stmt_Expression(
++        expr: Expr_ConstFetch(
++            name: Name(
++                name: a
++            )
++        )
++    )
++)
++-----
++<?php $a = ?>
++foo
++-----
++Syntax error, unexpected ';' from 1:12 to 1:13
++array(
++    0: Stmt_InlineHTML(
++        value: foo
++    )
++)
++-----
++<?php switch (1) { ?>
++
++foo
++<?php }
++-----
++Syntax error, unexpected T_INLINE_HTML, expecting T_CASE or T_DEFAULT or '}' from 3:1 to 3:3
++-----
++<?php switch (1) { ?>
++
++<?php }
++-----
++Syntax error, unexpected T_INLINE_HTML, expecting T_CASE or T_DEFAULT or '}' from 2:1 to 2:1
++-----
++<?php@@{ "\r" }@@$a = ;@@{ "\r" }@@foo();
++-----
++Syntax error, unexpected ';' from 2:6 to 2:6
++array(
++    0: Stmt_Expression(
++        expr: Expr_FuncCall(
++            name: Name(
++                name: foo
++            )
++            args: array(
++            )
++        )
++    )
++)
+diff --git a/test/code/parser/errorHandling/lexerErrors.test b/test/code/parser/errorHandling/lexerErrors.test
+index 2efcac65..085c7217 100644
+--- a/test/code/parser/errorHandling/lexerErrors.test
++++ b/test/code/parser/errorHandling/lexerErrors.test
+@@ -6,7 +6,7 @@ $a = 42;
+ /*
+ $b = 24;
+ -----
+-Unterminated comment from 4:1 to 5:9
++Unterminated comment from 4:1 to 5:8
+ array(
+     0: Stmt_Expression(
+         expr: Expr_Assign(
+@@ -139,5 +139,5 @@ if ($b) {
+     /* unterminated
+ }
+ -----
+-Unterminated comment from 5:5 to 6:2
++Unterminated comment from 5:5 to 6:1
+ Syntax error, unexpected EOF from 6:2 to 6:2
+diff --git a/test/code/parser/nodePositionsAtLineEnd.test b/test/code/parser/nodePositionsAtLineEnd.test
+new file mode 100644
+index 00000000..041cf440
+--- /dev/null
++++ b/test/code/parser/nodePositionsAtLineEnd.test
+@@ -0,0 +1,35 @@
++Node ranges cover a trailing line terminator carried by their last token
++-----
++<?php $a = 1 ?>
++inline
++<?php $b = <<<X
++  y
++  X;
++-----
++!!positions
++array(
++    0: Stmt_Expression[1:7 - 1:16](
++        expr: Expr_Assign[1:7 - 1:12](
++            var: Expr_Variable[1:7 - 1:8](
++                name: a
++            )
++            expr: Scalar_Int[1:12 - 1:12](
++                value: 1
++            )
++        )
++    )
++    1: Stmt_InlineHTML[2:1 - 2:7](
++        value: inline
++
++    )
++    2: Stmt_Expression[3:7 - 5:4](
++        expr: Expr_Assign[3:7 - 5:3](
++            var: Expr_Variable[3:7 - 3:8](
++                name: b
++            )
++            expr: Scalar_String[3:12 - 5:3](
++                value: y
++            )
++        )
++    )
++)
+diff --git a/test/code/parser/nopPositions.test b/test/code/parser/nopPositions.test
+index 3b700c8a..cd95dcd7 100644
+--- a/test/code/parser/nopPositions.test
++++ b/test/code/parser/nopPositions.test
+@@ -21,7 +21,7 @@ array(
+ array(
+     0: Stmt_Block[2:1 - 4:1](
+         stmts: array(
+-            0: Stmt_Nop[3:0 - 3:17](
++            0: Stmt_Nop[3:18 - 3:17](
+                 comments: array(
+                     0: /* comment */
+                 )
+diff --git a/test/code/parser/scalar/flexibleDocStringErrors.test b/test/code/parser/scalar/flexibleDocStringErrors.test
+index cb64e0fd..cf956241 100644
+--- a/test/code/parser/scalar/flexibleDocStringErrors.test
++++ b/test/code/parser/scalar/flexibleDocStringErrors.test
+@@ -42,9 +42,9 @@ Invalid indentation - tabs and spaces cannot be mixed from 8:1 to 8:3
+ Invalid indentation - tabs and spaces cannot be mixed from 10:6 to 12:5
+ Invalid body indentation level (expecting an indentation level of at least 5) from 14:6 to 18:8
+ Invalid body indentation level (expecting an indentation level of at least 1) from 20:1 to 22:4
+-Invalid body indentation level (expecting an indentation level of at least 2) from 25:1 to 26:0
++Invalid body indentation level (expecting an indentation level of at least 2) from 25:1 to 25:5
+ Invalid body indentation level (expecting an indentation level of at least 1) from 30:1 to 30:4
+-Invalid body indentation level (expecting an indentation level of at least 1) from 34:1 to 35:0
++Invalid body indentation level (expecting an indentation level of at least 1) from 34:1 to 34:2
+ array(
+     0: Stmt_Expression(
+         expr: Scalar_String(
+diff --git a/test/code/parser/scalar/unicodeEscape.test b/test/code/parser/scalar/unicodeEscape.test
+index c672fb08..e477a807 100644
+--- a/test/code/parser/scalar/unicodeEscape.test
++++ b/test/code/parser/scalar/unicodeEscape.test
+@@ -80,9 +80,9 @@ array(
+ <?php
+ "\u{FFFFFFFFFFFFFFFF}";
+ -----
+-Invalid UTF-8 codepoint escape sequence: Codepoint too large on line 2
++Invalid UTF-8 codepoint escape sequence: Codepoint too large from 2:1 to 2:22
+ -----
+ <?php
+ "\u{110000}";
+ -----
+-Invalid UTF-8 codepoint escape sequence: Codepoint too large on line 2
++Invalid UTF-8 codepoint escape sequence: Codepoint too large from 2:1 to 2:12
+diff --git a/tools/fuzzing/target.php b/tools/fuzzing/target.php
+index 206cc9ec..90a96042 100644
+--- a/tools/fuzzing/target.php
++++ b/tools/fuzzing/target.php
+@@ -16,7 +16,7 @@ if (class_exists(PhpParser\Parser\Php7::class)) {
+ 
+ $autoload = __DIR__ . '/../../vendor/autoload.php';
+ if (!file_exists($autoload)) {
+-    echo "Cannot find PHP-Parser installation in " . __DIR__ . "/PHP-Parser\n";
++    echo "Cannot find PHP-Parser installation: no autoloader at $autoload\n";
+     exit(1);
+ }
+ 

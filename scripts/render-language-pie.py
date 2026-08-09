@@ -50,7 +50,7 @@ src = (root / "media" / "language-pie.html").as_uri()
 with sync_playwright() as p:
     browser = p.chromium.launch()
     for theme in ("light", "dark"):
-        page = browser.new_page(viewport={"width": 1400, "height": 700}, device_scale_factor=2)
+        page = browser.new_page(viewport={"width": 1400, "height": 740}, device_scale_factor=2)
         page.goto(f"{src}?theme={theme}&data={payload}")
         page.wait_for_timeout(300)
         out = root / "media" / f"language-pie-{theme}.png"

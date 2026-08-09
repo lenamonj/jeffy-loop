@@ -28,6 +28,7 @@ loss rather than hiding it.
 | gson | 1 | 2 | converged | evaluator countersigned | 0 |
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
+| PHP-Parser | 3 | 29 | converged | evaluator countersigned | 0 |
 | PyPortfolioOpt | 6 | 58 | converged | evaluator countersigned | 1 |
 | python-dotenv | 8 | 73 | converged | evaluator countersigned | 1 |
 | quantstats | 4 | 40 | converged | evaluator countersigned | 0 |
@@ -53,9 +54,9 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 20 brownfield convergences:
+The engine tightened over time. Of the 21 brownfield convergences:
 
-- **15** were countersigned by the adversarial evaluator, the current standard.
+- **16** were countersigned by the adversarial evaluator, the current standard.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
   standing instruction against sub-agents, and the receipt says so rather than
   working around it.
@@ -63,7 +64,7 @@ The engine tightened over time. Of the 20 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 20 as one number
+Every receipt names the standard its own run met. Pooling all 21 as one number
 would overstate the earliest four.
 
 ## What was started and never published
@@ -92,7 +93,7 @@ Convergence here is per-run, and a blocked run is relaunched from written
 state with a fresh evaluator budget. Under that protocol, persistence raises
 the chance of eventually converging - dotenv took eight runs, dayjs eight,
 gitignore five with three terminal rejections along the way. The run counts
-above are published precisely so that "20 converged" is read with the cost
+above are published precisely so that "21 converged" is read with the cost
 attached rather than as a success rate.
 
 Targets from here on carry a **pre-registered run budget** committed before
@@ -109,6 +110,8 @@ non-convergence. It converged on the fifth and last budgeted run, at iteration
 8 of 10. Seven evaluator rejections preceded that PASS. The rule was capable of
 producing the unwelcome answer up to the final run, which is the only condition
 under which a stopping rule is worth publishing at all.
+
+`PHP-Parser` was the sixth, at four runs; it used three.
 
 `rust-url` was the fifth, also at five runs; it used three. Its budget never
 came close to binding, which is the opposite outcome to `sqlparse` and is
