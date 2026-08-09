@@ -78,11 +78,26 @@ fi
 # number of invocations that actually left evidence.
 ev_rejects=0
 if [ -f "$root/JOURNAL.md" ]; then
+  # Only EVALUATOR entries are counted, and this is the whole of the
+  # correctness here. An ordinary task entry names the rejection that filed
+  # its task - "G1, filed by the gate at iteration 5 under Evaluator: REJECT"
+  # is exactly the provenance the prompt asks a run to record - so a scan over
+  # every primary entry read those references as verdicts. A run one rejection
+  # into a cap-3 budget counted three and was refused as past every cap: a
+  # false refusal of a legal convergence, on the precise path P1-3 opened, and
+  # worse than the fail-open it replaced because it broke runs that had done
+  # everything right. Only an EVALUATOR entry carries a verdict.
+  # It undercounts rather than overcounts where a single EVALUATOR entry
+  # records two verdicts, and that is the safe direction on purpose: this is
+  # an absolute backstop, the prompt owns the cap, and the artifact ordinal
+  # is the second reading of the same quantity. skip starts at 1 so a
+  # preamble line before the first heading is never counted.
   ev_rejects="$(awk -v tok="| $runid8 |" '
+    BEGIN { skip = 1 }
     { sub(/\r$/, "") }
     /^## iter / {
       split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
-      if (index($0, tok) && t != "ROTATION" && t != "SALVAGE") { skip = 0; counted = 0 } else { skip = 1 }
+      if (index($0, tok) && t == "EVALUATOR") { skip = 0; counted = 0 } else { skip = 1 }
       next
     }
     !skip && !counted && index($0, "Evaluator: REJECT") { n++; counted = 1 }

@@ -3496,6 +3496,35 @@ if command -v jq >/dev/null 2>&1; then
       hb_git rm -q .jeffy/evaluator/sess-1-000000-4.md >/dev/null 2>&1
       hb_git commit -q -m 'jeffy: drop the fourth ordinal' >/dev/null 2>&1
 
+      # The bound counts gate verdicts, not the word. An ordinary task entry
+      # names the rejection that filed its task - "G1, filed by the gate at
+      # iteration 5 under Evaluator: REJECT" is exactly how the prompt asks a
+      # run to record provenance - and a substring scan over every primary
+      # entry read those references as verdicts. A run one rejection into a
+      # cap-3 budget then counted three and was refused as past every cap,
+      # which is a FALSE REFUSAL of a legal convergence on the precise path
+      # P1-3 opened: worse than the fail-open it replaced, because it breaks
+      # runs that did everything right. Only EVALUATOR-typed entries carry a
+      # verdict, so only they are counted.
+      # The preceding scenario's git rm moved HEAD past the artifact commit,
+      # so re-commit it first: otherwise this case is refused by the recency
+      # check and proves nothing about the counter it exists to test.
+      hb_recommit_artifact
+      hb_write_journal_entries \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit.' \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - two findings filed as G1 and G2.' \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | G1 | done:::Task: G1, filed by the gate at iteration 1 under Evaluator: REJECT.' \
+        '## iter 1/3 | sess-1-000000 | 2026-01-01 | G2 | done:::Task: G2, filed by the gate at iteration 1 under Evaluator: REJECT.' \
+        '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
+      hb_p2_ord_fixture_keep_journal
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook counts gate verdicts, not task entries that cite the rejection that filed them"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read provenance references as verdicts and refused a legal convergence"
+      fi
+
       # Gate salvage is a prompt state, not a hook state: mid-budget the hook
       # keeps re-feeding after a terminal REJECT, which is what gives the run
       # the iterations it was previously forbidden to use.
