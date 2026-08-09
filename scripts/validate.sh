@@ -358,10 +358,14 @@ fi
 
 # J. Counts the README states are derived, never transcribed - the class
 #    that produced three drift incidents in one day across two codebases.
-#    Source of truth is the eval table: one row per evals/*/REPORT.md, the
-#    Run column says **converged**, the Language column feeds the distinct
-#    count. On failure, remember the surfaces grep cannot see: the GitHub
-#    About text, release bodies, and any live article state the same numbers.
+#    Source of truth is the eval table: one row per evals/*/REPORT.md, a
+#    numeric Iters cell marks the row converged, the Language column feeds
+#    the distinct count. A row whose Iters cell is neither a number nor an
+#    italic status is unclassifiable and faults rather than being dropped
+#    from the tally in silence - that silence is what the old **converged**
+#    grep allowed, where a typo'd marker just stopped counting.
+#    On failure, remember the surfaces grep cannot see: the GitHub About
+#    text, release bodies, and any live article state the same numbers.
 receipts=0
 for receipt in evals/*/REPORT.md; do
   # An unmatched glob arrives as the literal pattern, so the -f test is what
@@ -369,12 +373,15 @@ for receipt in evals/*/REPORT.md; do
   if [ -f "$receipt" ]; then receipts=$((receipts + 1)); fi
 done
 tbl_rows="$(grep -c '^| \[.*(evals/.*/REPORT\.md)' README.md)"
-tbl_conv="$(grep -c '^| \[.*(evals/.*/REPORT\.md).*\*\*converged\*\*' README.md)"
-tbl_langs="$(awk -F'|' '/^\| \[/ && /\*\*converged\*\*/ { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 }' README.md | sort -u | wc -l | tr -d ' ')"
+tbl_conv="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) c++ } END { print c+0 }' README.md)"
+tbl_langs="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 } }' README.md | sort -u | wc -l | tr -d ' ')"
+tbl_odd="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/^[ \t]+|[ \t]+$/, "", i); if (i !~ /^[0-9]+$/ && i !~ /^\*[a-z]+\*$/) print $2 }' README.md | wc -l | tr -d ' ')"
 claim_conv="$(sed -n 's/.*<!-- count:converged -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
 claim_langs="$(sed -n 's/.*<!-- count:languages -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
 if [ "$tbl_rows" != "$receipts" ]; then
   fault "README eval table has $tbl_rows rows but evals/ holds $receipts REPORT.md receipts; a new eval landed without its row (and the About text and live articles need the same edit)"
+elif [ "$tbl_odd" != "0" ]; then
+  fault "README eval table has $tbl_odd row(s) whose Iters cell is neither an iteration count nor an italic status; such a row is silently absent from every derived count"
 elif [ -z "$claim_conv" ] || [ -z "$claim_langs" ]; then
   fault "README prose counts are not marker-anchored (<!-- count:converged --> / <!-- count:languages -->); an unanchored count is an untracked claim"
 elif [ "$claim_conv" != "$tbl_conv" ]; then
