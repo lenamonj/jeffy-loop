@@ -81,8 +81,57 @@ When that run ends, close the session and start a new one to run it again. That 
 The installer verifies the Claude Code CLI and `jq` (offering to install it via winget, Homebrew, or apt), copies the `/jeffy` and `/cancel-jeffy` skills - engine included - to `~/.claude/skills`, and registers the loop's hook in `~/.claude/settings.json`. Every step prints an [OK] or the exact fix.
 
 - **Re-run** - always safe: it skips what is installed, upgrades in place, and never duplicates the hook registration.
-- **Update** - `git pull`, then re-run the installer; upgrades also refresh the hook's registered timeout.
+- **Update** - see [Already installed? Upgrade in five steps](#already-installed-upgrade-in-five-steps) below.
 - **Uninstall** - delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy`, and remove the hook entry from `~/.claude/settings.json`.
+
+### Already installed? Upgrade in five steps
+
+Upgrading touches `~/.claude` and nothing else. No project you have run against is modified.
+
+**1. Check the version you are on.**
+
+```bash
+grep -m1 JEFFY_VERSION ~/.claude/skills/jeffy/hooks/stop-hook.sh
+```
+
+Windows PowerShell:
+
+```powershell
+Select-String -Path $env:USERPROFILE\.claude\skills\jeffy\hooks\stop-hook.sh -Pattern '^JEFFY_VERSION' | Select-Object -First 1 -ExpandProperty Line
+```
+
+Both print `JEFFY_VERSION="x.y.z"`. Nothing to do if it already matches the newest release.
+
+**2. Let any run finish, or stop it with `/cancel-jeffy`.** The Stop hook is read from disk every time it fires, so replacing it underneath a live run changes that run's rules midway through it.
+
+**3. Pull the new version.**
+
+```bash
+cd jeffy-loop
+git pull
+```
+
+Deleted the clone since installing? Clone it again instead - the installer only ever reads from it:
+
+```bash
+git clone https://github.com/lenamonj/jeffy-loop.git
+cd jeffy-loop
+```
+
+**4. Re-run the installer.**
+
+```bash
+./install.sh        # Windows PowerShell: .\install.ps1
+```
+
+It overwrites both skills in place, leaves a correct hook registration alone, and adds the 600s timeout to a registration made before v1.2.
+
+**5. Start a new Claude Code session.** Skills and hook registrations are read when a session starts, so a session you already have open keeps running the old engine until you restart it.
+
+To confirm the upgrade took, re-run the check from step 1, or just start a run - `/jeffy` names the engine version on its first line.
+
+> [!NOTE]
+> The installer copies over the top and never deletes, so a file removed in a later version stays behind. If you want a clean slate, delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy` before step 4; step 4 puts both back.
 
 ## Usage
 
