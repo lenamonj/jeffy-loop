@@ -27,6 +27,8 @@ loss rather than hiding it.
 | go-yaml | 3 | 29 | converged | evaluator countersigned | 0 |
 | goldmark | 5 | 47 | **not converged** | n/a | 0 |
 | gson | 1 | 2 | converged | evaluator countersigned | 0 |
+| image-rs (attempt 1) | 2 | 10 | **not converged** | n/a | 2 |
+| image-rs (attempt 2) | 3 | 30 | **not converged** | n/a | 0 |
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
 | PHP-Parser | 3 | 29 | converged | evaluator countersigned | 0 |
@@ -143,3 +145,50 @@ held instead is between counts and claims: the counts include run 5, and no
 claim here rests on it. The engine change that would have caught it - the
 launch printing how many runs this target has already had, before adding
 another - is on the release backlog.
+
+## image-rs, twice, and the second one was stopped by a rule that worked
+
+`image-rs` was attempted twice, and **both attempts are listed separately
+rather than pooled.** Their baselines differ in the one way that decides what a
+result means, and pooling would hide the more instructive half.
+
+**Attempt 1 failed because of the operator, and that is stated rather than
+softened.** Its baseline pinned the `pic-scale-safe` dependency *backwards*, to
+a version below what the crate's own manifest resolves, in order to manufacture
+a green start. Upstream declares a caret range and does not track `Cargo.lock`,
+so **no user and no upstream CI run has ever seen the version that run
+measured.** Worse, the pin concealed a live defect: upstream `main` was red on
+that very test, on the tip of the branch, the day before. Inside its
+manufactured world the loop did find a genuine High in the resize border
+handling, correctly refused to unpin on its own authority, filed the blocker,
+and handed the decision back - it behaved well in a world that should not have
+existed. Two runs, 10 iterations, both ending blocked.
+
+**Attempt 2 started deliberately red** - no pin, a fresh resolve, the same
+version upstream CI resolves, with the suite failing at the baseline exactly as
+it fails for anybody who builds the project. It ran three of a pre-registered
+five.
+
+At the run-2/run-3 boundary an **abort criterion** was added: 19 of 42 surface
+rows swept by the end of run 3, or stop. That criterion is honestly weaker than
+a pre-registration - two runs of outcome were already visible when it was
+written, and it says so - but it was fixed before run 3 began and it decided the
+outcome rather than being chosen afterwards. Run 3 finished at **15 rows**. The
+criterion fired and attempt 2 stopped at 30 iterations rather than 50.
+
+**It fired on a hypothesis that was correct.** The criterion existed to test
+whether the sweep rate was front-loaded by instrument-building and would
+accelerate once the batteries existed. It did: 0.50 rows per iteration in run 1,
+0.30 in run 2, then **0.70 in run 3**, the fastest of the three and more than
+double its predecessor. It was still not close to the 1.6 per iteration needed
+to finish. A hypothesis can be right and the answer still no, and the value of
+writing the number down beforehand is that the run gets to prove itself without
+the number moving to accommodate it.
+
+So attempt 2 is **a finding about budget sizing rather than about image-rs**: a
+47-row surface probed at roughly one known-answer battery per row does not fit
+fifty iterations. Its own surface inventory grew from 42 rows to 47 mid-run,
+because an audit correctly split an oversized row into six function families
+rather than let one checkbox stand for a module - which is the behaviour that
+makes the coverage number mean something, and which no faster-looking run
+elsewhere in this table should be assumed to have done.
