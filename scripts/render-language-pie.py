@@ -18,7 +18,7 @@ root = pathlib.Path(__file__).resolve().parent.parent
 readme = (root / "README.md").read_text(encoding="utf-8")
 
 # Receipts table rows look like:
-#   | [name](evals/x/REPORT.md) | 1,570 | Rust | 30 | [PR open](...) | ... |
+#   | [name](evals/x/REPORT.md) | Rust | 30 | [PR open](...) | ... |
 #
 # The iterations cell is what marks a row converged: a converged run has an
 # iteration count, anything else carries an italic status instead (PapaParse
@@ -26,7 +26,7 @@ readme = (root / "README.md").read_text(encoding="utf-8")
 # table was widened; validate.sh check J classifies rows the same way and
 # faults on any row that is neither, so a new shape cannot slip past silently.
 ROW = re.compile(
-    r"^\|\s*\[[^\]]+\]\(evals/[^)]+\)\s*\|[^|]*\|\s*([^|]+?)\s*\|\s*\d+\s*\|",
+    r"^\|\s*\[[^\]]+\]\(evals/[^)]+\)\s*\|\s*([^|]+?)\s*\|\s*\d+\s*\|",
     re.M,
 )
 
