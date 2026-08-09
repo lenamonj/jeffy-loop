@@ -1,0 +1,1643 @@
+diff --git a/data-url/src/lib.rs b/data-url/src/lib.rs
+index 44966a1..77968d7 100644
+--- a/data-url/src/lib.rs
++++ b/data-url/src/lib.rs
+@@ -288,41 +288,56 @@ where
+ {
+     let bytes = encoded_body_plus_fragment.as_bytes();
+     let mut slice_start = 0;
+-    for (i, &byte) in bytes.iter().enumerate() {
++    // An explicit cursor rather than `bytes.iter().enumerate()`, because an
++    // escape may consume more than three bytes when tabs or newlines fall
++    // inside it, and those consumed bytes must not be visited again: revisiting
++    // an ignored byte would move `slice_start` backwards and re-emit input.
++    let mut i = 0;
++    while i < bytes.len() {
++        let byte = bytes[i];
+         // We only need to look for 5 different "special" byte values.
+         // For everything else we make slices as large as possible, borrowing the input,
+         // in order to make fewer write_all() calls.
+-        if matches!(byte, b'%' | b'#' | b'\t' | b'\n' | b'\r') {
+-            // Write everything (if anything) "non-special" we’ve accumulated
+-            // before this special byte
+-            if i > slice_start {
+-                write_bytes(&bytes[slice_start..i])?;
+-                slice_start = i;
+-            }
+-            // Then deal with the special byte.
+-            match byte {
+-                b'%' => {
+-                    let l = bytes.get(i + 2).and_then(|&b| (b as char).to_digit(16));
+-                    let h = bytes.get(i + 1).and_then(|&b| (b as char).to_digit(16));
+-                    if let (Some(h), Some(l)) = (h, l) {
+-                        // '%' followed by two ASCII hex digits
+-                        let one_byte = h as u8 * 0x10 + l as u8;
++        if !matches!(byte, b'%' | b'#' | b'\t' | b'\n' | b'\r') {
++            i += 1;
++            continue;
++        }
++        // Write everything (if anything) "non-special" we’ve accumulated
++        // before this special byte
++        if i > slice_start {
++            write_bytes(&bytes[slice_start..i])?;
++            slice_start = i;
++        }
++        // Then deal with the special byte.
++        match byte {
++            b'%' => {
++                // The two hex digits may be separated from the '%' and from
++                // each other by ASCII tabs or newlines, because the URL parser
++                // would have removed those before the escape was ever seen.
++                match two_hex_digits_ignoring_tabs_and_newlines(bytes, i + 1) {
++                    Some((one_byte, end)) => {
+                         write_bytes(&[one_byte])?;
+-                        slice_start = i + 3;
+-                    } else {
+-                        // Do nothing. Leave slice_start unchanged.
+-                        // The % sign will be part of the next slice.
++                        slice_start = end;
++                        i = end;
++                    }
++                    None => {
++                        // Not an escape. Leave slice_start at the '%', which
++                        // will be part of the next slice.
++                        i += 1;
+                     }
+                 }
++            }
+ 
+-                b'#' => {
+-                    let fragment_start = i + 1;
+-                    let fragment = &encoded_body_plus_fragment[fragment_start..];
+-                    return Ok(Some(FragmentIdentifier(fragment)));
+-                }
++            b'#' => {
++                let fragment_start = i + 1;
++                let fragment = &encoded_body_plus_fragment[fragment_start..];
++                return Ok(Some(FragmentIdentifier(fragment)));
++            }
+ 
+-                // Ignore over '\t' | '\n' | '\r'
+-                _ => slice_start = i + 1,
++            // Ignore over '\t' | '\n' | '\r'
++            _ => {
++                slice_start = i + 1;
++                i += 1;
+             }
+         }
+     }
+@@ -330,6 +345,30 @@ where
+     Ok(None)
+ }
+ 
++/// Read the two ASCII hex digits of a percent escape starting at `from`,
++/// skipping the ASCII tabs and newlines the URL parser would have removed.
++///
++/// Returns the decoded byte and the index just past the second digit, or
++/// `None` when the next two non-ignored bytes are not both hex digits, in
++/// which case the `%` is not an escape at all.
++fn two_hex_digits_ignoring_tabs_and_newlines(bytes: &[u8], from: usize) -> Option<(u8, usize)> {
++    let mut value = 0u8;
++    let mut i = from;
++    for _ in 0..2 {
++        loop {
++            let byte = *bytes.get(i)?;
++            i += 1;
++            if matches!(byte, b'\t' | b'\n' | b'\r') {
++                continue;
++            }
++            let digit = (byte as char).to_digit(16)?;
++            value = value * 0x10 + digit as u8;
++            break;
++        }
++    }
++    Some((value, i))
++}
++
+ /// `decode_without_base64()` composed with
+ /// <https://infra.spec.whatwg.org/#isomorphic-decode> composed with
+ /// <https://infra.spec.whatwg.org/#forgiving-base64-decode>.
+@@ -345,3 +384,96 @@ where
+     decoder.finish()?;
+     Ok(fragment)
+ }
++
++#[cfg(test)]
++mod ignorable_characters {
++    use super::DataUrl;
++    use alloc::string::String;
++    use alloc::vec::Vec;
++
++    /// Everything a caller can observe about a processed data URL.
++    #[derive(PartialEq, Debug)]
++    struct Outcome {
++        mime: Option<String>,
++        body: Option<Vec<u8>>,
++        fragment: Option<Option<String>>,
++    }
++
++    fn observe(input: &str) -> Outcome {
++        match DataUrl::process(input) {
++            Err(_) => Outcome {
++                mime: None,
++                body: None,
++                fragment: None,
++            },
++            Ok(url) => {
++                let mime = Some(alloc::format!("{}", url.mime_type()));
++                match url.decode_to_vec() {
++                    Err(_) => Outcome {
++                        mime,
++                        body: None,
++                        fragment: None,
++                    },
++                    Ok((body, fragment)) => Outcome {
++                        mime,
++                        body: Some(body),
++                        fragment: Some(fragment.map(|f| f.to_percent_encoded())),
++                    },
++                }
++            }
++        }
++    }
++
++    /// The URL parser removes every ASCII tab and newline from its input before
++    /// parsing, so a data URL must decode identically with those characters
++    /// inserted anywhere. The check provokes that at every position of every
++    /// representative URL rather than reasoning about which code reads them:
++    /// scheme matching, the mime type, its parameters, the base64 suffix, a
++    /// percent-escaped body, a malformed escape, and a fragment.
++    #[test]
++    fn tabs_and_newlines_are_ignored_at_every_position() {
++        const INPUTS: &[&str] = &[
++            "data:,plain",
++            "data:,a%20b",
++            "data:,%F0%9F%92%96",
++            "data:,100%",
++            "data:,%zz",
++            "data:text/html,<p>hi</p>",
++            "data:text/plain;charset=utf-8,x",
++            "data:;charset=utf-8,x",
++            "data:text/plain;base64,Zm9vYmFy",
++            "data:;base64,SGVsbG8sIHdvcmxkIQ==",
++            "data:,body#frag",
++            "data:text/html;base64,PHA+aGk8L3A+#tail",
++            "data:application/octet-stream;base64,AAECAwQ=",
++            "data:text/plain;a=\"x;y\",v",
++        ];
++        const IGNORABLE: &[char] = &['\t', '\n', '\r'];
++
++        let mut cases = 0usize;
++        for input in INPUTS {
++            let expected = observe(input);
++            for &ch in IGNORABLE {
++                for position in 0..=input.len() {
++                    if !input.is_char_boundary(position) {
++                        continue;
++                    }
++                    let mut mutated = String::with_capacity(input.len() + 1);
++                    mutated.push_str(&input[..position]);
++                    mutated.push(ch);
++                    mutated.push_str(&input[position..]);
++                    cases += 1;
++                    assert_eq!(
++                        observe(&mutated),
++                        expected,
++                        "inserting {:?} at byte {} of {:?} changed the outcome",
++                        ch,
++                        position,
++                        input
++                    );
++                }
++            }
++        }
++        assert_eq!(cases, 1011, "the enumeration lost cases");
++    }
++}
+diff --git a/form_urlencoded/src/lib.rs b/form_urlencoded/src/lib.rs
+index 639545a..1fea5aa 100644
+--- a/form_urlencoded/src/lib.rs
++++ b/form_urlencoded/src/lib.rs
+@@ -312,6 +312,36 @@ impl<'a, T: Target> Serializer<'a, T> {
+     /// This can be more convenient, so the user doesn’t need to introduce a block
+     /// to limit the scope of `Serializer`’s borrow of its string.
+     ///
++    /// `K` has to be named at the call site. Unlike [`Serializer::extend_pairs`],
++    /// whose bound `I::Item: Borrow<(K, V)>` can only be satisfied one way
++    /// because the target is a tuple, this bound is `I::Item: Borrow<K>` with a
++    /// bare type variable, and both `impl<T> Borrow<T> for T` and
++    /// `impl<T> Borrow<T> for &T` satisfy it for every ordinary item type. So
++    /// `extend_keys_only` without a turbofish does not compile:
++    ///
++    /// ```compile_fail,E0283
++    /// let mut serializer = form_urlencoded::Serializer::new(String::new());
++    /// serializer.extend_keys_only(vec!["a", "b"]);
++    /// ```
++    ///
++    /// Naming `K` fixes it:
++    ///
++    /// ```rust
++    /// let mut serializer = form_urlencoded::Serializer::new(String::new());
++    /// serializer.extend_keys_only::<Vec<&str>, &str>(vec!["foo", "bar"]);
++    /// assert_eq!(serializer.finish(), "foo&bar");
++    /// ```
++    ///
++    /// Owned keys work the same way:
++    ///
++    /// ```rust
++    /// let keys = vec![String::from("foo"), String::from("bar")];
++    /// let encoded: String = form_urlencoded::Serializer::new(String::new())
++    ///     .extend_keys_only::<Vec<String>, String>(keys)
++    ///     .finish();
++    /// assert_eq!(encoded, "foo&bar");
++    /// ```
++    ///
+     /// Panics if called after `.finish()`.
+     pub fn extend_keys_only<I, K>(&mut self, iter: I) -> &mut Self
+     where
+diff --git a/percent_encoding/src/ascii_set.rs b/percent_encoding/src/ascii_set.rs
+index 26c66dd..58e860d 100644
+--- a/percent_encoding/src/ascii_set.rs
++++ b/percent_encoding/src/ascii_set.rs
+@@ -53,12 +53,49 @@ impl AsciiSet {
+         !byte.is_ascii() || self.contains(byte)
+     }
+ 
++    /// Return a set that also contains `byte`.
++    ///
++    /// # Panics
++    ///
++    /// Panics if `byte` is not in the ASCII range, that is if it is `0x80` or
++    /// greater, because the set only spans the 128 ASCII values. In a `const`
++    /// context the same argument is a compile error rather than a panic.
++    ///
++    /// There is nothing to gain by adding a non-ASCII byte: every byte outside
++    /// the ASCII range is percent-encoded whatever the set says, so no set ever
++    /// needs to name one.
++    ///
++    /// ```
++    /// use percent_encoding::{percent_encode, AsciiSet};
++    ///
++    /// // Non-ASCII bytes are encoded even by the empty set.
++    /// assert_eq!(percent_encode(&[0x80], &AsciiSet::EMPTY).to_string(), "%80");
++    /// ```
++    ///
++    /// ```should_panic
++    /// use percent_encoding::{AsciiSet, CONTROLS};
++    ///
++    /// let _ = CONTROLS.add(0x80); // panics: 0x80 is outside the ASCII range
++    /// # let _ = AsciiSet::EMPTY;
++    /// ```
+     pub const fn add(&self, byte: u8) -> Self {
+         let mut mask = self.mask;
+         mask[byte as usize / BITS_PER_CHUNK] |= 1 << (byte as usize % BITS_PER_CHUNK);
+         Self { mask }
+     }
+ 
++    /// Return a set that does not contain `byte`.
++    ///
++    /// # Panics
++    ///
++    /// Panics if `byte` is not in the ASCII range, on the same terms as
++    /// [`AsciiSet::add`].
++    ///
++    /// ```should_panic
++    /// use percent_encoding::CONTROLS;
++    ///
++    /// let _ = CONTROLS.remove(0x80); // panics: 0x80 is outside the ASCII range
++    /// ```
+     pub const fn remove(&self, byte: u8) -> Self {
+         let mut mask = self.mask;
+         mask[byte as usize / BITS_PER_CHUNK] &= !(1 << (byte as usize % BITS_PER_CHUNK));
+diff --git a/url/src/lib.rs b/url/src/lib.rs
+index fa28036..88683fc 100644
+--- a/url/src/lib.rs
++++ b/url/src/lib.rs
+@@ -345,6 +345,12 @@ impl Url {
+     ///
+     /// Existing params are not removed.
+     ///
++    /// The returned URL always has a query, because the params are appended
++    /// through [`Url::query_pairs_mut`], which creates one. An empty `iter`
++    /// therefore leaves a URL carrying an empty query rather than no query, and
++    /// the result differs from [`Url::parse`] on the same input by a trailing
++    /// `?`. Use [`Url::parse`] when there may be no params to add.
++    ///
+     /// # Examples
+     ///
+     /// ```rust
+@@ -360,6 +366,24 @@ impl Url {
+     /// # run().unwrap();
+     /// ```
+     ///
++    /// An empty `iter` still leaves the URL with a query:
++    ///
++    /// ```rust
++    /// use url::Url;
++    /// # use url::ParseError;
++    ///
++    /// # fn run() -> Result<(), ParseError> {
++    /// let no_params: [(&str, &str); 0] = [];
++    /// let url = Url::parse_with_params("https://example.net/", &no_params)?;
++    /// assert_eq!(url.as_str(), "https://example.net/?");
++    /// assert_eq!(url.query(), Some(""));
++    ///
++    /// assert_eq!(Url::parse("https://example.net/")?.query(), None);
++    /// # Ok(())
++    /// # }
++    /// # run().unwrap();
++    /// ```
++    ///
+     /// # Errors
+     ///
+     /// If the function can not parse an absolute URL from the given string,
+@@ -471,6 +495,24 @@ impl Url {
+         Self::options().base_url(Some(self)).parse(input)
+     }
+ 
++    /// The Windows drive letter that opens this URL's path, if it has one.
++    ///
++    /// Only a `file:` URL has one, and only as `path[0]`: WHATWG `shorten a
++    /// URL's path` step 4 refuses to remove that segment, so it is the floor
++    /// that `..` cannot climb below and behaves like part of the base rather
++    /// than like an ordinary path segment.
++    fn windows_drive_letter_prefix(&self) -> Option<&str> {
++        if !SchemeType::from(self.scheme()).is_file() {
++            return None;
++        }
++        let first_segment = self.path().strip_prefix('/')?.split('/').next()?;
++        if parser::is_normalized_windows_drive_letter(first_segment) {
++            Some(first_segment)
++        } else {
++            None
++        }
++    }
++
+     /// Creates a relative URL if possible, with this URL as the base URL.
+     ///
+     /// This is the inverse of [`join`].
+@@ -501,6 +543,34 @@ impl Url {
+     /// let url = Url::parse("https://example.net/a/b.html?e=f")?;
+     /// let relative = base.make_relative(&url);
+     /// assert_eq!(relative.as_ref().map(|s| s.as_str()), Some("?e=f"));
++    ///
++    /// // A relative reference inherits the base's whole authority, so a
++    /// // difference in credentials cannot be expressed by one.
++    /// let base = Url::parse("https://user@example.net/a/b.html")?;
++    /// let url = Url::parse("https://example.net/a/c.png")?;
++    /// assert_eq!(base.make_relative(&url), None);
++    ///
++    /// // `..` cannot climb past a `file:` URL's Windows drive letter, so a
++    /// // base under one reaches only targets under the same one.
++    /// let base = Url::parse("file:///C:/a/b")?;
++    /// assert_eq!(base.make_relative(&Url::parse("file:///a/b")?), None);
++    /// let url = Url::parse("file:///C:/a/c")?;
++    /// let relative = base.make_relative(&url);
++    /// assert_eq!(relative.as_ref().map(|s| s.as_str()), Some("c"));
++    ///
++    /// // An authority with no path is not the same URL as one with a root
++    /// // path, and only one direction between them can be expressed.
++    /// let base = Url::parse("foo://h")?;
++    /// let url = Url::parse("foo://h/")?;
++    /// assert_eq!(base.make_relative(&url).as_deref(), Some("./"));
++    /// assert_eq!(url.make_relative(&base), None);
++    ///
++    /// // An empty authority is still an authority, so it is not interchangeable
++    /// // with none at all, even though neither URL has a host.
++    /// let base = Url::parse("foo:/a")?;
++    /// let url = Url::parse("foo:///a")?;
++    /// assert_eq!(base.make_relative(&url), None);
++    /// assert_eq!(url.make_relative(&base), None);
+     /// # Ok(())
+     /// # }
+     /// # run().unwrap();
+@@ -509,23 +579,104 @@ impl Url {
+     /// # Errors
+     ///
+     /// If this URL can't be a base for the given URL, `None` is returned.
+-    /// This is for example the case if the scheme, host or port are not the same.
++    /// This is the case when either URL has an opaque path, since such a URL
++    /// has no path segments to resolve against or to be named by a reference.
++    /// It is also the case whenever the two URLs differ in any part of their
++    /// authority - scheme, whether an authority is present at all, username,
++    /// password, host or port - because a relative reference resolves against
++    /// the base's authority in full and so cannot express a change to any of
++    /// it. `foo:/a` and `foo:///a` differ that way even though neither has a
++    /// host. It is also the case when this URL
++    /// is a `file:` URL whose path begins with a Windows drive letter and the
++    /// given URL does not begin with the same one, because reference
++    /// resolution will not climb past that segment, and when the given URL has
++    /// no path below that floor at all while this one does, as `foo://h` has
++    /// none and `foo://h/` has one empty segment: resolution merges a
++    /// reference onto the floor, so it can never produce the path-less form.
+     ///
+     /// [`join`]: #method.join
+     pub fn make_relative(&self, url: &Self) -> Option<String> {
+-        if self.cannot_be_a_base() {
++        // Neither end may have an opaque path. A base with one has no
++        // directory to resolve against, and a target with one has no path
++        // segments for a reference to name, so no relative reference resolves
++        // to it. The target's opaque path is also the one path here that does
++        // not open with a slash, which every split below assumes it does:
++        // letting it through made `foo:/a/b` to `foo:bar` answer `../ar`,
++        // eating the first byte and resolving to `foo:/ar`.
++        if self.cannot_be_a_base() || url.cannot_be_a_base() {
+             return None;
+         }
+ 
+-        // Scheme, host and port need to be the same
+-        if self.scheme() != url.scheme() || self.host() != url.host() || self.port() != url.port() {
++        // The whole authority needs to be the same, userinfo included, and that
++        // includes whether there is an authority at all. A relative-path
++        // reference carries no authority, so RFC 3986 section 5.3 recomposes
++        // the target with the base's authority verbatim; anything this check
++        // lets through is a component the returned reference silently rewrites.
++        // Ignoring username and password, as this once did, meant a base
++        // carrying credentials and a target without them produced a reference
++        // that rejoined to the credentials. Ignoring presence meant the same
++        // for `foo:/a` and `foo:///a`, which are different URLs that every
++        // accessor below reports identically - both have no host, no port and
++        // no credentials - so only `has_authority` separates them.
++        if self.scheme() != url.scheme()
++            || self.has_authority() != url.has_authority()
++            || self.host() != url.host()
++            || self.port() != url.port()
++            || self.username() != url.username()
++            || self.password() != url.password()
++        {
+             return None;
+         }
+ 
+-        // We ignore username/password at this point
++        // A `file:` URL whose first path segment is a Windows drive letter
++        // carries it the way it carries its authority. WHATWG `shorten a URL's
++        // path` step 4 refuses to climb past that segment, so no relative
++        // reference can leave it: a base under `/C:` reaches only targets under
++        // `/C:`. Emitting `..` for it produced a reference that resolved back
++        // into the base's own drive.
++        let base_drive = self.windows_drive_letter_prefix();
++        if base_drive.is_some() && base_drive != url.windows_drive_letter_prefix() {
++            return None;
++        }
+ 
+         // The path has to be transformed
+         let mut relative = String::new();
++        // Count the segments written rather than testing `relative.is_empty()`,
++        // which the separator logic used to stand in for it. The two differ
++        // whenever a segment is itself empty: such a segment writes no bytes
++        // but still has to be separated from what follows, so standing in for
++        // one with the other silently drops a `//` inside the target path.
++        let mut segments_written = 0usize;
++        // Whether the first segment written needs a leading dot-segment, which
++        // is decided when that segment is written and acted on once at the end.
++        let mut first_segment_needs_dot = false;
++
++        let is_file = SchemeType::from(self.scheme()).is_file();
++
++        fn push_segment(
++            relative: &mut String,
++            segments_written: &mut usize,
++            first_segment_needs_dot: &mut bool,
++            is_file: bool,
++            segment: &str,
++        ) {
++            if *segments_written > 0 {
++                relative.push('/');
++            } else {
++                *first_segment_needs_dot = segment.is_empty()
++                    || segment.contains(':')
++                    // A `file:` reference opening with a bare Windows drive
++                    // letter is read as one by resolution, which then drops the
++                    // base's path entirely instead of merging onto it, so an
++                    // ordinary segment that happens to be spelled `C|` has to
++                    // be written `./C|`. Only the `|` spelling reaches here:
++                    // `C:` is already caught by the colon test above, and a
++                    // longer segment such as `C|x` is not a drive letter.
++                    || (is_file && parser::is_windows_drive_letter(segment));
++            }
++            *segments_written += 1;
++            relative.push_str(segment);
++        }
+ 
+         // Extract the filename of both URIs, these need to be handled separately
+         fn extract_path_filename(s: &str) -> (&str, &str) {
+@@ -538,8 +689,39 @@ impl Url {
+             }
+         }
+ 
+-        let (base_path, base_filename) = extract_path_filename(self.path());
+-        let (url_path, url_filename) = extract_path_filename(url.path());
++        // Split the part of the path below the floor - the drive letter above,
++        // or the authority when there is none - into a directory and a
++        // filename. `None` for the filename means there is nothing below the
++        // floor at all: an authority-only URL like `foo://h`, or a `file:` URL
++        // that is nothing but its drive letter.
++        //
++        // That state has to stay distinct from an empty final segment, which is
++        // what a trailing slash means, and `rfind` alone conflates them: it
++        // splits both `""` and `"/"` into an empty directory and an empty
++        // filename. The two differ in both directions. Resolution merges a
++        // reference onto the floor, so it can never produce the no-path shape
++        // from a base that has a path, and such a target has to be refused; and
++        // a base in that shape offers no filename for a reference to replace,
++        // so reaching `foo://h/` from `foo://h` takes `./` rather than the
++        // empty reference the conflation produced.
++        fn split_below_floor<'a>(path: &'a str, drive: Option<&str>) -> (&'a str, Option<&'a str>) {
++            let below = match drive {
++                Some(drive) => &path[drive.len() + 1..],
++                None => path,
++            };
++            if below.is_empty() {
++                return ("", None);
++            }
++            let (directory, filename) = extract_path_filename(below);
++            (directory, Some(filename))
++        }
++
++        let (base_path, base_filename) = split_below_floor(self.path(), base_drive);
++        let (url_path, url_filename) = split_below_floor(url.path(), base_drive);
++
++        if url_filename.is_none() && base_filename.is_some() {
++            return None;
++        }
+ 
+         let mut base_path = base_path.split('/').peekable();
+         let mut url_path = url_path.split('/').peekable();
+@@ -550,42 +732,50 @@ impl Url {
+             url_path.next();
+         }
+ 
+-        // Add `..` segments for the remainder of the base path
+-        for base_path_segment in base_path {
+-            // Skip empty last segments
+-            if base_path_segment.is_empty() {
+-                break;
+-            }
+-
+-            if !relative.is_empty() {
+-                relative.push('/');
+-            }
+-
+-            relative.push_str("..");
++        // Add `..` segments for the remainder of the base path.
++        //
++        // Every remaining segment is a directory level to climb out of,
++        // including an empty one. `extract_path_filename` has already split
++        // off the trailing segment, so the only way an empty segment reaches
++        // here is a `//` inside the base path, which names a real directory
++        // whose name happens to be empty; skipping it, as this loop once did,
++        // climbs out one level short and lands the reference in the wrong
++        // directory.
++        for _base_path_segment in base_path {
++            push_segment(
++                &mut relative,
++                &mut segments_written,
++                &mut first_segment_needs_dot,
++                is_file,
++                "..",
++            );
+         }
+ 
+         // Append the remainder of the other URI
+         for url_path_segment in url_path {
+-            if !relative.is_empty() {
+-                relative.push('/');
+-            }
+-
+-            relative.push_str(url_path_segment);
++            push_segment(
++                &mut relative,
++                &mut segments_written,
++                &mut first_segment_needs_dot,
++                is_file,
++                url_path_segment,
++            );
+         }
+ 
+-        // Add the filename if they are not the same
+-        if !relative.is_empty() || base_filename != url_filename {
+-            // If the URIs filename is empty this means that it was a directory
+-            // so we'll have to append a '/'.
+-            //
+-            // Otherwise append it directly as the new filename.
+-            if url_filename.is_empty() {
+-                relative.push('/');
+-            } else {
+-                if !relative.is_empty() {
+-                    relative.push('/');
+-                }
+-                relative.push_str(url_filename);
++        // Add the filename if it differs, or if segments were already written
++        // and it therefore has to terminate them. An empty filename is a real
++        // segment here: it is what makes the reference name a directory, and a
++        // base with no filename at all differs from one, which is what makes
++        // `foo://h` to `foo://h/` a `./` rather than an empty reference.
++        if let Some(url_filename) = url_filename {
++            if segments_written > 0 || base_filename != Some(url_filename) {
++                push_segment(
++                    &mut relative,
++                    &mut segments_written,
++                    &mut first_segment_needs_dot,
++                    is_file,
++                    url_filename,
++                );
+             }
+         }
+ 
+@@ -600,6 +790,41 @@ impl Url {
+             relative.push_str(fragment);
+         }
+ 
++        // A relative reference does not always resolve back to `url` under the
++        // reference resolution of RFC 3986 section 5. Two shapes have to be
++        // repaired, and both are repaired here, at the single point where the
++        // reference is complete, rather than at each site that can produce
++        // one.
++        if segments_written == 0 {
++            // The reference carries no path at all, so it is empty or
++            // fragment-only. Resolution then keeps the base's query, which
++            // names `url` only when `url` has a query of its own to override
++            // it with, or when this URL has no query to inherit in the first
++            // place. In the remaining case spell out a same-directory
++            // reference to the final path segment, which keeps the path and
++            // drops the query.
++            if url.query().is_none() && self.query().is_some() {
++                match url_filename {
++                    Some(url_filename) => {
++                        relative.insert_str(0, url_filename);
++                        relative.insert_str(0, "./");
++                    }
++                    // There is no final path segment to name: the target sits
++                    // on the floor, so every reference to it carries no path
++                    // and inherits the base query it must not have.
++                    None => return None,
++                }
++            }
++        } else if first_segment_needs_dot {
++            // An empty first segment would make this an absolute-path
++            // reference, resolved against the root rather than against the
++            // base directory. A first segment containing a colon would be read
++            // as a scheme: RFC 3986 section 4.2 says such a segment "must be
++            // preceded by a dot-segment". One leading dot-segment answers
++            // both, and preserves the empty segment rather than swallowing it.
++            relative.insert_str(0, "./");
++        }
++
+         Some(relative)
+     }
+ 
+@@ -2070,6 +2295,12 @@ impl Url {
+             self.username_end = new_path_start;
+             self.host_start = new_path_start;
+             self.host_end = new_path_start;
++            // The authority is gone from the serialization, so the parsed host
++            // has to go with it. Leaving the old `HostInternal` behind makes
++            // `has_host` answer true over an empty host slice, and for an IP
++            // host makes `host()` keep returning an address that no longer
++            // appears anywhere in the URL.
++            self.host = HostInternal::None;
+             self.port = None;
+             if let Some(ref mut index) = self.query_start {
+                 *index -= offset
+diff --git a/url/src/parser.rs b/url/src/parser.rs
+index 6ccfa9b..84c0fac 100644
+--- a/url/src/parser.rs
++++ b/url/src/parser.rs
+@@ -1268,22 +1268,48 @@ impl Parser<'_> {
+                     }
+                     _ => {
+                         self.check_url_code_point(c, &input);
+-                        if scheme_type.is_file()
+-                            && self.serialization.len() > path_start
+-                            && is_normalized_windows_drive_letter(
+-                                &self.serialization[path_start + 1..],
+-                            )
+-                        {
+-                            push_pending(
+-                                &mut self.serialization,
+-                                start_str,
+-                                input_before_c.chars.as_str().len(),
+-                                self.context,
+-                                scheme_type,
+-                            );
+-                            start_str = input_before_c.chars.as_str();
+-                            self.serialization.push('/');
+-                            segment_start += 1;
++                        // A path that already ends at `path[0]`, and `path[0]`
++                        // is a drive letter, needs a separator before it can
++                        // continue: `file:///p:` joined with `a` is
++                        // `file:///p:/a`, not `file:///a`. Nothing below
++                        // concerns any other scheme, so the scheme test stays
++                        // outermost: this is the parser's per-character loop
++                        // and `file_first_segment_start` walks the path's
++                        // leading slashes.
++                        if scheme_type.is_file() {
++                            // While a hostless `file:` URL is being parsed the
++                            // serialization carries a run of slashes at
++                            // `path_start`, not one, so derive where `path[0]`
++                            // begins rather than assuming `path_start + 1`.
++                            let first_segment_start =
++                                Parser::file_first_segment_start(&self.serialization, path_start);
++                            // The drive letter has to have been complete before
++                            // this segment began - carried in from a base URL -
++                            // and not spelled by this segment's own characters.
++                            // `push_pending` writes the pending characters into
++                            // the serialization at an ASCII tab, LF or CR as
++                            // well as at a separator, so a drive letter in the
++                            // current segment reaches here only when one of
++                            // those three characters follows it. WHATWG removes
++                            // all three before parsing, so firing there made
++                            // `file:///C:<tab>x` parse as `file:///C:/x` while
++                            // `file:///C:x` parsed as `file:///C:x`.
++                            if first_segment_start < segment_start
++                                && is_normalized_windows_drive_letter(
++                                    &self.serialization[first_segment_start..],
++                                )
++                            {
++                                push_pending(
++                                    &mut self.serialization,
++                                    start_str,
++                                    input_before_c.chars.as_str().len(),
++                                    self.context,
++                                    scheme_type,
++                                );
++                                start_str = input_before_c.chars.as_str();
++                                self.serialization.push('/');
++                                segment_start += 1;
++                            }
+                         }
+                     }
+                 }
+@@ -1301,7 +1327,11 @@ impl Parser<'_> {
+                     debug_assert!(self.serialization.as_bytes()[segment_start - 1] == b'/');
+                     self.serialization.truncate(segment_start);
+                     if self.serialization.ends_with('/')
+-                        && Parser::last_slash_can_be_removed(&self.serialization, path_start)
++                        && Parser::last_slash_can_be_removed(
++                            &self.serialization,
++                            path_start,
++                            scheme_type,
++                        )
+                     {
+                         self.serialization.pop();
+                     }
+@@ -1322,8 +1352,18 @@ impl Parser<'_> {
+                 }
+                 _ => {
+                     // If url’s scheme is "file", url’s path is empty, and buffer is a Windows drive letter, then
++                    //
++                    // "url's path is empty" means this segment is `path[0]`,
++                    // which is not at `path_start + 1` while a hostless `file:`
++                    // URL is being parsed - see `file_first_segment_start`.
++                    // Assuming it left `file:///C|/a` as the one way in that
++                    // kept the `|` spelling of a drive letter at `path[0]`.
++                    // The alternatives are enumerated and driven by
++                    // `test_every_entrance_normalises_a_leading_pipe_drive_letter`
++                    // in url/tests/unit.rs, which is the claim's evidence.
+                     if scheme_type.is_file()
+-                        && segment_start == path_start + 1
++                        && segment_start
++                            == Parser::file_first_segment_start(&self.serialization, path_start)
+                         && is_windows_drive_letter(segment_before_slash)
+                     {
+                         // Replace the second code point in buffer with U+003A (:).
+@@ -1361,30 +1401,56 @@ impl Parser<'_> {
+         input
+     }
+ 
+-    fn last_slash_can_be_removed(serialization: &str, path_start: usize) -> bool {
++    /// The offset at which `path[0]` begins, for a `file:` URL.
++    ///
++    /// The path opens with the slash at `path_start`, so `path[0]` usually
++    /// begins one byte later. It does not while a hostless `file:` URL is being
++    /// parsed: the caller pushes the path's opening slash and then `parse_path`
++    /// pushes one more for each empty leading segment, so `file:///C:/..`
++    /// reaches the shortening helpers below as `file:////C:/`. Those empty
++    /// leading segments are removed when `parse_path` returns, which is what
++    /// makes the segment after the whole run of slashes `path[0]`.
++    ///
++    /// Only meaningful for `file:` URLs: no other scheme drops leading empty
++    /// segments, so an empty `path[0]` there is a segment in its own right.
++    fn file_first_segment_start(serialization: &str, path_start: usize) -> usize {
++        let path = &serialization[path_start..];
++        path_start + (path.len() - path.trim_start_matches('/').len())
++    }
++
++    fn last_slash_can_be_removed(
++        serialization: &str,
++        path_start: usize,
++        scheme_type: SchemeType,
++    ) -> bool {
+         let url_before_segment = &serialization[..serialization.len() - 1];
+         if let Some(segment_before_start) = url_before_segment.rfind('/') {
+             // Do not remove the root slash
+             segment_before_start >= path_start
+-                // Or a windows drive letter slash
+-                && !path_starts_with_windows_drive_letter(&serialization[segment_before_start..])
++                // Or the slash of a `file:` URL's leading drive letter. The
++                // drive letter is only protected as path[0]; a drive letter
++                // deeper in the path is an ordinary segment and its slash goes.
++                && !(scheme_type.is_file()
++                    && segment_before_start + 1
++                        == Parser::file_first_segment_start(serialization, path_start)
++                    && path_starts_with_windows_drive_letter(&serialization[segment_before_start..]))
+         } else {
+             false
+         }
+     }
+ 
+     /// https://url.spec.whatwg.org/#shorten-a-urls-path
++    ///
++    /// Step 4, which keeps a `file:` URL's leading Windows drive letter, is
++    /// enforced by `pop_path` rather than here. It used to be written in both
++    /// places, but this copy sliced the path from `path_start`, which is the
++    /// slash the path opens with, so it compared a string beginning `/` against
++    /// a predicate wanting exactly two bytes and could never fire.
+     fn shorten_path(&mut self, scheme_type: SchemeType, path_start: usize) {
+         // If path is empty, then return.
+         if self.serialization.len() == path_start {
+             return;
+         }
+-        // If url’s scheme is "file", path’s size is 1, and path[0] is a normalized Windows drive letter, then return.
+-        if scheme_type.is_file()
+-            && is_normalized_windows_drive_letter(&self.serialization[path_start..])
+-        {
+-            return;
+-        }
+         // Remove path’s last item.
+         self.pop_path(scheme_type, path_start);
+     }
+@@ -1395,10 +1461,18 @@ impl Parser<'_> {
+             let slash_position = self.serialization[path_start..].rfind('/').unwrap();
+             // + 1 since rfind returns the position before the slash.
+             let segment_start = path_start + slash_position + 1;
+-            // Don’t pop a Windows drive letter
+-            if !(scheme_type.is_file()
+-                && is_normalized_windows_drive_letter(&self.serialization[segment_start..]))
+-            {
++            // Don’t pop a Windows drive letter, but only where the spec says
++            // not to: `shorten a URL's path` step 4 protects it when the path
++            // has one segment and that segment is path[0]. Testing the last
++            // segment instead protected a drive letter anywhere in the path,
++            // which left `file:///x/C:` unable to pop `C:` at all; testing
++            // `path_start + 1` protected it on the `join` entrance only, and
++            // dropped it while parsing `file:///C:/..` from scratch.
++            let protected = scheme_type.is_file()
++                && segment_start
++                    == Parser::file_first_segment_start(&self.serialization, path_start)
++                && is_normalized_windows_drive_letter(&self.serialization[segment_start..]);
++            if !protected {
+                 self.serialization.truncate(segment_start);
+             }
+         }
+@@ -1747,19 +1821,36 @@ pub fn to_u32(i: usize) -> ParseResult<u32> {
+     }
+ }
+ 
+-fn is_normalized_windows_drive_letter(segment: &str) -> bool {
++/// Whether `segment` is a Windows drive letter in its normalized spelling, the
++/// one with a colon.
++///
++/// This is deliberately stricter than [`is_windows_drive_letter`] and
++/// [`path_starts_with_windows_drive_letter`], which both accept `C|` as well.
++/// The two spellings answer different questions. `C|` is a spelling the parser
++/// accepts on the way in, and the path state rewrites it as `C:` in exactly one
++/// position: `path[0]` of a `file:` URL, which is the only place a drive letter
++/// means anything. A serialized path keeps the pipe everywhere else -
++/// `Url::parse("file:///x/C|").path()` is `/x/C|`, and
++/// `Url::parse("https://e.com/C|").path()` is `/C|`, since the rewrite is
++/// `file:`-only as well. So this predicate is the one for a caller asking
++/// whether `path[0]` of a `file:` URL is a drive letter, and the wrong one for
++/// a caller matching the spelling a user wrote.
++pub(crate) fn is_normalized_windows_drive_letter(segment: &str) -> bool {
+     is_windows_drive_letter(segment) && segment.as_bytes()[1] == b':'
+ }
+ 
+-/// Whether the scheme is file:, the path has a single segment, and that segment
+-/// is a Windows drive letter
++/// Whether `segment` is a Windows drive letter in either spelling, `C:` or
++/// `C|`. Accepting `C|` is what makes the path state recognise it and rewrite
++/// it; see [`is_normalized_windows_drive_letter`] for which of the two forms
++/// each caller wants.
+ #[inline]
+ pub fn is_windows_drive_letter(segment: &str) -> bool {
+     segment.len() == 2 && starts_with_windows_drive_letter(segment)
+ }
+ 
+-/// Whether path starts with a root slash
+-/// and a windows drive letter eg: "/c:" or "/a:/"
++/// Whether path starts with a root slash and a Windows drive letter in either
++/// spelling, eg "/c:" or "/a:/" or "/c|". Like [`is_windows_drive_letter`] and
++/// unlike [`is_normalized_windows_drive_letter`], this accepts `|`.
+ fn path_starts_with_windows_drive_letter(s: &str) -> bool {
+     if let Some(c) = s.as_bytes().first() {
+         matches!(c, b'/' | b'\\' | b'?' | b'#') && starts_with_windows_drive_letter(&s[1..])
+diff --git a/url/src/slicing.rs b/url/src/slicing.rs
+index 4544509..18f024c 100644
+--- a/url/src/slicing.rs
++++ b/url/src/slicing.rs
+@@ -122,6 +122,20 @@ pub enum Position {
+ }
+ 
+ impl Url {
++    /// True when nothing but an optional `@` delimiter sits between the end of
++    /// the username and the start of the host, which is exactly the shape the
++    /// no-password branches of `index` handle.
++    ///
++    /// Two URL shapes reach those branches: one with no credentials at all,
++    /// where `username_end` and `host_start` coincide, and one with a username
++    /// but no password, where a single `@` separates them.
++    #[inline]
++    fn no_password_between_username_and_host(&self) -> bool {
++        self.username_end == self.host_start
++            || (self.host_start == self.username_end + "@".len() as u32
++                && self.byte_at(self.username_end) == b'@')
++    }
++
+     #[inline]
+     fn index(&self, position: Position) -> usize {
+         match position {
+@@ -145,7 +159,7 @@ impl Url {
+                 if self.has_authority() && self.byte_at(self.username_end) == b':' {
+                     self.username_end as usize + ":".len()
+                 } else {
+-                    debug_assert!(self.username_end == self.host_start);
++                    debug_assert!(self.no_password_between_username_and_host());
+                     self.username_end as usize
+                 }
+             }
+@@ -155,8 +169,12 @@ impl Url {
+                     debug_assert!(self.byte_at(self.host_start - "@".len() as u32) == b'@');
+                     self.host_start as usize - "@".len()
+                 } else {
+-                    debug_assert!(self.username_end == self.host_start);
+-                    self.host_start as usize
++                    debug_assert!(self.no_password_between_username_and_host());
++                    // There is no password, so this position is the same as
++                    // `BeforePassword` and the slice between them is empty. Any
++                    // `@` that separates the credentials from the host belongs
++                    // between here and `BeforeHost`, as a delimiter.
++                    self.username_end as usize
+                 }
+             }
+ 
+diff --git a/url/tests/expected_failures.txt b/url/tests/expected_failures.txt
+index 314adad..b5d818e 100644
+--- a/url/tests/expected_failures.txt
++++ b/url/tests/expected_failures.txt
+@@ -42,7 +42,6 @@
+ <non-spec:/> set pathname to </..//p>
+ <non-spec:/> set pathname to <//p>
+ <non-spec:/.//> set pathname to <p>
+-<file:///w|/m>
+ <non-special:opaque  ?hi>
+ <non-special:opaque  #hi>
+ <non-special:opaque \t\t  \t#hi>
+diff --git a/url/tests/unit.rs b/url/tests/unit.rs
+index faeb7c5..f460c50 100644
+--- a/url/tests/unit.rs
++++ b/url/tests/unit.rs
+@@ -97,6 +97,34 @@ fn test_set_empty_host() {
+     assert_eq!(base.as_str(), "file://foo/share/foo/bar");
+ }
+ 
++#[test]
++/// Removing the host must clear the parsed host as well as the serialization,
++/// including when the removed host was an IP address.
++fn test_set_host_none_clears_the_parsed_host() {
++    for (input, expected) in [
++        ("moz://foo:bar@servo/baz", "moz:/baz"),
++        ("foo://example.com:99/p", "foo:/p"),
++        ("foo://[::1]/p", "foo:/p"),
++        ("file://server/share", "file:///share"),
++        ("file://192.168.0.1/p", "file:///p"),
++        ("file://[::1]/p", "file:///p"),
++    ] {
++        let mut url: Url = input.parse().unwrap();
++        url.set_host(None).unwrap();
++        assert_eq!(url.as_str(), expected, "input {:?}", input);
++        assert!(!url.has_host(), "input {:?} still reports a host", input);
++        assert_eq!(url.host_str(), None, "input {:?}", input);
++        assert_eq!(url.host(), None, "input {:?}", input);
++        assert_eq!(url.port(), None, "input {:?}", input);
++        url.check_invariants().unwrap();
++        // The accessors must match a fresh parse of the same serialization.
++        let reparsed = Url::parse(url.as_str()).unwrap();
++        assert_eq!(url, reparsed);
++        assert_eq!(url.has_host(), reparsed.has_host(), "input {:?}", input);
++        assert_eq!(url.host(), reparsed.host(), "input {:?}", input);
++    }
++}
++
+ #[test]
+ fn test_set_empty_username_and_password() {
+     let mut base: Url = "moz://foo:bar@servo/baz".parse().unwrap();
+@@ -1115,6 +1143,26 @@ fn test_slicing() {
+             path: "blob-info",
+             ..Default::default()
+         },
++        // A username with no password: the password slice must be empty, and
++        // the `@` that ends the credentials belongs between AfterPassword and
++        // BeforeHost.
++        ExpectedSlices {
++            full: "https://user@domain.com/path",
++            scheme: "https",
++            username: "user",
++            host: "domain.com",
++            path: "/path",
++            ..Default::default()
++        },
++        // A password with no username, for the mirror case.
++        ExpectedSlices {
++            full: "https://:pass@domain.com/path",
++            scheme: "https",
++            password: "pass",
++            host: "domain.com",
++            path: "/path",
++            ..Default::default()
++        },
+     ];
+ 
+     for expected_slices in &data {
+@@ -1129,6 +1177,17 @@ fn test_slicing() {
+             &url[BeforePassword..AfterPassword],
+             expected_slices.password
+         );
++        // The credentials delimiter sits between the end of the password and
++        // the start of the host, and is present exactly when there are
++        // credentials.
++        let has_credentials =
++            !expected_slices.username.is_empty() || !expected_slices.password.is_empty();
++        assert_eq!(
++            &url[AfterPassword..BeforeHost],
++            if has_credentials { "@" } else { "" },
++            "credentials delimiter for {}",
++            expected_slices.full
++        );
+         assert_eq!(&url[BeforeHost..AfterHost], expected_slices.host);
+         assert_eq!(&url[BeforePort..AfterPort], expected_slices.port);
+         assert_eq!(&url[BeforePath..AfterPath], expected_slices.path);
+@@ -1141,6 +1200,371 @@ fn test_slicing() {
+     }
+ }
+ 
++#[test]
++/// `make_relative` is documented as the inverse of `join`, so every reference it
++/// returns must rejoin to the target. The first grid crosses the dimensions that
++/// reach the reference-assembly code: root, files and directories, depth
++/// changes, colon segments at several positions, dot-like and percent-encoded
++/// segments, an empty interior segment, case variants, a special and a
++/// non-special scheme, and every combination of absent, empty and non-empty
++/// query and fragment. The second crosses userinfo, which a relative reference
++/// inherits from the base and therefore cannot change.
++fn test_make_relative_always_rejoins() {
++    const PATHS: &[&str] = &[
++        "/",
++        "/a",
++        "/a/",
++        "/a/b",
++        "/a/b/",
++        "/a/b/c",
++        "/a/b/c/",
++        "/x/y",
++        "/a:b",
++        "/a/c:d",
++        "/a/c:d/",
++        "/a/b/c:d/e",
++        "/http:",
++        "/a/http://x",
++        "/a/.b",
++        "/a/..b",
++        "/a/%20",
++        "/a//b",
++        "/a/b%2Fc",
++        "/A/B",
++    ];
++    const SCHEMES: &[&str] = &["https://example.com", "foo://example.com"];
++
++    let mut prefixes: Vec<String> = Vec::new();
++    for scheme in SCHEMES {
++        for path in PATHS {
++            prefixes.push(format!("{}{}", scheme, path));
++        }
++    }
++
++    assert_rejoins_over_every_pair("scheme/path/query/fragment", &cross(&prefixes));
++    assert_rejoins_over_every_pair("credentials", &cross(&credentials_prefixes()));
++    assert_rejoins_over_every_pair("file", &cross(&file_prefixes()));
++    assert_rejoins_over_every_pair("empty path", &cross(&empty_path_prefixes()));
++    assert_rejoins_over_every_pair("opaque path", &cross(&opaque_path_prefixes()));
++    assert_rejoins_over_every_pair("authority shape", &cross(&authority_shape_prefixes()));
++
++    // Whether an authority is present at all is part of the authority, and no
++    // relative reference changes it. `foo:/a` and `foo:///a` report the same
++    // host, port and credentials - none of each - so the refusal has to be
++    // asserted directly: the round-trip driver above skips the pairs that
++    // return `None` and can only catch a wrong `Some`.
++    let authority_shape = cross(&authority_shape_prefixes());
++    let mut leaked = Vec::new();
++    for base in &authority_shape {
++        for target in &authority_shape {
++            if base.has_authority() == target.has_authority() {
++                continue;
++            }
++            if let Some(relative) = base.make_relative(target) {
++                leaked.push(format!("{} -> {} answered {:?}", base, target, relative));
++            }
++        }
++    }
++    assert!(
++        leaked.is_empty(),
++        "{} pairs crossed an authority-shape boundary:\n{}",
++        leaked.len(),
++        leaked.join("\n")
++    );
++
++    // The two shapes the finding named, spelled out so the regression is named
++    // rather than only covered.
++    let no_authority = Url::parse("foo:/a").unwrap();
++    let empty_authority = Url::parse("foo:///a").unwrap();
++    assert_eq!(no_authority.make_relative(&empty_authority), None);
++    assert_eq!(empty_authority.make_relative(&no_authority), None);
++    assert_eq!(
++        Url::parse("foo:/a/b")
++            .unwrap()
++            .make_relative(&empty_authority),
++        None
++    );
++
++    // A cannot-be-a-base URL has an opaque path rather than a list of
++    // segments, so no relative reference names one and the answer is always
++    // `None`. The round-trip driver above cannot see this on its own: it skips
++    // the pairs that return `None`, so a wrong `Some` is what it catches and
++    // the refusal itself has to be asserted directly.
++    for base in cross(&opaque_path_prefixes()) {
++        for target in cross(&opaque_path_prefixes()) {
++            if target.cannot_be_a_base() {
++                assert_eq!(
++                    base.make_relative(&target),
++                    None,
++                    "base {} target {} has an opaque path and cannot be named by a reference",
++                    base,
++                    target
++                );
++            }
++        }
++    }
++}
++
++/// Hierarchical and opaque-path URLs of the same scheme, so that every ordered
++/// pair crosses the boundary in one direction or the other. `foo:bar` carries
++/// an opaque path with no leading slash, which is the shape every path split
++/// here assumes is present.
++fn opaque_path_prefixes() -> Vec<String> {
++    [
++        "foo:/a/b", "foo:/a/", "foo:/", "foo:bar", "foo:x", "foo:a/b", "foo:",
++    ]
++    .iter()
++    .map(|s| s.to_string())
++    .collect()
++}
++
++/// The fourteen authority-shape prefixes: three families that differ only in
++/// whether the URL carries an authority and what is in it - none at all, an
++/// empty one, and a host - each at every path depth from the floor down. The
++/// first two families are indistinguishable through `host`, `port`, `username`
++/// and `password`, which is what let a reference cross between them.
++fn authority_shape_prefixes() -> Vec<String> {
++    let mut prefixes = Vec::new();
++    for authority in ["", "//", "//h"] {
++        for path in ["", "/", "/a", "/a/", "/a/b"] {
++            if authority.is_empty() && path.is_empty() {
++                // `foo:` has an opaque path, which the opaque grid covers.
++                continue;
++            }
++            prefixes.push(format!("foo:{}{}", authority, path));
++        }
++    }
++    prefixes
++}
++
++/// Every query and fragment shape each grid is crossed with: absent, empty and
++/// non-empty for both. Absent and empty are different URLs and the reference
++/// between them is not the same, so a grid that carries only one of them can
++/// miss a whole direction - which is how the authority floor stayed hidden
++/// until the empty-path dimension arrived carrying queries.
++fn cross(prefixes: &[String]) -> Vec<Url> {
++    const QUERIES: &[Option<&str>] = &[None, Some(""), Some("q"), Some("q=1&r=2")];
++    const FRAGMENTS: &[Option<&str>] = &[None, Some(""), Some("f")];
++
++    let mut urls = Vec::new();
++    for prefix in prefixes {
++        for query in QUERIES {
++            for fragment in FRAGMENTS {
++                let mut text = prefix.clone();
++                if let Some(q) = query {
++                    text.push('?');
++                    text.push_str(q);
++                }
++                if let Some(f) = fragment {
++                    text.push('#');
++                    text.push_str(f);
++                }
++                urls.push(Url::parse(&text).unwrap());
++            }
++        }
++    }
++    urls
++}
++
++/// Paths at and just above the authority floor. A URL with an authority and an
++/// empty path is the floor itself: reference resolution merges a reference onto
++/// `/`, so it can never produce an empty path from a base that has one, and the
++/// empty path has to stay distinct from `/`, which is one empty segment rather
++/// than none.
++fn empty_path_prefixes() -> Vec<String> {
++    ["", "/", "/a", "/a/", "/a/b"]
++        .iter()
++        .map(|path| format!("foo://h{}", path))
++        .collect()
++}
++
++/// The seventeen `file:` prefixes. A Windows drive letter is only `path[0]` of a
++/// `file:` URL, and `..` cannot climb past it, so the grid crosses paths with
++/// and without a leading drive letter, a drive letter appearing deeper in the
++/// path where it is an ordinary segment, and the root, file and directory
++/// shapes at each depth. The four `C|` prefixes are written the way URL-14 was
++/// filed; every one parses to its `C:` spelling, so they enter the grid as
++/// duplicates of their colon twins.
++fn file_prefixes() -> Vec<String> {
++    [
++        "file:///a/b",
++        "file:///a/",
++        "file:///a",
++        "file:///",
++        "file:///C:/a/b",
++        "file:///C:/a/",
++        "file:///C:/a",
++        "file:///C:/",
++        "file:///C:",
++        "file:///x/C:",
++        "file:///x/C:/y",
++        "file:///a/b/c",
++        "file:///C:/a/b/c",
++        "file:///C|/a/b",
++        "file:///C|/",
++        "file:///C|",
++        "file:///x/C|",
++    ]
++    .iter()
++    .map(|s| s.to_string())
++    .collect()
++}
++
++/// The six credentials prefixes: absent, username-only and username-and-password
++/// userinfo, crossed with two paths, so that every ordered pair either keeps the
++/// userinfo or changes it.
++fn credentials_prefixes() -> Vec<String> {
++    let mut prefixes = Vec::new();
++    for userinfo in ["", "u@", "u:p@"] {
++        for path in ["/a/b", "/a/c"] {
++            prefixes.push(format!("https://{}e.com{}", userinfo, path));
++        }
++    }
++    prefixes
++}
++
++/// Drives `base.join(base.make_relative(target)) == target` over every ordered
++/// pair of `urls` and reports every failing pair at once, with the count, so a
++/// grid's result reads as "n of m" rather than as its first failure.
++fn assert_rejoins_over_every_pair(grid: &str, urls: &[Url]) {
++    let mut failures = Vec::new();
++    for base in urls {
++        for target in urls {
++            let relative = match base.make_relative(target) {
++                Some(relative) => relative,
++                None => continue,
++            };
++            match base.join(&relative) {
++                Ok(rejoined) => {
++                    if rejoined != *target {
++                        failures.push(format!(
++                            "base {} target {} went through {:?} to {}",
++                            base, target, relative, rejoined
++                        ));
++                    }
++                }
++                Err(e) => failures.push(format!(
++                    "base {} target {} went through {:?}: {}",
++                    base, target, relative, e
++                )),
++            }
++        }
++    }
++    assert!(
++        failures.is_empty(),
++        "{} grid: {} of {} ordered pairs failed to rejoin:
++{}",
++        grid,
++        failures.len(),
++        urls.len() * urls.len(),
++        failures.join(
++            "
++"
++        )
++    );
++}
++
++#[test]
++/// `shorten a URL's path` step 4 protects a Windows drive letter only when it
++/// is `path[0]` and the path has one segment. A drive letter deeper in the
++/// path is an ordinary segment, so `..` must pop it. Popping it used to be
++/// refused, which left the reference resolved against a path that had not been
++/// shortened: a debug build tripped the segment-start assertion in the parser
++/// and a release build returned the unshortened path with the reference
++/// appended.
++fn test_join_pops_a_windows_drive_letter_that_is_not_the_first_segment() {
++    for (base, reference, expected) in [
++        // The drive letter is not path[0]: an ordinary segment, so it pops.
++        ("file:///x/C:", "../y", "file:///y"),
++        ("file:///x/C:", "..", "file:///"),
++        ("file:///x/C:", ".", "file:///x/"),
++        ("file:///x/C:/y", "../z", "file:///x/z"),
++        ("file:///x/y/C:", "../../z", "file:///z"),
++        ("file:///a/b/C:/d", "../../e", "file:///a/e"),
++        // The drive letter is path[0] with one segment: protected, so `..`
++        // shortens to it and no further.
++        ("file:///C:", "../y", "file:///C:/y"),
++        ("file:///C:", "..", "file:///C:/"),
++        ("file:///C:/a", "../y", "file:///C:/y"),
++        ("file:///C:/a/b", "../../y", "file:///C:/y"),
++        ("file:///C:/a", "../../../y", "file:///C:/y"),
++        // A non-file scheme has no drive letters at all.
++        ("foo:///x/C:", "../y", "foo:///y"),
++        ("http://h/x/C:", "../y", "http://h/y"),
++    ] {
++        let joined = Url::parse(base)
++            .unwrap()
++            .join(reference)
++            .unwrap_or_else(|e| panic!("{} join {:?}: {}", base, reference, e));
++        assert_eq!(joined.as_str(), expected, "{} join {:?}", base, reference);
++    }
++
++    // `join` is one of two entrances to the path-shortening helpers. The other
++    // is parsing a whole URL, where a hostless `file:` URL carries an extra
++    // leading slash for as long as it is being built, so the offset at which
++    // `path[0]` begins is not the one `join` establishes.
++    for (input, expected) in [
++        ("file:///C:/..", "file:///C:/"),
++        ("file:///C:/../..", "file:///C:/"),
++        ("file:///C:/a/../../x", "file:///C:/x"),
++        ("file://localhost/C:/..", "file:///C:/"),
++        ("file:///x/C:/..", "file:///x/"),
++        ("file:///x/C:/../..", "file:///"),
++        ("http://h/C:/..", "http://h/"),
++    ] {
++        let parsed = Url::parse(input).unwrap();
++        assert_eq!(parsed.as_str(), expected, "parse {:?}", input);
++    }
++
++    // And the two entrances must agree: for a base ending in `/` and a
++    // reference that is not itself an absolute URL, parsing the concatenation
++    // and joining the reference describe the same operation. References
++    // spelling a drive letter with `|` are left out: the two entrances really
++    // do disagree there, because only `join` reaches the code that rewrites
++    // `C|` as `C:`, and that is a separate defect from this one.
++    for base in [
++        "file:///",
++        "file:///C:/",
++        "file:///x/",
++        "file:///x/C:/",
++        "file://localhost/",
++        "file://localhost/C:/",
++        "http://h/",
++        "http://h/C:/",
++        "http://h/x/",
++    ] {
++        for reference in [
++            "..",
++            "../",
++            "../..",
++            "../../",
++            "../../x",
++            ".",
++            "./",
++            "a/..",
++            "a/../",
++            "a/../..",
++            "a/../../x",
++            "x/C:/..",
++            "x/C:/../..",
++            "a/b/../../..",
++            "%2e%2e",
++            "%2e%2e/",
++            "a/%2e%2e/..",
++        ] {
++            let parsed = Url::parse(&format!("{}{}", base, reference)).unwrap();
++            let joined = Url::parse(base).unwrap().join(reference).unwrap();
++            assert_eq!(
++                parsed.as_str(),
++                joined.as_str(),
++                "parse({:?} + {:?}) disagrees with join",
++                base,
++                reference
++            );
++        }
++    }
++}
++
+ #[test]
+ fn test_make_relative() {
+     let tests = [
+@@ -1412,3 +1836,191 @@ fn test_path_percent_encode() {
+     let url = Url::parse("http://localhost/a}b").unwrap();
+     assert_eq!(url.path(), "/a%7Db");
+ }
++
++/// The evidence behind the comment in `url/src/parser.rs` that says parsing a
++/// hostless `file:` URL was the one way in that kept the `|` spelling of a
++/// Windows drive letter at `path[0]`. Twenty-three cases across every entrance
++/// that can reach `path[0]`: `Url::parse` in eight forms, `ParseOptions` in
++/// three, `join`, the four path setters, three `set_host` transitions, and the
++/// three entrances that refuse such input outright rather than normalising it.
++///
++/// A claim that generalises over a set of sites needs the set written down and
++/// driven, which is why this is a table and not a sentence.
++#[test]
++fn test_every_entrance_normalises_a_leading_pipe_drive_letter() {
++    // Url::parse, in every form that reaches a `file:` path.
++    for (input, expected) in [
++        ("file:///C|/a", "file:///C:/a"),
++        ("file:///C|", "file:///C:"),
++        ("file:///C|/", "file:///C:/"),
++        ("file://h/C|/a", "file://h/C:/a"),
++        ("file:C|/a", "file:///C:/a"),
++        ("file:/C|/a", "file:///C:/a"),
++        ("file://C|/a", "file:///C:/a"),
++        ("file:///w|/m", "file:///w:/m"),
++    ] {
++        assert_eq!(
++            Url::parse(input).unwrap().as_str(),
++            expected,
++            "parse {:?}",
++            input
++        );
++    }
++
++    // ParseOptions with a base, and join.
++    let base = Url::parse("file:///base/x").unwrap();
++    for reference in ["/C|/a", "C|/a", "file:///C|/a"] {
++        let parsed = Url::options()
++            .base_url(Some(&base))
++            .parse(reference)
++            .unwrap();
++        assert_eq!(
++            parsed.as_str(),
++            "file:///C:/a",
++            "base_url parse {:?}",
++            reference
++        );
++    }
++    assert_eq!(base.join("C|/a").unwrap().as_str(), "file:///C:/a", "join");
++
++    // The path setters.
++    let mut by_absolute_set_path = Url::parse("file:///a").unwrap();
++    by_absolute_set_path.set_path("/C|/a");
++    assert_eq!(by_absolute_set_path.as_str(), "file:///C:/a");
++
++    let mut by_relative_set_path = Url::parse("file:///a").unwrap();
++    by_relative_set_path.set_path("C|/a");
++    assert_eq!(by_relative_set_path.as_str(), "file:///C:/a");
++
++    let mut by_segments = Url::parse("file:///a").unwrap();
++    by_segments
++        .path_segments_mut()
++        .unwrap()
++        .clear()
++        .push("C|")
++        .push("a");
++    assert_eq!(by_segments.as_str(), "file:///C:/a");
++
++    let mut by_quirks_pathname = Url::parse("file:///a").unwrap();
++    url::quirks::set_pathname(&mut by_quirks_pathname, "/C|/a");
++    assert_eq!(by_quirks_pathname.as_str(), "file:///C:/a");
++
++    let mut by_quirks_href = Url::parse("file:///a").unwrap();
++    url::quirks::set_href(&mut by_quirks_href, "file:///C|/a").unwrap();
++    assert_eq!(by_quirks_href.as_str(), "file:///C:/a");
++
++    // Moving the host in or out does not reintroduce the pipe.
++    let mut host_added = Url::parse("file:///C|/a").unwrap();
++    host_added.set_host(Some("h")).unwrap();
++    assert_eq!(host_added.as_str(), "file://h/C:/a");
++
++    let mut host_removed = Url::parse("file://h/C|/a").unwrap();
++    host_removed.set_host(None).unwrap();
++    assert_eq!(host_removed.as_str(), "file:///C:/a");
++
++    let mut set_then_unhost = Url::parse("file://h/a").unwrap();
++    set_then_unhost.set_path("/C|/a");
++    set_then_unhost.set_host(None).unwrap();
++    assert_eq!(set_then_unhost.as_str(), "file:///C:/a");
++
++    // Three entrances refuse rather than normalise, which is equally a way of
++    // not producing one. `C|` is not a drive on Windows and `C|\a` is not an
++    // absolute path anywhere else, so both constructors reject it on every
++    // platform they exist for; and a non-`file:` URL carrying a pipe cannot be
++    // turned into a `file:` URL, which would otherwise smuggle one in.
++    #[cfg(any(unix, windows, target_os = "redox", target_os = "wasi"))]
++    {
++        assert!(Url::from_file_path(r"C|\a").is_err());
++        assert!(Url::from_directory_path(r"C|\a\").is_err());
++    }
++    let mut foreign = Url::parse("foo:///C|/a").unwrap();
++    assert_eq!(foreign.path(), "/C|/a");
++    assert!(url::quirks::set_protocol(&mut foreign, "file").is_err());
++    assert_eq!(foreign.path(), "/C|/a");
++
++    // And the corrected half of the claim: the rewrite is `path[0]`-only and
++    // `file:`-only, so a serialized path does carry the pipe elsewhere. The doc
++    // comment on `is_normalized_windows_drive_letter` says exactly this.
++    assert_eq!(Url::parse("file:///x/C|").unwrap().path(), "/x/C|");
++    assert_eq!(Url::parse("file:///x/C|/y").unwrap().path(), "/x/C|/y");
++    assert_eq!(Url::parse("file:///C|a").unwrap().path(), "/C|a");
++    assert_eq!(Url::parse("https://e.com/C|").unwrap().path(), "/C|");
++    assert_eq!(Url::parse("foo:///C|/a").unwrap().path(), "/C|/a");
++}
++
++/// URL-17. WHATWG removes every ASCII tab, LF and CR from a URL before parsing
++/// it, so inserting one anywhere must not change the result. The crate's own
++/// answer for the same input without the character is therefore the oracle, and
++/// no spec reading is needed to grade this.
++///
++/// The class this catches is narrow and easy to miss: `push_pending` writes the
++/// pending characters into the serialization at one of those three characters
++/// as well as at a separator, so a mid-segment buffer becomes visible to code
++/// that expects to see only complete segments. A grid built from ordinary URLs
++/// cannot reach it however wide it is, because the trigger is the character
++/// itself. An insertion enumeration is the instrument for that.
++#[test]
++fn test_a_tab_or_newline_never_changes_how_a_url_parses() {
++    const CORPUS: &[&str] = &[
++        "file:///C:x",
++        "file:///C:/x",
++        "file:///C:",
++        "file:///x",
++        "file:///C:a/b",
++        "file://h/C:x",
++        "file:/C:x",
++        "file:C:x",
++        "http://h/C:x",
++        "foo:///C:x",
++        "file:///C|x",
++        "file:///a/C:x",
++        "file:///",
++        "file:///C:/",
++        "file://h/a",
++    ];
++
++    let mut changed = Vec::new();
++    let mut insertions = 0usize;
++    for input in CORPUS {
++        let clean = Url::parse(input).map(|u| u.to_string());
++        for c in ['\t', '\n', '\r'] {
++            for position in 0..=input.len() {
++                if !input.is_char_boundary(position) {
++                    continue;
++                }
++                let mut spelled = input.to_string();
++                spelled.insert(position, c);
++                insertions += 1;
++                let got = Url::parse(&spelled).map(|u| u.to_string());
++                if got != clean {
++                    changed.push(format!(
++                        "{:?} with {:?} at {} parsed as {:?}, without it {:?}",
++                        input, c, position, got, clean
++                    ));
++                }
++            }
++        }
++    }
++    assert_eq!(insertions, 522, "the corpus changed size");
++    assert!(
++        changed.is_empty(),
++        "{} of {} insertions changed the parse:\n{}",
++        changed.len(),
++        insertions,
++        changed.join("\n")
++    );
++
++    // The same class through the setter entrance, which reaches the same loop
++    // with a different context.
++    let mut with_tab = Url::parse("file:///a").unwrap();
++    with_tab.set_path("/C:\tx");
++    let mut without = Url::parse("file:///a").unwrap();
++    without.set_path("/C:x");
++    assert_eq!(with_tab.as_str(), without.as_str());
++    assert_eq!(without.path(), "/C:x");
++
++    // The arm this guards is live, not dead: a path that already ends at a
++    // drive letter still gains its separator when the path continues.
++    let base = Url::parse("fIlE:p:?../").unwrap();
++    assert_eq!(base.join("a").unwrap().as_str(), "file:///p:/a");
++}

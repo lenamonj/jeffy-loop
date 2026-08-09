@@ -34,6 +34,7 @@ loss rather than hiding it.
 | records | 1 | 7 | converged | pre-evaluator | 0 |
 | rrule | 4 | 33 | converged | evaluator countersigned | 0 |
 | RuboCop | 1 | 7 | converged | evaluator countersigned | 0 |
+| rust-url | 3 | 30 | converged | evaluator countersigned | 0 |
 | sqlparse | 5 | 47 | converged | evaluator countersigned | 2 |
 | Spectre.Console | 1 | 8 | converged | evaluator countersigned | 0 |
 | speedtest-cli | 1 | 5 | converged | pre-evaluator | 0 |
@@ -52,9 +53,9 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 19 brownfield convergences:
+The engine tightened over time. Of the 20 brownfield convergences:
 
-- **14** were countersigned by the adversarial evaluator, the current standard.
+- **15** were countersigned by the adversarial evaluator, the current standard.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
   standing instruction against sub-agents, and the receipt says so rather than
   working around it.
@@ -62,7 +63,7 @@ The engine tightened over time. Of the 19 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 19 as one number
+Every receipt names the standard its own run met. Pooling all 20 as one number
 would overstate the earliest four.
 
 ## What was started and never published
@@ -91,7 +92,7 @@ Convergence here is per-run, and a blocked run is relaunched from written
 state with a fresh evaluator budget. Under that protocol, persistence raises
 the chance of eventually converging - dotenv took eight runs, dayjs eight,
 gitignore five with three terminal rejections along the way. The run counts
-above are published precisely so that "19 converged" is read with the cost
+above are published precisely so that "20 converged" is read with the cost
 attached rather than as a success rate.
 
 Targets from here on carry a **pre-registered run budget** committed before
@@ -105,6 +106,11 @@ quota. `rrule` was the third, at five runs; it used four.
 budget nearly bound. Four runs failed, two of them ending blocked, and the
 expectation written down after run 4 was that it would be published here as a
 non-convergence. It converged on the fifth and last budgeted run, at iteration
-8 of 10. Six evaluator rejections preceded that PASS. The rule was capable of
+8 of 10. Seven evaluator rejections preceded that PASS. The rule was capable of
 producing the unwelcome answer up to the final run, which is the only condition
 under which a stopping rule is worth publishing at all.
+
+`rust-url` was the fifth, also at five runs; it used three. Its budget never
+came close to binding, which is the opposite outcome to `sqlparse` and is
+recorded here for the same reason: a pre-registered budget is only evidence if
+both results get published.
