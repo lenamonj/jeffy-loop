@@ -373,9 +373,9 @@ for receipt in evals/*/REPORT.md; do
   if [ -f "$receipt" ]; then receipts=$((receipts + 1)); fi
 done
 tbl_rows="$(grep -c '^| \[.*(evals/.*/REPORT\.md)' README.md)"
-tbl_conv="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$4; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) c++ } END { print c+0 }' README.md)"
-tbl_langs="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$4; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) { gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3 } }' README.md | sort -u | wc -l | tr -d ' ')"
-tbl_odd="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$4; gsub(/^[ \t]+|[ \t]+$/, "", i); if (i !~ /^[0-9]+$/ && i !~ /^\*[a-z]+\*$/) print $2 }' README.md | wc -l | tr -d ' ')"
+tbl_conv="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) c++ } END { print c+0 }' README.md)"
+tbl_langs="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 } }' README.md | sort -u | wc -l | tr -d ' ')"
+tbl_odd="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/^[ \t]+|[ \t]+$/, "", i); if (i !~ /^[0-9]+$/ && i !~ /^\*[a-z]+\*$/) print $2 }' README.md | wc -l | tr -d ' ')"
 claim_conv="$(sed -n 's/.*<!-- count:converged -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
 claim_langs="$(sed -n 's/.*<!-- count:languages -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
 if [ "$tbl_rows" != "$receipts" ]; then
