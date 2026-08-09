@@ -21,7 +21,7 @@ Run `/jeffy 10` and walk away. Jeffy maps your project's whole public surface, a
 
 It has receipts. Widely used open-source libraries have been run to convergence, surfacing shipped, reproducible bugs - many hiding behind green test suites - and three greenfield builds converged from empty directories under external judges the loop could not edit, one of them against a deliberately mutated specification. [The receipts are below.](#external-validation-public-open-source-projects)
 
-New to autonomous agent loops, or want the full argument? **The Jeffy Loop** is a 29-page white paper written for readers with no prior knowledge of agents: how loops got here from ReAct to AutoGPT to the Ralph Loop, what Anthropic recommends and what that guidance leaves open, then every rule below explained from first principles - including an honest account of what this method still cannot do. It cites 28 sources, all linked. **[Download it here.](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
+New to autonomous agent loops, or want the full argument? **The Jeffy Loop** is a 33-page white paper written for readers with no prior knowledge of agents: how loops got here from ReAct to AutoGPT to the Ralph Loop, what Anthropic recommends and what that guidance leaves open, then every rule below explained from first principles - including an honest account of what this method still cannot do. It cites 28 sources, all linked. **[Download it here.](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
 
 <div align="center">
 
@@ -360,9 +360,9 @@ Disclosure is deliberate and selective. Filing a machine-generated issue costs a
 
 **What is not in the table above is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md):** every target ever started, the runs each one cost, which of three convergence standards it met, and the one public target that was abandoned without a receipt. Convergence here is per-run and a blocked run gets relaunched, so run counts are published with the wins attached rather than a bare success rate. Targets from here on carry a pre-registered run budget committed before their first iteration.
 
-### Greenfield: two builds judged by suites the loop did not write
+### Greenfield: three builds judged by suites the loop did not write
 
-Every receipt above is brownfield - the project arrived with a test suite the loop did not author. The white paper's own limits section names the residual weakness anyway: the loop writes many of the tests that certify the loop. Greenfield is that weakness at its maximum, so the answer was pre-registered: start from an empty directory, commit the goal and a Verify command naming an **external judge** before iteration 1, ship the backlog empty so the task decomposition is the loop's own work, and never intervene in a run. The engine is unmodified. Both targets converged.
+Every receipt above is brownfield - the project arrived with a test suite the loop did not author. The white paper's own limits section names the residual weakness anyway: the loop writes many of the tests that certify the loop. Greenfield is that weakness at its maximum, so the answer was pre-registered: start from an empty directory, commit the goal and a Verify command naming an **external judge** before iteration 1, ship the backlog empty so the task decomposition is the loop's own work, and never intervene in a run. The engine is unmodified. All three targets converged.
 
 | Target | Judge | Final position | Rows swept | Iterations | Runs |
 |:---|:---|:---|---:|---:|---:|
