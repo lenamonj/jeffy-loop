@@ -108,14 +108,22 @@ fi
 # The ordinal is parsed off the full "$runid8-" prefix rather than the last
 # hyphen, because the run id carries a hyphen of its own (session prefix,
 # then the started_at HHMMSS token).
-ev_art_ord="$(
-  for ev_cand in "$root/.jeffy/evaluator/$runid8"-*.md; do
-    [ -f "$ev_cand" ] || continue
-    ev_n="${ev_cand##*/}"; ev_n="${ev_n#"$runid8-"}"; ev_n="${ev_n%.md}"
-    case "$ev_n" in '' | *[!0-9]*) continue ;; esac
-    printf '%s\n' "$ev_n"
-  done | sort -n | tail -n 1
-)"
+# Written as a plain loop keeping the running maximum, never as a command
+# substitution wrapping this case statement. Stock macOS ships bash 3.2,
+# whose parser scans $( ... ) for the closing paren and takes the one that
+# ends a case pattern instead, so the whole hook died with "syntax error near
+# unexpected token `newline`" on that platform - every gate dead, on the one
+# host the project promises the same bounded check as any other. It parsed
+# fine under Git Bash and bash 5, which is exactly why the CI leg exists.
+ev_art_ord=""
+for ev_cand in "$root/.jeffy/evaluator/$runid8"-*.md; do
+  [ -f "$ev_cand" ] || continue
+  ev_n="${ev_cand##*/}"; ev_n="${ev_n#"$runid8-"}"; ev_n="${ev_n%.md}"
+  case "$ev_n" in '' | *[!0-9]*) continue ;; esac
+  if [ -z "$ev_art_ord" ] || [ "$ev_n" -gt "$ev_art_ord" ]; then
+    ev_art_ord="$ev_n"
+  fi
+done
 
 # Extension honesty, first half: the +2 window buys the convergence sequence
 # and never an audit. A full audit run inside the window manufactures the

@@ -866,8 +866,11 @@ if command -v jq >/dev/null 2>&1; then
         printf 'Verdict: PASS\n'
       } > "$hb_proj/.jeffy/evaluator/$hb_art_id-$hb_art_ord.md"
     }
-    hb_write_legacy_artifact() { # $1 optional run id - the pre-1.8.0 single path, for the fallback
-      hb_art_id="${1:-sess-1-000000}"
+    # Takes the run id positionally like its sibling; shellcheck flags an
+    # optional parameter no caller passes (SC2120), so the one caller passes
+    # the default explicitly rather than the helper growing a second shape.
+    hb_write_legacy_artifact() { # $1 run id - the pre-1.8.0 single path, for the fallback
+      hb_art_id="$1"
       hb_art_n=$((hb_art_n + 1))
       mkdir -p "$hb_proj/.jeffy/evaluator"
       {
@@ -3413,7 +3416,7 @@ if command -v jq >/dev/null 2>&1; then
       # left behind. Falling back is what keeps that run from being stranded
       # mid-arc by an upgrade.
       hb_git rm -q .jeffy/evaluator/sess-1-000000-1.md .jeffy/evaluator/sess-1-000000-2.md >/dev/null 2>&1
-      hb_write_legacy_artifact
+      hb_write_legacy_artifact sess-1-000000
       hb_git add .jeffy >/dev/null 2>&1
       hb_git commit -q -m 'jeffy: pre-1.8.0 single-path artifact' >/dev/null 2>&1
       hb_p2_ord_fixture
