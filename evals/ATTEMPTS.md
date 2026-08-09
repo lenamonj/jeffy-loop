@@ -25,6 +25,7 @@ loss rather than hiding it.
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
 | go-yaml | 3 | 29 | converged | evaluator countersigned | 0 |
+| goldmark | 5 | 47 | **not converged** | n/a | 0 |
 | gson | 1 | 2 | converged | evaluator countersigned | 0 |
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
@@ -117,3 +118,28 @@ under which a stopping rule is worth publishing at all.
 came close to binding, which is the opposite outcome to `sqlparse` and is
 recorded here for the same reason: a pre-registered budget is only evidence if
 both results get published.
+
+`goldmark` was the seventh, at four runs, and it is **the first pre-registered
+budget that bound and returned the unwelcome answer.** Four runs, 40
+iterations, no convergence. Under the rule fixed before iteration 1 that is
+where it stops. Until now every pre-registered budget had ended in a receipt -
+`sqlparse` came closest and converged on its last budgeted run - so this row is
+the first evidence that the stopping rule can actually cost something rather
+than merely being capable of it in principle.
+
+The disclosure that belongs beside it, in the same plain terms as TOML-M's:
+**a fifth run was launched 24 minutes after run 4 wrapped, and ran seven
+iterations before it was caught and stopped.** It was momentum, not a decision
+to extend - nothing in the launch, the loop state, or the journal says a budget
+has been spent, and no one checked. Had it converged, the convergence would
+have been bought by extending the budget after watching four runs fail, which
+is the outcome pre-registration exists to prevent, and no quality of fix would
+have rescued it.
+
+That fifth run and its seven iterations are **counted in the table above rather
+than removed.** A file whose purpose is that no run gets deleted from the
+record does not get to delete the run that should not have happened. The line
+held instead is between counts and claims: the counts include run 5, and no
+claim here rests on it. The engine change that would have caught it - the
+launch printing how many runs this target has already had, before adding
+another - is on the release backlog.
