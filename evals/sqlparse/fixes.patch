@@ -1,0 +1,1656 @@
+diff --git a/.gitignore b/.gitignore
+index dd37cb6..5612b95 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -9,3 +9,4 @@ MANIFEST
+ htmlcov/
+ .pytest_cache
+ .venv/
++.claude/jeffy-loop.local.md
+diff --git a/CHANGELOG b/CHANGELOG
+index 3a01c0c..39a4f55 100644
+--- a/CHANGELOG
++++ b/CHANGELOG
+@@ -28,9 +28,56 @@ Security Fixes
+ Enhancements
+ 
+ * Modernize type annotations in top-level API functions using PEP 585 and PEP 604 syntax.
+-
+-Bug Fixes
+-
++* Document ``wrap_after`` as the column after which a list wraps rather than a
++  "column limit". Items are added until the column is passed, so the item that
++  crosses it stays on the line and the line ends past the column - the CLI help
++  already said this and the API docs did not.
++
++Bug Fixes
++
++* Fix ``Function.get_window()`` raising ``AttributeError`` on any function
++  without an ``OVER`` clause. The guard ``if not over_clause`` tested the tuple
++  ``token_next_by`` returns, and ``(None, None)`` is truthy, so it never fired
++  and the following line indexed ``None``. The method now unpacks the answer
++  and returns ``None`` when there is no window, which is what its docstring
++  already promised.
++
++* Fix ``IndexError`` when formatting a parenthesis that holds fewer than three
++  tokens. ``StripWhitespaceFilter._stripws_parenthesis`` read the second and
++  second-to-last children of a ``Parenthesis`` without checking it had that
++  many, but grouping does not guarantee the shape ``('(', body..., ')')``:
++  ``(as)`` comes back as a ``Parenthesis`` holding a single ``Identifier`` that
++  swallowed both parens. ``sqlparse.format('(as)', reindent=True)`` therefore
++  raised ``IndexError`` instead of returning, under ``strip_whitespace``,
++  ``reindent`` and ``reindent_aligned`` alike, and ``sqlformat`` exited 1 with a
++  traceback on a four-byte file. Every index into the token list is now bounded,
++  including the nested read that popped from a group until it could empty it.
++
++* Fix ``output_format`` emitting a snippet that does not match the SQL it was
++  given. Three defects, all in ``sqlparse/filters/output.py``:
++
++  - The parentheses that make a multi-line Python assignment legal were decided
++    from the stripped statement text, so a script written one statement per line
++    produced continuation lines with no parentheses around them - unparseable
++    Python for input as ordinary as ``select 1;\nselect 2;``.
++
++  - Only the first newline of a whitespace run started a new line, so the rest
++    stayed inside the open literal. In Python that is invalid syntax; in PHP the
++    remaining newlines silently escaped the ``.=`` continuation shape.
++
++  - Each token was read from its cached ``value``, which the filters that run
++    earlier leave stale when they edit inside a group. ``reindent`` and
++    ``reindent_aligned`` were therefore ignored in the emitted snippet whenever
++    their edits fell inside a group, and the snippet carried the unformatted
++    SQL.
++
++* Fix ``output_format="python"`` emitting invalid Python when the SQL carries a
++  raw control character inside a quoted token or a comment. A newline or
++  carriage return ended the generated string literal and a NUL made the whole
++  snippet unparseable; they are now written as ``\n``, ``\r`` and ``\x00``.
++  Such a character is not whitespace to the lexer, so it never reached the
++  serializer's line-splitting branch. PHP output is unchanged, since a
++  double-quoted PHP string carries these characters literally.
+ * Fix statement splitting (issue845).
+ * Fix a late-binding closure bug in `TokenList.token_not_matching`.
+ * Fix function grouping being skipped in ``CREATE TABLE ... AS SELECT``
+@@ -45,6 +92,120 @@ Bug Fixes
+   when it is followed by a float literal written without a leading zero
+   (e.g. ``x BETWEEN .03 AND .06``), so the bounds are parsed as number tokens
+   (issue601).
++* Fix ``reindent`` not being idempotent on multi-statement SQL. Each statement
++  after the first was given a blank line in front of it without the gap it
++  already had being removed, so re-formatting an already-formatted script grew
++  the gap by one newline per pass until it saturated at three - churn for any
++  format-on-save or pre-commit setup. The inter-statement gap is now
++  normalized, so it no longer grows from pass to pass.
++* Fix ``format`` deleting the space between two statements that share a line.
++  ``sqlparse.format('select 1; select 2;')`` returned ``'select 1;select 2;'``,
++  while the same statements separated by a newline came back untouched.
++  Trailing whitespace is invisible only at the end of a line of the document,
++  which no single statement can decide - the next one may start on that line -
++  so the statements are now joined before their lines are right-stripped
++  rather than each being stripped on its own. End-of-line and end-of-document
++  whitespace is still removed, and ``strip_whitespace`` still drains a
++  statement's trailing whitespace; that drain now removes all of it rather
++  than one token, which a stripped comment could leave behind as a pair.
++* Fix a doubled space, and a stray space at the start of a line, where a
++  comment ends a group. ``StripWhitespaceFilter`` asked each token whether it
++  was whitespace to decide if a separator was already in place, and a group's
++  own flag is False even when the group renders with a trailing space or
++  newline - as an ``Identifier`` does once a trailing comment is stripped out
++  of it. The space that followed the group was therefore kept as a second one,
++  which the next pass collapsed, so the output was not a fixed point either.
++* Fix ``reindent`` adding a blank line where a line comment had already ended
++  the line. ``reindent`` puts a line break before ``FROM``, ``AND``,
++  ``ORDER BY`` and the other clause keywords, and decided whether one was
++  already there by reading the single token in front of the keyword. When a
++  line comment ends that line the break lives inside the comment's own value
++  and the separator after it has already been emptied, so the token read
++  answered "no break here" and a second one was added. ``select foo``,
++  ``-- c``, `` from t`` came back with a blank line between the comment and
++  ``from``, and re-formatting that output removed it again, so the result was
++  not a fixed point. The indent that belongs with the keyword is still
++  applied, so ``AND`` inside a ``WHERE`` keeps its column.
++* Fix ``reindent`` dropping the line break before a clause keyword whose
++  separator it had just removed. ``reindent`` deletes the whitespace in front
++  of ``FROM``, ``AND``, ``OR`` and the rest and writes its own, and the break
++  it deletes can be one it inserted earlier in the same pass, and reading
++  the text before the keyword too early reported a break that had just
++  been removed. ``a,or`` came back as ``a,or``, with no break before the
++  ``OR`` that ``reindent`` exists to put there.
++* Reject ``reindent`` and ``reindent_aligned`` together. They are alternative
++  indentation styles, and enabling both stacked two indenters that each insert
++  a newline before the same keywords: the result was a blank line between
++  every clause, and it was unstable across passes because the aligned filter
++  deleted the inter-statement gap the other one had just inserted, gluing
++  statements together so the next pass parsed a different set of them.
++  ``sqlparse.format`` now raises ``SQLParseError`` for the combination.
++  ``indent_columns`` implies ``reindent``, so it collides with
++  ``reindent_aligned`` too.
++* Fix ``reindent_aligned`` raising ``ValueError`` instead of formatting when
++  a ``CASE`` has no ``END`` at its own level. A keyword that opens a group
++  takes everything after it, so in ``case where end`` the ``END`` sits inside
++  the ``WHERE``. The aligner looked for it without recursing and passed the
++  ``None`` it got back to ``token_index``, so ``sqlparse.format`` raised an
++  exception that is not ``SQLParseError`` and ``sqlformat -a`` printed a
++  traceback for a fourteen-character file. Such a ``CASE`` is now aligned
++  without aligning an ``END`` it does not have.
++* Fix ``identifier_case`` changing the case inside a quoted identifier. Case
++  inside quotes is part of the name, and ``SQL_REGEX`` gives four delimiters
++  an identifier token of their own - ``"..."``, ``` `...` ```, ``´...´`` and
++  ``[...]`` - but only the double quote was exempt. ``select `MyTbl` `` with
++  ``identifier_case="upper"`` became ``select `MYTBL` ``, which names a
++  different table on a case-sensitive MySQL, and ``capitalize`` lowercased
++  the whole name because the leading delimiter absorbed the capital.
++  Unquoted identifiers are folded exactly as before.
++* Fix ``sqlformat`` printing a traceback instead of an error message. Seven of
++  the twelve ways a run can fail crashed rather than reporting: SQL that trips a
++  documented grouping limit (both to stdout and in place), input bytes that do
++  not decode, an ``--encoding`` name no codec answers to (each of those last two
++  for both a named file and stdin), and output the console cannot encode. Every
++  one now emits the same single ``[ERROR] ...`` line and exits 1, so a failure
++  on one file still lets the remaining files be processed.
++* Fix ``sqlformat`` emptying files when formatting fails. ``--in-place`` and
++  ``-o`` opened the destination for writing - which truncates - before the
++  options were validated and the SQL was formatted, so any later failure left
++  the file at zero bytes. ``sqlformat --in-place --indent_width 0 f.sql``
++  emptied ``f.sql`` while reporting the invalid option, SQL exceeding a
++  grouping limit emptied it while raising, and with several files every file
++  was emptied. The text is now formatted before anything is opened for
++  writing, so a failing run leaves every file byte-identical.
++* Preserve trailing newlines. The statement splitter discarded a trailing
++  statement whose tokens were all whitespace, so any input ending in a
++  semicolon lost its final newline: ``parse("select 1;\n")`` round-tripped to
++  ``"select 1;"``. Trailing spaces were kept and inputs without a semicolon
++  were kept, so the loss was inconsistent as well as silent. The whitespace is
++  now attached to the statement it follows, which leaves ``split`` and the
++  number of parsed statements unchanged. ``sqlformat`` additionally restores a
++  file's final newline after reindenting, so ``--in-place`` no longer rewrites
++  the last byte of every file the pre-commit hook touches.
++* Fix the ``reindent_aligned`` validation error naming the wrong value. The
++  message interpolated ``reindent`` instead of ``reindent_aligned``, so
++  ``format(sql, reindent_aligned='x')`` reported ``Invalid value for
++  reindent_aligned: False`` - a value the caller never passed, and one that is
++  itself valid. With ``reindent=True`` also set it reported ``True``.
++* Remove the ``right_margin`` formatting option and ``RightMarginFilter``. The
++  option was validated as though it were supported and then raised a bare
++  ``NotImplementedError`` from a filter that had been disabled with a
++  "Doesn't work" note: with its ``keep_together`` list empty the filter split
++  qualified identifiers across line breaks, turning ``schema.table.column``
++  into three lines. It was never documented and no ``sqlformat`` flag exposed
++  it. Passing ``right_margin`` now raises ``SQLParseError`` instead of doing
++  nothing silently; ``right_margin=None`` remains a no-op.
++* Fix ``sqlformat --comma_first`` and ``--compact`` ignoring false values. Both
++  were declared ``type=bool``, which passes the raw string through ``bool()``,
++  so every non-empty value including ``False``, ``no`` and ``0`` switched the
++  option on. They now accept true/yes/y/on/1 and false/no/n/off/0 in any case
++  and reject anything else with an error instead of guessing.
++* Escape backslashes in ``output_format='python'`` and ``output_format='php'``.
++  Both serializers escaped the quote character but not the backslash, so SQL
++  containing a backslash produced a snippet that meant something else -
++  ``select 'a\nb'`` became a literal containing a real newline - and SQL ending
++  in a backslash produced an unterminated string literal. The PHP serializer
++  now also escapes ``$``, which PHP interpolates inside double-quoted strings.
+ 
+ 
+ Release 0.5.5 (Dec 19, 2025)
+diff --git a/docs/source/api.rst b/docs/source/api.rst
+index 7c6fd70..90e6469 100644
+--- a/docs/source/api.rst
++++ b/docs/source/api.rst
+@@ -49,6 +49,11 @@ The :meth:`~sqlparse.format` function accepts the following keyword arguments.
+ ``reindent_aligned``
+   If ``True`` the indentations of the statements are changed, and statements are aligned by keywords.
+ 
++  ``reindent`` and ``reindent_aligned`` are alternative indentation styles and
++  cannot be combined: enabling both raises
++  :class:`~sqlparse.exceptions.SQLParseError`. ``indent_columns`` implies
++  ``reindent``, so it collides with ``reindent_aligned`` too.
++
+ ``use_space_around_operators``
+   If ``True`` spaces are used around all operators.
+ 
+@@ -71,8 +76,10 @@ The :meth:`~sqlparse.format` function accepts the following keyword arguments.
+   implied by ``reindent`` and ``reindent_aligned``.
+ 
+ ``wrap_after``
+-  The column limit (in characters) for wrapping comma-separated lists. If unspecified, it
+-  puts every item in the list on its own line.
++  The column (in characters) after which comma-separated lists are wrapped. Items are
++  added to the current line until this column is passed, so the item that crosses it
++  stays on that line and the line ends past the column rather than within it. If
++  unspecified, every item in the list is put on its own line.
+ 
+ ``compact``
+   If ``True`` the formatter tries to produce more compact output.
+diff --git a/sqlparse/__init__.py b/sqlparse/__init__.py
+index 3615924..6a6a639 100644
+--- a/sqlparse/__init__.py
++++ b/sqlparse/__init__.py
+@@ -11,7 +11,7 @@
+ from collections.abc import Generator
+ from typing import IO, Any
+ 
+-from sqlparse import cli, engine, filters, formatter, sql, tokens
++from sqlparse import cli, engine, filters, formatter, sql, tokens, utils
+ 
+ __version__ = "0.5.6.dev0"
+ __all__ = ["cli", "engine", "filters", "formatter", "sql", "tokens"]
+@@ -57,7 +57,13 @@ def format(sql: str, encoding: str | None = None, **options: Any) -> str:
+     options = formatter.validate_options(options)
+     stack = formatter.build_filter_stack(stack, options)
+     stack.postprocess.append(filters.SerializerUnicode())
+-    return "".join(stack.run(sql, encoding))
++    # Trailing whitespace is invisible only at the end of a line of the
++    # document, which no single statement can decide: the next statement may
++    # start on the same line, and there the whitespace is the separator
++    # between them. So the statements are joined first and stripped after.
++    text = "".join(stack.run(sql, encoding))
++    return "\n".join(
++        line.rstrip() for line in utils.split_unquoted_newlines(text))
+ 
+ 
+ def split(
+diff --git a/sqlparse/cli.py b/sqlparse/cli.py
+index 03ee86e..e0143cf 100644
+--- a/sqlparse/cli.py
++++ b/sqlparse/cli.py
+@@ -24,6 +24,26 @@ from io import TextIOWrapper
+ import sqlparse
+ from sqlparse.exceptions import SQLParseError
+ 
++_TRUE_VALUES = frozenset(('true', 'yes', 'y', 'on', '1'))
++_FALSE_VALUES = frozenset(('false', 'no', 'n', 'off', '0'))
++
++
++def _bool_value(value):
++    """Parse a boolean command line value.
++
++    argparse's ``type=bool`` runs the raw string through ``bool()``, which is
++    true for every non-empty string, so ``--comma_first False`` used to switch
++    comma-first notation on. Anything that is neither true-ish nor false-ish is
++    rejected rather than quietly picking a side.
++    """
++    normalized = value.strip().lower()
++    if normalized in _TRUE_VALUES:
++        return True
++    if normalized in _FALSE_VALUES:
++        return False
++    raise argparse.ArgumentTypeError(
++        f'expected a boolean value, got {value!r}')
++
+ 
+ # TODO: Add CLI Tests
+ # TODO: Simplify formatter by using argparse `type` arguments
+@@ -98,7 +118,7 @@ def create_parser():
+         dest='reindent',
+         action='store_true',
+         default=False,
+-        help='reindent statements')
++        help='reindent statements (not with --reindent_aligned)')
+ 
+     group.add_argument(
+         '--indent_width',
+@@ -125,7 +145,7 @@ def create_parser():
+         '-a', '--reindent_aligned',
+         action='store_true',
+         default=False,
+-        help='reindent statements to aligned format')
++        help='reindent statements to aligned format (not with --reindent)')
+ 
+     group.add_argument(
+         '-s', '--use_space_around_operators',
+@@ -144,14 +164,16 @@ def create_parser():
+         '--comma_first',
+         dest='comma_first',
+         default=False,
+-        type=bool,
++        type=_bool_value,
++        metavar='BOOL',
+         help='Insert linebreak before comma (default False)')
+ 
+     group.add_argument(
+         '--compact',
+         dest='compact',
+         default=False,
+-        type=bool,
++        type=_bool_value,
++        metavar='BOOL',
+         help='Try to produce more compact output (default False)')
+ 
+     group.add_argument(
+@@ -178,49 +200,75 @@ def _process_file(filename, args):
+     if filename == '-' and args.inplace:
+         return _error('Cannot use --in-place with stdin')
+ 
+-    # Read input
+-    if filename == '-':  # read from stdin
+-        wrapper = TextIOWrapper(sys.stdin.buffer, encoding=args.encoding)
+-        try:
+-            data = wrapper.read()
+-        finally:
+-            wrapper.detach()
+-    else:
+-        try:
++    # Read input. LookupError is the codec name being unknown and UnicodeError
++    # is the bytes not decoding under it; both are caught here rather than in a
++    # wrapper around the whole function, because this step is the only one
++    # whose code looks up a codec, and a broad LookupError handler would report
++    # an internal KeyError as a read failure.
++    try:
++        if filename == '-':  # read from stdin
++            wrapper = TextIOWrapper(sys.stdin.buffer, encoding=args.encoding)
++            try:
++                data = wrapper.read()
++            finally:
++                wrapper.detach()
++        else:
+             with open(filename, encoding=args.encoding) as f:
+                 data = ''.join(f.readlines())
+-        except OSError as e:
+-            return _error(f'Failed to read {filename}: {e}')
++    except (OSError, UnicodeError, LookupError) as e:
++        return _error(f'Failed to read {filename}: {e}')
++
++    # Format the SQL before opening the destination. Opening a file for
++    # writing truncates it, so doing that first meant any later failure - a
++    # rejected option, or SQL that trips a grouping limit - left the user's
++    # file at zero bytes.
++    formatter_opts = vars(args)
++    try:
++        formatter_opts = sqlparse.formatter.validate_options(formatter_opts)
++    except SQLParseError as e:
++        return _error(f'Invalid options: {e}')
++
++    # SQL is the adversarial input class here, and the documented grouping
++    # limits exist to reject hostile input, so tripping one is an expected
++    # failure of this step rather than a bug to crash on.
++    try:
++        s = sqlparse.format(data, **formatter_opts)
++    except SQLParseError as e:
++        return _error(f'Failed to format {filename}: {e}')
++    # Reindenting normalises whitespace inside statements, which correctly
++    # strips a statement's trailing whitespace. A file's final newline is a
++    # property of the file rather than of the SQL, so restore it: without this
++    # every file the pre-commit hook rewrites loses its last byte.
++    if data.endswith('\n') and not s.endswith('\n'):
++        s += '\n'
+ 
+     # Determine output destination
+-    close_stream = False
+     if args.inplace:
+-        try:
+-            stream = open(filename, 'w', encoding=args.encoding)
+-            close_stream = True
+-        except OSError as e:
+-            return _error(f'Failed to open {filename}: {e}')
++        dest = filename
+     elif args.outfile:
++        dest = args.outfile
++    else:
++        dest = '<stdout>'
++
++    close_stream = args.inplace or bool(args.outfile)
++    if close_stream:
+         try:
+-            stream = open(args.outfile, 'w', encoding=args.encoding)
+-            close_stream = True
++            stream = open(dest, 'w', encoding=args.encoding)
+         except OSError as e:
+-            return _error(f'Failed to open {args.outfile}: {e}')
++            return _error(f'Failed to open {dest}: {e}')
+     else:
+         stream = sys.stdout
+ 
+-    # Format the SQL
+-    formatter_opts = vars(args)
++    # Writing can still fail after the destination opened: the console may not
++    # be able to encode the output, or the device may be full.
+     try:
+-        formatter_opts = sqlparse.formatter.validate_options(formatter_opts)
+-    except SQLParseError as e:
+-        return _error(f'Invalid options: {e}')
+-
+-    s = sqlparse.format(data, **formatter_opts)
+-    stream.write(s)
+-    stream.flush()
+-    if close_stream:
+-        stream.close()
++        stream.write(s)
++        stream.flush()
++    except (OSError, UnicodeError) as e:
++        return _error(f'Failed to write {dest}: {e}')
++    finally:
++        if close_stream:
++            stream.close()
+     return 0
+ 
+ 
+diff --git a/sqlparse/engine/statement_splitter.py b/sqlparse/engine/statement_splitter.py
+index bc57d17..492f7f1 100644
+--- a/sqlparse/engine/statement_splitter.py
++++ b/sqlparse/engine/statement_splitter.py
+@@ -152,6 +152,11 @@ class StatementSplitter:
+         """Process the stream"""
+         EOS_TTYPE = T.Whitespace, T.Comment.Single
+ 
++        # The most recently completed statement, held back by one so that
++        # trailing whitespace found at end of input can be attached to it
++        # rather than discarded. See the end-of-stream handling below.
++        pending = None
++
+         # Run over all stream tokens
+         for ttype, value in stream:
+             # Yield token if we finished a statement and there's no whitespaces
+@@ -159,7 +164,9 @@ class StatementSplitter:
+             # whitespace ignores newlines.
+             # why don't multi line comments also count?
+             if self.consume_ws and ttype not in EOS_TTYPE:
+-                yield sql.Statement(self.tokens)
++                if pending is not None:
++                    yield sql.Statement(pending)
++                pending = self.tokens
+ 
+                 # Reset filter and prepare to process next statement
+                 self._reset()
+@@ -193,4 +200,12 @@ class StatementSplitter:
+ 
+         # Yield pending statement (if any)
+         if self.tokens and not all(t.is_whitespace for t in self.tokens):
++            if pending is not None:
++                yield sql.Statement(pending)
+             yield sql.Statement(self.tokens)
++        elif pending is not None:
++            # What is left is whitespace only, so it is not a statement of its
++            # own. It is still part of the input though - discarding it dropped
++            # the trailing newline of every file ending in a semicolon - so
++            # keep it on the statement it follows.
++            yield sql.Statement(pending + self.tokens)
+diff --git a/sqlparse/filters/__init__.py b/sqlparse/filters/__init__.py
+index d9d1339..3955817 100644
+--- a/sqlparse/filters/__init__.py
++++ b/sqlparse/filters/__init__.py
+@@ -15,7 +15,6 @@ from sqlparse.filters.others import (
+ )
+ from sqlparse.filters.output import OutputPHPFilter, OutputPythonFilter
+ from sqlparse.filters.reindent import ReindentFilter
+-from sqlparse.filters.right_margin import RightMarginFilter
+ from sqlparse.filters.tokens import (
+     IdentifierCaseFilter,
+     KeywordCaseFilter,
+@@ -29,7 +28,6 @@ __all__ = [
+     'OutputPHPFilter',
+     'OutputPythonFilter',
+     'ReindentFilter',
+-    'RightMarginFilter',
+     'SerializerUnicode',
+     'SpacesAroundOperatorsFilter',
+     'StripCommentsFilter',
+diff --git a/sqlparse/filters/aligned_indent.py b/sqlparse/filters/aligned_indent.py
+index 6ac99d6..3d9107e 100644
+--- a/sqlparse/filters/aligned_indent.py
++++ b/sqlparse/filters/aligned_indent.py
+@@ -68,9 +68,15 @@ class AlignedIndentFilter:
+     def _process_case(self, tlist):
+         offset_ = len('case ') + len('when ')
+         cases = tlist.get_cases(skip_ws=True)
+-        # align the end as well
++        # Align the end as well - when there is one to align. A group that
++        # opens inside the CASE swallows everything after it, so in
++        # "case where end" the END sits inside the WHERE, and token_next_by
++        # does not recurse. Appending the None it answers put None where a
++        # token was expected and token_index raised ValueError out of the
++        # public API, which is not the SQLParseError callers handle.
+         end_token = tlist.token_next_by(m=(T.Keyword, 'END'))[1]
+-        cases.append((None, [end_token]))
++        if end_token is not None:
++            cases.append((None, [end_token]))
+ 
+         condition_width = [len(' '.join(map(str, cond))) if cond else 0
+                            for cond, _ in cases]
+diff --git a/sqlparse/filters/others.py b/sqlparse/filters/others.py
+index 95bc436..f2adfc7 100644
+--- a/sqlparse/filters/others.py
++++ b/sqlparse/filters/others.py
+@@ -87,6 +87,25 @@ class StripWhitespaceFilter:
+         func = getattr(self, func_name.lower(), self._stripws_default)
+         func(tlist)
+ 
++    @staticmethod
++    def _trailing_ws(token):
++        """Whether the token's rendered text ends in whitespace.
++
++        None when it renders as nothing. A group's own ``is_whitespace`` is
++        False even when its last rendered character is a space, so a list
++        cannot ask the flag whether a separator is already in place. Reading
++        the group's text with ``str()`` would rebuild the whole subtree - the
++        O(n*depth) construction removed for CWE-1333 - so walk the tail
++        instead, which stops at the first token that renders anything.
++        """
++        if not token.is_group:
++            return token.value[-1].isspace() if token.value else None
++        for sub in reversed(token.tokens):
++            tail = StripWhitespaceFilter._trailing_ws(sub)
++            if tail is not None:
++                return tail
++        return None
++
+     @staticmethod
+     def _stripws_default(tlist):
+         last_was_ws = False
+@@ -94,7 +113,18 @@ class StripWhitespaceFilter:
+         for token in tlist.tokens:
+             if token.is_whitespace:
+                 token.value = '' if last_was_ws or is_first_char else ' '
+-            last_was_ws = token.is_whitespace
++                # The run continues even though this token was emptied: the
++                # lexer emits one token per newline, so "\n\n" arrives as two
++                # and the second must not become a space.
++                last_was_ws = True
++            else:
++                # Sublists are stripped before their parent, so a group's tail
++                # is final by the time it is read here. A group that renders
++                # nothing leaves the answer untouched rather than claiming
++                # there was no whitespace before it.
++                tail = StripWhitespaceFilter._trailing_ws(token)
++                if tail is not None:
++                    last_was_ws = tail
+             is_first_char = False
+ 
+     def _stripws_identifierlist(self, tlist):
+@@ -112,20 +142,31 @@ class StripWhitespaceFilter:
+         return self._stripws_default(tlist)
+ 
+     def _stripws_parenthesis(self, tlist):
+-        while tlist.tokens[1].is_whitespace:
++        # The shape ['(', body..., ')'] is not guaranteed: grouping hands back
++        # a Parenthesis holding a single Identifier that swallowed both parens
++        # for `(as)`, and a two-token one for `()`. Every index is bounded
++        # rather than assumed, and the interior only exists at three tokens or
++        # more, so the loops stop there instead of reading the parens
++        # themselves.
++        while len(tlist.tokens) > 2 and tlist.tokens[1].is_whitespace:
+             tlist.tokens.pop(1)
+-        while tlist.tokens[-2].is_whitespace:
++        while len(tlist.tokens) > 2 and tlist.tokens[-2].is_whitespace:
+             tlist.tokens.pop(-2)
+-        if tlist.tokens[-2].is_group:
++        if len(tlist.tokens) > 2 and tlist.tokens[-2].is_group:
+             # save to remove the last whitespace
+-            while tlist.tokens[-2].tokens[-1].is_whitespace:
+-                tlist.tokens[-2].tokens.pop(-1)
++            inner = tlist.tokens[-2].tokens
++            while inner and inner[-1].is_whitespace:
++                inner.pop(-1)
+         self._stripws_default(tlist)
+ 
+     def process(self, stmt, depth=0):
+         [self.process(sgroup, depth + 1) for sgroup in stmt.get_sublists()]
+         self._stripws(stmt)
+-        if depth == 0 and stmt.tokens and stmt.tokens[-1].is_whitespace:
++        # A statement can end in more than one whitespace token - stripping a
++        # comment that ended a line leaves its line break behind next to the
++        # space before it - so drain them. Popping only the last one left a
++        # trailing space that the old per-statement rstrip happened to hide.
++        while depth == 0 and stmt.tokens and stmt.tokens[-1].is_whitespace:
+             stmt.tokens.pop(-1)
+         return stmt
+ 
+@@ -171,4 +212,9 @@ class SerializerUnicode:
+     @staticmethod
+     def process(stmt):
+         lines = split_unquoted_newlines(stmt)
+-        return '\n'.join(line.rstrip() for line in lines)
++        # Only a line a newline actually ends is one whose trailing whitespace
++        # is invisible. The last line of a statement is not necessarily the end
++        # of a line in the document - the next statement can start on it - so
++        # rstripping it deleted the space between them, and
++        # format('select 1; select 2;') came back as 'select 1;select 2;'.
++        return '\n'.join([line.rstrip() for line in lines[:-1]] + lines[-1:])
+diff --git a/sqlparse/filters/output.py b/sqlparse/filters/output.py
+index 235db54..38edd0a 100644
+--- a/sqlparse/filters/output.py
++++ b/sqlparse/filters/output.py
+@@ -8,9 +8,45 @@
+ from sqlparse import sql
+ from sqlparse import tokens as T
+ 
++# Metacharacters a backslash cannot escape by itself. Prefixing a backslash
++# to a real newline makes a line continuation, which drops the newline instead
++# of encoding it, and no escape at all leaves a character the target language
++# cannot carry inside a quoted literal.
++_ESCAPE_SEQUENCES = {'\n': '\\n', '\r': '\\r', '\x00': '\\x00'}
++
++
++def _escape(value, metachars):
++    """Escape *value* for embedding in a quoted string literal.
++
++    Backslashes are escaped first: doing it afterwards would also escape the
++    backslashes just added for *metachars*, and skipping it lets a backslash
++    in the SQL pair up with the following character into an escape sequence
++    the target language interprets.
++    """
++    value = value.replace('\\', '\\\\')
++    for char in metachars:
++        value = value.replace(char, _ESCAPE_SEQUENCES.get(char, '\\' + char))
++    return value
++
++
++def _escape_lines(value, metachars):
++    """Split a whitespace token on its newlines, escaping each run.
++
++    Every newline has to produce a line break in the generated snippet.
++    Splitting on the first one only left the remaining newlines inside the
++    still-open literal, which a Python literal cannot carry.
++    """
++    return [_escape(run, metachars) for run in value.split('\n')]
++
++
++def _breaks_line(token):
++    """Whether *token* makes the serializer close the literal and continue."""
++    return token.is_whitespace and '\n' in token.value
++
+ 
+ class OutputFilter:
+     varname_prefix = ''
++    metachars = ''
+ 
+     def __init__(self, varname='sql'):
+         self.varname = self.varname_prefix + varname
+@@ -26,12 +62,19 @@ class OutputFilter:
+         else:
+             varname = self.varname
+ 
+-        has_nl = len(str(stmt).strip().splitlines()) > 1
++        # Asked with the same test the loop uses, so the parentheses that make
++        # the continuation lines legal are emitted exactly when there are any.
++        # Deriving it from str(stmt) instead missed the leading whitespace that
++        # strip() removes, which is every statement after the first in a script
++        # written one statement per line.
++        has_nl = any(_breaks_line(token) for token in stmt.tokens)
+         stmt.tokens = self._process(stmt.tokens, varname, has_nl)
+         return stmt
+ 
+ 
+ class OutputPythonFilter(OutputFilter):
++    metachars = "'\n\r\x00"
++
+     def _process(self, stream, varname, has_nl):
+         # SQL query assignation to varname
+         if self.count > 1:
+@@ -47,27 +90,34 @@ class OutputPythonFilter(OutputFilter):
+         # Print the tokens on the quote
+         for token in stream:
+             # Token is a new line separator
+-            if token.is_whitespace and '\n' in token.value:
+-                # Close quote and add a new line
+-                yield sql.Token(T.Text, " '")
+-                yield sql.Token(T.Whitespace, '\n')
++            if _breaks_line(token):
++                runs = _escape_lines(token.value, self.metachars)
++                for run in runs[:-1]:
++                    if run:
++                        yield sql.Token(T.Whitespace, run)
+ 
+-                # Quote header on secondary lines
+-                yield sql.Token(T.Whitespace, ' ' * (len(varname) + 4))
+-                yield sql.Token(T.Text, "'")
++                    # Close quote and add a new line
++                    yield sql.Token(T.Text, " '")
++                    yield sql.Token(T.Whitespace, '\n')
++
++                    # Quote header on secondary lines
++                    yield sql.Token(T.Whitespace, ' ' * (len(varname) + 4))
++                    yield sql.Token(T.Text, "'")
+ 
+                 # Indentation
+-                after_lb = token.value.split('\n', 1)[1]
+-                if after_lb:
+-                    yield sql.Token(T.Whitespace, after_lb)
++                if runs[-1]:
++                    yield sql.Token(T.Whitespace, runs[-1])
+                 continue
+ 
+-            # Token has escape chars
+-            elif "'" in token.value:
+-                token.value = token.value.replace("'", "\\'")
+-
+-            # Put the token
+-            yield sql.Token(T.Text, token.value)
++            # Put the token. str() is asked rather than .value because .value
++            # is a cache filled when the group was built, which the filters
++            # that ran before this one leave stale when they edit inside a
++            # group. The control characters are escaped because a Python
++            # single-quoted literal cannot carry them literally: a newline or
++            # carriage return ends the literal, and a NUL makes the whole
++            # source unparseable. They reach here inside quoted tokens, whose
++            # is_whitespace is False, so the branch above never sees them.
++            yield sql.Token(T.Text, _escape(str(token), self.metachars))
+ 
+         # Close quote
+         yield sql.Token(T.Text, "'")
+@@ -77,6 +127,9 @@ class OutputPythonFilter(OutputFilter):
+ 
+ class OutputPHPFilter(OutputFilter):
+     varname_prefix = '$'
++    # A raw newline, carriage return or NUL is legal inside a PHP
++    # double-quoted string, so only the interpolation metacharacters need it.
++    metachars = '"$'
+ 
+     def _process(self, stream, varname, has_nl):
+         # SQL query assignation to varname (quote header)
+@@ -93,30 +146,33 @@ class OutputPHPFilter(OutputFilter):
+         # Print the tokens on the quote
+         for token in stream:
+             # Token is a new line separator
+-            if token.is_whitespace and '\n' in token.value:
+-                # Close quote and add a new line
+-                yield sql.Token(T.Text, ' ";')
+-                yield sql.Token(T.Whitespace, '\n')
+-
+-                # Quote header on secondary lines
+-                yield sql.Token(T.Name, varname)
+-                yield sql.Token(T.Whitespace, ' ')
+-                yield sql.Token(T.Operator, '.=')
+-                yield sql.Token(T.Whitespace, ' ')
+-                yield sql.Token(T.Text, '"')
++            if _breaks_line(token):
++                runs = _escape_lines(token.value, self.metachars)
++                for run in runs[:-1]:
++                    if run:
++                        yield sql.Token(T.Whitespace, run)
++
++                    # Close quote and add a new line
++                    yield sql.Token(T.Text, ' ";')
++                    yield sql.Token(T.Whitespace, '\n')
++
++                    # Quote header on secondary lines
++                    yield sql.Token(T.Name, varname)
++                    yield sql.Token(T.Whitespace, ' ')
++                    yield sql.Token(T.Operator, '.=')
++                    yield sql.Token(T.Whitespace, ' ')
++                    yield sql.Token(T.Text, '"')
+ 
+                 # Indentation
+-                after_lb = token.value.split('\n', 1)[1]
+-                if after_lb:
+-                    yield sql.Token(T.Whitespace, after_lb)
++                if runs[-1]:
++                    yield sql.Token(T.Whitespace, runs[-1])
+                 continue
+ 
+-            # Token has escape chars
+-            elif '"' in token.value:
+-                token.value = token.value.replace('"', '\\"')
+-
+-            # Put the token
+-            yield sql.Token(T.Text, token.value)
++            # Put the token, from str() rather than the stale .value cache as
++            # above. '$' is escaped too: PHP interpolates variables inside
++            # double-quoted strings, so an unescaped '$foo', '${x}' or '{$x}'
++            # from the SQL would be substituted away at runtime.
++            yield sql.Token(T.Text, _escape(str(token), self.metachars))
+ 
+         # Close quote
+         yield sql.Token(T.Text, '"')
+diff --git a/sqlparse/filters/reindent.py b/sqlparse/filters/reindent.py
+index ea41ac6..17ff08e 100644
+--- a/sqlparse/filters/reindent.py
++++ b/sqlparse/filters/reindent.py
+@@ -67,19 +67,52 @@ class ReindentFilter:
+ 
+         return tidx, token
+ 
++    @staticmethod
++    def _preceding_text(tlist, tidx):
++        """The text before ``tlist[tidx]``, back to the last token that renders.
++
++        A token that renders nothing answers nothing about what precedes the
++        keyword. StripWhitespaceFilter empties a separator whose line break the
++        previous token's tail already carries - a line comment ends its own
++        line - so reading only the token immediately before said "no line break
++        here" and a second one was inserted, leaving a blank line that a
++        re-format then removed.
++        """
++        for token in reversed(tlist.tokens[:tidx]):
++            text = str(token)
++            if text:
++                return text
++        return ''
++
+     def _split_kwds(self, tlist):
+         tidx, token = self._next_token(tlist)
+         while token:
+             pidx, prev_ = tlist.token_prev(tidx, skip_ws=False)
+-            uprev = str(prev_)
+ 
+             if prev_ and prev_.is_whitespace:
+                 del tlist.tokens[pidx]
+                 tidx -= 1
+ 
++            # Read what is left after removing the separator being replaced,
++            # not what was there before. A whitespace token deleted just above
++            # can itself be the line break - reindent inserts such tokens
++            # earlier in this same pass - and reading before the deletion
++            # reported a break that no longer existed, so the branch below
++            # added the indent without it and put a run of spaces mid-line.
++            uprev = self._preceding_text(tlist, tidx)
++
+             if not (uprev.endswith('\n') or uprev.endswith('\r')):
+                 tlist.insert_before(tidx, self.nl())
+                 tidx += 1
++            elif self.leading_ws:
++                # The break is already there and is not ours to move - it is
++                # the newline a line comment carries inside its own value - so
++                # only the indent is missing. Adding a second break left a
++                # blank line that a re-format then removed; adding nothing put
++                # the keyword in column 0 and made indent_width inert here.
++                tlist.insert_before(
++                    tidx, sql.Token(T.Whitespace, self.char * self.leading_ws))
++                tidx += 1
+ 
+             tidx, token = self._next_token(tlist, tidx)
+ 
+@@ -241,6 +274,12 @@ class ReindentFilter:
+         self._process(stmt)
+ 
+         if self._last_stmt is not None:
++            # Drop the gap this statement arrived with before writing ours.
++            # Without that the two stack: _split_statements has already turned
++            # the arriving gap into a newline of its own, so re-formatting an
++            # already-formatted script grew the gap by one on every pass.
++            while stmt.tokens and stmt.tokens[0].is_whitespace:
++                stmt.tokens.pop(0)
+             nl = '\n' if str(self._last_stmt).endswith('\n') else '\n\n'
+             stmt.tokens.insert(0, sql.Token(T.Whitespace, nl))
+ 
+diff --git a/sqlparse/filters/right_margin.py b/sqlparse/filters/right_margin.py
+deleted file mode 100644
+index 5233195..0000000
+--- a/sqlparse/filters/right_margin.py
++++ /dev/null
+@@ -1,49 +0,0 @@
+-#
+-# Copyright (C) 2009-2020 the sqlparse authors and contributors
+-# <see AUTHORS file>
+-#
+-# This module is part of python-sqlparse and is released under
+-# the BSD License: https://opensource.org/licenses/BSD-3-Clause
+-
+-import re
+-
+-from sqlparse import sql
+-from sqlparse import tokens as T
+-
+-
+-# FIXME: Doesn't work
+-class RightMarginFilter:
+-    keep_together = (
+-        # sql.TypeCast, sql.Identifier, sql.Alias,
+-    )
+-
+-    def __init__(self, width=79):
+-        self.width = width
+-        self.line = ''
+-
+-    def _process(self, group, stream):
+-        for token in stream:
+-            if token.is_whitespace and '\n' in token.value:
+-                if token.value.endswith('\n'):
+-                    self.line = ''
+-                else:
+-                    self.line = token.value.splitlines()[-1]
+-            elif token.is_group and type(token) not in self.keep_together:
+-                token.tokens = self._process(token, token.tokens)
+-            else:
+-                val = str(token)
+-                if len(self.line) + len(val) > self.width:
+-                    match = re.search(r'^ +', self.line)
+-                    if match is not None:
+-                        indent = match.group()
+-                    else:
+-                        indent = ''
+-                    yield sql.Token(T.Whitespace, f'\n{indent}')
+-                    self.line = indent
+-                self.line += val
+-            yield token
+-
+-    def process(self, group):
+-        # return
+-        # group.tokens = self._process(group, group.tokens)
+-        raise NotImplementedError
+diff --git a/sqlparse/filters/tokens.py b/sqlparse/filters/tokens.py
+index cc00a84..46ad063 100644
+--- a/sqlparse/filters/tokens.py
++++ b/sqlparse/filters/tokens.py
+@@ -29,9 +29,16 @@ class KeywordCaseFilter(_CaseFilter):
+ class IdentifierCaseFilter(_CaseFilter):
+     ttype = T.Name, T.String.Symbol
+ 
++    # Every delimiter SQL_REGEX gives an identifier token of its own, one per
++    # dialect: ANSI double quotes, MySQL backticks, the acute accent, and
++    # T-SQL / MS Access brackets. Case inside a quoted identifier is part of
++    # the name, so folding it can name a different object - only the double
++    # quote was exempt, and `MyTbl` came back as `MYTBL`.
++    QUOTES = ('"', '`', '´', '[')
++
+     def process(self, stream):
+         for ttype, value in stream:
+-            if ttype in self.ttype and value.strip()[0] != '"':
++            if ttype in self.ttype and value.strip()[:1] not in self.QUOTES:
+                 value = self.convert(value)
+             yield ttype, value
+ 
+diff --git a/sqlparse/formatter.py b/sqlparse/formatter.py
+index 1fba246..08826b1 100644
+--- a/sqlparse/formatter.py
++++ b/sqlparse/formatter.py
+@@ -74,10 +74,21 @@ def validate_options(options):
+     reindent_aligned = options.get('reindent_aligned', False)
+     if reindent_aligned not in [True, False]:
+         raise SQLParseError('Invalid value for reindent_aligned: '
+-                            f'{reindent!r}')
++                            f'{reindent_aligned!r}')
+     elif reindent_aligned:
+         options['strip_whitespace'] = True
+ 
++    # Two indenters stacked each insert a newline before the same keywords, so
++    # the result is neither style: a blank line between every clause, and
++    # unstable across passes because the aligned filter deletes the
++    # inter-statement gap the other one just inserted. Reject the combination
++    # rather than emitting output no caller asked for.
++    if options.get('reindent') and reindent_aligned:
++        raise SQLParseError(
++            'reindent and reindent_aligned are alternative indentation '
++            'styles and cannot be combined; enable exactly one '
++            '(indent_columns implies reindent)')
++
+     indent_after_first = options.get('indent_after_first', False)
+     if indent_after_first not in [True, False]:
+         raise SQLParseError('Invalid value for indent_after_first: '
+@@ -121,15 +132,14 @@ def validate_options(options):
+         raise SQLParseError('compact requires a boolean value')
+     options['compact'] = compact
+ 
+-    right_margin = options.get('right_margin')
+-    if right_margin is not None:
+-        try:
+-            right_margin = int(right_margin)
+-        except (TypeError, ValueError):
+-            raise SQLParseError('right_margin requires an integer')
+-        if right_margin < 10:
+-            raise SQLParseError('right_margin requires an integer > 10')
+-    options['right_margin'] = right_margin
++    # right_margin was never implemented: the filter that would have applied it
++    # split qualified identifiers across line breaks, so it was disabled before
++    # this option was ever documented. Reject it explicitly rather than
++    # accepting it and silently doing nothing.
++    if options.get('right_margin') is not None:
++        raise SQLParseError(
++            'right_margin is not implemented and has no effect; '
++            'remove the option')
+ 
+     return options
+ 
+@@ -184,11 +194,6 @@ def build_filter_stack(stack, options):
+         stack.stmtprocess.append(
+             filters.AlignedIndentFilter(char=options['indent_char']))
+ 
+-    if options.get('right_margin'):
+-        stack.enable_grouping()
+-        stack.stmtprocess.append(
+-            filters.RightMarginFilter(width=options['right_margin']))
+-
+     # Serializer
+     if options.get('output_format'):
+         frmt = options['output_format']
+diff --git a/sqlparse/sql.py b/sqlparse/sql.py
+index ec44a6d..ac62f8a 100644
+--- a/sqlparse/sql.py
++++ b/sqlparse/sql.py
+@@ -167,6 +167,14 @@ class TokenList(Token):
+     def __init__(self, tokens=None):
+         self.tokens = tokens or []
+         [setattr(token, 'parent', self) for token in self.tokens]
++        # ``value`` is a cache of the text this group had when it was built,
++        # and nothing refreshes it: a filter that edits inside the group leaves
++        # it stale. Computing it recursively instead was the quadratic
++        # behaviour removed for CWE-1333, so it stays a cache and the
++        # obligation is on readers - anything running after a filter may have
++        # edited the tree must ask str(token), which recomputes from the live
++        # tokens. Grouping itself keeps the cache correct, so a parse() result
++        # that no filter has touched is always accurate.
+         super().__init__(None, ''.join(token.value for token in self.tokens))
+         self.is_group = True
+ 
+@@ -640,10 +648,14 @@ class Function(NameAliasMixin, TokenList):
+ 
+     def get_window(self):
+         """Return the window if it exists."""
+-        over_clause = self.token_next_by(i=Over)
+-        if not over_clause:
++        # Unpack rather than subscript: token_next_by answers (None, None) on a
++        # miss, and that tuple is truthy, so the old `if not over_clause` guard
++        # could never fire and every function without an OVER clause raised
++        # AttributeError instead of returning None.
++        _, over_clause = self.token_next_by(i=Over)
++        if over_clause is None:
+             return None
+-        return over_clause[1].tokens[-1]
++        return over_clause.tokens[-1]
+ 
+ 
+ class Begin(TokenList):
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 4aec44d..2fc242a 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -4,6 +4,7 @@ import sys
+ import pytest
+ 
+ import sqlparse
++from sqlparse.exceptions import SQLParseError
+ 
+ 
+ def test_cli_main_empty():
+@@ -204,3 +205,117 @@ def test_cli_error_handling_continues(tmpdir, capsys):
+     assert "select * from baz" in file3.read()
+     _, err = capsys.readouterr()
+     assert "Failed to read" in err
++
++
++@pytest.mark.parametrize('flag, sql', [
++    ('--comma_first', 'select a,b from t'),
++    ('--compact', 'select case when a then 1 else 2 end from t'),
++])
++@pytest.mark.parametrize('value', ['False', 'false', 'no', '0', 'off'])
++def test_cli_boolean_flag_false_matches_omitting_it(tmpdir, flag, sql, value):
++    # argparse type=bool ran the raw string through bool(), so every non-empty
++    # value was True and '--comma_first False' turned comma-first ON.
++    test_file = tmpdir.join("test.sql")
++    test_file.write(sql)
++
++    baseline = sqlparse.format(sql, reindent=True)
++    args = sqlparse.cli.create_parser().parse_args(
++        [str(test_file), '-r', flag, value])
++    opts = sqlparse.formatter.validate_options(vars(args))
++
++    assert sqlparse.format(sql, **opts) == baseline
++
++
++@pytest.mark.parametrize('flag, sql', [
++    ('--comma_first', 'select a,b from t'),
++    ('--compact', 'select case when a then 1 else 2 end from t'),
++])
++@pytest.mark.parametrize('value', ['True', 'true', 'yes', '1', 'on'])
++def test_cli_boolean_flag_true_changes_output(tmpdir, flag, sql, value):
++    test_file = tmpdir.join("test.sql")
++    test_file.write(sql)
++
++    baseline = sqlparse.format(sql, reindent=True)
++    args = sqlparse.cli.create_parser().parse_args(
++        [str(test_file), '-r', flag, value])
++    opts = sqlparse.formatter.validate_options(vars(args))
++
++    assert sqlparse.format(sql, **opts) != baseline
++
++
++@pytest.mark.parametrize('flag', ['--comma_first', '--compact'])
++def test_cli_boolean_flag_rejects_nonsense(filepath, capsys, flag):
++    path = filepath('function.sql')
++    with pytest.raises(SystemExit):
++        sqlparse.cli.main([path, flag, 'banana'])
++    assert 'banana' in capsys.readouterr().err
++
++
++@pytest.mark.parametrize('content', [
++    'select a from t;\n',
++    'select a,b from t;\n',
++    'select a from t;',
++])
++def test_cli_inplace_preserves_final_newline(tmpdir, content):
++    # Reindenting strips a statement's trailing whitespace by design, but the
++    # file's final newline must survive: the shipped pre-commit hook runs
++    # --in-place --reindent over the user's files.
++    test_file = tmpdir.join("test.sql")
++    test_file.write_binary(content.encode())
++
++    assert sqlparse.cli.main([str(test_file), '--in-place', '--reindent']) == 0
++
++    after = test_file.read_binary()
++    assert after.endswith(b'\n') == content.endswith('\n')
++
++
++@pytest.mark.parametrize('bad_args', [
++    ['--indent_width', '0'],          # rejected by validate_options
++    ['--reindent'],                   # SQL trips the grouping depth limit
++])
++def test_cli_failed_run_leaves_file_intact(tmpdir, bad_args):
++    # Opening the destination for writing truncates it, so opening before
++    # formatting meant any later failure emptied the user's file.
++    deep = 'select ' + '(' * 150 + '1' + ')' * 150 + ' from t;\n'
++    original = deep if bad_args == ['--reindent'] else 'select a, b from t;\n'
++    test_file = tmpdir.join("test.sql")
++    test_file.write_binary(original.encode())
++
++    assert sqlparse.cli.main([str(test_file), '--in-place', *bad_args]) == 1
++    assert test_file.read_binary().decode() == original
++
++
++@pytest.mark.parametrize('content, argv, marker', [
++    # SQL that trips the documented grouping depth limit. --reindent is what
++    # turns grouping on, so without it the limit is never reached.
++    ('select ' + '(' * 150 + '1' + ')' * 150 + ' from t;', ['--reindent'],
++     'Failed to format'),
++    # Bytes that do not decode under the encoding in force.
++    (b'select \xff\xfe from t;', [], 'Failed to read'),
++    # An encoding name no codec answers to.
++    ('select 1 from t;', ['--encoding', 'nosuchcodec'], 'Failed to read'),
++])
++def test_cli_reports_failures_instead_of_crashing(tmpdir, capsys, content, argv,
++                                                  marker):
++    # Every step that can fail reports through the same [ERROR] line. These
++    # three used to leave the traceback on the user's terminal.
++    test_file = tmpdir.join("test.sql")
++    test_file.write_binary(content if isinstance(content, bytes) else content.encode())
++
++    assert sqlparse.cli.main([str(test_file), *argv]) == 1
++
++    err = capsys.readouterr().err
++    assert err.startswith('[ERROR] ')
++    assert marker in err
++    assert err.count('\n') == 1
++
++
++def test_cli_failed_run_leaves_outfile_intact(tmpdir):
++    src = tmpdir.join("src.sql")
++    src.write("select a from t;")
++    out = tmpdir.join("out.sql")
++    out.write("PRE-EXISTING\n")
++
++    sqlparse.cli.main([str(src), '-o', str(out), '--indent_width', '0'])
++
++    assert out.read() == "PRE-EXISTING\n"
+diff --git a/tests/test_format.py b/tests/test_format.py
+index 0cdbcf8..91cc115 100644
+--- a/tests/test_format.py
++++ b/tests/test_format.py
+@@ -1,3 +1,5 @@
++import ast
++
+ import pytest
+ 
+ import sqlparse
+@@ -38,6 +40,24 @@ class TestFormat:
+         res = sqlparse.format(sql, identifier_case="upper")
+         assert res == 'select * from "foo"."bar"'
+ 
++    # Case inside a quoted identifier is part of the name, and SQL_REGEX gives
++    # four delimiters an identifier token of their own. Only the double quote
++    # was exempt, so `MyTbl` came back as `MYTBL` - a different table on a
++    # case-sensitive MySQL - and capitalize lowercased the whole name, because
++    # the leading delimiter absorbed the capital.
++    @pytest.mark.parametrize('quoted', ['"MyCol"', '`MyCol`', '´MyCol´',
++                                        '[MyCol]'])
++    @pytest.mark.parametrize('case, bare, table', [
++        ('upper', 'MYCOL', 'MYTBL'),
++        ('lower', 'mycol', 'mytbl'),
++        ('capitalize', 'Mycol', 'Mytbl'),
++    ])
++    def test_identifiercase_leaves_every_quoting_style_alone(
++            self, quoted, case, bare, table):
++        res = sqlparse.format(f'select {quoted}, MyCol from MyTbl',
++                              identifier_case=case)
++        assert res == f'select {quoted}, {bare} from {table}'
++
+     def test_strip_comments_single(self):
+         sql = 'select *-- statement starts here\nfrom foo'
+         res = sqlparse.format(sql, strip_comments=True)
+@@ -68,6 +88,22 @@ class TestFormat:
+         res = ''
+         assert res == sqlparse.format(sql, strip_comments=True)
+ 
++    @pytest.mark.parametrize('sql, expected', [
++        ('select a, -- one\nb from t', 'select a,\nb from t'),
++        ('select a\n-- lead\nfrom t', 'select a\n\nfrom t'),
++        ('select a, b -- c\n, d from t', 'select a, b\n, d from t'),
++        ('select a from (select b -- inner\nfrom u) v',
++         'select a from (select b\nfrom u) v'),
++    ])
++    def test_strip_comments_keeps_the_line_break(self, sql, expected):
++        # A removed comment that ended a line leaves the line break behind
++        # (issue484). The filter decides that from the comment group's cached
++        # ``value``, which still holds the text as the group was built - by
++        # then the newline has already been stripped from the live tokens, so
++        # reading ``str(token)`` here would collapse every one of these to a
++        # space and the break would be lost.
++        assert sqlparse.format(sql, strip_comments=True) == expected
++
+     def test_strip_comments_invalid_option(self):
+         sql = 'select-- foo\nfrom -- bar\nwhere'
+         with pytest.raises(SQLParseError):
+@@ -523,6 +559,18 @@ class TestFormatReindent:
+             "       col3",
+             "from my_table"])
+ 
++    def test_wrap_after_is_a_threshold_not_a_maximum(self):
++        # docs/source/api.rst describes wrap_after as the column *after* which
++        # a list wraps, matching the CLI help: items are added until the column
++        # is passed, so the item that crosses it stays on the line and the line
++        # ends past the column. It used to be documented as a "column limit",
++        # which this output does not satisfy.
++        sql = 'select ' + ', '.join(f'col{i:02d}' for i in range(30)) + ' from t'
++        lines = sqlparse.format(sql, reindent=True, wrap_after=40).splitlines()
++        assert lines[0] == 'select col00, col01, col02, col03, col04, col05,'
++        assert len(lines[0]) == 48
++        assert max(len(line) for line in lines) == 48
++
+     def test_long_identifier_list_with_functions(self):
+         f = lambda sql: sqlparse.format(sql, reindent=True, wrap_after=30)
+         s = ("select 'abc' as foo, json_build_object('a',  a,"
+@@ -689,6 +737,77 @@ class TestOutputFormat:
+             '$sql  = "select * ";',
+             '$sql .= "from foo;";'])
+ 
++    @pytest.mark.parametrize('sql', [
++        r"select 'a\nb' from t",
++        r"select 'a\\b' from t",
++        r"select 'c:\path\to\file' from t",
++        r"select 'trailing\' from t",
++        r"select 'a\'b' from t",
++        "select 'plain' from t",
++    ])
++    def test_python_escapes_backslashes(self, sql):
++        # issue: the emitted snippet must evaluate back to the original SQL.
++        # Escaping the quote but not the backslash turned '\n' into a real
++        # newline and left a trailing backslash escaping the closing quote.
++        formatted = sqlparse.format(sql, output_format='python')
++        node = ast.parse(formatted).body[0].value
++        assert isinstance(node, ast.Constant)
++        assert node.value == sql
++
++    @pytest.mark.parametrize('sql', [
++        "select 'a\nb' from t",
++        "select 'a\rb' from t",
++        "select 'a\tb' from t",
++        "select 'a\x00b' from t",
++        'select "a\nb" from t',
++        'select "a\rb" from t',
++        'select "a\x00b" from t',
++    ])
++    def test_python_escapes_raw_control_characters(self, sql):
++        # A control character inside a quoted token is not whitespace, so it
++        # never reaches the line-splitting branch and lands in the literal as
++        # itself: a raw newline or carriage return ends the literal, and a NUL
++        # makes the whole snippet unparseable.
++        formatted = sqlparse.format(sql, output_format='python')
++        node = ast.parse(formatted).body[0].value
++        assert isinstance(node, ast.Constant)
++        assert node.value == sql
++
++    @pytest.mark.parametrize('sql', [
++        'select 1;\nselect 2;',          # leading newline on the second statement
++        'select 1;\n\nselect 2;',        # blank line between statements
++        'select 1;\r\nselect 2;',        # CRLF line endings
++    ])
++    @pytest.mark.parametrize('opts', [{}, {'reindent': True}])
++    def test_python_multiline_script_is_valid_python(self, sql, opts):
++        # The parentheses that make the continuation lines legal were decided
++        # from the stripped statement text, which does not see the leading
++        # whitespace the continuation lines are emitted for.
++        ast.parse(sqlparse.format(sql, output_format='python', **opts))
++
++    def test_python_reflects_reindent_inside_groups(self):
++        # The snippet is built from each top-level token, and a group's
++        # ``value`` is a cache filled when the group was built, which the
++        # reindent filter leaves stale when it edits inside the group. The
++        # snippet used to carry the un-reindented SQL while reindent was on.
++        # A newline at the top level becomes a space plus a source line break;
++        # one inside a group stays in the literal.
++        sql = 'select a, b from t where a = 1'
++        node = ast.parse(sqlparse.format(
++            sql, output_format='python', reindent=True)).body[0].value
++        assert ast.literal_eval(node) == 'select a, \n       b from t \nwhere a = 1'
++
++    @pytest.mark.parametrize('sql, expected', [
++        (r"select 'a\nb'", r'''$sql = "select 'a\\nb'";'''),
++        ("select '$foo'", r'''$sql = "select '\$foo'";'''),
++        ("select '{$x}'", r'''$sql = "select '{\$x}'";'''),
++        ('select \'a"b\'', r'''$sql = "select 'a\"b'";'''),
++    ])
++    def test_php_escapes_backslashes_and_dollars(self, sql, expected):
++        # PHP double-quoted strings interpret backslash escapes and interpolate
++        # variables, so both must be escaped for the snippet to mean the SQL.
++        assert sqlparse.format(sql, output_format='php') == expected
++
+     def test_sql(self):
+         # "sql" is an allowed option but has no effect
+         sql = 'select * from foo;'
+@@ -701,6 +820,30 @@ class TestOutputFormat:
+             sqlparse.format(sql, output_format='foo')
+ 
+ 
++@pytest.mark.parametrize('sql', [
++    'select 1; select 2;',
++    'select 1; select 2; select 3;',
++    'begin; update t set a = 1; commit;',
++    'select 1;\nselect 2;',
++    'select 1;\n\nselect 2;',
++    'select 1;\n\n\nselect 2;',
++])
++@pytest.mark.parametrize('opts', [{'reindent': True}, {'reindent_aligned': True}])
++def test_reindent_is_idempotent(sql, opts):
++    # Formatting an already-formatted script must change nothing, or every
++    # format-on-save and pre-commit hook rewrites files it already rewrote.
++    once = sqlparse.format(sql, **opts)
++    assert sqlparse.format(once, **opts) == once
++
++
++def test_reindent_separates_statements_by_one_blank_line():
++    # Whatever gap the statements arrive with, the result is the same one.
++    expected = 'select 1;\n\nselect 2;'
++    for sql in ('select 1; select 2;', 'select 1;\n\nselect 2;',
++                'select 1;\n\n\n\nselect 2;'):
++        assert sqlparse.format(sql, reindent=True) == expected
++
++
+ def test_format_column_ordering():
+     # issue89
+     sql = 'select * from foo order by c1 desc, c2, c3;'
+@@ -749,16 +892,19 @@ def test_having_produces_newline():
+     assert formatted == '\n'.join(expected)
+ 
+ 
+-@pytest.mark.parametrize('right_margin', ['ten', 2])
+-def test_format_right_margin_invalid_option(right_margin):
+-    with pytest.raises(SQLParseError):
++@pytest.mark.parametrize('right_margin', ['ten', 2, 79, "79"])
++def test_format_right_margin_rejected(right_margin):
++    # right_margin was never implemented. It used to be validated as though it
++    # were supported and then raise a bare NotImplementedError from the filter;
++    # it now fails as SQLParseError like every other bad option.
++    with pytest.raises(SQLParseError) as exinfo:
+         sqlparse.format('foo', right_margin=right_margin)
++    assert 'right_margin' in str(exinfo.value)
+ 
+ 
+-@pytest.mark.xfail(reason="Needs fixing")
+-def test_format_right_margin():
+-    # TODO: Needs better test, only raises exception right now
+-    sqlparse.format('foo', right_margin="79")
++def test_format_right_margin_none_is_accepted():
++    # None is the absence of the option and must stay a no-op.
++    assert sqlparse.format('select 1', right_margin=None) == 'select 1'
+ 
+ 
+ def test_format_json_ops():  # issue542
+@@ -784,3 +930,163 @@ def test_strip_ws_removes_trailing_ws_in_groups():  # issue782
+                                 strip_whitespace=True)
+     expected = '(where foo = bar) from'
+     assert formatted == expected
++
++
++# The comment sits inside the Identifier group, so the group is what ends in
++# whitespace. A group's is_whitespace is False, so the space that follows it
++# used to be kept as a second one - a doubled space the next pass collapsed,
++# which is what made the output not a fixed point.
++GROUP_TRAILING_WS = 'select foo\n-- c\n from t'
++
++
++def test_strip_comments_at_group_end_leaves_one_space():
++    assert sqlparse.format(GROUP_TRAILING_WS, strip_comments=True,
++                           strip_whitespace=True) == 'select foo from t'
++
++
++def test_strip_ws_after_group_ending_in_newline():
++    assert sqlparse.format(GROUP_TRAILING_WS,
++                           strip_whitespace=True) == 'select foo -- c\nfrom t'
++
++
++# The first four sets were chosen when this constant only had to survive the
++# doubled space, and every one of them either removes the comment or skips
++# reindent - so none of them ran the code that later broke. The six that follow
++# are exactly the sets that are not a fixed point on this constant before the
++# EV-007 fix, reindent alone among them. A parametrization that omits the
++# option under test certifies the shape it was written for and nothing else.
++@pytest.mark.parametrize('opts', [
++    {'strip_comments': True, 'strip_whitespace': True},
++    {'strip_whitespace': True},
++    {'reindent': True, 'strip_comments': True},
++    {'reindent_aligned': True, 'strip_comments': True},
++    {'reindent': True},
++    {'reindent': True, 'keyword_case': 'upper'},
++    {'reindent': True, 'indent_width': 4},
++    {'reindent': True, 'comma_first': True},
++    {'reindent': True, 'wrap_after': 20},
++    {'reindent': True, 'compact': True},
++])
++def test_format_is_a_fixed_point_around_group_trailing_ws(opts):
++    once = sqlparse.format(GROUP_TRAILING_WS, **opts)
++    assert sqlparse.format(once, **opts) == once
++
++
++# reindent wants a line break before a split keyword. When a line comment ends
++# the line that keyword follows, the break already exists inside the comment's
++# own value and is not reindent's to move - only the indent is missing. Reading
++# just the token before the keyword saw the separator StripWhitespaceFilter had
++# emptied, answered "no break here", and added a second one, so the output
++# carried a blank line that a re-format then removed.
++@pytest.mark.parametrize('sql, expected', [
++    ('select foo\n-- c\n from t',
++     'select foo -- c\nfrom t'),
++    ('select a from t\n-- tail\n order by a',
++     'select a\nfrom t -- tail\norder by a'),
++    ('select a from t where a = 1\n-- d\n and b = 2',
++     'select a\nfrom t\nwhere a = 1 -- d\n  and b = 2'),
++])
++def test_reindent_does_not_double_the_break_a_comment_carries(sql, expected):
++    assert sqlparse.format(sql, reindent=True) == expected
++
++
++def test_reindent_still_indents_a_keyword_a_comment_put_on_a_new_line():
++    # Accepting the comment's break without adding the indent would put the
++    # keyword in column 0 and make indent_width inert on this input.
++    sql = 'select a from t where a = 1\n-- d\n and b = 2'
++    assert sqlparse.format(sql, reindent=True, indent_width=4) == \
++        'select a\nfrom t\nwhere a = 1 -- d\n    and b = 2'
++
++
++# A group opening inside a CASE takes everything after it, so in "case where
++# end" the END sits inside the WHERE and the CASE has none at its own level.
++# token_next_by does not recurse, and the None it answered was appended as if
++# it were a token, so token_index raised ValueError out of format() - not the
++# SQLParseError the API documents, and a traceback out of the CLI.
++@pytest.mark.parametrize('sql, expected', [
++    ('case where end', 'case where end'),
++    ('case where c end', 'case where c end'),
++    ('case when a then b where c end', 'case when a then b where c end'),
++    ('select case where end from t', 'select case where end\n  from t'),
++])
++def test_reindent_aligned_case_whose_end_was_swallowed(sql, expected):
++    assert sqlparse.format(sql, reindent_aligned=True) == expected
++
++
++# reindent deletes the separator in front of a split keyword and writes its
++# own. That separator can be a line break reindent inserted earlier in the same
++# pass, so the question "is a break already there" has to be asked of what
++# survives the deletion, not of what preceded it. Asked too early it answered
++# yes about a newline that had just been removed, and only the indent was
++# written - a run of spaces mid-line, and not a fixed point.
++@pytest.mark.parametrize('sql, expected, expected_indented', [
++    ('a,or', 'a,\nor', 'a,\n  or'),
++    ('a,  or', 'a,\nor', 'a,\n  or'),
++    ('a,and b', 'a,\nand b', 'a,\n  and b'),
++    ('select a,or b from t', 'select a,\nor b\nfrom t',
++     'select a,\n  or b\n  from t'),
++])
++def test_reindent_writes_the_break_it_deleted(sql, expected, expected_indented):
++    assert sqlparse.format(sql, reindent=True) == expected
++    assert sqlparse.format(sql, reindent=True,
++                           indent_after_first=True) == expected_indented
++
++
++@pytest.mark.parametrize('sql', [
++    'select 1; select 2;',
++    'select 1; select 2; select 3;',
++    'select 1;\nselect 2;',
++    'select 1; -- c\nselect 2;',
++])
++def test_format_keeps_the_space_between_statements(sql):
++    # Trailing whitespace is invisible only at the end of a line of the
++    # document. Right-stripping each statement on its own removed the space
++    # before a statement that starts on the same line.
++    assert sqlparse.format(sql) == sql
++
++
++@pytest.mark.parametrize('sql, expected', [
++    ('select 1;   ', 'select 1;'),
++    ('select a   \nfrom t', 'select a\nfrom t'),
++    ('select 1; -- trailing comment\nselect 2;', 'select 1;\n\nselect 2;'),
++])
++def test_format_still_strips_end_of_line_whitespace(sql, expected):
++    opts = {'reindent': True, 'strip_comments': True} if '--' in sql else {}
++    assert sqlparse.format(sql, **opts) == expected
++
++
++@pytest.mark.parametrize('opts', [
++    {'reindent': True, 'reindent_aligned': True},
++    {'indent_columns': True, 'reindent_aligned': True},
++])
++def test_reindent_styles_cannot_be_combined(opts):
++    # Two indenters stacked insert a newline before the same keywords, so the
++    # result is neither style and is unstable across passes.
++    with pytest.raises(SQLParseError) as exinfo:
++        sqlparse.format('select a, b from t', **opts)
++    assert 'alternative indentation styles' in str(exinfo.value)
++
++
++@pytest.mark.parametrize('option', [
++    'keyword_case', 'identifier_case', 'strip_comments', 'strip_whitespace',
++    'use_space_around_operators', 'truncate_strings', 'indent_columns',
++    'reindent', 'reindent_aligned', 'indent_after_first', 'indent_tabs',
++])
++def test_invalid_option_message_echoes_its_own_value(option):
++    # The reindent_aligned branch used to interpolate `reindent`, so a bad
++    # value was reported as "Invalid value for reindent_aligned: False" -
++    # naming a value the caller never passed, which is itself valid.
++    with pytest.raises(SQLParseError) as exinfo:
++        sqlparse.format('select 1', **{option: 'jeffy-sentinel'})
++    assert option in str(exinfo.value)
++    assert 'jeffy-sentinel' in str(exinfo.value)
++
++
++@pytest.mark.parametrize('sibling_value', [True, False])
++def test_reindent_aligned_message_ignores_reindent(sibling_value):
++    # The defect was only visible with the sibling option also set: the
++    # message echoed reindent's value rather than reindent_aligned's.
++    with pytest.raises(SQLParseError) as exinfo:
++        sqlparse.format('select 1', reindent_aligned='jeffy-sentinel',
++                        reindent=sibling_value)
++    assert 'jeffy-sentinel' in str(exinfo.value)
+diff --git a/tests/test_grouping.py b/tests/test_grouping.py
+index 20fab9b..5ae2a2b 100644
+--- a/tests/test_grouping.py
++++ b/tests/test_grouping.py
+@@ -403,6 +403,29 @@ def test_grouping_function():
+     assert isinstance(p.tokens[0].get_window(), sql.Parenthesis)
+ 
+ 
++@pytest.mark.parametrize('sql_text', [
++    'foo()',
++    'foo(a)',
++    'select count(*) from t',
++    'select foo(a, b) from t',
++])
++def test_get_window_without_over_clause(sql_text):
++    # get_window() promises the window "if it exists", but its guard tested
++    # the tuple token_next_by returns, and (None, None) is truthy, so every
++    # function without an OVER clause raised AttributeError instead.
++    stack = list(sqlparse.parse(sql_text))
++    functions = []
++    while stack:
++        token = stack.pop()
++        if isinstance(token, sql.Function):
++            functions.append(token)
++        if token.is_group:
++            stack.extend(token.tokens)
++    assert functions
++    for function in functions:
++        assert function.get_window() is None
++
++
+ def test_grouping_function_not_in():
+     # issue183
+     p = sqlparse.parse('in(1, 2)')[0]
+diff --git a/tests/test_regressions.py b/tests/test_regressions.py
+index aca7f7b..6ec837e 100644
+--- a/tests/test_regressions.py
++++ b/tests/test_regressions.py
+@@ -505,6 +505,39 @@ def test_keyword_before_qualified_name_still_grouped():
+         assert ident is not None
+ 
+ 
++@pytest.mark.parametrize('sql_text', [
++    '(as)',
++    'select * from (as)',
++    'select coalesce(as)',
++    'update t set a = (as)',
++    'select a from t group by (as)',
++    '((as))',
++    '(as,as)',
++    '()',
++])
++@pytest.mark.parametrize('options', [
++    {'strip_whitespace': True},
++    {'reindent': True},
++    {'reindent_aligned': True},
++])
++def test_short_parenthesis_does_not_raise(sql_text, options):
++    # A Parenthesis is not always ('(', body..., ')'): `(as)` groups as a
++    # Parenthesis holding one Identifier that swallowed both parens, and
++    # _stripws_parenthesis indexed its second and second-to-last children
++    # regardless. Formatting must return, and the result must still be the
++    # same SQL.
++    formatted = sqlparse.format(sql_text, **options)
++    assert ''.join(str(s) for s in sqlparse.parse(formatted)) == formatted
++
++
++def test_short_parenthesis_known_answers():
++    assert sqlparse.format('(as)', reindent=True) == '(as)'
++    assert sqlparse.format('(as)', strip_whitespace=True) == '(as)'
++    assert sqlparse.format('( )', strip_whitespace=True) == '()'
++    assert sqlparse.format('select * from (as)',
++                           reindent=True) == 'select *\nfrom (as)'
++
++
+ @pytest.fixture
+ def limit_recursion():
+     curr_limit = sys.getrecursionlimit()
+diff --git a/tests/test_split.py b/tests/test_split.py
+index 92c3fef..6eecd61 100644
+--- a/tests/test_split.py
++++ b/tests/test_split.py
+@@ -374,3 +374,25 @@ def test_split_standalone_for_update():
+     assert stmts[1] == "SELECT 3;"
+ 
+ 
++
++
++@pytest.mark.parametrize('sql', [
++    'select 1;\n',
++    'select 1;\n\n',
++    'select foo;\nselect bar;\n',
++    '-- leading comment\nselect 1;\n',
++    'select 1;\t\n',
++])
++def test_parse_preserves_trailing_whitespace(sql):
++    # The splitter discarded a trailing statement whose tokens were all
++    # whitespace, so every input ending in a semicolon lost its final newline.
++    # parse must lose nothing; format additionally rstrips each line, so it is
++    # the count of trailing newlines that must survive there, not the tabs.
++    assert ''.join(str(s) for s in sqlparse.parse(sql)) == sql
++    trailing = lambda s: len(s) - len(s.rstrip('\n'))
++    assert trailing(sqlparse.format(sql)) == trailing(sql)
++
++
++def test_parse_trailing_newline_adds_no_statement():
++    assert len(sqlparse.parse('select 1;\n')) == 1
++    assert len(sqlparse.parse('select 1;\nselect 2;\n')) == 2

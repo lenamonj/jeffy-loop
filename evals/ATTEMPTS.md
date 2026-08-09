@@ -34,6 +34,7 @@ loss rather than hiding it.
 | records | 1 | 7 | converged | pre-evaluator | 0 |
 | rrule | 4 | 33 | converged | evaluator countersigned | 0 |
 | RuboCop | 1 | 7 | converged | evaluator countersigned | 0 |
+| sqlparse | 5 | 47 | converged | evaluator countersigned | 2 |
 | Spectre.Console | 1 | 8 | converged | evaluator countersigned | 0 |
 | speedtest-cli | 1 | 5 | converged | pre-evaluator | 0 |
 | ta | 6 | 64 | converged | evaluator **unavailable**, recorded | 0 |
@@ -99,3 +100,11 @@ chosen after seeing the outcome. TOML-M was the first, at five runs; it used
 one. `go-yaml` was the second, also at five runs; it used three and the
 remaining two were not spent, because a budget is a ceiling rather than a
 quota. `rrule` was the third, at five runs; it used four.
+
+`sqlparse` was the fourth, at five runs, and it is the first target where the
+budget nearly bound. Four runs failed, two of them ending blocked, and the
+expectation written down after run 4 was that it would be published here as a
+non-convergence. It converged on the fifth and last budgeted run, at iteration
+8 of 10. Six evaluator rejections preceded that PASS. The rule was capable of
+producing the unwelcome answer up to the final run, which is the only condition
+under which a stopping rule is worth publishing at all.
