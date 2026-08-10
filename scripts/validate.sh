@@ -443,6 +443,178 @@ PIE_EOF
   fi
 fi
 
+# Jc/Jd/Je. evals/ATTEMPTS.md:9 asserts "this table and the README agree", and
+#     until now nothing checked it: the receipts table's Iters column, the
+#     standards split, and the greenfield runs and iterations were hand-typed
+#     on both sides of that assertion. Checks J and Jb closed the same class
+#     for the converged and language totals and for the pie's alt text; these
+#     three close the remainder, so PLAN.md's "Not yet derived" list empties.
+#     ATTEMPTS.md is the source of truth here rather than the README, because
+#     it is the ledger every run appends to and the README is its summary.
+att_md="evals/ATTEMPTS.md"
+if [ ! -f "$att_md" ]; then
+  fault "$att_md is missing; the receipts table's Iters column, the standards split and the greenfield table then have no oracle at all"
+else
+  # Jc. Every receipts-table row's iteration count against ATTEMPTS.md's
+  #     brownfield table, matched on the row's link text, which is the same
+  #     string both files use as the target's name. Numeric-ness has to agree
+  #     as well as the value: PapaParse publishes *audit* against a "-", and a
+  #     row that became a real run on one side only is a disagreement even
+  #     though neither cell is a number. The reverse direction is checked too
+  #     - a target ATTEMPTS.md calls converged with no README row is the drift
+  #     that adds a receipt to the ledger and forgets the table.
+  if ! jc_msg="$(awk -F'|' -v att="$att_md" '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    function unbold(s) { s = trim(s); gsub(/\*\*/, "", s); return trim(s) }
+    function linktext(c,   s, e) {
+      c = trim(c); s = index(c, "["); e = index(c, "](")
+      if (s > 0 && e > s) return substr(c, s + 1, e - s - 1)
+      return unbold(c)
+    }
+    FILENAME == att {
+      if ($0 ~ /^\| Target \| Runs \| Iterations \| Outcome \| Standard met \|/) { t = 1; next }
+      if ($0 ~ /^\| Target \| Runs \| Iterations \| Outcome \| Runs that ended blocked \|/) { t = 2; next }
+      if ($0 !~ /^\|/) { t = 0; next }
+      if ($0 ~ /^\|[-:| ]*$/) next
+      if (t == 1) { k = unbold($2); ai[k] = unbold($4); ao[k] = unbold($5); an++ }
+      next
+    }
+    /^\| \[.*\(evals\/.*\/REPORT\.md\)/ {
+      k = linktext($2); ri[k] = trim($5); rn++
+      if (k in seen) { print "duplicate receipts-table target: " k; bad++ }
+      seen[k] = 1
+    }
+    END {
+      if (an == 0) { print "no brownfield table found in " att " - its header row changed and this check went blind"; bad++ }
+      for (k in seen) {
+        if (!(k in ai)) { print "receipts-table target \"" k "\" has no row in " att; bad++; continue }
+        rnum = (ri[k] ~ /^[0-9]+$/); anum = (ai[k] ~ /^[0-9]+$/)
+        if (rnum != anum) {
+          print "\"" k "\": README Iters is \"" ri[k] "\" but " att " Iterations is \"" ai[k] "\" - one is an iteration count and the other is not"
+          bad++
+        } else if (rnum && ri[k] != ai[k]) {
+          print "\"" k "\": README says " ri[k] " iterations, " att " says " ai[k]
+          bad++
+        }
+      }
+      for (k in ai) {
+        if (ao[k] == "converged" && !(k in seen)) {
+          print "\"" k "\" is converged in " att " but has no row in the README receipts table"
+          bad++
+        }
+      }
+      if (bad) exit 1
+      printf "%d", rn
+    }
+  ' "$att_md" README.md)"; then
+    printf '%s\n' "$jc_msg"
+    fault "the README receipts table and $att_md disagree; $att_md:9 asserts they agree, so one of the two is wrong"
+  else
+    pass "README receipts-table iteration cells are derived from $att_md ($jc_msg rows)"
+  fi
+
+  # Jd. The standards split. Derived over ATTEMPTS.md's converged rows alone,
+  #     since a non-converged run met no standard. A converged row whose
+  #     Standard met cell matches none of the three is a fault rather than a
+  #     silent omission, for check J's reason: a tally that quietly drops a
+  #     row still adds up and still looks right.
+  if ! jd_msg="$(awk -F'|' '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    function unbold(s) { s = trim(s); gsub(/\*\*/, "", s); return trim(s) }
+    /^\| Target \| Runs \| Iterations \| Outcome \| Standard met \|/ { t = 1; next }
+    $0 ~ /^\|[-:| ]*$/ { next }
+    $0 !~ /^\|/ { t = 0; next }
+    t == 1 {
+      o = unbold($5); s = unbold($6)
+      if (o != "converged") next
+      n++
+      if (s ~ /countersigned/) c++
+      else if (s ~ /unavailable/) u++
+      else if (s == "pre-evaluator") p++
+      else { print "unclassifiable Standard met cell \"" s "\" on converged target " unbold($2); bad++ }
+    }
+    END { if (bad) exit 1; printf "%d %d %d %d", n+0, c+0, u+0, p+0 }
+  ' "$att_md")"; then
+    printf '%s\n' "$jd_msg"
+    fault "$att_md carries a converged row whose Standard met cell fits none of the three standards; such a row is absent from the split the README publishes and the total still looks right"
+  else
+    read -r jd_total jd_c jd_u jd_p <<JD_EOF
+$jd_msg
+JD_EOF
+    m_c="$(sed -n 's/.*<!-- count:countersigned -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
+    m_u="$(sed -n 's/.*<!-- count:evaluator-unavailable -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
+    m_p="$(sed -n 's/.*<!-- count:pre-evaluator -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
+    # Every count:converged marker, not just the first: the split sentence
+    # restates the converged total a second time, and check J reads only the
+    # first occurrence, so a second one could drift alone.
+    jd_odd="$(sed -n 's/.*<!-- count:converged -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | grep -cv "^$jd_total$")"
+    if [ -z "$m_c" ] || [ -z "$m_u" ] || [ -z "$m_p" ]; then
+      fault "the README standards split is not marker-anchored (<!-- count:countersigned --> / <!-- count:evaluator-unavailable --> / <!-- count:pre-evaluator -->); an unanchored count is an untracked claim"
+    elif [ "$m_c" != "$jd_c" ] || [ "$m_u" != "$jd_u" ] || [ "$m_p" != "$jd_p" ]; then
+      fault "README publishes a standards split of $m_c/$m_u/$m_p but $att_md's converged rows give $jd_c/$jd_u/$jd_p (countersigned/unavailable/pre-evaluator)"
+    elif [ $((jd_c + jd_u + jd_p)) -ne "$jd_total" ]; then
+      fault "the standards split $jd_c/$jd_u/$jd_p does not account for all $jd_total converged targets in $att_md"
+    elif [ "$jd_odd" != "0" ]; then
+      fault "$jd_odd <!-- count:converged --> marker(s) in README.md disagree with the $jd_total converged targets in $att_md"
+    else
+      pass "README standards split is derived from $att_md ($jd_c countersigned, $jd_u unavailable, $jd_p pre-evaluator of $jd_total)"
+    fi
+  fi
+
+  # Je. The greenfield table's Iterations and Runs columns. The two tables
+  #     name these three targets differently ("TOML decoder" against "TOML 1.0
+  #     decoder, Rust"), so the join key is the first token of the target name
+  #     lowercased - toml, gitignore, toml-m - which is unique across both
+  #     tables and survives a reorder of either. A collision or a row present
+  #     on one side only faults rather than being skipped.
+  if ! je_msg="$(awk -F'|' -v att="$att_md" '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    function unbold(s) { s = trim(s); gsub(/\*\*/, "", s); return trim(s) }
+    function linktext(c,   s, e) {
+      c = trim(c); s = index(c, "["); e = index(c, "](")
+      if (s > 0 && e > s) return substr(c, s + 1, e - s - 1)
+      return unbold(c)
+    }
+    function key1(s,   a) { s = linktext(s); split(s, a, /[ ,]/); return tolower(a[1]) }
+    FILENAME == att {
+      if ($0 ~ /^\| Target \| Runs \| Iterations \| Outcome \| Runs that ended blocked \|/) { t = 2; next }
+      if ($0 !~ /^\|/) { t = 0; next }
+      if ($0 ~ /^\|[-:| ]*$/) next
+      if (t == 2) {
+        k = key1($2)
+        if (k in ar) { print "duplicate greenfield key \"" k "\" in " att; bad++ }
+        ar[k] = unbold($3); at[k] = unbold($4); an++
+      }
+      next
+    }
+    /^\| Target \| Judge \| Final position \| Rows swept \| Iterations \| Runs \|/ { r = 1; next }
+    $0 !~ /^\|/ { r = 0; next }
+    $0 ~ /^\|[-:| ]*$/ { next }
+    r == 1 {
+      k = key1($2)
+      if (k in rr) { print "duplicate greenfield key \"" k "\" in the README table"; bad++ }
+      rr[k] = unbold($7); rt[k] = unbold($6); rn++
+    }
+    END {
+      if (an == 0) { print "no greenfield table found in " att " - its header row changed and this check went blind"; bad++ }
+      if (rn == 0) { print "no greenfield table found in README.md - its header row changed and this check went blind"; bad++ }
+      for (k in rr) {
+        if (!(k in ar)) { print "README greenfield target \"" k "\" has no row in " att; bad++; continue }
+        if (rt[k] != at[k]) { print "\"" k "\": README says " rt[k] " iterations, " att " says " at[k]; bad++ }
+        if (rr[k] != ar[k]) { print "\"" k "\": README says " rr[k] " runs, " att " says " ar[k]; bad++ }
+      }
+      for (k in ar) if (!(k in rr)) { print "\"" k "\" is in " att "s greenfield table but has no README row"; bad++ }
+      if (bad) exit 1
+      printf "%d", rn
+    }
+  ' "$att_md" README.md)"; then
+    printf '%s\n' "$je_msg"
+    fault "the README greenfield table and $att_md disagree on runs or iterations"
+  else
+    pass "README greenfield runs and iterations are derived from $att_md ($je_msg rows)"
+  fi
+fi
+
 # 6b. The iteration prompt's shape invariants: one single line, no double
 #     quotes, no CR bytes. The Stop hook cats the file into its block reason
 #     and jq handles the JSON encoding, so nothing breaks mechanically - these
@@ -3970,9 +4142,11 @@ else
 fi
 
 # K. The check count the README publishes is derived from this run, never
-#    transcribed. Three README claims carry a derivation: the eval receipts
+#    transcribed. Six README claims carry a derivation: the eval receipts
 #    and the converged and language totals (check J), the language-pie alt
-#    text (check Jb), and this one. That list is not the whole file, and an
+#    text (check Jb), the receipts table's iteration cells (Jc), the
+#    standards split (Jd), the greenfield runs and iterations (Je), and this
+#    one. That list is not the whole file, and an
 #    earlier version of this comment said it was - claiming this figure was
 #    "the last hand-typed claim in the file" while the pie's alt text and the
 #    white paper's page and source counts sat beside it underived. PLAN.md's
