@@ -91,4 +91,6 @@ Findings were re-verified against a clean clone of upstream by agents that never
 - Only F9's fix has been re-proven independently against pristine upstream. The rest are verified by the project's own suite plus the run's instruments.
 - This receipt was published as *not converged* for four runs before it converged. If the standard here is worth anything, that period is evidence rather than embarrassment.
 
+**Convergence standard**: evaluator countersigned. The adversarial evaluator's verdict for this run is in the narrative above; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: fixes live in this eval's artifacts. F9 was disclosed upstream as [theskumar/python-dotenv#678](https://github.com/theskumar/python-dotenv/pull/678), a 51-line pull request cut independently from upstream `main` rather than lifted from this run's tree: the two added tests, applied alone to unmodified `main`, give 8 failures against the 8 rejection cases and 7 passes against the control keys that already round-trip, and the change takes the suite from 220 to 235 passing with `ruff` and `mypy` clean. Its scope is deliberately the key only; the value-side sibling is upstream #218, closed in 2021, and this run does not reopen it.

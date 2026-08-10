@@ -51,6 +51,8 @@ Two things follow. The gate works, and it works precisely where self-assessment 
 - `fixes.patch` proven to apply cleanly to pristine `60de77f` with `git apply --check`.
 - Convergence conditions confirmed at the tree: `Converged: 5664f81`, 16 of 16 inventory rows swept, `Now`/`Next`/`Later` empty, `Evaluator: PASS` recorded.
 
+**Convergence standard**: evaluator countersigned. The adversarial evaluator's verdict for this run is in the narrative above; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: the work lives in this eval's `fixes.patch` (+299/-77 across 11 files, of which shipped code is 5 files +41/-40, applies to pristine `60de77f`) and `journal.md` (all ten entries of the single run, as written).
 
 **Upstream**: filed as [open-source-parsers/jsoncpp#1709](https://github.com/open-source-parsers/jsoncpp/pull/1709), 4 files, +32/-31, carrying JC-1 and JC-7 together with the `CZString` move-assignment fix, and closing [#1399](https://github.com/open-source-parsers/jsoncpp/issues/1399), open since March 2022. That issue reported both the portability problem and, in its own words, that "the unit tests won't build" - which is JC-7 exactly, four years before this run found it.

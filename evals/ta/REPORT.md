@@ -70,6 +70,8 @@ The loop found more than the audit. It also cost 64 iterations against the audit
 
 **Independently verified**, by the session that wrote this receipt rather than by the loop reporting on itself. `fixes.patch` was applied to a **pristine clone checked out at `a890410`**, where the suite is `Ran 134 tests ... FAILED (errors=2)`; after applying it, the same interpreter gives `Ran 211 tests ... OK`. The OBV finding was reproduced from scratch against the library's own dataset and matches the run's reported figures to the decimal (85 flat bars of 399, 1631.93 against 533.44, 205.9 percent). The PSAR label-write claim was checked against `git show a890410:ta/trend.py`, which carries `self._psar[i] = high2` at line 1030 beside `.iloc[i]` at 1032, and against HEAD, where the label form is gone. The final suite state, `Ran 211 tests ... OK` at exit 0, was re-run directly rather than read out of the journal. The convergence hash `b961193` was confirmed to be a real commit carrying the final `Converged` line, with the ledger empty in Now, Next and Later.
 
+**Convergence standard**: evaluator unavailable, recorded. This run could not spawn the gate and recorded that fact rather than claiming a countersignature; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: the work lives in this eval's `fixes.patch`; nothing was pushed upstream. Findings were not disclosed upstream: the project has been dormant since 2023-11-02 with no GitHub Actions run ever, CircleCI red on HEAD, and no merged pull request in over two years.
 
 **Note for anyone repeating this**: the project's test files are not named `test_*`, so pytest collects nothing and reports "no tests ran". Use `python -m unittest discover -s test -p '*.py'`.

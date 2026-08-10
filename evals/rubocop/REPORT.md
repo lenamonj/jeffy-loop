@@ -34,4 +34,6 @@ Full iteration-by-iteration record: [journal.md](journal.md).
 - Seven iterations is a breadth pass with targeted depth on recent changes, not an exhaustive adversarial campaign per cop. A null result here means the examined surface held under the checks described, not that RuboCop has no bugs - its own issue tracker, where maintainers fix false positives weekly, says otherwise. What this run certifies is that none of those were findable at the severity bar and surface this method sweeps.
 - Process note from the evaluator, recorded as a Learning: this run's probes lived in `/tmp` rather than committed under `.jeffy/probes/`, acceptable because the project's own committed suite is the battery, but flagged against the method's standing rule.
 
+**Convergence standard**: evaluator countersigned. The adversarial evaluator's verdict for this run is in the narrative above; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: nothing lives in this eval's artifacts but the record itself - the certified tree is pristine upstream `68bd0839`. Findings were not disclosed upstream: there are none.

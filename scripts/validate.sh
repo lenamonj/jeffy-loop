@@ -684,25 +684,26 @@ else
 fi
 
 # N. README.md states twice that every receipt names the standard its run met,
-#    the second time as "so none of this requires taking our word for it". That
-#    was false for four of the twenty-one converged receipts - chalk,
-#    mustache.js, records and speedtest-cli each described the conditions they
-#    met without ever saying which of the three standards that was - while the
-#    standards split published two paragraphs earlier counts those same four as
-#    "predate the gate entirely". This check makes the sentence load-bearing:
-#    each receipt is classified from its own text and compared against the
-#    Standard met column ATTEMPTS.md records for it.
-#    The classification order is not arbitrary. "unavailable" is tested first
-#    because a receipt that records Evaluator: unavailable may also discuss
-#    what a PASS now requires, and a pass-anywhere test reads that as a
-#    countersignature - which is exactly what it did to ta in the audit that
-#    filed this finding. A proximity window was tried instead and failed the
-#    other way, missing spectre.console, whose verdict reads "before passing
-#    it" at the far end of a long sentence.
+#    the second time as "so none of this requires taking our word for it". This
+#    check makes that sentence load-bearing.
+#    It went in as a classifier over each receipt's natural prose and the
+#    evaluator gate broke it in one move: the countersigned arm asked only
+#    whether the words evaluator and PASS both appeared somewhere in the file,
+#    so a receipt reading "The suite PASSes at 128 tests. The evaluator
+#    dimension of the audit scored clean." passed while naming no standard at
+#    all. Widening the regex was tried and is not the fix - it still missed
+#    spectre.console, whose verdict reads "before passing it" at the far end of
+#    a long sentence, and it leaned on arm ordering to mask two wrong matches.
+#    A predicate that guesses at prose is the same defect this repository has
+#    been removing from its own documentation all run.
+#    So the receipts state it instead. Every converged receipt carries one
+#    line beginning "**Convergence standard**: " whose first clause is the
+#    exact Standard met value ATTEMPTS.md records for that target, and this
+#    check extracts that clause and compares it. Nothing is inferred.
 if [ ! -f "evals/ATTEMPTS.md" ]; then
   echo "[SKIP] receipt convergence-standard check (no evals/ATTEMPTS.md)"
 elif ! n_msg="$(awk -v att="evals/ATTEMPTS.md" -v rme="README.md" '
-  function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+  function trim(s) { gsub(/^[ 	]+|[ 	]+$/, "", s); return s }
   function unbold(s) { s = trim(s); gsub(/\*\*/, "", s); return trim(s) }
   FILENAME == att {
     if ($0 ~ /^\| Target \| Runs \| Iterations \| Outcome \| Standard met \|/) { t = 1; next }
@@ -723,30 +724,35 @@ elif ! n_msg="$(awk -v att="evals/ATTEMPTS.md" -v rme="README.md" '
   {
     d = FILENAME; sub(/^evals\//, "", d); sub(/\/REPORT\.md$/, "", d)
     seen[d] = 1
-    if ($0 ~ /[Ee]valuator[^\n]*unavailable|unavailable[^\n]*[Ee]valuator/) sig_u[d] = 1
-    if ($0 ~ /pre-evaluator|predates the evaluator gate/)                   sig_p[d] = 1
-    if ($0 ~ /[Ee]valuator/)                                               has_e[d] = 1
-    if ($0 ~ /PASS|[Pp]assing it|countersign/)                             has_v[d] = 1
+    if ($0 ~ /^\*\*Convergence standard\*\*: /) {
+      v = $0
+      sub(/^\*\*Convergence standard\*\*: /, "", v)
+      sub(/\..*$/, "", v)
+      if (d in decl) { print d ": more than one Convergence standard line"; bad++ }
+      decl[d] = trim(v)
+    }
   }
   END {
     for (d in seen) {
       name = (d in tgt) ? tgt[d] : d
       if (!(name in ao)) { print d ": no row in " att " (README link text \"" name "\")"; bad++; continue }
       if (ao[name] != "converged") continue
-      got = "none"
-      if (d in sig_u)                        got = "evaluator unavailable, recorded"
-      else if (d in sig_p)                   got = "pre-evaluator"
-      else if ((d in has_e) && (d in has_v)) got = "evaluator countersigned"
-      if (got != as[name]) {
-        print d ": " att " records \"" as[name] "\" but the receipt names \"" got "\""
-        bad++
-      } else { okn++ }
+      if (!(d in decl)) {
+        print d ": carries no \"**Convergence standard**: \" line; " att " records \"" as[name] "\""
+        bad++; continue
+      }
+      if (decl[d] != as[name]) {
+        print d ": declares \"" decl[d] "\" but " att " records \"" as[name] "\""
+        bad++; continue
+      }
+      okn++
     }
     if (bad) exit 1
     printf "%d", okn
   }
 ' evals/ATTEMPTS.md README.md evals/*/REPORT.md)"; then
-  printf '%s\n' "$n_msg"
+  printf '%s
+' "$n_msg"
   fault "a published receipt does not name the convergence standard its run met, which README.md states of every one of them"
 else
   pass "every converged receipt names the standard its run met, agreeing with evals/ATTEMPTS.md ($n_msg receipts)"

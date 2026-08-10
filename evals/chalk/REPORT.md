@@ -33,7 +33,7 @@ Full iteration-by-iteration record: [journal.md](journal.md). Complete product d
 
 End state: 34/34 tests, 100 percent statement coverage, npm audit 0 vulnerabilities.
 
-**Convergence standard**: this run predates the evaluator gate. It converged under the earlier of Jeffy's three standards - a clean closing audit scoring zero High and zero Medium in-envelope, and an empty backlog - and no adversarial evaluator countersigned it. Which standard a run met is recorded for every target in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+**Convergence standard**: pre-evaluator. This run predates the evaluator gate and converged under a clean closing audit and an empty backlog; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
 
 **Status**: fixes live in this eval's artifacts. Nothing was pushed upstream. The correctness finding was disclosed upstream with a repro and a PR offer in [chalk/chalk#686](https://github.com/chalk/chalk/issues/686) (2026-07-23).
 

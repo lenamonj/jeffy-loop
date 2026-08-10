@@ -113,3 +113,5 @@ Everything below was executed against the converged tree or a pristine clone on 
 | Prior art | `gh` search on the tracker | #862, #863, #864 closed unmerged |
 
 Runs, iterations, findings and severities were derived by script from [`journal.md`](journal.md) and the full history of the run's `BACKLOG.md`, rather than read off the run's own summaries. The journal is published here in full, so the run and iteration counts can be recomputed from it directly: run identifiers and iteration numbers are carried in every entry heading.
+
+**Convergence standard**: evaluator countersigned. The adversarial evaluator's verdict for this run is in the narrative above; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
