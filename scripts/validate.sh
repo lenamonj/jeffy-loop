@@ -615,6 +615,74 @@ JD_EOF
   fi
 fi
 
+# L/M. Enumerations the product text asserts about the engine's own behaviour,
+#      derived from the engine rather than transcribed beside it. Checks J
+#      through Je cover the numbers README.md publishes; these two cover the
+#      other half of that class - a sentence that lists what the hook does,
+#      which drifts the moment the hook grows a case and the prose does not.
+#      Both are stated in more than one document, so both compare every
+#      document that states them: SECURITY.md understated the truncator set
+#      for a release while skills/jeffy/SKILL.md had it right, and a check
+#      reading one file would have called that green.
+#      PLAN.md's "Derived and settled claims" section carries the enumeration
+#      of every such site and says of each one which check derives it or why
+#      none does; add to that list rather than assuming this pair is all of
+#      them.
+lm_hook="skills/jeffy/hooks/stop-hook.sh"
+
+# L. The refused pager/truncator set, from the case arm that sets vc_lint.
+lm_trunc="$(awk '
+  /^[ \t]*[a-z|\\ *]+\)$/ && !seen {
+    line = $0
+    if (line ~ /head/ && line ~ /tail/) {
+      gsub(/[ \t]/, "", line); sub(/\)$/, "", line)
+      n = split(line, a, "|")
+      for (i = 1; i <= n; i++) if (a[i] ~ /^[a-z]+$/) print a[i]
+      seen = 1
+    }
+  }
+' "$lm_hook" | sort -u | tr '\n' ' ')"
+lm_trunc_bad=""
+for lm_f in SECURITY.md skills/jeffy/SKILL.md; do
+  lm_got="$(grep -o 'pager or truncator[^.]*' "$lm_f" | head -n 1 \
+    | grep -o '`[a-z]*`' | tr -d '`' | sort -u | tr '\n' ' ')"
+  if [ -z "$lm_got" ]; then
+    lm_trunc_bad="$lm_trunc_bad $lm_f(states no 'pager or truncator' enumeration)"
+  elif [ "$lm_got" != "$lm_trunc" ]; then
+    lm_trunc_bad="$lm_trunc_bad $lm_f[$lm_got]"
+  fi
+done
+if [ -z "$lm_trunc" ]; then
+  fault "the hook's refused-truncator case arm could not be enumerated; the arm moved and this check went blind"
+elif [ -n "$lm_trunc_bad" ]; then
+  fault "the hook refuses [$lm_trunc] but the product text disagrees:$lm_trunc_bad"
+else
+  pass "the refused pager/truncator set is derived from the hook in every document that states it ($lm_trunc)"
+fi
+
+# M. The verify-timeout fallback chain, from the vto assignments the hook
+#    tries before it falls back to its own shell watchdog. The watchdog is not
+#    a binary and carries no backticks, so it is not part of the derived set;
+#    the anchor "a shell watchdog" is what locates the sentence in each file.
+lm_to="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_hook" | sort -u | tr '\n' ' ')"
+lm_to_bad=""
+for lm_f in README.md SECURITY.md; do
+  lm_got="$(grep -oE '(`[a-z]+`[,;]?( +[a-z]+)? +){1,4}a shell watchdog' "$lm_f" | head -n 1 \
+    | grep -o '`[a-z]*`' | tr -d '`' | sort -u | tr '\n' ' ')"
+  if [ -z "$lm_got" ]; then
+    lm_to_bad="$lm_to_bad $lm_f(states no fallback chain before its shell watchdog)"
+  elif [ "$lm_got" != "$lm_to" ]; then
+    lm_to_bad="$lm_to_bad $lm_f[$lm_got]"
+  fi
+done
+if [ -z "$lm_to" ]; then
+  fault "the hook's timeout fallback chain could not be enumerated; the vto assignments moved and this check went blind"
+elif [ -n "$lm_to_bad" ]; then
+  fault "the hook resolves [$lm_to] before its shell watchdog but the product text disagrees:$lm_to_bad"
+else
+  pass "the verify-timeout fallback chain is derived from the hook in every document that states it ($lm_to then a shell watchdog)"
+fi
+
 # 6b. The iteration prompt's shape invariants: one single line, no double
 #     quotes, no CR bytes. The Stop hook cats the file into its block reason
 #     and jq handles the JSON encoding, so nothing breaks mechanically - these
