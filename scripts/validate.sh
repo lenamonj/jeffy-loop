@@ -795,6 +795,61 @@ $o_hit
   fi
 fi
 
+# P. The converged-stop verify bound's derivation chain, regenerated from the
+#    hook and compared byte for byte in every document that states it.
+#    Check M already derives the chain of timeout *binaries* the same sentence
+#    in README.md names - timeout, gtimeout, a shell watchdog - and that
+#    proximity is exactly why this one was needed: 1.8.2 gave the *bound* a
+#    second source (P1-31) while README went on calling 240 the default and
+#    verify_timeout_seconds the only override, and check M did not fault
+#    because the mechanism it derives never moved. Two mechanisms sharing one
+#    sentence need two checks.
+#    Nothing here classifies prose. The five fields come out of the hook, the
+#    clause is rebuilt from them, and each document must carry that exact
+#    string - the same shape check Jb uses for the language-pie alt text, and
+#    the reason the wording is fixed rather than idiomatic per file.
+#    Every field is asserted, never merely extracted: a field that goes empty
+#    faults instead of silently shortening the clause, and the default and the
+#    floor must agree, because if they ever diverge "else 240s" stops naming
+#    one number and this check has gone blind.
+p_hook=skills/jeffy/hooks/stop-hook.sh
+p_files="README.md skills/jeffy/SKILL.md skills/jeffy/references/plan-default.md"
+if [ ! -f "$p_hook" ]; then
+  echo "[SKIP] verify-bound derivation chain (no $p_hook)"
+else
+  p_key="$(sed -n 's/^[ \t]*vt="\$(fm \([a-z_][a-z_]*\))"$/\1/p' "$p_hook")"
+  p_lbl="$(grep -o "s/\^[A-Za-z][A-Za-z ]*:" "$p_hook" | head -n 1 | sed 's|^s/\^||; s|:$||')"
+  p_mul="$(sed -n 's/^[ \t]*\*) vt=\$((vd \* \([0-9][0-9]*\))).*/\1/p' "$p_hook")"
+  p_dfl="$(sed -n "s/^[ \t]*'' | \*\[!0-9\]\*) vt=\([0-9][0-9]*\) ;;.*/\1/p" "$p_hook")"
+  p_flr="$(sed -n 's/.*\[ "\$vt" -lt \([0-9][0-9]*\) \].*/\1/p' "$p_hook")"
+  p_missing=""
+  for p_pair in "state key:$p_key" "PLAN label:$p_lbl" "multiplier:$p_mul" \
+                "default:$p_dfl" "floor:$p_flr"; do
+    case "$p_pair" in *:) p_missing="$p_missing ${p_pair%:}" ;; esac
+  done
+  if [ -n "$p_missing" ]; then
+    fault "the hook's verify-bound derivation could not be enumerated (no$p_missing); the assignments moved and this check went blind"
+  elif [ "$p_dfl" != "$p_flr" ]; then
+    fault "the hook's verify-bound default ($p_dfl) and floor ($p_flr) disagree, so no single number names the last link of the chain"
+  else
+    # shellcheck disable=SC2016
+    p_want='`'"$p_key"'`, else `'"$p_lbl"'` x'"$p_mul"' floored at '"$p_flr"'s, else '"$p_dfl"'s'
+    p_bad=""
+    for p_f in $p_files; do
+      if [ ! -f "$p_f" ]; then
+        p_bad="$p_bad $p_f(absent)"
+      elif ! grep -qF -- "$p_want" "$p_f"; then
+        p_bad="$p_bad $p_f"
+      fi
+    done
+    if [ -n "$p_bad" ]; then
+      fault "the hook resolves the verify bound as [$p_want] but that clause is missing from:$p_bad"
+    else
+      pass "the verify-bound derivation chain is regenerated from the hook and stated identically in every document that carries it ($p_want)"
+    fi
+  fi
+fi
+
 # 6b. The iteration prompt's shape invariants: one single line, no double
 #     quotes, no CR bytes. The Stop hook cats the file into its block reason
 #     and jq handles the JSON encoding, so nothing breaks mechanically - these
