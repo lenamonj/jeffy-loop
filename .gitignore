@@ -36,3 +36,13 @@ __pycache__/
 /FABLE*.MD
 /Fable*.md
 /Fable*.MD
+
+# Versioned release-planning docs (plan4.7.md, plan4.8.md, ...) - maintainer
+# working notes, not product. Digit-anchored so a future product doc called
+# plan-something.md is not silently ignored, and both casings spelled out for
+# the same reason as the Fable patterns above. Without this a self-run's
+# `git add -A` checkpoint sweeps them into the public history.
+/plan[0-9]*.md
+/plan[0-9]*.MD
+/Plan[0-9]*.md
+/PLAN[0-9]*.md
