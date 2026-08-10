@@ -683,6 +683,75 @@ else
   pass "the verify-timeout fallback chain is derived from the hook in every document that states it ($lm_to then a shell watchdog)"
 fi
 
+# N. README.md states twice that every receipt names the standard its run met,
+#    the second time as "so none of this requires taking our word for it". That
+#    was false for four of the twenty-one converged receipts - chalk,
+#    mustache.js, records and speedtest-cli each described the conditions they
+#    met without ever saying which of the three standards that was - while the
+#    standards split published two paragraphs earlier counts those same four as
+#    "predate the gate entirely". This check makes the sentence load-bearing:
+#    each receipt is classified from its own text and compared against the
+#    Standard met column ATTEMPTS.md records for it.
+#    The classification order is not arbitrary. "unavailable" is tested first
+#    because a receipt that records Evaluator: unavailable may also discuss
+#    what a PASS now requires, and a pass-anywhere test reads that as a
+#    countersignature - which is exactly what it did to ta in the audit that
+#    filed this finding. A proximity window was tried instead and failed the
+#    other way, missing spectre.console, whose verdict reads "before passing
+#    it" at the far end of a long sentence.
+if [ ! -f "evals/ATTEMPTS.md" ]; then
+  echo "[SKIP] receipt convergence-standard check (no evals/ATTEMPTS.md)"
+elif ! n_msg="$(awk -v att="evals/ATTEMPTS.md" -v rme="README.md" '
+  function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+  function unbold(s) { s = trim(s); gsub(/\*\*/, "", s); return trim(s) }
+  FILENAME == att {
+    if ($0 ~ /^\| Target \| Runs \| Iterations \| Outcome \| Standard met \|/) { t = 1; next }
+    if ($0 !~ /^\|/) { t = 0; next }
+    if ($0 ~ /^\|[-:| ]*$/) next
+    if (t == 1) { split($0, c, "|"); k = unbold(c[2]); ao[k] = unbold(c[5]); as[k] = unbold(c[6]) }
+    next
+  }
+  FILENAME == rme {
+    if ($0 ~ /^\| \[.*\(evals\/.*\/REPORT\.md\)/) {
+      s = index($0, "["); e = index($0, "](")
+      name = substr($0, s + 1, e - s - 1)
+      d = substr($0, e + 2); sub(/\/REPORT\.md.*/, "", d); sub(/^evals\//, "", d)
+      tgt[d] = name
+    }
+    next
+  }
+  {
+    d = FILENAME; sub(/^evals\//, "", d); sub(/\/REPORT\.md$/, "", d)
+    seen[d] = 1
+    if ($0 ~ /[Ee]valuator[^\n]*unavailable|unavailable[^\n]*[Ee]valuator/) sig_u[d] = 1
+    if ($0 ~ /pre-evaluator|predates the evaluator gate/)                   sig_p[d] = 1
+    if ($0 ~ /[Ee]valuator/)                                               has_e[d] = 1
+    if ($0 ~ /PASS|[Pp]assing it|countersign/)                             has_v[d] = 1
+  }
+  END {
+    for (d in seen) {
+      name = (d in tgt) ? tgt[d] : d
+      if (!(name in ao)) { print d ": no row in " att " (README link text \"" name "\")"; bad++; continue }
+      if (ao[name] != "converged") continue
+      got = "none"
+      if (d in sig_u)                        got = "evaluator unavailable, recorded"
+      else if (d in sig_p)                   got = "pre-evaluator"
+      else if ((d in has_e) && (d in has_v)) got = "evaluator countersigned"
+      if (got != as[name]) {
+        print d ": " att " records \"" as[name] "\" but the receipt names \"" got "\""
+        bad++
+      } else { okn++ }
+    }
+    if (bad) exit 1
+    printf "%d", okn
+  }
+' evals/ATTEMPTS.md README.md evals/*/REPORT.md)"; then
+  printf '%s\n' "$n_msg"
+  fault "a published receipt does not name the convergence standard its run met, which README.md states of every one of them"
+else
+  pass "every converged receipt names the standard its run met, agreeing with evals/ATTEMPTS.md ($n_msg receipts)"
+fi
+
 # 6b. The iteration prompt's shape invariants: one single line, no double
 #     quotes, no CR bytes. The Stop hook cats the file into its block reason
 #     and jq handles the JSON encoding, so nothing breaks mechanically - these

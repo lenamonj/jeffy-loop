@@ -15,4 +15,6 @@ A deliberately contrasting case to [records](../records/REPORT.md): a dormant bu
 
 Full iteration-by-iteration record: [journal.md](journal.md).
 
+**Convergence standard**: this run predates the evaluator gate. It converged under the earlier of Jeffy's three standards - a clean closing audit scoring zero High and zero Medium in-envelope, and an empty backlog - and no adversarial evaluator countersigned it. Which standard a run met is recorded for every target in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Unlike the other evals, no upstream disclosure was filed: the repository does not accept issues, so the offer-first channel the other disclosures used does not exist here.
