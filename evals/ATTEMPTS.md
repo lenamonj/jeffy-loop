@@ -21,6 +21,7 @@ loss rather than hiding it.
 | Target | Runs | Iterations | Outcome | Standard met | Runs that ended blocked |
 |---|---:|---:|---|---|---:|
 | bat | 1 | 10 | converged | evaluator countersigned | 0 |
+| BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
@@ -145,6 +146,44 @@ held instead is between counts and claims: the counts include run 5, and no
 claim here rests on it. The engine change that would have caught it - the
 launch printing how many runs this target has already had, before adding
 another - is on the release backlog.
+
+## BurntSushi/toml, where the gate was the only thing standing in the way
+
+`BurntSushi/toml` is a Go TOML library, and it is **not** the greenfield TOML
+decoder or TOML-M in the table below - three different targets, never pooled.
+
+It ended at its declared ceiling without converging, and the shape of that
+failure is the reason it is worth reading. At the end it had **22 of 22 surface
+rows swept**, a green `go test -race` suite, fourteen green probe batteries, a
+clean `go vet` and `gofmt`, a clean `GOARCH=386` build, and an empty ledger.
+Every mechanical closing condition the engine checks was satisfied. **Seven
+adversarial evaluator invocations returned zero passes.**
+
+**What blocked it was prose, not code.** The terminal rejection named two
+Mediums, both in documentation, and **both were false sentences the final run
+wrote itself** - one at iteration 2 and one at iteration 8, the second in the
+task whose entire purpose was to make an inaccurate comment true. Each
+generalised a claim from the single input shape its own test drives: a godoc
+sentence about which limit an over-nested inline table is reported against,
+true only for the one form the boundary test exercises; and a sentence about
+whitespace indentation that is false for five values carrying a newline. The
+evaluator reproduced counter-examples for both before filing them.
+
+That class - a prose claim wider than the evidence behind it - was already
+written down as a Lesson in this project's own `PLAN.md`, and it happened twice
+anyway, in the two iterations that decided the run.
+
+**A pass here would have shipped two false godoc sentences into a library other
+people read.** No test suite can catch that: a wrong sentence in a doc comment
+compiles and goes green. Only a reader that re-derives the claim against the
+code finds it, which is what the adversarial gate is for and why a rejection at
+this point is a better outcome than the receipt would have been.
+
+One caveat stated plainly rather than buried: this target ran **three runs with
+no written budget at all** before a five-run ceiling was declared ahead of run 4,
+with three runs of outcome already visible. That is weaker than a
+pre-registration and is not described as one. The ceiling still bound - the run
+that reached it stopped rather than continuing into a sixth.
 
 ## image-rs, twice, and the second one was stopped by a rule that worked
 
