@@ -31,6 +31,8 @@ loss rather than hiding it.
 | image-rs (attempt 1) | 2 | 10 | **not converged** | n/a | 2 |
 | image-rs (attempt 2) | 3 | 30 | **not converged** | n/a | 0 |
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
+| mruby (attempt 1) | 5 | 50 | **not converged** | n/a | 0 |
+| mruby (attempt 2) | 5 | 63 | **not converged** | n/a | 1 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
 | PHP-Parser | 3 | 29 | converged | evaluator countersigned | 0 |
 | PyPortfolioOpt | 6 | 58 | converged | evaluator countersigned | 1 |
@@ -231,3 +233,60 @@ because an audit correctly split an oversized row into six function families
 rather than let one checkbox stand for a module - which is the behaviour that
 makes the coverage number mean something, and which no faster-looking run
 elsewhere in this table should be assumed to have done.
+
+## mruby, twice, and the evaluator that was never due
+
+mruby is a bytecode VM for Ruby, written in C. Both budgets were
+pre-registered in the cohort brief before their first iterations: attempt 1 at
+five runs of ten, and attempt 2, declared after attempt 1 ended, at four runs
+of fifteen. Attempt 1's rows are published here for the first time - its
+pre-registration promised publication and the rows were never added, the same
+debt image-rs attempt 1 settled, and this paragraph settles it. Attempt 1 spent
+all 50 iterations and did not converge.
+
+Attempt 2's iteration count needs its arithmetic shown. The four budgeted runs
+spent 61 iterations: three ran their full fifteen, and one ran sixteen by using
+the engine's one-time +2 closing extension before ending blocked. The other two
+iterations are a disclosed operator error: a run was launched with a
+10-iteration ceiling against the declared 15, caught at iteration 2, and
+cancelled. Those two iterations are counted in the table rather than removed -
+a file whose purpose is that no run gets deleted from the record does not get
+to delete the run that should not have happened - and no claim here rests on
+them.
+
+The disclosure that belongs beside the rows: mruby's oracle was rated the
+weakest in its cohort at selection, and the rating was written down before the
+first run. The in-repo suite - quoted at
+selection as 1,925 unit tests and 105 binary tests - is fully editable by the
+loop, so the shipped harness alone cannot overrule it. What was declared as the real measurement was whether the loop would reach
+for the external oracle, CRuby 3.3.8 installed beside it, without being told
+to. It did, from the first run onward: the journals record per-family probe
+batteries that drive both implementations and diff the answers - a
+fourteen-read enumeration over named captures, corpus differentials over
+sprintf and bignum arithmetic, a 39-line matrix over dig - and the divergences
+those probes pinned are what most of the closed findings are. The suite was
+also extended with regression pins as fixes landed, which an editable oracle
+permits; the differential batteries are the part the loop could not have
+rewritten into agreement.
+
+What the two attempts bought is a finding about the convergence gate itself.
+Across ten runs and 113 primary iterations, the adversarial evaluator never
+ran once - not skipped, never due. The gate fires when the task ledger empties
+with a clean full audit already on the record, and on a surface this size that
+conjunction never occurred: the final run's ledger emptied at iteration 12
+before any audit had been recorded, the audit at iteration 13 filed four new
+findings and refilled it, and the run ended two iterations later. This is not
+a discipline story - the project's backlog carries 48 settled defect classes,
+each with an enumerating check, and the final run alone closed twelve tasks
+including one High driven to class-completeness across three iterations. It
+is a reachability story: eight of the 28 mapped surface rows were still
+unswept when the budget ran out, several cost a full iteration just to build
+the instrument, and two need a build variant the project's own recorded
+lessons forbid in this tree. A target can be worked by the rules, every run,
+and still never legally meet its evaluator inside the budget the rules fixed.
+
+Under the rule fixed before iteration 1, that is where it stops. What a future
+attempt would inherit is written in the final run's handoff: a clean tree, a
+green gate, three Low findings with acceptance checks already executed, one
+blocked Medium, and four decisions that belong to the user rather than the
+loop. No third attempt is declared here.
