@@ -758,6 +758,41 @@ else
   pass "every converged receipt names the standard its run met, agreeing with evals/ATTEMPTS.md ($n_msg receipts)"
 fi
 
+# O. The evaluator artifact is required committed and unmodified, so its
+#    hygiene cannot be repaired after the fact - a redaction would break the
+#    very property the Stop hook checks. The rule therefore lands at write
+#    time, in plan-default.md, and this check enforces what actually ships.
+#    The artifact's audience is a clone. A path only the authoring machine can
+#    resolve - a drive letter, a home directory, a Windows profile directory -
+#    is not evidence to anyone else, and it republishes the operator's local
+#    layout into a public tree. The drive-letter arm is anchored on a
+#    non-letter because an unanchored [A-Za-z]:[/\] matches every https://
+#    URL, which is the first thing an artifact full of command output contains.
+#    Only tracked artifacts are in scope: an untracked one has not been
+#    published, and a project that has never converged has none to check.
+o_files="$(git ls-files '.jeffy/evaluator/*.md' 2>/dev/null)"
+if [ -z "$o_files" ]; then
+  pass "no tracked evaluator artifact to check for machine-absolute paths"
+else
+  o_bad=""
+  o_n=0
+  for o_f in $o_files; do
+    o_n=$((o_n + 1))
+    o_hit="$(grep -nE '(^|[^A-Za-z])[A-Za-z]:[/\]|/home/|/Users/|AppData' "$o_f" | head -n 3)"
+    if [ -n "$o_hit" ]; then
+      o_bad="$o_bad$o_f
+$o_hit
+"
+    fi
+  done
+  if [ -n "$o_bad" ]; then
+    printf '%s' "$o_bad"
+    fault "an evaluator artifact names a machine-absolute path; name locations outside the repository with a placeholder defined once (\$SCRATCH) so the record reads on any clone"
+  else
+    pass "no tracked evaluator artifact names a machine-absolute path ($o_n artifacts)"
+  fi
+fi
+
 # 6b. The iteration prompt's shape invariants: one single line, no double
 #     quotes, no CR bytes. The Stop hook cats the file into its block reason
 #     and jq handles the JSON encoding, so nothing breaks mechanically - these
