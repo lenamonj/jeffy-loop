@@ -115,12 +115,12 @@ non-convergence. It converged on the fifth and last budgeted run, at iteration
 producing the unwelcome answer up to the final run, which is the only condition
 under which a stopping rule is worth publishing at all.
 
-`PHP-Parser` was the sixth, at four runs; it used three.
-
 `rust-url` was the fifth, also at five runs; it used three. Its budget never
 came close to binding, which is the opposite outcome to `sqlparse` and is
 recorded here for the same reason: a pre-registered budget is only evidence if
 both results get published.
+
+`PHP-Parser` was the sixth, at four runs; it used three.
 
 `goldmark` was the seventh, at four runs, and it is **the first pre-registered
 budget that bound and returned the unwelcome answer.** Four runs, 40
