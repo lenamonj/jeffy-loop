@@ -644,12 +644,13 @@ lm_trunc="$(awk '
 ' "$lm_hook" | sort -u | tr '\n' ' ')"
 lm_trunc_bad=""
 for lm_f in SECURITY.md skills/jeffy/SKILL.md; do
+  # shellcheck disable=SC2016
   lm_got="$(grep -o 'pager or truncator[^.]*' "$lm_f" | head -n 1 \
     | grep -o '`[a-z]*`' | tr -d '`' | sort -u | tr '\n' ' ')"
   if [ -z "$lm_got" ]; then
     lm_trunc_bad="$lm_trunc_bad $lm_f(states no 'pager or truncator' enumeration)"
   elif [ "$lm_got" != "$lm_trunc" ]; then
-    lm_trunc_bad="$lm_trunc_bad $lm_f[$lm_got]"
+    lm_trunc_bad="$lm_trunc_bad ${lm_f}[${lm_got}]"
   fi
 done
 if [ -z "$lm_trunc" ]; then
@@ -667,12 +668,13 @@ fi
 lm_to="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_hook" | sort -u | tr '\n' ' ')"
 lm_to_bad=""
 for lm_f in README.md SECURITY.md; do
+  # shellcheck disable=SC2016
   lm_got="$(grep -oE '(`[a-z]+`[,;]?( +[a-z]+)? +){1,4}a shell watchdog' "$lm_f" | head -n 1 \
     | grep -o '`[a-z]*`' | tr -d '`' | sort -u | tr '\n' ' ')"
   if [ -z "$lm_got" ]; then
     lm_to_bad="$lm_to_bad $lm_f(states no fallback chain before its shell watchdog)"
   elif [ "$lm_got" != "$lm_to" ]; then
-    lm_to_bad="$lm_to_bad $lm_f[$lm_got]"
+    lm_to_bad="$lm_to_bad ${lm_f}[${lm_got}]"
   fi
 done
 if [ -z "$lm_to" ]; then
