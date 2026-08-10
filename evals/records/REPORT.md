@@ -27,4 +27,6 @@
 
 Full iteration-by-iteration record: [journal.md](journal.md). Complete product diff: [fixes.patch](fixes.patch) (records.py, tests, packaging - about 180 lines).
 
+**Convergence standard**: pre-evaluator. This run predates the evaluator gate and converged under a clean closing audit and an empty backlog; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: fixes live in this eval's artifacts. All four findings were disclosed upstream with repros and a PR offer in [kennethreitz/records#236](https://github.com/kennethreitz/records/issues/236) (2026-07-22). Merging anything remains the maintainers' call.

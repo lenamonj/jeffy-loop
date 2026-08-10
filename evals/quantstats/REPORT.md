@@ -43,4 +43,6 @@ The pattern in those six is one pattern: they are **convention defects** - inter
 - `fixes.patch` includes upstream's own `.claude/` planning docs among its 12 files, because the loop updated them alongside the code they describe; the jeffy state files are excluded and verified absent.
 - Negative risk-free rates are inert across the package at HEAD and remain so after the run, recorded by the evaluator as an open owner decision rather than fixed unilaterally.
 
+**Convergence standard**: evaluator countersigned. The adversarial evaluator's verdict for this run is in the narrative above; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: the work lives in this eval's `fixes.patch` (applies cleanly to pristine `fbd10da`; 125 to 393 passing) and `journal.md` (all 42 entries across the four runs, as written). Findings were disclosed upstream with repros and a PR offer in [ranaroussi/quantstats#537](https://github.com/ranaroussi/quantstats/issues/537), which remains open with no maintainer reply as of 2026-07-28.

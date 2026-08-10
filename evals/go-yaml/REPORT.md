@@ -116,3 +116,5 @@ Every number above was derived from the tree and the journals on 2026-08-08, not
 - The conformance figures in the table above were produced in scratch clones of both trees, with fixtures confirmed LF, since a `core.autocrlf=true` checkout corrupts 33 cases on its own and would have made those numbers meaningless.
 
 `journal.md` is the run's complete journal, both the rotated archive and the live file, exactly as the loop wrote it.
+
+**Convergence standard**: evaluator countersigned. The adversarial evaluator's verdict for this run is in the narrative above; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).

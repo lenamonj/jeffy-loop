@@ -31,4 +31,6 @@ Full record: [journal.md](journal.md).
 - The field was freshly swept: four outside correctness fixes merged the week before the baseline are part of why there was nothing left at this method's severity bar. A run against the same tree a month earlier would likely have found what those contributors found.
 - G1 remains real and open upstream by our decision, not theirs: the benchmarks module's Caliper dependency is unmaintained. It is a Low in a dev-only module, priced as exceeding one iteration, and revisitable.
 
+**Convergence standard**: evaluator countersigned. The adversarial evaluator's verdict for this run is in the narrative above; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: nothing lives in this eval's artifacts but the record itself - the certified tree is upstream `0482d5ca` plus loop bookkeeping. Findings were not disclosed upstream: the sole finding is a declined Low in a benchmarks-only module.

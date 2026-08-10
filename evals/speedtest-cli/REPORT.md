@@ -15,4 +15,6 @@ A deliberately contrasting case to [records](../records/REPORT.md): a dormant bu
 
 Full iteration-by-iteration record: [journal.md](journal.md).
 
+**Convergence standard**: pre-evaluator. This run predates the evaluator gate and converged under a clean closing audit and an empty backlog; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: fixes live in this eval's artifacts; nothing was pushed upstream. Unlike the other evals, no upstream disclosure was filed: the repository does not accept issues, so the offer-first channel the other disclosures used does not exist here.

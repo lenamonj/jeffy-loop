@@ -29,4 +29,6 @@ End state: 297 passing, including the official Mustache spec compliance suite; `
 
 Full iteration-by-iteration record: [journal.md](journal.md). Complete product diff: [fixes.patch](fixes.patch) (12 files, +85/-140, excluding the regenerated package-lock.json).
 
+**Convergence standard**: pre-evaluator. This run predates the evaluator gate and converged under a clean closing audit and an empty backlog; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: the fixes live in this eval's artifacts. Nothing was pushed upstream - the run stayed in a local clone throughout. All four findings were disclosed upstream with repros and a PR offer in [janl/mustache.js#848](https://github.com/janl/mustache.js/issues/848) (2026-07-23). Merging anything remains the maintainers' call.

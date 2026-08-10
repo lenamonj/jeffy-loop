@@ -126,3 +126,5 @@ php vendor/bin/phpunit
 ```
 
 `journal.md` is the run's own journal, both the rotated archive and the live file, unedited.
+
+**Convergence standard**: evaluator countersigned. The adversarial evaluator's verdict for this run is in the narrative above; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).

@@ -36,4 +36,6 @@ Full record: [journal.md](journal.md). Product diff: [fixes.patch](fixes.patch).
 - The verify gate runs the library's own suite across three target frameworks; it does not run the source generator's analyzer tests or the ImageSharp extension against real image files beyond what upstream already covers.
 - The fix changes rendered output for one previously-broken case. That is a behavior change by definition, and the journal records the preserved contract rather than claiming the change is invisible.
 
+**Convergence standard**: evaluator countersigned. The adversarial evaluator's verdict for this run is in the narrative above; the standard each target met is recorded in [evals/ATTEMPTS.md](../ATTEMPTS.md).
+
 **Status**: fixes live in this eval's artifacts. Nothing was pushed upstream. The finding was disclosed upstream with the rendered before/after evidence and a PR offer in [spectreconsole/spectre.console#2184](https://github.com/spectreconsole/spectre.console/issues/2184) (2026-07-31), raised as an issue first because the project's CONTRIBUTING asks for maintainer buyoff before a pull request.
