@@ -60,6 +60,8 @@ All work happens directly in the current project folder on the current branch. W
 
 ## Step 3: Launch the loop
 
+Verify bound first: when PLAN.md exists at the project root and carries a `Command: ` line under `## Verify command`, look there for a labeled line reading `Verify duration: <N>s` (a measured figure earlier runs record). Found: compute the bound as three times the measured seconds, floored at 240, and add a `verify_timeout_seconds: <bound>` line to the frontmatter written below, so the Stop hook's converged-stop verify re-run inherits a bound sized to this suite across relaunches. Absent, with a `Command: ` line present: ask the user one question - roughly how long does the verify command run? Under 4 minutes needs nothing (the 240-second default holds; write no line). A longer answer is written as `verify_timeout_seconds: <stated seconds x3>`. No PLAN.md yet, or no `Command: ` line: write no line and move on; the first run measures, records `Verify duration:` in PLAN.md, and every later launch inherits it from there.
+
 Write the loop state file yourself, at the project root, with an absolute path. If focus text was given, sanitize it first: remove double quotes, backticks, dollar signs, and newlines, which would break the heredoc or the frontmatter, then substitute it below; with no focus, leave the value empty (the line stays, its value blank). In an Enhance run, the focus value is the sanitized topic. Substitute PROJECT_ROOT, REF (resolved in Step 2), and N. `base_head` records the commit the run starts on, or `none` outside a repository; the Stop hook uses it to tell a genuine convergence ratchet, which re-declares a tree an earlier run certified, from a run that did the work itself and typed RATCHET over it. The heredoc terminator EOF must stay at column 0.
 
 ```bash
@@ -76,6 +78,7 @@ focus: <sanitized focus, or empty>
 completion_promise: JEFFY CONVERGED
 started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 base_head: $(git -C "$PR" rev-parse HEAD 2>/dev/null || echo none)
+<verify_timeout_seconds line when derived above, else omit this line entirely>
 ---
 Jeffy loop state. Session-scoped and transient: the Stop hook deletes it when
 the run ends. Cancel with /cancel-jeffy, or delete this file to end the loop.

@@ -1746,6 +1746,55 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook mishandled a Verify command overrunning its timeout"
     fi
 
+    # P1-31: the bound is measured, not guessed. With no state key the hook
+    # derives its timeout from PLAN.md's "Verify duration: <N>s" line at 3x
+    # headroom, floored at the old 240s default; a state key still wins.
+    # A verify command exiting 124 of its own accord reads as a timeout (a
+    # recorded Declined quirk), which makes the ${vt} in the refusal message
+    # observable in milliseconds - no fixture has to actually sleep out a
+    # bound. The refusal must also name the remedy, because the operator who
+    # meets it is standing at a declaration with a slow suite, not reading
+    # this script.
+    hb_write_plan_duration() { # $1 command, $2 Verify duration payload
+      printf '# Plan\n\n## Verify command\nCommand: %s\nVerify duration: %s\n' "$1" "$2" > "$hb_proj/PLAN.md"
+    }
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    hb_write_plan_duration 'exit 124' '100s measured 2026-01-01'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exceeded the 300s timeout' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Verify duration:'; then
+      pass "stop hook derives its verify bound from PLAN.md's Verify duration line (100s -> 300s), and the refusal names the remedy"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook did not derive its verify bound from the recorded Verify duration"
+    fi
+
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    hb_write_plan_duration 'exit 124' '10s measured 2026-01-01'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exceeded the 240s timeout'; then
+      pass "stop hook floors a derived verify bound at the 240s default (10s -> 240s, never twitchier than before)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let a tiny recorded duration lower the verify bound below the default"
+    fi
+
+    hb_write_state sess-1 1 3 7
+    hb_write_backlog ''
+    hb_write_plan_duration 'exit 124' '100s measured 2026-01-01'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exceeded the 7s timeout'; then
+      pass "stop hook lets an explicit verify_timeout_seconds outrank the PLAN-derived bound (7s wins over 300s)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook mishandled precedence between the state key and the PLAN-derived bound"
+    fi
+
     hb_write_state sess-1 1 3
     hb_write_backlog ''
     hb_write_plan none
@@ -2372,6 +2421,38 @@ if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt" 2>/dev/null
         fault "stop hook could not end a run hiding behind the ceremony exemption"
+      fi
+
+      # P1-29: an iteration whose entry honestly records blocked did real
+      # work and refused an unearned checkpoint - the canonical case is a
+      # verify still in flight at turn end, which is how a run died three
+      # minutes before its own verify returned green. The status word joins
+      # the ceremony exemption under the same cap, so the strike logic is
+      # unchanged for every run that never writes it and bounded for one
+      # that always does.
+      hb_p11_iter 7 'T7 | blocked'
+      hb_write_state_ceremony 7 "$hb_p11_prev" 1 0
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+        && grep -q '^stall: 1$' "$hb_state" \
+        && grep -q '^stall_ceremony: 1$' "$hb_state"; then
+        pass "stop hook exempts an iteration honestly recorded blocked from the stall strike (counted against the ceremony cap)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook struck an iteration that recorded blocked instead of claiming an unearned checkpoint"
+      fi
+
+      hb_p11_iter 7 'T7 | blocked'
+      hb_write_state_ceremony 7 "$hb_p11_prev" 1 3
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook ends a run that types blocked past the ceremony cap (the exemption cannot become immortality)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook let a run hide behind the blocked status indefinitely"
       fi
 
       # A user interrupt can leave two primary entries at one index, which

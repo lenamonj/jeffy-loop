@@ -628,7 +628,20 @@ if [ -n "$promise" ]; then
                 violation="the Verify command ($verify_cmd) ends in $vc_lint, so its exit status is the truncator's, not the suite's; drop the trailing stage, then re-declare convergence"
               else
                 vt="$(fm verify_timeout_seconds)"
-                case "$vt" in '' | *[!0-9]*) vt=240 ;; esac
+                case "$vt" in '' | *[!0-9]*)
+                  # No state key: derive the bound from the measured duration
+                  # PLAN.md records as "Verify duration: <N>s", with 3x
+                  # headroom for a loaded host, floored at the old default so
+                  # a stale or tiny measurement can never make this gate
+                  # twitchier than it was. The engine's own repository met
+                  # this refusal at its first declaration: a 404s suite under
+                  # a 240s default. (P1-31)
+                  vd="$(sed -n 's/^Verify duration:[ \t]*\([0-9][0-9]*\)s.*/\1/p' "$root/PLAN.md" 2>/dev/null | head -n 1)"
+                  case "$vd" in
+                    '' | *[!0-9]*) vt=240 ;;
+                    *) vt=$((vd * 3)); [ "$vt" -lt 240 ] && vt=240 ;;
+                  esac
+                ;; esac
                 # The gate has to run everywhere it is claimed to run. A stock
                 # macOS ships no GNU timeout, and skipping the run there left
                 # the loudest promise in the README - the hook re-runs your
@@ -684,7 +697,7 @@ if [ -n "$promise" ]; then
                   rm -f "$vsent"
                 fi
                 if [ "$vrc" -eq 124 ]; then
-                  violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; get it green, then re-declare convergence"
+                  violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; if the suite legitimately runs long, record its measured time as a labeled line reading Verify duration: <N>s in PLAN.md under Verify command (or set verify_timeout_seconds in the loop state file frontmatter), then get it green and re-declare convergence"
                 elif [ "$vrc" -ne 0 ]; then
                   violation="the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence"
                 fi
@@ -1008,18 +1021,28 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
       # interrupt can leave two primary entries at one index (the hygiene
       # check above warns about exactly that), where the current entry is the
       # later one. The evaluator and ledger-refill scans read it the same way.
-      stall_type="$(awk -v tok="| $runid8 |" -v it="$iter" '
+      # The status column rides along with the task name: an iteration whose
+      # entry honestly reads blocked did real work and refused an unearned
+      # checkpoint (a verify still in flight is the canonical case), and
+      # scoring that refusal as no-progress once ended a run three minutes
+      # before its own verify returned green. The same ceremony cap bounds
+      # it, so a run that cries blocked forever still stalls. (P1-29)
+      stall_line="$(awk -v tok="| $runid8 |" -v it="$iter" '
         { sub(/\r$/, "") }
         /^## iter / && index($0, tok) {
           split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
           if (t == "ROTATION" || t == "SALVAGE") next
           n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n)
-          if (n + 0 == it + 0) { type = t }
+          st = f[5]; gsub(/^[ \t]+|[ \t]+$/, "", st)
+          if (n + 0 == it + 0) { type = t; status = st }
         }
-        END { print type }
+        END { print type "\t" status }
       ' "$root/JOURNAL.md")"
+      stall_type="$(printf '%s' "$stall_line" | cut -f1)"
+      stall_status="$(printf '%s' "$stall_line" | cut -f2)"
       case "$stall_type" in
         AUDIT | EVALUATOR | RATCHET | WRAPUP) stall_exempt="$stall_type" ;;
+        *) case "$stall_status" in blocked) stall_exempt="blocked" ;; esac ;;
       esac
     fi
     if [ -n "$stall_exempt" ] && [ "$ceremony_n" -lt 3 ]; then
