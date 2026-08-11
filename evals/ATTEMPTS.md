@@ -74,6 +74,21 @@ The engine tightened over time. Of the 21 brownfield convergences:
 Every receipt names the standard its own run met. Pooling all 21 as one number
 would overstate the earliest four.
 
+A third era begins at engine v1.9.0. From that version a declaration requires
+zero open High and zero open Medium findings; an open Low no longer blocks and
+is instead carried - named in the closing journal entry and the run report,
+and published with the receipt. This is a loosening of exactly one axis and is
+recorded as such rather than smoothed over: two self-runs on the engine's own
+repository spent all three evaluator invocations each without converging, on
+trees whose audits scored zero High and zero Medium, because the empty-ledger
+rule made the gate always reachable and never passable there. Severity became
+the load-bearing input at the same moment, so it came under adversarial check:
+a finding filed below the rubric's suggestion must carry its rationale, and
+the evaluator re-scores every open and carried finding, a misscoring being a
+REJECT reason in itself. **All 21 convergences above predate v1.9.0 and met
+the stricter empty-ledger rule.** Receipts from v1.9.0 onward name this
+standard and list their carried Lows; the eras are never pooled.
+
 ## What was started and never published
 
 - **libuv.** A real loop run on a WSL clone, 2026-07-31. At least one full

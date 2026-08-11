@@ -168,7 +168,7 @@ check_markers skills/jeffy/references/plan-default.md \
   "Environment fingerprint: " \
   "bare assertion that nothing is excluded" \
   "## Lessons" \
-  "leaves no open task behind" \
+  "leaves no High and no Medium behind" \
   "run report" \
   "adversarial evaluator gate" \
   "the only sub-agent review this Method authorizes" \
@@ -235,7 +235,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Checkpoint:" \
   "Lessons:" \
   "Run report:" \
-  "no Low is silently left behind" \
+  "lists each carried Low by ID" \
   "wrapped in promise XML tags" \
   "Evaluator gate:" \
   "Evaluator: PASS" \
@@ -1086,6 +1086,25 @@ if [ -f "$prompt_file" ]; then
   fi
 fi
 
+# 6b2. P0-2 (1.9.0): the prompt's closing rule is the severity floor, and the
+#      three clauses that make it safe each appear exactly once - the floor
+#      itself, the carried-findings publication duty, and the evaluator
+#      re-score. Exactly-once, not presence: a restatement is how the launcher
+#      paragraph produced four consecutive gate findings, so the count is the
+#      check. Each clause is one canonical substring; the documents state the
+#      rule once and nothing else paraphrases it.
+if [ -f "$prompt_file" ]; then
+  p02_ok=1
+  for p02_clause in 'zero open High and zero open Medium' 'lists each carried Low by ID' 're-score the severity of every open and carried finding'; do
+    p02_n="$(grep -oF -- "$p02_clause" "$prompt_file" | wc -l | tr -d '[:space:]')"
+    if [ "$p02_n" != "1" ]; then
+      p02_ok=0
+      fault "prompt clause '$p02_clause' appears $p02_n times, expected exactly 1 (the severity floor is stated once or it drifts)"
+    fi
+  done
+  [ "$p02_ok" = "1" ] && pass "the severity-floor closing rule, carried-findings duty, and evaluator re-score each appear exactly once in the prompt"
+fi
+
 # 6c. The evaluator-gate marker is unique in the prompt. Check 6 only proves
 #     presence, so a stray duplicate of the marker text elsewhere in the file
 #     would keep check 6 green even with the gate section itself removed;
@@ -1712,6 +1731,61 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook rejected a legitimate convergence promise"
     fi
 
+    # P0-2 (1.9.0): the closing test is a severity floor. An open Low is
+    # carried, not blocking - the accept-path stderr note names it so the run
+    # report cannot omit it. High, Medium, and any line whose severity the
+    # parser cannot read still block, the last because a floor that guesses
+    # is a floor gamed by omission. Four scenarios, one severity token
+    # mutated between them, so each fails under exactly one mutation.
+    hb_write_state sess-1 1 3
+    hb_write_backlog '- [ ] X9 (Low, docs, documentation): imprecise sentence. Acceptance: rewritten.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+      && grep -q 'carried Low' "$hb_tmp/hb_err.txt" \
+      && grep -qF 'X9 (Low' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook accepts a declaration whose only open task is a Low, naming it as carried (P0-2)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused a declaration blocked only by a Low, or accepted it without naming the carried finding"
+    fi
+
+    hb_write_state sess-1 1 3
+    hb_write_backlog '- [ ] X9 (Medium, runtime, correctness): wrong value returned. Acceptance: fixed.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'still lists open High or Medium tasks' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'X9 (Medium'; then
+      pass "stop hook still refuses a declaration with an open Medium under the severity floor"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let an open Medium through the severity floor"
+    fi
+
+    hb_write_state sess-1 1 3
+    hb_write_backlog '- [ ] X9 (High, runtime, correctness): crash on empty input. Acceptance: fixed.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'still lists open High or Medium tasks'; then
+      pass "stop hook still refuses a declaration with an open High under the severity floor"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let an open High through the severity floor"
+    fi
+
+    hb_write_state sess-1 1 3
+    hb_write_backlog '- [ ] X9: a task line carrying no severity parenthetical at all'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no parseable severity'; then
+      pass "stop hook fails closed on an open task with no parseable severity (P0-2 cannot be gamed by omission)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook guessed a severity for an unparseable task line instead of failing closed"
+    fi
+    # Restore the empty ledger the scenarios below assume; this block's
+    # sandbox state is its own to clean up.
+    hb_write_backlog ''
+
     # Surface-inventory check: a convergence claim covers the whole mapped
     # surface. Dimension scores claim only what an audit examined, so an
     # unswept row is unexamined code behind a clean-looking score -
@@ -1845,7 +1919,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
     if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CORRECTIVE' \
-      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'still lists open tasks' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'still lists open High or Medium tasks' \
       && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
       && [ -f "$hb_state" ] && grep -q '^corrective_granted: 1$' "$hb_state"; then
       pass "stop hook spends one corrective re-feed on a convergence refused at budget exhaustion"

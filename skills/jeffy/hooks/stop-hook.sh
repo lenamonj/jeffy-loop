@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.8.2"
+JEFFY_VERSION="1.9.0"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -192,14 +192,25 @@ if [ -n "$promise" ]; then
       # one file was the whole price. Closed the way the journal fail-opens
       # were closed in 1.7.0, and as a violation rather than an end, so a
       # ledger lost to a bad rotation is repairable inside the budget.
-      open_tasks=""
+      # P0-2 (1.9.0): the closing test is a severity floor, not an empty
+      # ledger. An open High or Medium blocks; an open Low is carried - named
+      # on the accept path's stderr note so the run report cannot silently
+      # omit it. Severity is read from the task line's mandated form
+      # `- [ ] <ID> (<Severity>, ...)`, and the parse FAILS CLOSED: a line
+      # carrying no parseable severity blocks, because a floor that guesses
+      # is a floor that gets gamed by omission. [b] and [~] lines are not
+      # open tasks and are untouched, exactly as before.
+      open_blocking=""
+      open_carried=""
       if [ -f "$root/BACKLOG.md" ]; then
-        open_tasks="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { print }' "$root/BACKLOG.md")"
+        open_scan="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { if ($0 ~ /^- \[ \] [^ ]+ \(Low[,)]/) print "L\t" $0; else print "B\t" $0 }' "$root/BACKLOG.md")"
+        open_blocking="$(printf '%s\n' "$open_scan" | awk -F'\t' '$1 == "B" { print $2 }')"
+        open_carried="$(printf '%s\n' "$open_scan" | awk -F'\t' '$1 == "L" { print $2 }')"
       fi
       if [ ! -f "$root/BACKLOG.md" ]; then
         violation="BACKLOG.md is missing at $root, and every convergence gate reads it - the open-task test, the Converged hash that certifies the tree, and the ratchet all live in that file; restore the ledger with its Now, Next, Later, and Converged sections, then re-declare"
-      elif [ -n "$open_tasks" ]; then
-        violation="BACKLOG.md still lists open tasks in Now, Next, or Later, first: $(printf '%s' "$open_tasks" | head -n 1)"
+      elif [ -n "$open_blocking" ]; then
+        violation="BACKLOG.md still lists open High or Medium tasks in Now, Next, or Later (a task line with no parseable severity counts as blocking - the closing rule reads severity from the task line itself), first: $(printf '%s' "$open_blocking" | head -n 1)"
       elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
         # Converged-hash check: the latest Converged line must name a commit
         # in this repository, and nothing but loop state may have changed
@@ -707,6 +718,10 @@ if [ -n "$promise" ]; then
         fi
       fi
       if [ -z "$violation" ]; then
+        if [ -n "$open_carried" ]; then
+          carried_n="$(printf '%s\n' "$open_carried" | grep -c .)"
+          echo "jeffy stop hook: convergence accepted with $carried_n carried Low finding(s) still open, first: $(printf '%s' "$open_carried" | head -n 1); the closing entry and the run report must name each carried Low, and the receipt publishes them." >&2
+        fi
         rm -f "$state"
         exit 0
       fi
