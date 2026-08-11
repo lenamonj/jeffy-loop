@@ -879,10 +879,22 @@ p_files="README.md skills/jeffy/SKILL.md skills/jeffy/references/plan-default.md
 if [ ! -f "$p_hook" ]; then
   echo "[SKIP] verify-bound derivation chain (no $p_hook)"
 else
+  # The single quotes are deliberate: these are sed scripts matching the
+  # hook's literal $ characters, not shell expansions. Without the directives
+  # below, SC2016 is reported at info level on each, and check 3 above lints
+  # with no severity flag, so info alone is enough to take its fault branch
+  # and turn the Linux CI leg red while this host - where the linter is
+  # absent, the one exclusion the Environment fingerprint declares - stays
+  # green. That is how it shipped and how the gate caught it. A comment line
+  # here must never open with the linter's own name, or it is parsed as a
+  # malformed directive; the first fix for this finding did exactly that. (G2)
+  # shellcheck disable=SC2016
   p_key="$(sed -n 's/^[ \t]*vt="\$(fm \([a-z_][a-z_]*\))"$/\1/p' "$p_hook")"
   p_lbl="$(grep -o "s/\^[A-Za-z][A-Za-z ]*:" "$p_hook" | head -n 1 | sed 's|^s/\^||; s|:$||')"
+  # shellcheck disable=SC2016
   p_mul="$(sed -n 's/^[ \t]*\*) vt=\$((vd \* \([0-9][0-9]*\))).*/\1/p' "$p_hook")"
   p_dfl="$(sed -n "s/^[ \t]*'' | \*\[!0-9\]\*) vt=\([0-9][0-9]*\) ;;.*/\1/p" "$p_hook")"
+  # shellcheck disable=SC2016
   p_flr="$(sed -n 's/.*\[ "\$vt" -lt \([0-9][0-9]*\) \].*/\1/p' "$p_hook")"
   p_missing=""
   for p_pair in "state key:$p_key" "PLAN label:$p_lbl" "multiplier:$p_mul" \
