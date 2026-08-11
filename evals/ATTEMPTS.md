@@ -24,6 +24,7 @@ loss rather than hiding it.
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
+| eemeli/yaml | 5 | 50 | **not converged** | n/a | 0 |
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
 | go-yaml | 3 | 29 | converged | evaluator countersigned | 0 |
 | goldmark | 5 | 47 | **not converged** | n/a | 0 |
@@ -290,3 +291,94 @@ attempt would inherit is written in the final run's handoff: a clean tree, a
 green gate, three Low findings with acceptance checks already executed, one
 blocked Medium, and four decisions that belong to the user rather than the
 loop. No third attempt is declared here.
+
+## eemeli/yaml, where the gate was never due either
+
+`eemeli/yaml` is a YAML 1.2 parser and stringifier written in TypeScript and
+published as the `yaml` npm package. It is **not** `go-yaml`, which is a
+different target in the table above and converged; the two are never pooled.
+
+Its budget was pre-registered at five runs of ten before the first iteration,
+and it was spent exactly. Five runs, fifty primary iterations, every journal
+heading carrying a `/10` denominator and no iteration numbered past ten: no
+`+2` closing extension, no cancelled fragment, no run started after the last
+wrap-up. This row therefore carries no arithmetic disclosure, unlike
+`goldmark`'s momentum run and `mruby` attempt 2's ceiling that did not match
+its declaration - and the reason is not virtue but a practice those two
+produced, the launch being checked against the pre-registration rather than
+assumed. The last two launches were checked that way. Both pinned conformance
+corpora carry the SHAs recorded at adoption, verified at close.
+
+It did not converge. The Definition of done requires the Surface inventory to
+list no unswept row, and ten of 26 remained. The sweep went 0, 7, 10, 13, 16 -
+the first run swept nothing, spending its whole budget on defects, and each of
+the last three swept exactly three rows. At three rows a run, 26 rows need
+roughly nine runs. **The budget was never feasible for the definition of done
+it was measured against, and that was computable at the first audit rather than
+at the fifth run.** The tier that produced five-by-ten was applied correctly;
+the arithmetic underneath it was not performed. That is the same lesson
+`image-rs` produced from the opposite direction, and the engine change that
+would run it automatically is on the release backlog.
+
+**The finding worth the row is that the adversarial evaluator never ran - not
+once in fifty iterations.** Not skipped: never due. The gate fires when the
+ledger empties with a clean full audit already on record, and on a 26-row
+surface swept three at a time that conjunction never occurred.
+
+That is the second independent time this has happened, after `mruby`'s ten runs
+and 113 iterations, and it is the more informative of the two. `mruby` is a
+bytecode VM in C and could be read as a story about size. This is an
+ordinary-sized library, 76 TypeScript files under `src/`, of the kind this
+corpus is mostly made of. **The reachability bound sits lower than the first
+datapoint suggested, and sizing the budget by tier does not fix it.** What a
+per-run convergence protocol can certify on a surface above some size is a real
+open question in the engine's design rather than a property of these two
+targets.
+
+Two moments in the final run are worth publishing on their own, because both
+are refusals and refusals are the part of a method that is hard to fake.
+
+**The conformance corpus vetoed a working fix, and the loop took the veto.**
+Aliased duplicate map keys went undetected; the fix was written, was a clean
+boundary rather than scattered patches, added no import cycle, and made all
+five reproduction cases report `DUPLICATE_KEY`. Then the suite went red on
+`yaml-test-suite` case X38W, which lists an alias key denoting the same node as
+another key as valid. One line in the project's own skip list would have turned
+the gate green - and that list already overrides the corpus on this exact
+question once, for duplicate empty keys. The run did not add the line. It
+reverted the fix, left the finding open, and filed the semantic question for
+the maintainer with both authorities argued and the reverted fix described. Its
+reason, in its own words: the skip list is where the maintainer records
+deliberate deviations, and adding to it to land your own change is weakening a
+test to pass a change. It also checked the corpus's own tags rather than
+assuming, and found `2JQS` tagged `duplicate-key` while X38W is tagged
+`alias complex-key flow` - the corpus authors appear to have considered alias
+keys and deliberately not counted them as duplicates.
+
+**A probe was deleted rather than repaired, and the deletion was earned first.**
+One battery printed twenty failures and exited 0, so the previous run's claim
+that all batteries pass had counted it green - a batch check reads exit status.
+Before removing it, every one of the twenty was accounted for: sixteen were
+superseded by rows that now carry authoritative batteries, and the remaining
+four were executed directly and shown to be defects in the probe rather than in
+the library. What replaced it is a guard over the whole probe tree that fails
+when any script's output and exit status disagree, proven with a freshly
+written liar rather than the artefact just removed. Repairing it instead would
+have meant hand-writing twenty answers for twelve rows nobody had swept, which
+is the sweeping work done badly; wrong breadth coverage is worse than none.
+
+One more finding generalises past this target. A High in the fourth run was
+invisible to 3,485 passing tests: the published CLI could not load a `--visit`
+visitor at all on this platform, because the test file calls the CLI in process
+and the test runner rewrites dynamic `import()`, so those tests graded the
+runner's module resolver instead of Node's. It was found by running the
+published binary as a subprocess. A Medium in the same run had been dead since
+a major refactor because nothing executes the script carrying it. Both say the
+same thing, and the run said it better than this paragraph can: a green suite
+bounds what the project exercises, never what its consumers can reach.
+
+Under the rule fixed before iteration 1, that is where it stops. Ten rows
+remain, all in the parse and compose direction, and the final wrap-up names
+which to take first and why. Two Highs are blocked on semantic decisions that
+belong to the upstream maintainer rather than to the loop. No second attempt is
+declared here.
