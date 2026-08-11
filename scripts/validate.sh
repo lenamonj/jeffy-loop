@@ -1023,16 +1023,38 @@ $p_extra"
     # shellcheck disable=SC2016
     p_want='`'"$p_key"'`, else `'"$p_lbl"'` x'"$p_mul"' floored at '"$p_flr"'s, else '"$p_dfl"'s'
     p_bad=""
+    # Every statement of the chain in each document, not merely one. Requiring
+    # the canonical string to be present is a presence read, and it left every
+    # other statement of the same fact in that document unchecked: a second,
+    # differing clause passed green beside the canonical one. The locator below
+    # matches the clause by shape rather than by its values, so any restatement
+    # carrying different numbers is found and compared. What it cannot see is a
+    # restatement in free prose, and the answer to that is the one this project
+    # already settled - documents state such a fact in one canonical form and it
+    # is compared exactly, never classified from wording - which is why the
+    # launcher skill's own paragraph was rewritten to state it once. (G3)
+    # shellcheck disable=SC2016
+    p_shape='`[a-z_][a-z_]*`, else `[A-Za-z][A-Za-z ]*` x[0-9][0-9]* floored at [0-9][0-9]*s, else [0-9][0-9]*s'
     while IFS= read -r p_f; do
       [ -n "$p_f" ] || continue
       if [ ! -f "$p_f" ]; then
         p_bad="$p_bad $p_f(absent)"
-      elif ! grep -qF -- "$p_want" "$p_f"; then
-        p_bad="$p_bad $p_f"
+        continue
       fi
+      p_sites="$(grep -o "$p_shape" "$p_f")"
+      if [ -z "$p_sites" ]; then
+        p_bad="$p_bad $p_f(states no bound-derivation chain)"
+        continue
+      fi
+      p_i=0
+      while IFS= read -r p_site; do
+        [ -n "$p_site" ] || continue
+        p_i=$((p_i + 1))
+        [ "$p_site" = "$p_want" ] || p_bad="$p_bad ${p_f}#${p_i}[${p_site}]"
+      done < <(printf '%s\n' "$p_sites")
     done < <(printf '%s\n' "$p_files")
     if [ -n "$p_bad" ]; then
-      fault "the hook resolves the verify bound as [$p_want] but that clause is missing from:$p_bad"
+      fault "the hook resolves the verify bound as [$p_want] but the product text disagrees:$p_bad"
     else
       pass "the verify-bound derivation chain is regenerated from the hook and stated identically in every document that carries it ($p_want)"
     fi
