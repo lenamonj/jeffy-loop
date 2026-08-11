@@ -968,7 +968,7 @@ if [ ! -f "$p_hook" ]; then
 else
   # The single quotes are deliberate: these are sed scripts matching the
   # hook's literal $ characters, not shell expansions. Without the directives
-  # below, SC2016 is reported at info level on each, and check 3 above lints
+  # below, SC2016 is reported at info level on each, and check 5 above lints
   # with no severity flag, so info alone is enough to take its fault branch
   # and turn the Linux CI leg red while this host - where the linter is
   # absent, the one exclusion the Environment fingerprint declares - stays
