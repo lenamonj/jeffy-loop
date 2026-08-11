@@ -631,17 +631,34 @@ fi
 lm_hook="skills/jeffy/hooks/stop-hook.sh"
 
 # L. The refused pager/truncator set, from the case arm that sets vc_lint.
-lm_trunc="$(awk '
+#    The extractor accounts for every alternative in that arm rather than
+#    keeping the ones it recognises. A whitelist that drops what it does not
+#    match is silently agreed with by product text that also omits it: add a
+#    sixth truncator in a shape this pattern misses and the derived set, the
+#    documents and this check all stay consistent with each other while the
+#    engine refuses something none of them mention. The arm legitimately
+#    carries two shapes, a bare token and that token's argument form, so the
+#    rule is a partition: every alternative is one or the other, every
+#    argument form has its bare token beside it, and anything left over is
+#    reported with a leading ! and faults. (L1)
+lm_trunc_raw="$(awk '
   /^[ \t]*[a-z|\\ *]+\)$/ && !seen {
     line = $0
     if (line ~ /head/ && line ~ /tail/) {
       gsub(/[ \t]/, "", line); sub(/\)$/, "", line)
       n = split(line, a, "|")
-      for (i = 1; i <= n; i++) if (a[i] ~ /^[a-z]+$/) print a[i]
+      for (i = 1; i <= n; i++) {
+        if (a[i] ~ /^[a-z]+$/) { print a[i]; tok[a[i]] = 1 }
+        else if (a[i] ~ /^[a-z]+\\\*$/) { b = a[i]; sub(/\\\*$/, "", b); argf[b] = 1 }
+        else print "!" a[i]
+      }
       seen = 1
     }
   }
-' "$lm_hook" | sort -u | tr '\n' ' ')"
+  END { for (b in argf) if (!(b in tok)) print "!" b " (argument form with no bare token)" }
+' "$lm_hook")"
+lm_trunc_left="$(printf '%s\n' "$lm_trunc_raw" | grep '^!' | sed 's/^!//' | tr '\n' ' ')"
+lm_trunc="$(printf '%s\n' "$lm_trunc_raw" | grep -v '^!' | grep -v '^$' | sort -u | tr '\n' ' ')"
 lm_trunc_bad=""
 for lm_f in SECURITY.md skills/jeffy/SKILL.md; do
   # shellcheck disable=SC2016
@@ -655,6 +672,8 @@ for lm_f in SECURITY.md skills/jeffy/SKILL.md; do
 done
 if [ -z "$lm_trunc" ]; then
   fault "the hook's refused-truncator case arm could not be enumerated; the arm moved and this check went blind"
+elif [ -n "$lm_trunc_left" ]; then
+  fault "the hook's refused-truncator case arm carries an alternative this check cannot classify [$lm_trunc_left]; it would be dropped from the derived set and no document would be asked to state it"
 elif [ -n "$lm_trunc_bad" ]; then
   fault "the hook refuses [$lm_trunc] but the product text disagrees:$lm_trunc_bad"
 else
@@ -665,7 +684,18 @@ fi
 #    tries before it falls back to its own shell watchdog. The watchdog is not
 #    a binary and carries no backticks, so it is not part of the derived set;
 #    the anchor "a shell watchdog" is what locates the sentence in each file.
+#    Same account-for-everything rule as check L, for the same reason: a
+#    fourth candidate written in a shape this sed misses - quoted, or carrying
+#    an argument - would leave the derived set silently, and the documents
+#    that omit it would go on agreeing with a check that never saw it. So the
+#    assignments are counted as well as extracted. The empty initialiser is
+#    not a candidate and is excluded by name, never by falling through the
+#    pattern, because falling through is the defect. (L1)
 lm_to="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_hook" | sort -u | tr '\n' ' ')"
+lm_to_cand="$(grep -c '^[ \t]*vto=' "$lm_hook")"
+lm_to_init="$(grep -c '^[ \t]*vto=""$' "$lm_hook")"
+lm_to_kept="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_hook" | wc -l | tr -d '[:space:]')"
+lm_to_want=$((lm_to_cand - lm_to_init))
 lm_to_bad=""
 for lm_f in README.md SECURITY.md; do
   # shellcheck disable=SC2016
@@ -679,6 +709,8 @@ for lm_f in README.md SECURITY.md; do
 done
 if [ -z "$lm_to" ]; then
   fault "the hook's timeout fallback chain could not be enumerated; the vto assignments moved and this check went blind"
+elif [ "$lm_to_kept" -ne "$lm_to_want" ]; then
+  fault "the hook carries $lm_to_want vto assignments beyond the empty initialiser but this check extracted $lm_to_kept; one is written in a shape the pattern misses and would leave the derived set unnoticed"
 elif [ -n "$lm_to_bad" ]; then
   fault "the hook resolves [$lm_to] before its shell watchdog but the product text disagrees:$lm_to_bad"
 else
@@ -735,6 +767,16 @@ elif ! n_msg="$(awk -v att="evals/ATTEMPTS.md" -v rme="README.md" '
     }
   }
   END {
+    # Account for every receipt handed in, not only the ones that produced a
+    # line. A zero-byte REPORT.md never triggers the main rule, so it never
+    # entered seen and this check used to pass over it in silence - the same
+    # drop-instead-of-fault defect checks L and M carried. ARGV still lists
+    # it, so the file set is the authority on what had to be examined and the
+    # records are compared against that. (L1)
+    for (i = 3; i < ARGC; i++) {
+      f = ARGV[i]; sub(/^evals\//, "", f); sub(/\/REPORT\.md$/, "", f)
+      if (!(f in seen)) { print f ": REPORT.md produced no lines, so nothing about it was checked"; bad++ }
+    }
     for (d in seen) {
       name = (d in tgt) ? tgt[d] : d
       if (!(name in ao)) { print d ": no row in " att " (README link text \"" name "\")"; bad++; continue }
