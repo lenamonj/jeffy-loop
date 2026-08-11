@@ -389,10 +389,16 @@ tbl_odd="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/^[ \t]+|
 # shape. Check Jd catches a disagreeing converged marker by its own route; this
 # reads them all here too, so the message names the defect rather than blaming
 # the eval table for a number the README disagrees with itself about. (M1)
-claim_conv="$(sed -n 's/.*<!-- count:converged -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md \
-  | sort -u | tr '\n' ' ' | sed 's/ $//')"
-claim_langs="$(sed -n 's/.*<!-- count:languages -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md \
-  | sort -u | tr '\n' ' ' | sed 's/ $//')"
+# Extracted with grep -o rather than a sed carrying a leading .*, because that
+# .* is greedy and runs to the last match on a line, so the sed yielded one
+# value per line where the claim is one per site. README.md already ships two
+# count:converged markers on a single line, and rewriting the first of that
+# pair was reproduced leaving this check green. Every extractor of a repeatable
+# site in this file reads with grep -o for that reason. (G1)
+claim_conv="$(grep -o '<!-- count:converged -->[0-9][0-9]*<!-- /count -->' README.md \
+  | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+claim_langs="$(grep -o '<!-- count:languages -->[0-9][0-9]*<!-- /count -->' README.md \
+  | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 if [ "$tbl_rows" != "$receipts" ]; then
   fault "README eval table has $tbl_rows rows but evals/ holds $receipts REPORT.md receipts; a new eval landed without its row (and the About text and live articles need the same edit)"
 elif [ "$tbl_odd" != "0" ]; then
@@ -451,7 +457,8 @@ PIE_EOF
   # Every alt attribute on that image, not the first: a second tag carrying a
   # different description is a second accessible claim, and comparing one of
   # them certifies neither. (M1)
-  pie_alt="$(sed -n 's/.*<img src="media\/language-pie-light\.png" alt="\([^"]*\)".*/\1/p' README.md | sort -u)"
+  pie_alt="$(grep -o '<img src="media/language-pie-light\.png" alt="[^"]*"' README.md \
+    | sed 's/.*alt="//; s/"$//' | sort -u)"
   pie_alt_n="$(printf '%s' "$pie_alt" | grep -c '^')"
   if [ -z "$pie_alt" ]; then
     fault "README carries no <img src=\"media/language-pie-light.png\" alt=\"...\"> to derive; the chart's accessible description is then an untracked claim"
@@ -566,16 +573,17 @@ $jd_msg
 JD_EOF
     # Every marker of each kind, never the first, for the reason check J's
     # markers carry above: one site of a claim is not the claim. (M1)
-    m_c="$(sed -n 's/.*<!-- count:countersigned -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md \
-      | sort -u | tr '\n' ' ' | sed 's/ $//')"
-    m_u="$(sed -n 's/.*<!-- count:evaluator-unavailable -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md \
-      | sort -u | tr '\n' ' ' | sed 's/ $//')"
-    m_p="$(sed -n 's/.*<!-- count:pre-evaluator -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md \
-      | sort -u | tr '\n' ' ' | sed 's/ $//')"
+    m_c="$(grep -o '<!-- count:countersigned -->[0-9][0-9]*<!-- /count -->' README.md \
+      | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+    m_u="$(grep -o '<!-- count:evaluator-unavailable -->[0-9][0-9]*<!-- /count -->' README.md \
+      | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+    m_p="$(grep -o '<!-- count:pre-evaluator -->[0-9][0-9]*<!-- /count -->' README.md \
+      | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
     # Every count:converged marker, not just the first: the split sentence
     # restates the converged total a second time, and check J reads only the
     # first occurrence, so a second one could drift alone.
-    jd_odd="$(sed -n 's/.*<!-- count:converged -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | grep -cv "^$jd_total$")"
+    jd_odd="$(grep -o '<!-- count:converged -->[0-9][0-9]*<!-- /count -->' README.md \
+      | tr -dc '0-9\n' | grep -v '^$' | grep -cv "^$jd_total$")"
     if [ -z "$m_c" ] || [ -z "$m_u" ] || [ -z "$m_p" ]; then
       fault "the README standards split is not marker-anchored (<!-- count:countersigned --> / <!-- count:evaluator-unavailable --> / <!-- count:pre-evaluator -->); an unanchored count is an untracked claim"
     elif [ "${m_c#* }" != "$m_c" ] || [ "${m_u#* }" != "$m_u" ] || [ "${m_p#* }" != "$m_p" ]; then
@@ -966,7 +974,7 @@ else
   p_mul="$(sed -n 's/^[ \t]*\*) vt=\$((vd \* \([0-9][0-9]*\))).*/\1/p' "$p_hook")"
   p_dfl="$(sed -n "s/^[ \t]*'' | \*\[!0-9\]\*) vt=\([0-9][0-9]*\) ;;.*/\1/p" "$p_hook")"
   # shellcheck disable=SC2016
-  p_flr="$(sed -n 's/.*\[ "\$vt" -lt \([0-9][0-9]*\) \].*/\1/p' "$p_hook")"
+  p_flr="$(grep -o '\[ "\$vt" -lt [0-9][0-9]* \]' "$p_hook" | tr -dc '0-9\n' | grep -v '^$')"
   p_missing=""
   p_multi=""
   p_field() {
@@ -4651,8 +4659,8 @@ fi
 #    marker free to state a different number, which is the same defect check N
 #    was built to avoid on its own count. One marker carries this claim today,
 #    so this is the guard rather than a current disagreement. (M1)
-claim_checks="$(sed -n 's/.*<!-- count:checks -->\*\*\([0-9][0-9]*\) behavioural checks\*\*<!-- \/count -->.*/\1/p' README.md \
-  | sort -u | tr '\n' ' ' | sed 's/ $//')"
+claim_checks="$(grep -o '<!-- count:checks -->\*\*[0-9][0-9]* behavioural checks\*\*<!-- /count -->' README.md \
+  | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 if [ -z "$claim_checks" ]; then
   fault "README carries no <!-- count:checks -->N behavioural checks<!-- /count --> marker; the engine's own check count is then an untracked claim"
 elif [ "${claim_checks#* }" != "$claim_checks" ]; then
