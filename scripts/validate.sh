@@ -797,9 +797,29 @@ elif ! n_msg="$(awk -v att="evals/ATTEMPTS.md" -v rme="README.md" '
 ' evals/ATTEMPTS.md README.md evals/*/REPORT.md)"; then
   printf '%s
 ' "$n_msg"
-  fault "a published receipt does not name the convergence standard its run met, which README.md states of every one of them"
+  fault "a published receipt does not name the convergence standard its run met, which README.md states of every converged one"
 else
-  pass "every converged receipt names the standard its run met, agreeing with evals/ATTEMPTS.md ($n_msg receipts)"
+  # README says this of a set with a stated size - "each of those 21" - so the
+  # size it names and the number this check actually drove have to be the same
+  # number, or the sentence quantifies over a set wider than anything verified.
+  # That gap is what L2 was: the claim read over all 22 rows in the table while
+  # the check covered the 21 converged, PapaParse being the audit that carries
+  # no such line by design. Narrowing the sentence without tying it to the
+  # count would have left the same hole one row narrower. (L2)
+  # Every marker, never the first. Reading one with head -n 1 was the first
+  # attempt here and a mutation caught it inside the same iteration: the
+  # sentence this check exists to make load-bearing carries the third marker
+  # in the file, so editing that one alone left the check green. Reading a
+  # single member of a set and ignoring the rest is the class L1 settled.
+  n_claim="$(grep -o '<!-- count:converged -->[0-9][0-9]*<!-- /count -->' README.md \
+    | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+  if [ -z "$n_claim" ]; then
+    fault "README carries no <!-- count:converged --> marker, so the receipts sentence names no set and this check has nothing to agree with"
+  elif [ "$n_msg" != "$n_claim" ]; then
+    fault "README says the standard is named by each of [$n_claim] receipts but this check verified $n_msg; the sentence quantifies over a set that is not the one driven (a list of several values means its own markers disagree)"
+  else
+    pass "every converged receipt names the standard its run met, agreeing with evals/ATTEMPTS.md and with the count README states ($n_msg receipts)"
+  fi
 fi
 
 # O. The evaluator artifact is required committed and unmodified, so its
