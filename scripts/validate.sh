@@ -342,9 +342,17 @@ fi
 #    where the release is actually cut - the maintainer's tree - and skipped
 #    elsewhere; faulting on its absence would make every CI leg red on a file
 #    the repository is designed never to ship.
-hook_ver="$(sed -n 's/^JEFFY_VERSION="\([0-9][0-9.]*\)"$/\1/p' skills/jeffy/hooks/stop-hook.sh | head -n 1)"
+#    Every JEFFY_VERSION line, not the first: a second one stating a different
+#    version is the drift this pairing exists to catch, and reading one with
+#    head -n 1 would compare the CHANGELOG against whichever came first. The
+#    CHANGELOG read below is head -n 1 on purpose and stays that way - the
+#    newest release is the topmost heading, so first is the claim. (M1)
+hook_ver="$(sed -n 's/^JEFFY_VERSION="\([0-9][0-9.]*\)"$/\1/p' skills/jeffy/hooks/stop-hook.sh \
+  | sort -u | tr '\n' ' ' | sed 's/ $//')"
 if [ -z "$hook_ver" ]; then
   fault "stop-hook.sh carries no JEFFY_VERSION=\"x.y.z\" line"
+elif [ "${hook_ver#* }" != "$hook_ver" ]; then
+  fault "stop-hook.sh states more than one JEFFY_VERSION [$hook_ver]; no single version is shipped"
 elif [ ! -f CHANGELOG.md ]; then
   echo "[SKIP] JEFFY_VERSION/CHANGELOG pairing (no CHANGELOG.md; maintainer-only file)"
 else
@@ -376,14 +384,23 @@ tbl_rows="$(grep -c '^| \[.*(evals/.*/REPORT\.md)' README.md)"
 tbl_conv="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) c++ } END { print c+0 }' README.md)"
 tbl_langs="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 } }' README.md | sort -u | wc -l | tr -d ' ')"
 tbl_odd="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/^[ \t]+|[ \t]+$/, "", i); if (i !~ /^[0-9]+$/ && i !~ /^\*[a-z]+\*$/) print $2 }' README.md | wc -l | tr -d ' ')"
-claim_conv="$(sed -n 's/.*<!-- count:converged -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
-claim_langs="$(sed -n 's/.*<!-- count:languages -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
+# Every marker of each kind, not the first: a second one is free to state a
+# different number, and the count:converged pair in this file is exactly that
+# shape. Check Jd catches a disagreeing converged marker by its own route; this
+# reads them all here too, so the message names the defect rather than blaming
+# the eval table for a number the README disagrees with itself about. (M1)
+claim_conv="$(sed -n 's/.*<!-- count:converged -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md \
+  | sort -u | tr '\n' ' ' | sed 's/ $//')"
+claim_langs="$(sed -n 's/.*<!-- count:languages -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md \
+  | sort -u | tr '\n' ' ' | sed 's/ $//')"
 if [ "$tbl_rows" != "$receipts" ]; then
   fault "README eval table has $tbl_rows rows but evals/ holds $receipts REPORT.md receipts; a new eval landed without its row (and the About text and live articles need the same edit)"
 elif [ "$tbl_odd" != "0" ]; then
   fault "README eval table has $tbl_odd row(s) whose Iters cell is neither an iteration count nor an italic status; such a row is silently absent from every derived count"
 elif [ -z "$claim_conv" ] || [ -z "$claim_langs" ]; then
   fault "README prose counts are not marker-anchored (<!-- count:converged --> / <!-- count:languages -->); an unanchored count is an untracked claim"
+elif [ "${claim_conv#* }" != "$claim_conv" ] || [ "${claim_langs#* }" != "$claim_langs" ]; then
+  fault "README's own count markers disagree (converged [$claim_conv], languages [$claim_langs]); no single number is published for a check to derive"
 elif [ "$claim_conv" != "$tbl_conv" ]; then
   fault "README claims $claim_conv converged but the eval table shows $tbl_conv (and the About text and live articles need the same edit)"
 elif [ "$claim_langs" != "$tbl_langs" ]; then
@@ -431,9 +448,15 @@ if [ "$tbl_conv" -gt 0 ] 2>/dev/null; then
 $pie_pairs
 PIE_EOF
   pie_derived="$pie_derived."
-  pie_alt="$(sed -n 's/.*<img src="media\/language-pie-light\.png" alt="\([^"]*\)".*/\1/p' README.md | head -n 1)"
+  # Every alt attribute on that image, not the first: a second tag carrying a
+  # different description is a second accessible claim, and comparing one of
+  # them certifies neither. (M1)
+  pie_alt="$(sed -n 's/.*<img src="media\/language-pie-light\.png" alt="\([^"]*\)".*/\1/p' README.md | sort -u)"
+  pie_alt_n="$(printf '%s' "$pie_alt" | grep -c '^')"
   if [ -z "$pie_alt" ]; then
     fault "README carries no <img src=\"media/language-pie-light.png\" alt=\"...\"> to derive; the chart's accessible description is then an untracked claim"
+  elif [ "$pie_alt_n" -gt 1 ]; then
+    fault "README carries $pie_alt_n differing alt descriptions for the language pie; no single accessible claim is published"
   elif [ "$pie_alt" = "$pie_derived" ]; then
     pass "language-pie alt text is derived from the eval table ($tbl_conv targets, $tbl_langs languages)"
   else
@@ -541,15 +564,22 @@ else
     read -r jd_total jd_c jd_u jd_p <<JD_EOF
 $jd_msg
 JD_EOF
-    m_c="$(sed -n 's/.*<!-- count:countersigned -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
-    m_u="$(sed -n 's/.*<!-- count:evaluator-unavailable -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
-    m_p="$(sed -n 's/.*<!-- count:pre-evaluator -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | head -n 1)"
+    # Every marker of each kind, never the first, for the reason check J's
+    # markers carry above: one site of a claim is not the claim. (M1)
+    m_c="$(sed -n 's/.*<!-- count:countersigned -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md \
+      | sort -u | tr '\n' ' ' | sed 's/ $//')"
+    m_u="$(sed -n 's/.*<!-- count:evaluator-unavailable -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md \
+      | sort -u | tr '\n' ' ' | sed 's/ $//')"
+    m_p="$(sed -n 's/.*<!-- count:pre-evaluator -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md \
+      | sort -u | tr '\n' ' ' | sed 's/ $//')"
     # Every count:converged marker, not just the first: the split sentence
     # restates the converged total a second time, and check J reads only the
     # first occurrence, so a second one could drift alone.
     jd_odd="$(sed -n 's/.*<!-- count:converged -->\([0-9][0-9]*\)<!-- \/count -->.*/\1/p' README.md | grep -cv "^$jd_total$")"
     if [ -z "$m_c" ] || [ -z "$m_u" ] || [ -z "$m_p" ]; then
       fault "the README standards split is not marker-anchored (<!-- count:countersigned --> / <!-- count:evaluator-unavailable --> / <!-- count:pre-evaluator -->); an unanchored count is an untracked claim"
+    elif [ "${m_c#* }" != "$m_c" ] || [ "${m_u#* }" != "$m_u" ] || [ "${m_p#* }" != "$m_p" ]; then
+      fault "README's standards-split markers disagree with themselves ($m_c / $m_u / $m_p); no single split is published"
     elif [ "$m_c" != "$jd_c" ] || [ "$m_u" != "$jd_u" ] || [ "$m_p" != "$jd_p" ]; then
       fault "README publishes a standards split of $m_c/$m_u/$m_p but $att_md's converged rows give $jd_c/$jd_u/$jd_p (countersigned/unavailable/pre-evaluator)"
     elif [ $((jd_c + jd_u + jd_p)) -ne "$jd_total" ]; then
@@ -659,15 +689,26 @@ lm_trunc_raw="$(awk '
 ' "$lm_hook")"
 lm_trunc_left="$(printf '%s\n' "$lm_trunc_raw" | grep '^!' | sed 's/^!//' | tr '\n' ' ')"
 lm_trunc="$(printf '%s\n' "$lm_trunc_raw" | grep -v '^!' | grep -v '^$' | sort -u | tr '\n' ' ')"
+#    Every site in each document is compared, never the first. Reading one with
+#    head -n 1 left a second and contradicting sentence in the same file
+#    unexamined: appending "refuses a final pager or truncator stage - `head` or
+#    `tail` - and nothing else" to SECURITY.md was reproduced passing this check
+#    green. The comparison here is deliberately a set - the hook's case arm
+#    lists alternatives, and no order among them is claimed - which is the one
+#    difference from check M below, where the claim is a sequence. (M1)
 lm_trunc_bad=""
 for lm_f in SECURITY.md skills/jeffy/SKILL.md; do
-  # shellcheck disable=SC2016
-  lm_got="$(grep -o 'pager or truncator[^.]*' "$lm_f" | head -n 1 \
-    | grep -o '`[a-z]*`' | tr -d '`' | sort -u | tr '\n' ' ')"
-  if [ -z "$lm_got" ]; then
+  lm_seen=0
+  lm_sites="$(grep -o 'pager or truncator[^.]*' "$lm_f")"
+  while IFS= read -r lm_site; do
+    [ -n "$lm_site" ] || continue
+    lm_seen=$((lm_seen + 1))
+    # shellcheck disable=SC2016
+    lm_got="$(printf '%s\n' "$lm_site" | grep -o '`[a-z]*`' | tr -d '`' | sort -u | tr '\n' ' ')"
+    [ "$lm_got" = "$lm_trunc" ] || lm_trunc_bad="$lm_trunc_bad ${lm_f}#${lm_seen}[${lm_got}]"
+  done < <(printf '%s\n' "$lm_sites")
+  if [ "$lm_seen" -eq 0 ]; then
     lm_trunc_bad="$lm_trunc_bad $lm_f(states no 'pager or truncator' enumeration)"
-  elif [ "$lm_got" != "$lm_trunc" ]; then
-    lm_trunc_bad="$lm_trunc_bad ${lm_f}[${lm_got}]"
   fi
 done
 if [ -z "$lm_trunc" ]; then
@@ -691,20 +732,36 @@ fi
 #    assignments are counted as well as extracted. The empty initialiser is
 #    not a candidate and is excluded by name, never by falling through the
 #    pattern, because falling through is the defect. (L1)
-lm_to="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_hook" | sort -u | tr '\n' ' ')"
+#    Order is the claim here, so order is what is compared. Both sides were
+#    sorted, which made the sequence unobservable: reversing the chain in
+#    README.md and SECURITY.md, so each named gtimeout before timeout where the
+#    hook resolves timeout first, was reproduced passing this check green while
+#    its own pass message printed the set alphabetically and called it a chain.
+#    The dedupe is order-preserving for that reason, and every site in each
+#    document is compared rather than the first. (M1)
+lm_to="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_hook" | awk '!seen[$0]++' | tr '\n' ' ')"
 lm_to_cand="$(grep -c '^[ \t]*vto=' "$lm_hook")"
 lm_to_init="$(grep -c '^[ \t]*vto=""$' "$lm_hook")"
 lm_to_kept="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_hook" | wc -l | tr -d '[:space:]')"
 lm_to_want=$((lm_to_cand - lm_to_init))
 lm_to_bad=""
 for lm_f in README.md SECURITY.md; do
+  lm_seen=0
+  # The site list is hoisted so the SC2016 directive attaches to an assignment
+  # rather than to a loop terminator, and it is replayed with printf rather
+  # than a heredoc: these sites carry backticks, which an expanding heredoc
+  # would run as command substitution. (M1)
   # shellcheck disable=SC2016
-  lm_got="$(grep -oE '(`[a-z]+`[,;]?( +[a-z]+)? +){1,4}a shell watchdog' "$lm_f" | head -n 1 \
-    | grep -o '`[a-z]*`' | tr -d '`' | sort -u | tr '\n' ' ')"
-  if [ -z "$lm_got" ]; then
+  lm_sites="$(grep -oE '(`[a-z]+`[,;]?( +[a-z]+)? +){1,4}a shell watchdog' "$lm_f")"
+  while IFS= read -r lm_site; do
+    [ -n "$lm_site" ] || continue
+    lm_seen=$((lm_seen + 1))
+    # shellcheck disable=SC2016
+    lm_got="$(printf '%s\n' "$lm_site" | grep -o '`[a-z]*`' | tr -d '`' | awk '!seen[$0]++' | tr '\n' ' ')"
+    [ "$lm_got" = "$lm_to" ] || lm_to_bad="$lm_to_bad ${lm_f}#${lm_seen}[${lm_got}]"
+  done < <(printf '%s\n' "$lm_sites")
+  if [ "$lm_seen" -eq 0 ]; then
     lm_to_bad="$lm_to_bad $lm_f(states no fallback chain before its shell watchdog)"
-  elif [ "$lm_got" != "$lm_to" ]; then
-    lm_to_bad="$lm_to_bad ${lm_f}[${lm_got}]"
   fi
 done
 if [ -z "$lm_to" ]; then
@@ -874,6 +931,13 @@ fi
 #    faults instead of silently shortening the clause, and the default and the
 #    floor must agree, because if they ever diverge "else 240s" stops naming
 #    one number and this check has gone blind.
+#    Every field is asserted to have matched exactly once, not merely to be
+#    non-empty. A second matching line concatenates into the field, the clause
+#    rebuilt from it carries an embedded newline, and grep -F reads that as two
+#    alternative patterns - the first of which still matches every document. A
+#    hook given a second `*) vt=$((vd * 5)) ;;` arm was reproduced passing this
+#    check green while its own message printed the clause broken across a
+#    newline. (M1)
 p_hook=skills/jeffy/hooks/stop-hook.sh
 p_files="README.md skills/jeffy/SKILL.md skills/jeffy/references/plan-default.md"
 if [ ! -f "$p_hook" ]; then
@@ -890,19 +954,44 @@ else
   # malformed directive; the first fix for this finding did exactly that. (G2)
   # shellcheck disable=SC2016
   p_key="$(sed -n 's/^[ \t]*vt="\$(fm \([a-z_][a-z_]*\))"$/\1/p' "$p_hook")"
-  p_lbl="$(grep -o "s/\^[A-Za-z][A-Za-z ]*:" "$p_hook" | head -n 1 | sed 's|^s/\^||; s|:$||')"
+  p_lbl="$(grep -o "s/\^[A-Za-z][A-Za-z ]*:" "$p_hook" | sed 's|^s/\^||; s|:$||')"
   # shellcheck disable=SC2016
   p_mul="$(sed -n 's/^[ \t]*\*) vt=\$((vd \* \([0-9][0-9]*\))).*/\1/p' "$p_hook")"
   p_dfl="$(sed -n "s/^[ \t]*'' | \*\[!0-9\]\*) vt=\([0-9][0-9]*\) ;;.*/\1/p" "$p_hook")"
   # shellcheck disable=SC2016
   p_flr="$(sed -n 's/.*\[ "\$vt" -lt \([0-9][0-9]*\) \].*/\1/p' "$p_hook")"
   p_missing=""
-  for p_pair in "state key:$p_key" "PLAN label:$p_lbl" "multiplier:$p_mul" \
-                "default:$p_dfl" "floor:$p_flr"; do
-    case "$p_pair" in *:) p_missing="$p_missing ${p_pair%:}" ;; esac
-  done
+  p_multi=""
+  p_field() {
+    if [ -z "$2" ]; then
+      p_missing="$p_missing $1"
+    else
+      p_n="$(printf '%s\n' "$2" | wc -l | tr -d '[:space:]')"
+      [ "$p_n" -gt 1 ] && p_multi="$p_multi $1(x$p_n)"
+    fi
+    return 0
+  }
+  p_field "state key" "$p_key"
+  p_field "PLAN label" "$p_lbl"
+  p_field "multiplier" "$p_mul"
+  p_field "default" "$p_dfl"
+  p_field "floor" "$p_flr"
+  # The document set is the hook's own state key rather than a list typed here:
+  # a fourth document that discusses the bound joins the comparison in the
+  # commit that introduces it instead of drifting outside a hardcoded three.
+  # The seed list stays as the floor, so a document that drops the key entirely
+  # is still required to carry the clause, and nothing is skipped where git is
+  # absent. (M1)
+  if [ -n "$p_key" ] && command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    for p_extra in $(git ls-files '*.md' | grep -v '^evals/' | grep -v '^\.jeffy/'); do
+      grep -q -- "$p_key" "$p_extra" || continue
+      case " $p_files " in *" $p_extra "*) ;; *) p_files="$p_files $p_extra" ;; esac
+    done
+  fi
   if [ -n "$p_missing" ]; then
     fault "the hook's verify-bound derivation could not be enumerated (no$p_missing); the assignments moved and this check went blind"
+  elif [ -n "$p_multi" ]; then
+    fault "the hook's verify-bound derivation matched more than once ($p_multi); the rebuilt clause would carry an embedded newline, which grep -F reads as alternative patterns and this check would satisfy on the first line alone"
   elif [ "$p_dfl" != "$p_flr" ]; then
     fault "the hook's verify-bound default ($p_dfl) and floor ($p_flr) disagree, so no single number names the last link of the chain"
   else
@@ -4548,9 +4637,16 @@ fi
 #    and a shellcheck lint where the linter is installed. It asserts only in
 #    that maintainer tree, which is where releases are cut and where the
 #    marker is authored; a clone or a CI leg has nothing to author and skips.
-claim_checks="$(sed -n 's/.*<!-- count:checks -->\*\*\([0-9][0-9]*\) behavioural checks\*\*<!-- \/count -->.*/\1/p' README.md | head -n 1)"
+#    Every marker, never the first: reading one with head -n 1 leaves a second
+#    marker free to state a different number, which is the same defect check N
+#    was built to avoid on its own count. One marker carries this claim today,
+#    so this is the guard rather than a current disagreement. (M1)
+claim_checks="$(sed -n 's/.*<!-- count:checks -->\*\*\([0-9][0-9]*\) behavioural checks\*\*<!-- \/count -->.*/\1/p' README.md \
+  | sort -u | tr '\n' ' ' | sed 's/ $//')"
 if [ -z "$claim_checks" ]; then
   fault "README carries no <!-- count:checks -->N behavioural checks<!-- /count --> marker; the engine's own check count is then an untracked claim"
+elif [ "${claim_checks#* }" != "$claim_checks" ]; then
+  fault "README states the behavioural check count as [$claim_checks]; its own count:checks markers disagree, so no single number is published"
 elif [ ! -f CHANGELOG.md ] || [ -z "$ps" ] \
   || ! command -v jq >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
   echo "[SKIP] README check-count derivation (asserts in a maintainer tree with jq, git and PowerShell, where the marker is written)"
