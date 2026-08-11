@@ -905,7 +905,15 @@ if [ -z "$o_files" ]; then
 else
   o_bad=""
   o_n=0
-  for o_f in $o_files; do
+  # NUL-delimited, never a split of the space-separated list above: an artifact
+  # whose filename carries whitespace split into fragments, grep read paths
+  # that do not exist, the artifact escaped the hygiene check entirely, and the
+  # pass message counted the fragments as artifacts. Same defect L1 closed in
+  # check P; this site survived it because L1's enumeration matched `in $(` and
+  # this one splits a variable. The enumeration that covers both is
+  # `grep -nE 'for [A-Za-z_][A-Za-z0-9_]* in \$' scripts/validate.sh`, which
+  # now returns nothing here, in the hook or in the installers. (G2)
+  while IFS= read -r -d '' o_f; do
     o_n=$((o_n + 1))
     o_hit="$(grep -nE '(^|[^A-Za-z])[A-Za-z]:[/\]|/home/|/Users/|AppData' "$o_f" | head -n 3)"
     if [ -n "$o_hit" ]; then
@@ -913,7 +921,7 @@ else
 $o_hit
 "
     fi
-  done
+  done < <(git ls-files -z '.jeffy/evaluator/*.md' 2>/dev/null)
   if [ -n "$o_bad" ]; then
     printf '%s' "$o_bad"
     fault "an evaluator artifact names a machine-absolute path; name locations outside the repository with a placeholder defined once (\$SCRATCH) so the record reads on any clone"
