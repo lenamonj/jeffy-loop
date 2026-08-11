@@ -1735,8 +1735,28 @@ if command -v jq >/dev/null 2>&1; then
     # carried, not blocking - the accept-path stderr note names it so the run
     # report cannot omit it. High, Medium, and any line whose severity the
     # parser cannot read still block, the last because a floor that guesses
-    # is a floor gamed by omission. Four scenarios, one severity token
+    # is a floor gamed by omission. Five scenarios, one severity token
     # mutated between them, so each fails under exactly one mutation.
+    # The classifier's severity pattern ends [,)], so a Low is carried whether
+    # its parenthetical names a class or not, and both alternatives are driven
+    # here. R3: for one release only the comma side was, and a scenario set
+    # that exercises one branch of the pattern it tests reads exactly like one
+    # that exercises both. The bare form is not hypothetical: the template's
+    # own Method says a legacy task line carrying no class is read as runtime,
+    # so a ledger written before the class taxonomy existed reaches exactly
+    # this branch at its declaration.
+    hb_write_state sess-1 1 3
+    hb_write_backlog '- [ ] X9 (Low): a bare severity, no class field. Acceptance: fixed.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+      && grep -q 'carried Low' "$hb_tmp/hb_err.txt" \
+      && grep -qF 'X9 (Low)' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook carries a Low whose parenthetical names no class (the severity pattern's other branch)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook did not carry a bare (Low) task line; the severity floor reads only the comma form"
+    fi
+
     hb_write_state sess-1 1 3
     hb_write_backlog '- [ ] X9 (Low, docs, documentation): imprecise sentence. Acceptance: rewritten.'
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
