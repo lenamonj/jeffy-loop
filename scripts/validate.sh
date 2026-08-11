@@ -939,7 +939,14 @@ fi
 #    check green while its own message printed the clause broken across a
 #    newline. (M1)
 p_hook=skills/jeffy/hooks/stop-hook.sh
-p_files="README.md skills/jeffy/SKILL.md skills/jeffy/references/plan-default.md"
+# Newline-delimited rather than space-delimited, and enumerated NUL-safe below,
+# because a space-delimited list fails open on exactly the input this check
+# exists to catch: a tracked path carrying whitespace split into fragments, the
+# membership grep failed on names that do not exist, and that document escaped
+# the comparison in silence while the check reported green. (L1)
+p_files="README.md
+skills/jeffy/SKILL.md
+skills/jeffy/references/plan-default.md"
 if [ ! -f "$p_hook" ]; then
   echo "[SKIP] verify-bound derivation chain (no $p_hook)"
 else
@@ -983,10 +990,12 @@ else
   # is still required to carry the clause, and nothing is skipped where git is
   # absent. (M1)
   if [ -n "$p_key" ] && command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-    for p_extra in $(git ls-files '*.md' | grep -v '^evals/' | grep -v '^\.jeffy/'); do
+    while IFS= read -r -d '' p_extra; do
+      case "$p_extra" in evals/* | .jeffy/*) continue ;; esac
       grep -q -- "$p_key" "$p_extra" || continue
-      case " $p_files " in *" $p_extra "*) ;; *) p_files="$p_files $p_extra" ;; esac
-    done
+      printf '%s\n' "$p_files" | grep -Fxq -- "$p_extra" || p_files="$p_files
+$p_extra"
+    done < <(git ls-files -z '*.md')
   fi
   if [ -n "$p_missing" ]; then
     fault "the hook's verify-bound derivation could not be enumerated (no$p_missing); the assignments moved and this check went blind"
@@ -998,13 +1007,14 @@ else
     # shellcheck disable=SC2016
     p_want='`'"$p_key"'`, else `'"$p_lbl"'` x'"$p_mul"' floored at '"$p_flr"'s, else '"$p_dfl"'s'
     p_bad=""
-    for p_f in $p_files; do
+    while IFS= read -r p_f; do
+      [ -n "$p_f" ] || continue
       if [ ! -f "$p_f" ]; then
         p_bad="$p_bad $p_f(absent)"
       elif ! grep -qF -- "$p_want" "$p_f"; then
         p_bad="$p_bad $p_f"
       fi
-    done
+    done < <(printf '%s\n' "$p_files")
     if [ -n "$p_bad" ]; then
       fault "the hook resolves the verify bound as [$p_want] but that clause is missing from:$p_bad"
     else
