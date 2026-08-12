@@ -33,14 +33,21 @@ It converged in one run of ten iterations, to the iteration.
 | F9 | Medium | testing | a leaking test the run itself introduced (see below - this one was filed by the evaluator) |
 | F5 | Low | documentation | `cJSON_InsertItemInArray` silently appends when `which` is past the end and returns true, a contract stated nowhere |
 
-**F1 is the finding to read first.** Sorting an object rebuilt its child list forward but never repointed `child->prev` at the new tail, and cJSON stores the tail there. Every subsequent `cJSON_AddItemToObject` on that object then walked to a stale tail and attached behind it, so the item was linked into nothing and never appeared in the document or its output. Sort an object, add to it, and the addition disappears. The fix is three lines:
+**F1 is the finding to read first.** Sorting an object rebuilt its child list forward but never repointed `child->prev` at the new tail, and cJSON stores the tail there. `add_item_to_array` reads that pointer and does nothing when it is NULL, so every subsequent `cJSON_AddItemToObject` on a sorted object was silently dropped, reported as success, and leaked. Sort an object, add to it, and the addition never appears in the document or its output.
+
+The fix lands in `sort_object` in `cJSON_Utils.c` - `sort_list` itself cannot do it, because the recursion has no way to tell a sub-list head from the whole list's head:
 
 ```c
+    for (tail = object->child; (tail != NULL) && (tail->next != NULL); tail = tail->next)
+    {
+    }
     if (object->child != NULL)
     {
         object->child->prev = tail;
     }
 ```
+
+The same invariant is corrupted by `cJSONUtils_GeneratePatches` and the merge-patch generator, which sort their inputs in place even though the caller never asked for a sort. Both are covered by the regression tests.
 
 **F8 fixed the build floors** from `VERSION 3.0` and `VERSION 2.8.5` to `VERSION 3.10`.
 
