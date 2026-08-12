@@ -23,6 +23,7 @@ loss rather than hiding it.
 | bat | 1 | 10 | converged | evaluator countersigned | 0 |
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
+| cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
 | eemeli/yaml | 5 | 50 | **not converged** | n/a | 0 |
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
@@ -61,9 +62,12 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 21 brownfield convergences:
+The engine tightened over time. Of the 22 brownfield convergences:
 
-- **16** were countersigned by the adversarial evaluator, the current standard.
+- **17** were countersigned by the adversarial evaluator, the current standard.
+  Sixteen of those met the empty-ledger rule; `cJSON` met the v1.9.0 severity
+  floor described below and is the first convergence in the study that the
+  empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
   standing instruction against sub-agents, and the receipt says so rather than
   working around it.
@@ -71,7 +75,7 @@ The engine tightened over time. Of the 21 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 21 as one number
+Every receipt names the standard its own run met. Pooling all 22 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -85,8 +89,9 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **All 21 convergences above predate v1.9.0 and met
-the stricter empty-ledger rule.** Receipts from v1.9.0 onward name this
+REJECT reason in itself. **21 of the 22 convergences above predate v1.9.0 and met the stricter
+empty-ledger rule; `cJSON` is the first under this one, and its receipt names
+the three Lows it carried.** Receipts from v1.9.0 onward name this
 standard and list their carried Lows; the eras are never pooled.
 
 ## What was started and never published
@@ -115,7 +120,7 @@ Convergence here is per-run, and a blocked run is relaunched from written
 state with a fresh evaluator budget. Under that protocol, persistence raises
 the chance of eventually converging - dotenv took eight runs, dayjs eight,
 gitignore five with three terminal rejections along the way. The run counts
-above are published precisely so that "21 converged" is read with the cost
+above are published precisely so that "22 converged" is read with the cost
 attached rather than as a success rate.
 
 Targets from here on carry a **pre-registered run budget** committed before
@@ -164,6 +169,16 @@ held instead is between counts and claims: the counts include run 5, and no
 claim here rests on it. The engine change that would have caught it - the
 launch printing how many runs this target has already had, before adding
 another - is on the release backlog.
+
+`cJSON`'s budget was **two runs**, and it used one. That budget was not a guess:
+it was the falsifiable form of a change to how targets are chosen. The picks
+before it had been made for oracle purity, which points only at protocol and
+spec implementations, and those took five or more runs here and mostly did not
+converge, while every single-purpose library with a bounded public API had
+converged inside two. cJSON was picked to test the replacement rule against its
+own prediction, with the stopping point fixed in advance so the prediction could
+fail. It converged in one run of ten iterations, the same figure as `jsoncpp`,
+the sibling it was reasoned from.
 
 ## BurntSushi/toml, where the gate was the only thing standing in the way
 

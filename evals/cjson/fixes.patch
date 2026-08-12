@@ -1,0 +1,555 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c7ca27f..ee5b716 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ set(CMAKE_LEGACY_CYGWIN_WIN32 0)
+-cmake_minimum_required(VERSION 3.0)
++cmake_minimum_required(VERSION 3.10)
+ 
+ project(cJSON
+     VERSION 1.7.19
+diff --git a/README.md b/README.md
+index 99147af..b3939a5 100644
+--- a/README.md
++++ b/README.md
+@@ -246,7 +246,7 @@ You can create an empty array with `cJSON_CreateArray`. `cJSON_CreateArrayRefere
+ 
+ To add items to an array, use `cJSON_AddItemToArray` to append items to the end.
+ Using `cJSON_AddItemReferenceToArray` an element can be added as a reference to another item, array or string. This means that `cJSON_Delete` will not delete that items `child` or `valuestring` properties, so no double frees are occurring if they are already used elsewhere.
+-To insert items in the middle, use `cJSON_InsertItemInArray`. It will insert an item at the given 0 based index and shift all the existing items to the right.
++To insert items in the middle, use `cJSON_InsertItemInArray`. It will insert an item at the given 0 based index and shift all the existing items to the right. An index at or past the end of the array appends the item rather than failing. A negative index fails and returns 0, and in that case the item is not added, so the caller is still responsible for it.
+ 
+ If you want to take an item out of an array at a given index and continue using it, use `cJSON_DetachItemFromArray`, it will return the detached item, so be sure to assign it to a pointer, otherwise you will have a memory leak.
+ 
+diff --git a/cJSON.c b/cJSON.c
+index 6e4fb0d..1e6b545 100644
+--- a/cJSON.c
++++ b/cJSON.c
+@@ -304,6 +304,83 @@ typedef struct
+ #define buffer_at_offset(buffer) ((buffer)->content + (buffer)->offset)
+ 
+ /* Parse the input text to generate a number, and populate the result into item. */
++/* Length of the longest prefix of buffer that is a JSON number, 0 when there is
++ * none. RFC 8259 section 6:
++ *   number = [ '-' ] ( '0' / digit1-9 *DIGIT ) [ '.' 1*DIGIT ] [ ('e'/'E') [ sign ] 1*DIGIT ]
++ * cJSON consumes the longest number it can and leaves the rest for the caller
++ * to reject, so this measures a prefix rather than validating the whole span.
++ * strtod cannot do the measuring: it also accepts leading zeros, a trailing
++ * decimal point and hex, none of which are JSON. */
++static size_t json_number_prefix_length(const unsigned char * const buffer, const size_t length)
++{
++    size_t i = 0;
++    size_t valid = 0;
++
++    if (buffer == NULL)
++    {
++        return 0;
++    }
++
++    if ((i < length) && (buffer[i] == '-'))
++    {
++        i++;
++    }
++
++    /* int: a lone zero, or a nonzero digit followed by any run of digits */
++    if ((i < length) && (buffer[i] == '0'))
++    {
++        i++;
++    }
++    else if ((i < length) && (buffer[i] >= '1') && (buffer[i] <= '9'))
++    {
++        while ((i < length) && (buffer[i] >= '0') && (buffer[i] <= '9'))
++        {
++            i++;
++        }
++    }
++    else
++    {
++        return 0; /* a JSON number must have an integer part */
++    }
++    valid = i;
++
++    /* frac: a decimal point is only part of the number if a digit follows it */
++    if ((i < length) && (buffer[i] == '.'))
++    {
++        i++;
++        if ((i >= length) || (buffer[i] < '0') || (buffer[i] > '9'))
++        {
++            return valid;
++        }
++        while ((i < length) && (buffer[i] >= '0') && (buffer[i] <= '9'))
++        {
++            i++;
++        }
++        valid = i;
++    }
++
++    /* exp: likewise, the exponent needs at least one digit to count */
++    if ((i < length) && ((buffer[i] == 'e') || (buffer[i] == 'E')))
++    {
++        i++;
++        if ((i < length) && ((buffer[i] == '+') || (buffer[i] == '-')))
++        {
++            i++;
++        }
++        if ((i >= length) || (buffer[i] < '0') || (buffer[i] > '9'))
++        {
++            return valid;
++        }
++        while ((i < length) && (buffer[i] >= '0') && (buffer[i] <= '9'))
++        {
++            i++;
++        }
++        valid = i;
++    }
++
++    return valid;
++}
++
+ static cJSON_bool parse_number(cJSON * const item, parse_buffer * const input_buffer)
+ {
+     double number = 0;
+@@ -363,6 +440,16 @@ loop_end:
+     memcpy(number_c_string, buffer_at_offset(input_buffer), number_string_length);
+     number_c_string[number_string_length] = '\0';
+ 
++    /* keep only the part that is actually a JSON number, before strtod - which
++     * is more permissive than JSON - gets to decide how much to consume */
++    number_string_length = json_number_prefix_length(number_c_string, number_string_length);
++    if (number_string_length == 0)
++    {
++        input_buffer->hooks.deallocate(number_c_string);
++        return false; /* not a JSON number */
++    }
++    number_c_string[number_string_length] = '\0';
++
+     if (has_decimal_point)
+     {
+         for (i = 0; i < number_string_length; i++)
+@@ -2240,9 +2327,36 @@ CJSON_PUBLIC(cJSON*) cJSON_AddArrayToObject(cJSON * const object, const char * c
+     return NULL;
+ }
+ 
++/* Is item one of parent's children? cJSON stores no parent pointer, so the
++ * only way to establish this is to walk the child list. The pointer-taking
++ * entry points need it: unlinking an item that belongs to another parent
++ * cross-links the two lists and leaves a dangling tail pointer behind. */
++static cJSON_bool has_child(const cJSON * const parent, const cJSON * const item)
++{
++    cJSON *element = NULL;
++
++    if ((parent == NULL) || (item == NULL))
++    {
++        return false;
++    }
++
++    for (element = parent->child; element != NULL; element = element->next)
++    {
++        if (element == item)
++        {
++            return true;
++        }
++    }
++
++    return false;
++}
++
+ CJSON_PUBLIC(cJSON *) cJSON_DetachItemViaPointer(cJSON *parent, cJSON * const item)
+ {
+-    if ((parent == NULL) || (item == NULL) || (item != parent->child && item->prev == NULL))
++    /* has_child establishes that item belongs to parent; the prev check keeps
++     * the unlinking below from dereferencing a NULL prev on a list whose
++     * back-links were never built. */
++    if (!has_child(parent, item) || ((item != parent->child) && (item->prev == NULL)))
+     {
+         return NULL;
+     }
+@@ -2352,7 +2466,7 @@ CJSON_PUBLIC(cJSON_bool) cJSON_InsertItemInArray(cJSON *array, int which, cJSON
+ 
+ CJSON_PUBLIC(cJSON_bool) cJSON_ReplaceItemViaPointer(cJSON * const parent, cJSON * const item, cJSON * replacement)
+ {
+-    if ((parent == NULL) || (parent->child == NULL) || (replacement == NULL) || (item == NULL))
++    if ((replacement == NULL) || !has_child(parent, item))
+     {
+         return false;
+     }
+@@ -2411,25 +2525,46 @@ CJSON_PUBLIC(cJSON_bool) cJSON_ReplaceItemInArray(cJSON *array, int which, cJSON
+ 
+ static cJSON_bool replace_item_in_object(cJSON *object, const char *string, cJSON *replacement, cJSON_bool case_sensitive)
+ {
++    cJSON *target = NULL;
++    char *name = NULL;
++
+     if ((replacement == NULL) || (string == NULL))
+     {
+         return false;
+     }
+ 
+-    /* replace the name in the replacement */
+-    if (!(replacement->type & cJSON_StringIsConst) && (replacement->string != NULL))
++    /* find the member first: its key, not the caller's lookup string, is the
++     * one the document keeps. A case insensitive lookup can match a different
++     * spelling, and adopting the caller's would silently rename the member. */
++    target = get_object_item(object, string, case_sensitive);
++    if ((target == NULL) || (target->string == NULL))
+     {
+-        cJSON_free(replacement->string);
++        return false;
+     }
+-    replacement->string = (char*)cJSON_strdup((const unsigned char*)string, &global_hooks);
+-    if (replacement->string == NULL)
++
++    if (target == replacement)
++    {
++        /* replacing a member with itself changes nothing, and going further
++         * would free the key while it is still in use */
++        return true;
++    }
++
++    /* copy the key before releasing the old one: the caller may well have
++     * passed replacement->string itself as the lookup string */
++    name = (char*)cJSON_strdup((const unsigned char*)target->string, &global_hooks);
++    if (name == NULL)
+     {
+         return false;
+     }
+ 
++    if (!(replacement->type & cJSON_StringIsConst) && (replacement->string != NULL))
++    {
++        cJSON_free(replacement->string);
++    }
++    replacement->string = name;
+     replacement->type &= ~cJSON_StringIsConst;
+ 
+-    return cJSON_ReplaceItemViaPointer(object, get_object_item(object, string, case_sensitive), replacement);
++    return cJSON_ReplaceItemViaPointer(object, target, replacement);
+ }
+ 
+ CJSON_PUBLIC(cJSON_bool) cJSON_ReplaceItemInObject(cJSON *object, const char *string, cJSON *newitem)
+diff --git a/cJSON.h b/cJSON.h
+index cab5feb..91a2183 100644
+--- a/cJSON.h
++++ b/cJSON.h
+@@ -236,6 +236,8 @@ CJSON_PUBLIC(cJSON_bool) cJSON_AddItemReferenceToArray(cJSON *array, cJSON *item
+ CJSON_PUBLIC(cJSON_bool) cJSON_AddItemReferenceToObject(cJSON *object, const char *string, cJSON *item);
+ 
+ /* Remove/Detach items from Arrays/Objects. */
++/* item must be one of parent's children; if it is not, the call fails and
++ * changes nothing. Establishing that costs a walk of parent's child list. */
+ CJSON_PUBLIC(cJSON *) cJSON_DetachItemViaPointer(cJSON *parent, cJSON * const item);
+ CJSON_PUBLIC(cJSON *) cJSON_DetachItemFromArray(cJSON *array, int which);
+ CJSON_PUBLIC(void) cJSON_DeleteItemFromArray(cJSON *array, int which);
+@@ -245,7 +247,12 @@ CJSON_PUBLIC(void) cJSON_DeleteItemFromObject(cJSON *object, const char *string)
+ CJSON_PUBLIC(void) cJSON_DeleteItemFromObjectCaseSensitive(cJSON *object, const char *string);
+ 
+ /* Update array items. */
+-CJSON_PUBLIC(cJSON_bool) cJSON_InsertItemInArray(cJSON *array, int which, cJSON *newitem); /* Shifts pre-existing items to the right. */
++/* Insert newitem at the 0 based index which. Shifts pre-existing items to the
++ * right. An index at or past the end appends instead of failing; a negative
++ * index fails, and on failure newitem is not added and remains the caller's. */
++CJSON_PUBLIC(cJSON_bool) cJSON_InsertItemInArray(cJSON *array, int which, cJSON *newitem);
++/* item must be one of parent's children; if it is not, the call fails and
++ * changes nothing. Establishing that costs a walk of parent's child list. */
+ CJSON_PUBLIC(cJSON_bool) cJSON_ReplaceItemViaPointer(cJSON * const parent, cJSON * const item, cJSON * replacement);
+ CJSON_PUBLIC(cJSON_bool) cJSON_ReplaceItemInArray(cJSON *array, int which, cJSON *newitem);
+ CJSON_PUBLIC(cJSON_bool) cJSON_ReplaceItemInObject(cJSON *object,const char *string,cJSON *newitem);
+diff --git a/cJSON_Utils.c b/cJSON_Utils.c
+index 8fa24f8..8dbcb02 100644
+--- a/cJSON_Utils.c
++++ b/cJSON_Utils.c
+@@ -594,11 +594,26 @@ static cJSON *sort_list(cJSON *list, const cJSON_bool case_sensitive)
+ 
+ static void sort_object(cJSON * const object, const cJSON_bool case_sensitive)
+ {
++    cJSON *tail = NULL;
++
+     if (object == NULL)
+     {
+         return;
+     }
+     object->child = sort_list(object->child, case_sensitive);
++
++    /* sort_list rebuilds the next/prev chain but cannot restore the circular
++     * tail pointer cJSON keeps on every child list, because the recursion has
++     * no way to tell a sub-list head from the whole list's head. Restore it
++     * here: without it add_item_to_array sees a NULL child->prev and silently
++     * drops every later append. */
++    for (tail = object->child; (tail != NULL) && (tail->next != NULL); tail = tail->next)
++    {
++    }
++    if (object->child != NULL)
++    {
++        object->child->prev = tail;
++    }
+ }
+ 
+ static cJSON_bool compare_json(cJSON *a, cJSON *b, const cJSON_bool case_sensitive)
+diff --git a/library_config/uninstall.cmake b/library_config/uninstall.cmake
+index e751ec4..69e6e0e 100644
+--- a/library_config/uninstall.cmake
++++ b/library_config/uninstall.cmake
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 2.8.5)
++cmake_minimum_required(VERSION 3.10)
+ 
+ set(MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/install_manifest.txt")
+ 
+diff --git a/tests/misc_tests.c b/tests/misc_tests.c
+index 7c61647..4d4e38c 100644
+--- a/tests/misc_tests.c
++++ b/tests/misc_tests.c
+@@ -798,6 +798,121 @@ static void cjson_parse_big_numbers_should_not_report_error(void)
+     cJSON_Delete(valid_big_number_json_object2);
+ }
+ 
++/* The two entry points that take an item pointer must confirm the item really
++ * is one of parent's children. Accepting a foreign item cross-links the two
++ * documents: detaching left parent's tail pointer aimed at the other tree,
++ * which the next append dereferenced after it had been freed, and replacing
++ * silently edited the other document while reporting success. */
++static void cjson_functions_taking_an_item_pointer_should_reject_a_foreign_item(void)
++{
++    cJSON *array = cJSON_Parse("[1,2]");
++    cJSON *other = cJSON_Parse("[7,8,9]");
++    cJSON *foreign = NULL;
++    cJSON *replacement = NULL;
++    char *printed = NULL;
++
++    TEST_ASSERT_NOT_NULL(array);
++    TEST_ASSERT_NOT_NULL(other);
++    foreign = other->child->next;
++    TEST_ASSERT_NOT_NULL(foreign);
++
++    TEST_ASSERT_NULL_MESSAGE(cJSON_DetachItemViaPointer(array, foreign),
++        "detaching an item that belongs to another parent must fail");
++
++    replacement = cJSON_CreateNumber(5);
++    TEST_ASSERT_NOT_NULL(replacement);
++    TEST_ASSERT_FALSE_MESSAGE(cJSON_ReplaceItemViaPointer(array, foreign, replacement),
++        "replacing an item that belongs to another parent must fail");
++    /* a refused replacement is not adopted, so the caller still owns it */
++    cJSON_Delete(replacement);
++
++    /* neither document may have been touched */
++    printed = cJSON_PrintUnformatted(array);
++    TEST_ASSERT_EQUAL_STRING("[1,2]", printed);
++    free(printed);
++    printed = cJSON_PrintUnformatted(other);
++    TEST_ASSERT_EQUAL_STRING("[7,8,9]", printed);
++    free(printed);
++
++    /* the tail pointer survived, so appending still works */
++    TEST_ASSERT_TRUE(cJSON_AddItemToArray(array, cJSON_CreateNumber(3)));
++    printed = cJSON_PrintUnformatted(array);
++    TEST_ASSERT_EQUAL_STRING("[1,2,3]", printed);
++    free(printed);
++
++    cJSON_Delete(array);
++    cJSON_Delete(other);
++}
++
++/* The member key belongs to the document, not to whatever spelling the caller
++ * happened to look the member up with, and it has to be copied before the old
++ * one is released because the caller may have passed that very buffer. */
++static void cjson_replace_item_in_object_should_keep_the_documents_key(void)
++{
++    cJSON *object = cJSON_Parse("{\"Aa\":1,\"b\":2}");
++    cJSON *self = NULL;
++    cJSON *rejected = NULL;
++    char *printed = NULL;
++
++    TEST_ASSERT_NOT_NULL(object);
++
++    /* the case insensitive lookup matches "Aa"; the key must not become "aA" */
++    TEST_ASSERT_TRUE(cJSON_ReplaceItemInObject(object, "aA", cJSON_CreateNumber(5)));
++    printed = cJSON_PrintUnformatted(object);
++    TEST_ASSERT_EQUAL_STRING("{\"Aa\":5,\"b\":2}", printed);
++    free(printed);
++
++    /* a miss changes nothing and reports failure; the refused replacement is
++     * not adopted, so the caller still owns it */
++    rejected = cJSON_CreateNumber(9);
++    TEST_ASSERT_NOT_NULL(rejected);
++    TEST_ASSERT_FALSE(cJSON_ReplaceItemInObjectCaseSensitive(object, "aA", rejected));
++    cJSON_Delete(rejected);
++
++    /* passing the item's own key buffer as the lookup string must be safe */
++    self = cJSON_GetObjectItem(object, "Aa");
++    TEST_ASSERT_NOT_NULL(self);
++    TEST_ASSERT_TRUE(cJSON_ReplaceItemInObject(object, self->string, self));
++    printed = cJSON_PrintUnformatted(object);
++    TEST_ASSERT_EQUAL_STRING("{\"Aa\":5,\"b\":2}", printed);
++    free(printed);
++
++    cJSON_Delete(object);
++}
++
++/* The out-of-range contract cJSON.h and the README state: at or past the end
++ * appends, a negative index fails and does not adopt the item. */
++static void cjson_insert_item_in_array_should_follow_its_documented_range_contract(void)
++{
++    cJSON *array = cJSON_Parse("[1,2]");
++    cJSON *rejected = NULL;
++    char *printed = NULL;
++
++    TEST_ASSERT_NOT_NULL(array);
++
++    TEST_ASSERT_TRUE(cJSON_InsertItemInArray(array, 1, cJSON_CreateNumber(9)));
++    printed = cJSON_PrintUnformatted(array);
++    TEST_ASSERT_EQUAL_STRING("[1,9,2]", printed);
++    free(printed);
++
++    /* at the end and past it both append */
++    TEST_ASSERT_TRUE(cJSON_InsertItemInArray(array, 3, cJSON_CreateNumber(7)));
++    TEST_ASSERT_TRUE(cJSON_InsertItemInArray(array, 99, cJSON_CreateNumber(8)));
++    printed = cJSON_PrintUnformatted(array);
++    TEST_ASSERT_EQUAL_STRING("[1,9,2,7,8]", printed);
++    free(printed);
++
++    /* a negative index fails and leaves the item with the caller */
++    rejected = cJSON_CreateNumber(0);
++    TEST_ASSERT_FALSE(cJSON_InsertItemInArray(array, -1, rejected));
++    printed = cJSON_PrintUnformatted(array);
++    TEST_ASSERT_EQUAL_STRING("[1,9,2,7,8]", printed);
++    free(printed);
++    cJSON_Delete(rejected);
++
++    cJSON_Delete(array);
++}
++
+ int CJSON_CDECL main(void)
+ {
+     UNITY_BEGIN();
+@@ -832,6 +947,9 @@ int CJSON_CDECL main(void)
+     RUN_TEST(cjson_set_valuestring_to_object_should_not_leak_memory);
+     RUN_TEST(cjson_set_bool_value_must_not_break_objects);
+     RUN_TEST(cjson_parse_big_numbers_should_not_report_error);
++    RUN_TEST(cjson_functions_taking_an_item_pointer_should_reject_a_foreign_item);
++    RUN_TEST(cjson_replace_item_in_object_should_keep_the_documents_key);
++    RUN_TEST(cjson_insert_item_in_array_should_follow_its_documented_range_contract);
+ 
+     return UNITY_END();
+ }
+diff --git a/tests/misc_utils_tests.c b/tests/misc_utils_tests.c
+index 7d300bc..017e722 100644
+--- a/tests/misc_utils_tests.c
++++ b/tests/misc_utils_tests.c
+@@ -70,11 +70,70 @@ static void cjson_utils_functions_shouldnt_crash_with_null_pointers(void)
+     cJSON_Delete(item);
+ }
+ 
++/* cJSON keeps the tail of every child list in the head's prev pointer, and
++ * add_item_to_array silently does nothing when that pointer is NULL. Sorting
++ * rebuilds the list, so it has to restore the tail or every later append is
++ * dropped, reported as success, and leaked. */
++static void sorting_should_keep_the_child_list_tail_pointer(void)
++{
++    cJSON *object = cJSON_Parse("{\"c\":3,\"a\":1,\"b\":2}");
++    cJSON *element = NULL;
++    cJSON *tail = NULL;
++    char *printed = NULL;
++
++    TEST_ASSERT_NOT_NULL(object);
++
++    cJSONUtils_SortObject(object);
++
++    for (element = object->child; element->next != NULL; element = element->next)
++    {
++        tail = element->next;
++    }
++    TEST_ASSERT_EQUAL_PTR_MESSAGE(tail, object->child->prev,
++        "the head's prev pointer must be the tail after sorting");
++
++    TEST_ASSERT_TRUE(cJSON_AddItemToObject(object, "z", cJSON_CreateNumber(26)));
++    printed = cJSON_PrintUnformatted(object);
++    TEST_ASSERT_EQUAL_STRING("{\"a\":1,\"b\":2,\"c\":3,\"z\":26}", printed);
++    free(printed);
++
++    cJSON_Delete(object);
++}
++
++/* The patch and merge-patch generators sort their inputs in place, so they
++ * corrupt the same invariant even though the caller never asked for a sort. */
++static void generating_patches_should_keep_the_child_list_tail_pointer(void)
++{
++    cJSON *from = cJSON_Parse("{\"c\":3,\"a\":1,\"b\":2}");
++    cJSON *to = cJSON_Parse("{\"c\":4,\"a\":1,\"b\":2}");
++    cJSON *patches = NULL;
++    char *printed = NULL;
++
++    TEST_ASSERT_NOT_NULL(from);
++    TEST_ASSERT_NOT_NULL(to);
++
++    patches = cJSONUtils_GeneratePatchesCaseSensitive(from, to);
++    TEST_ASSERT_NOT_NULL(patches);
++
++    TEST_ASSERT_NOT_NULL_MESSAGE(from->child->prev,
++        "generating patches must not clear the source's tail pointer");
++    TEST_ASSERT_TRUE(cJSON_AddItemToObject(from, "z", cJSON_CreateNumber(26)));
++    printed = cJSON_PrintUnformatted(from);
++    TEST_ASSERT_EQUAL_STRING("{\"a\":1,\"b\":2,\"c\":3,\"z\":26}", printed);
++    free(printed);
++
++    cJSON_Delete(patches);
++    cJSON_Delete(from);
++    cJSON_Delete(to);
++}
++
+ int main(void)
+ {
+     UNITY_BEGIN();
+ 
+     RUN_TEST(cjson_utils_functions_shouldnt_crash_with_null_pointers);
++    RUN_TEST(sorting_should_keep_the_child_list_tail_pointer);
++    RUN_TEST(generating_patches_should_keep_the_child_list_tail_pointer);
+ 
+     return UNITY_END();
+ }
+diff --git a/tests/parse_number.c b/tests/parse_number.c
+index defda4a..36dd276 100644
+--- a/tests/parse_number.c
++++ b/tests/parse_number.c
+@@ -115,11 +115,42 @@ static void parse_number_should_parse_big_numbers(void)
+     assert_parse_big_number("999999999999999999999999999999999999999999999991234567890.1234567");
+ }
+ 
++/* strtod accepts leading zeros and a trailing decimal point; JSON does not.
++ * cJSON consumes the longest valid number and leaves the rest to the caller,
++ * so the rejection shows up as an error at the enclosing container. */
++static void parse_number_should_reject_forms_json_does_not_allow(void)
++{
++    const char *invalid[] = {
++        "[01]", "[00]", "[-01]", "[1.]", "[.5]", "[+1]", "[-]",
++        "[1e]", "[e5]", "[--1]", "[1e+]", "[0x10]", "[1.2.3]"
++    };
++    const char *valid[] = {
++        "[0]", "[-0]", "[1]", "[-1]", "[1.5]", "[-1.5]", "[0.5]", "[1e5]",
++        "[1E5]", "[1e+5]", "[1e-5]", "[-1.5e-3]", "[0e0]", "[123456789]"
++    };
++    size_t i = 0;
++
++    for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++)
++    {
++        cJSON *parsed = cJSON_Parse(invalid[i]);
++        TEST_ASSERT_NULL_MESSAGE(parsed, invalid[i]);
++        cJSON_Delete(parsed);
++    }
++
++    for (i = 0; i < sizeof(valid) / sizeof(valid[0]); i++)
++    {
++        cJSON *parsed = cJSON_Parse(valid[i]);
++        TEST_ASSERT_NOT_NULL_MESSAGE(parsed, valid[i]);
++        cJSON_Delete(parsed);
++    }
++}
++
+ int CJSON_CDECL main(void)
+ {
+     /* initialize cJSON item */
+     memset(item, 0, sizeof(cJSON));
+     UNITY_BEGIN();
++    RUN_TEST(parse_number_should_reject_forms_json_does_not_allow);
+     RUN_TEST(parse_number_should_parse_zero);
+     RUN_TEST(parse_number_should_parse_negative_integers);
+     RUN_TEST(parse_number_should_parse_positive_integers);
