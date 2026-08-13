@@ -71,18 +71,18 @@ cd jeffy-loop
 > [!NOTE]
 > If PowerShell blocks the installer with "running scripts is disabled on this system", run it once with `powershell -ExecutionPolicy Bypass -File .\install.ps1` - the bypass applies to that single invocation only.
 
+The installer verifies the Claude Code CLI and `jq` (offering to install it via winget, Homebrew, or apt), copies the `/jeffy` and `/cancel-jeffy` skills - engine included - to `~/.claude/skills`, and registers the loop's hook in `~/.claude/settings.json`. Every step prints an [OK] or the exact fix.
+
+- **Re-run** - always safe: it skips what is installed, upgrades in place, and never duplicates the hook registration.
+- **Update** - see [Already installed? Upgrade in five steps](#already-installed-upgrade-in-five-steps) below.
+- **Uninstall** - delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy`, and remove the hook entry from `~/.claude/settings.json`.
+
 Then open Claude Code in the project you want to improve and type `/jeffy 10`.
 
 > [!TIP]
 > `/jeffy` is a slash command inside the Claude Code session, not a shell command.
 
 When that run ends, close the session and start a new one to run it again. That restart is doing real work, and [why is worth two minutes](#use-several-short-runs-not-one-long-one).
-
-The installer verifies the Claude Code CLI and `jq` (offering to install it via winget, Homebrew, or apt), copies the `/jeffy` and `/cancel-jeffy` skills - engine included - to `~/.claude/skills`, and registers the loop's hook in `~/.claude/settings.json`. Every step prints an [OK] or the exact fix.
-
-- **Re-run** - always safe: it skips what is installed, upgrades in place, and never duplicates the hook registration.
-- **Update** - see [Already installed? Upgrade in five steps](#already-installed-upgrade-in-five-steps) below.
-- **Uninstall** - delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy`, and remove the hook entry from `~/.claude/settings.json`.
 
 ### Already installed? Upgrade in five steps
 
