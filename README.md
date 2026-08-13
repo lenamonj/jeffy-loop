@@ -74,7 +74,7 @@ cd jeffy-loop
 The installer verifies the Claude Code CLI and `jq` (offering to install it via winget, Homebrew, or apt), copies the `/jeffy` and `/cancel-jeffy` skills - engine included - to `~/.claude/skills`, and registers the loop's hook in `~/.claude/settings.json`. Every step prints an [OK] or the exact fix.
 
 - **Re-run** - always safe: it skips what is installed, upgrades in place, and never duplicates the hook registration.
-- **Update** - see [Already installed? Upgrade in five steps](#already-installed-upgrade-in-five-steps) below.
+- **Update** - see [Already installed? Upgrade](#already-installed-upgrade) below.
 - **Uninstall** - delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy`, and remove the hook entry from `~/.claude/settings.json`.
 
 Then open Claude Code in the project you want to improve and type `/jeffy 10`.
@@ -84,54 +84,24 @@ Then open Claude Code in the project you want to improve and type `/jeffy 10`.
 
 When that run ends, close the session and start a new one to run it again. That restart is doing real work, and [why is worth two minutes](#use-several-short-runs-not-one-long-one).
 
-### Already installed? Upgrade in five steps
+### Already installed? Upgrade
 
-Upgrading touches `~/.claude` and nothing else. No project you have run against is modified.
-
-**1. Check the version you are on.**
+Upgrading touches `~/.claude` and nothing else. No project you have run against is modified. Pull and re-install:
 
 ```bash
-grep -m1 JEFFY_VERSION ~/.claude/skills/jeffy/hooks/stop-hook.sh
-```
-
-Windows PowerShell:
-
-```powershell
-Select-String -Path $env:USERPROFILE\.claude\skills\jeffy\hooks\stop-hook.sh -Pattern '^JEFFY_VERSION' | Select-Object -First 1 -ExpandProperty Line
-```
-
-Both print `JEFFY_VERSION="x.y.z"`. Nothing to do if it already matches the newest release.
-
-**2. Let any run finish, or stop it with `/cancel-jeffy`.** The Stop hook is read from disk every time it fires, so replacing it underneath a live run changes that run's rules midway through it.
-
-**3. Pull the new version.**
-
-```bash
-cd jeffy-loop
-git pull
-```
-
-Deleted the clone since installing? Clone it again instead - the installer only ever reads from it:
-
-```bash
-git clone https://github.com/lenamonj/jeffy-loop.git
-cd jeffy-loop
-```
-
-**4. Re-run the installer.**
-
-```bash
+cd jeffy-loop && git pull
 ./install.sh        # Windows PowerShell: .\install.ps1
 ```
 
-It overwrites both skills in place, leaves a correct hook registration alone, and adds the 600s timeout to a registration made before v1.2.
+Then **start a new Claude Code session** - skills and hook registrations are read at session start, so an open session keeps running the old engine until you restart it. That is the whole upgrade. `/jeffy` names the engine version on its first line, so you will see the new one immediately.
 
-**5. Start a new Claude Code session.** Skills and hook registrations are read when a session starts, so a session you already have open keeps running the old engine until you restart it.
-
-To confirm the upgrade took, re-run the check from step 1, or just start a run - `/jeffy` names the engine version on its first line.
+Deleted the clone since installing? Clone it again and run the installer from there; it only ever reads from the clone.
 
 > [!NOTE]
-> The installer copies over the top and never deletes, so a file removed in a later version stays behind. If you want a clean slate, delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy` before step 4; step 4 puts both back.
+> Do not upgrade underneath a live run. The Stop hook is read from disk every time it fires, so replacing it mid-run changes that run's rules halfway through. Let the run finish, or stop it with `/cancel-jeffy` first.
+
+> [!NOTE]
+> The installer copies over the top and never deletes, so a file removed in a later version stays behind. For a clean slate, delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy` before re-running it - the installer puts both back.
 
 ## Usage
 
