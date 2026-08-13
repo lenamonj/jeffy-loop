@@ -1,0 +1,607 @@
+diff --git a/Guides/Chunked.md b/Guides/Chunked.md
+index 583f781..b00bd0d 100644
+--- a/Guides/Chunked.md
++++ b/Guides/Chunked.md
+@@ -45,7 +45,7 @@ let remaining = names.chunks(ofCount: 3)
+ // equivalent to [["David", "Kyle", "Karoy"], ["Nate"]]
+ ```
+ 
+-The `chunks(ofCount:)` method was previously [proposed](proposal) for inclusion
++The `chunks(ofCount:)` method was previously [proposed][proposal] for inclusion
+ in the standard library.
+ 
+ The `evenlyChunked(in:)` method takes a `count` parameter and divides the
+@@ -119,7 +119,7 @@ collection. The lazy methods are O(_n_) because the start index is pre-computed.
+ 
+ The operation performed by these methods is similar to other ways of breaking a 
+ collection up into subsequences. In particular, the predicate-based 
+-`split(where:)` method looks similar to `chunked(on:)`. You can draw a 
++`split(whereSeparator:)` method looks similar to `chunked(on:)`. You can draw a 
+ distinction between these different operations based on the resulting 
+ subsequences:
+ 
+diff --git a/Guides/Keyed.md b/Guides/Keyed.md
+index 33c5f08..0c55509 100644
+--- a/Guides/Keyed.md
++++ b/Guides/Keyed.md
+@@ -67,7 +67,7 @@ Calling `keyed(by:)` is an O(_n_) operation.
+ 
+ 1. Java's `toMap` is referring to `Map`/`HashMap`, their naming for Dictionaries and other associative collections. It's easy to confuse with the transformation function, `Sequence.map(_:)`.
+ 2. C#'s `toXXX()` naming doesn't suite Swift well, which tends to prefer `Foo.init` over `toFoo()` methods.
+-3. Ruby's `index_by` naming doesn't fit Swift well, where "index" is a specific term (e.g. the `associatedtype Index` on `Collection`). There is also a [`index(by:)`](Index.md) method in swift-algorithms, is specifically to do with matching elements up with their indices, and not any arbitrary derived value.
++3. Ruby's `index_by` naming doesn't fit Swift well, where "index" is a specific term (e.g. the `associatedtype Index` on `Collection`). There is also an [`indexed()`](Indexed.md) method in swift-algorithms, which is specifically to do with matching elements up with their indices, and not any arbitrary derived value.
+ 
+ #### Alternative names
+ 
+diff --git a/Guides/README.md b/Guides/README.md
+index d489488..d51cdeb 100644
+--- a/Guides/README.md
++++ b/Guides/README.md
+@@ -30,7 +30,8 @@ These guides describe the design and intention behind the APIs included in the `
+ - [`randomStableSample(count:)`, `randomStableSample(count:using:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/RandomSampling.md): Randomly selects a specific number of elements from a collection, preserving their original relative order.
+ - [`striding(by:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Stride.md): Returns every nth element of a collection.
+ - [`suffix(while:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Suffix.md): Returns the suffix of a collection where all element pass a given predicate.
+-- [`trimmingPrefix(while:)`, `trimmingSuffix(while)`, `trimming(while:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Trim.md): Returns a slice by trimming elements from a collection's start, end, or both. The mutating `trim...` methods trim a collection in place.
++- [`trimmingPrefix(while:)`, `trimmingSuffix(while:)`, `trimming(while:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Trim.md): Returns a slice by trimming elements from a collection's start, end, or both. The mutating `trim...` methods trim a collection in place.
++- [`endOfPrefix(while:)`, `startOfSuffix(while:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Trim.md): The bounds of the prefix or suffix of elements that satisfy a predicate, as indices rather than as a slice.
+ - [`uniqued()`, `uniqued(on:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Unique.md): The unique elements of a collection, preserving their order.
+ - [`minAndMax()`, `minAndMax(by:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/MinMax.md): Returns the smallest and largest elements of a sequence.
+ 
+@@ -41,13 +42,13 @@ These guides describe the design and intention behind the APIs included in the `
+ #### Other useful operations
+ 
+ - [`adjacentPairs()`](https://github.com/apple/swift-algorithms/blob/main/Guides/AdjacentPairs.md): Lazily iterates over tuples of adjacent elements.
+-- [`chunked(by:)`, `chunked(on:)`, `chunks(ofCount:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Chunked.md): Eager and lazy operations that break a collection into chunks based on either a binary predicate or when the result of a projection changes or chunks of a given count.
++- [`chunked(by:)`, `chunked(on:)`, `chunks(ofCount:)`, `evenlyChunked(in:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Chunked.md): Eager and lazy operations that break a collection into chunks based on either a binary predicate, or when the result of a projection changes, or chunks of a given count, or a given number of evenly sized chunks.
+ - [`firstNonNil(_:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/FirstNonNil.md): Returns the first non-`nil` result from transforming a sequence's elements.
+ - [`grouped(by:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Grouped.md): Group up elements using the given closure, returning a Dictionary of those groups, keyed by the results of the closure.
+ - [`indexed()`](https://github.com/apple/swift-algorithms/blob/main/Guides/Indexed.md): Iterate over tuples of a collection's indices and elements. 
+ - [`interspersed(with:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Intersperse.md): Place a value between every two elements of a sequence.
+-- [`keyed(by:)`, `keyed(by:resolvingConflictsBy:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Keyed.md): Returns a Dictionary that associates elements of a sequence with the keys returned by the given closure.
++- [`keyed(by:)`, `keyed(by:resolvingConflictsWith:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Keyed.md): Returns a Dictionary that associates elements of a sequence with the keys returned by the given closure.
+ - [`partitioningIndex(where:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Partition.md): Returns the starting index of the partition of a collection that matches a predicate.
+ - [`reductions(_:)`, `reductions(_:_:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Reductions.md): Returns all the intermediate states of reducing the elements of a sequence or collection.
+-- [`split(maxSplits:omittingEmptySubsequences:whereSeparator)`, `split(separator:maxSplits:omittingEmptySubsequences)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Split.md): Lazy versions of the Standard Library's eager operations that split sequences and collections into subsequences separated by the specified separator element.
++- [`split(maxSplits:omittingEmptySubsequences:whereSeparator:)`, `split(separator:maxSplits:omittingEmptySubsequences:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Split.md): Lazy versions of the Standard Library's eager operations that split sequences and collections into subsequences separated by the specified separator element.
+ - [`windows(ofCount:)`](https://github.com/apple/swift-algorithms/blob/main/Guides/Windows.md): Breaks a collection into overlapping subsequences where elements are slices from the original collection.
+diff --git a/Guides/Stride.md b/Guides/Stride.md
+index 7eb9e7f..8bce63d 100644
+--- a/Guides/Stride.md
++++ b/Guides/Stride.md
+@@ -42,7 +42,7 @@ the fastest way possible. See the related
+ information.
+ 
+ A careful thought was given to the composition of these strides by giving a 
+-custom implementation to `index(_:offsetBy:limitedBy)` which multiplies the 
++custom implementation to `index(_:offsetBy:limitedBy:)` which multiplies the 
+ offset by the stride amount. 
+ 
+ ```swift
+diff --git a/Sources/Algorithms/Chunked.swift b/Sources/Algorithms/Chunked.swift
+index 74f774b..645b98d 100644
+--- a/Sources/Algorithms/Chunked.swift
++++ b/Sources/Algorithms/Chunked.swift
+@@ -796,12 +796,12 @@ extension Collection {
+   ///         print(chunk)
+   ///     }
+   ///     // [1, 2, 3]
+-  ///     // [4, 5, 5]
++  ///     // [4, 5, 6]
+   ///     // [7, 8, 9]
+   ///     // [10]
+   ///
+   /// - Parameter count: The desired size of each chunk.
+-  /// - Returns: A collection of consescutive, non-overlapping subseqeunces of
++  /// - Returns: A collection of consecutive, non-overlapping subsequences of
+   ///   this collection, where each subsequence (except possibly the last) has
+   ///   the length `count`.
+   ///
+diff --git a/Sources/Algorithms/Combinations.swift b/Sources/Algorithms/Combinations.swift
+index 0bfcbff..a1bbbee 100644
+--- a/Sources/Algorithms/Combinations.swift
++++ b/Sources/Algorithms/Combinations.swift
+@@ -57,29 +57,55 @@ public struct CombinationsSequence<Base: Collection> {
+   }
+   
+   /// The total number of combinations.
++  ///
++  /// - Note: A total that cannot be represented by an `Int` is a runtime
++  ///   error, as it is elsewhere in Swift's integer arithmetic; this property
++  ///   never reports such a total as a negative or truncated value.
+   @inlinable
+   public var count: Int {
+     guard let k = self.kRange else { return 0 }
+     let n = baseCount
+-    if k == 0 ..< (n + 1) {
++
++    // The number of subsets of an `n`-element set is `2 ** n`, but `1 << n`
++    // stops being that number at `n == Int.bitWidth - 1`: the shift overflows
++    // and yields `Int.min`, then zero, rather than trapping. Sizes at or past
++    // that point fall through to the summation below, where an unrepresentable
++    // total is a trap instead of a wrong answer.
++    if k == 0 ..< (n + 1), n < Int.bitWidth - 1 {
+       return 1 << n
+     }
+-    
++
++    /// The number of `k`-element subsets of an `n`-element set.
++    ///
++    /// Accumulates the running product `C(n - m + i, i)`, which is a whole
++    /// number at every step, and takes each quotient through
++    /// `dividingFullWidth` so the intermediate product is carried at twice the
++    /// width of `Int`. The recurrence `n * binomial(n - 1, k - 1) / k` cannot
++    /// do that: its intermediate is `k` times the answer, so it overflows for
++    /// results that fit comfortably, `C(62, 31)` among them.
+     func binomial(n: Int, k: Int) -> Int {
+-      switch k {
+-      case n, 0: return 1
+-      case n...: return 0
+-      case (n / 2 + 1)...: return binomial(n: n, k: n - k)
+-      default: return n * binomial(n: n - 1, k: k - 1) / k
++      guard k >= 0, k <= n else { return 0 }
++      let m = Swift.min(k, n - k)
++      var result = 1
++      var i = 1
++      while i <= m {
++        result = i.dividingFullWidth(
++          result.multipliedFullWidth(by: n - m + i)
++        ).quotient
++        i += 1
+       }
++      return result
+     }
+-    
++
+     return k.map {
+       binomial(n: n, k: $0)
+     }.reduce(0, +)
+   }
+ 
+   /// The total number of combinations.
++  ///
++  /// - Note: A total that cannot be represented by an `Int` is a runtime
++  ///   error, as it is for ``count``.
+   @inlinable
+   public var underestimatedCount: Int { count }
+ }
+diff --git a/Sources/Algorithms/Intersperse.swift b/Sources/Algorithms/Intersperse.swift
+index 706c4ea..8251da2 100644
+--- a/Sources/Algorithms/Intersperse.swift
++++ b/Sources/Algorithms/Intersperse.swift
+@@ -652,9 +652,9 @@ extension LazySequenceProtocol {
+   /// Each separator is produced by a closure that is given access to the
+   /// two elements in the original sequence right before and after it.
+   ///
+-  ///     let strings = [1, 2, 2].interspersedMap(String.init,
++  ///     let strings = [1, 2, 2].lazy.interspersedMap(String.init,
+   ///         with: { $0 == $1 ? " == " : " != " })
+-  ///     print(strings.joined()) // "1 != 2 == 2"
++  ///     print(strings.joined(separator: "")) // "1 != 2 == 2"
+   ///
+   @usableFromInline
+   internal func interspersedMap<Result>(
+diff --git a/Sources/Algorithms/MinMax.swift b/Sources/Algorithms/MinMax.swift
+index ea6b5a7..45b5ffa 100644
+--- a/Sources/Algorithms/MinMax.swift
++++ b/Sources/Algorithms/MinMax.swift
+@@ -219,6 +219,28 @@ extension Sequence where Element: Comparable {
+ }
+ 
+ extension Collection {
++  /// Returns every element of this collection ordered by the given predicate,
++  /// with elements the predicate treats as equal left in their original
++  /// relative order.
++  ///
++  /// The standard library's `sorted(by:)` explicitly does not promise to be
++  /// stable, so `min(count:)` and `max(count:)` cannot reach their documented
++  /// ordering of equal elements through it. Pairing each element with its index
++  /// and breaking ties on that index makes the ordering a property of this
++  /// code rather than of whichever sort the standard library happens to ship.
++  ///
++  /// - Complexity: O(*n* log *n*), where *n* is the length of this collection.
++  @inlinable
++  internal func _stablySorted(
++    by areInIncreasingOrder: (Element, Element) throws -> Bool
++  ) rethrows -> [Element] {
++    try indexed().sorted { lhs, rhs in
++      if try areInIncreasingOrder(lhs.element, rhs.element) { return true }
++      if try areInIncreasingOrder(rhs.element, lhs.element) { return false }
++      return lhs.index < rhs.index
++    }.map { $0.element }
++  }
++
+   /// Returns the smallest elements of this collection, as sorted by the given
+   /// predicate.
+   ///
+@@ -267,7 +289,8 @@ extension Collection {
+     // If we're attempting to prefix more than 10% of the collection, it's
+     // faster to sort everything.
+     guard prefixCount < (self.count / 10) else {
+-      return Array(try sorted(by: areInIncreasingOrder).prefix(prefixCount))
++      return Array(
++        try _stablySorted(by: areInIncreasingOrder).prefix(prefixCount))
+     }
+     
+     return try _minImplementation(count: count, sortedBy: areInIncreasingOrder)
+@@ -321,7 +344,8 @@ extension Collection {
+     // If we're attempting to prefix more than 10% of the collection, it's
+     // faster to sort everything.
+     guard suffixCount < (self.count / 10) else {
+-      return Array(try sorted(by: areInIncreasingOrder).suffix(suffixCount))
++      return Array(
++        try _stablySorted(by: areInIncreasingOrder).suffix(suffixCount))
+     }
+ 
+     return try _maxImplementation(count: count, sortedBy: areInIncreasingOrder)
+@@ -361,7 +385,7 @@ extension Collection where Element: Comparable {
+   /// largest values:
+   ///
+   ///     let numbers = [7, 1, 6, 2, 8, 3, 9]
+-  ///     let smallestThree = numbers.max(count: 3)
++  ///     let largestThree = numbers.max(count: 3)
+   ///     // [7, 8, 9]
+   ///
+   /// If you need to sort a collection but only need to access its largest
+diff --git a/Sources/Algorithms/Permutations.swift b/Sources/Algorithms/Permutations.swift
+index 5b985cb..a43679d 100644
+--- a/Sources/Algorithms/Permutations.swift
++++ b/Sources/Algorithms/Permutations.swift
+@@ -524,12 +524,12 @@ extension Collection where Element: Hashable {
+   /// elements by position, and can include permutations with equal elements
+   /// in each permutation:
+   ///
+-  ///     for perm in numbers.permutations(ofCount: 2)
++  ///     for perm in numbers.permutations(ofCount: 2) {
+   ///         print(perm)
+   ///     }
+   ///     // [1, 1]
+-  ///     // [1, 1]
+   ///     // [1, 2]
++  ///     // [1, 1]
+   ///     // [1, 2]
+   ///     // [2, 1]
+   ///     // [2, 1]
+diff --git a/Sources/Algorithms/RandomSample.swift b/Sources/Algorithms/RandomSample.swift
+index 4ec863d..5624a20 100644
+--- a/Sources/Algorithms/RandomSample.swift
++++ b/Sources/Algorithms/RandomSample.swift
+@@ -86,7 +86,7 @@ extension Collection {
+   /// Randomly selects the specified number of elements from this collection,
+   /// maintaining their relative order.
+   ///
+-  /// This method is equivalent to calling `randomStableSample(k:using:)`,
++  /// This method is equivalent to calling `randomStableSample(count:using:)`,
+   /// passing in the system's default random generator.
+   ///
+   /// - Parameter k: The number of elements to randomly select.
+@@ -177,7 +177,7 @@ extension Collection {
+   
+   /// Randomly selects the specified number of elements from this collection.
+   ///
+-  /// This method is equivalent to calling `randomSample(k:using:)`, passing in
++  /// This method is equivalent to calling `randomSample(count:using:)`, passing in
+   /// the system's default random generator.
+   ///
+   /// - Parameter k: The number of elements to randomly select.
+@@ -247,7 +247,7 @@ extension Sequence {
+   
+   /// Randomly selects the specified number of elements from this sequence.
+   ///
+-  /// This method is equivalent to calling `randomSample(k:using:)`, passing in
++  /// This method is equivalent to calling `randomSample(count:using:)`, passing in
+   /// the system's default random generator.
+   ///
+   /// - Parameter k: The number of elements to randomly select.
+diff --git a/Sources/Algorithms/Reductions.swift b/Sources/Algorithms/Reductions.swift
+index d45ca0e..3be4f15 100644
+--- a/Sources/Algorithms/Reductions.swift
++++ b/Sources/Algorithms/Reductions.swift
+@@ -50,7 +50,7 @@ extension LazySequenceProtocol {
+   /// providing the initial value followed by these results as a sequence.
+   ///
+   /// ```
+-  /// let runningTotal = [1, 2, 3, 4].lazy.reductions(into: 0, +)
++  /// let runningTotal = [1, 2, 3, 4].lazy.reductions(into: 0, +=)
+   /// print(Array(runningTotal))
+   ///
+   /// // prints [0, 1, 3, 6, 10]
+@@ -128,7 +128,7 @@ extension Sequence {
+   /// providing the initial value followed by these results as a sequence.
+   ///
+   /// ```
+-  /// let runningTotal = [1, 2, 3, 4].reductions(into: 0, +)
++  /// let runningTotal = [1, 2, 3, 4].reductions(into: 0, +=)
+   /// print(runningTotal)
+   ///
+   /// // prints [0, 1, 3, 6, 10]
+diff --git a/Sources/Algorithms/Rotate.swift b/Sources/Algorithms/Rotate.swift
+index 4d0fa0c..835b031 100644
+--- a/Sources/Algorithms/Rotate.swift
++++ b/Sources/Algorithms/Rotate.swift
+@@ -115,10 +115,10 @@ extension MutableCollection {
+   /// Rotates the elements within the given subrange so that the element at the
+   /// specified index becomes the start of the subrange.
+   ///
+-  /// Rotating a collection is equivalent to breaking the collection into two
+-  /// sections at the index `newStart`, and then swapping those two sections.
+-  /// In this example, the `numbers` array is rotated so that the element at
+-  /// index `3` (`40`) is first:
++  /// Rotating a subrange is equivalent to breaking it into two sections at the
++  /// index `newStart`, and then swapping those two sections. In this example,
++  /// the first four elements of the `numbers` array are rotated so that the
++  /// element at index `2` (`30`) is first:
+   ///
+   ///     var numbers = [10, 20, 30, 40, 50, 60, 70, 80]
+   ///     let oldStart = numbers.rotate(subrange: 0..<4, toStartAt: 2)
+@@ -222,10 +222,10 @@ extension MutableCollection where Self: BidirectionalCollection {
+   /// Rotates the elements within the given subrange so that the element at the
+   /// specified index becomes the start of the subrange.
+   ///
+-  /// Rotating a collection is equivalent to breaking the collection into two
+-  /// sections at the index `newStart`, and then swapping those two sections.
+-  /// In this example, the `numbers` array is rotated so that the element at
+-  /// index `3` (`40`) is first:
++  /// Rotating a subrange is equivalent to breaking it into two sections at the
++  /// index `newStart`, and then swapping those two sections. In this example,
++  /// the first four elements of the `numbers` array are rotated so that the
++  /// element at index `2` (`30`) is first:
+   ///
+   ///     var numbers = [10, 20, 30, 40, 50, 60, 70, 80]
+   ///     let oldStart = numbers.rotate(subrange: 0..<4, toStartAt: 2)
+diff --git a/Sources/Algorithms/Split.swift b/Sources/Algorithms/Split.swift
+index 81c8cb0..e9e7002 100644
+--- a/Sources/Algorithms/Split.swift
++++ b/Sources/Algorithms/Split.swift
+@@ -18,8 +18,8 @@
+ ///
+ /// - Note: This type is the result of
+ ///
+-///     x.split(maxSplits:omittingEmptySubsequences:whereSeparator)
+-///     x.split(separator:maxSplits:omittingEmptySubsequences)
++///     x.split(maxSplits:omittingEmptySubsequences:whereSeparator:)
++///     x.split(separator:maxSplits:omittingEmptySubsequences:)
+ ///
+ ///   where `x` conforms to `LazySequenceProtocol`.
+ public struct SplitSequence<Base: Sequence> {
+@@ -342,8 +342,8 @@ extension LazySequenceProtocol where Element: Equatable {
+ ///
+ /// - Note: This type is the result of
+ ///
+-///     x.split(maxSplits:omittingEmptySubsequences:whereSeparator)
+-///     x.split(separator:maxSplits:omittingEmptySubsequences)
++///     x.split(maxSplits:omittingEmptySubsequences:whereSeparator:)
++///     x.split(separator:maxSplits:omittingEmptySubsequences:)
+ ///
+ ///   where `x` conforms to `LazySequenceProtocol` and `Collection`.
+ public struct SplitCollection<Base: Collection> {
+@@ -598,7 +598,7 @@ extension LazySequenceProtocol where Self: Collection, Elements: Collection {
+   ///     }
+   ///     // Prints
+   ///     // BLANCHE:
+-  ///     // I don't want realism. I want magic!
++  ///     //   I don't want realism. I want magic!
+   ///
+   /// The final example passes `false` for the `omittingEmptySubsequences`
+   /// parameter, so the returned array contains empty strings where spaces
+@@ -697,7 +697,7 @@ extension LazySequenceProtocol
+   ///     }
+   ///     // Prints
+   ///     // BLANCHE:
+-  ///     // I don't want realism. I want magic!
++  ///     //   I don't want realism. I want magic!
+   ///
+   /// The final example passes `false` for the `omittingEmptySubsequences`
+   /// parameter, so the returned array contains empty strings where spaces
+diff --git a/Sources/Algorithms/Trim.swift b/Sources/Algorithms/Trim.swift
+index c3318c3..7589cdc 100644
+--- a/Sources/Algorithms/Trim.swift
++++ b/Sources/Algorithms/Trim.swift
+@@ -7,6 +7,7 @@
+ //
+ // See https://swift.org/LICENSE.txt for license information
+ //
++//===----------------------------------------------------------------------===//
+ 
+ //===----------------------------------------------------------------------===//
+ // trimmingPrefix(while:)
+@@ -47,7 +48,7 @@ extension Collection where Self: RangeReplaceableCollection {
+   /// This example uses `trimPrefix(while:)` to remove the white space at the
+   /// beginning of the string:
+   ///
+-  ///     let myString = "  hello, world  "
++  ///     var myString = "  hello, world  "
+   ///     myString.trimPrefix(while: \.isWhitespace)
+   ///     print(myString) // "hello, world  "
+   ///
+@@ -73,11 +74,11 @@ extension Collection where Self == Self.SubSequence {
+   /// This example uses `trimPrefix(while:)` to remove the white space at the
+   /// beginning of the string:
+   ///
+-  ///     let myString = "  hello, world  "
++  ///     var myString = "  hello, world  "
+   ///     myString.trimPrefix(while: \.isWhitespace)
+   ///     print(myString) // "hello, world  "
+   ///
+-  /// - Parameters predicate: A closure which determines if the element should
++  /// - Parameter predicate: A closure which determines if the element should
+   ///   be removed from the string.
+   ///
+   /// - Complexity: O(*n*), where *n* is the length of this collection.
+@@ -148,9 +149,9 @@ extension BidirectionalCollection where Self: RangeReplaceableCollection {
+   /// start and at the end of it which satisfy the given predicate.
+   ///
+   /// This example uses `trim(while:)` to remove the white space at the
+-  /// beginning of the string:
++  /// beginning and end of the string:
+   ///
+-  ///     let myString = "  hello, world  "
++  ///     var myString = "  hello, world  "
+   ///     myString.trim(while: \.isWhitespace)
+   ///     print(myString) // "hello, world"
+   ///
+@@ -172,9 +173,9 @@ extension BidirectionalCollection where Self: RangeReplaceableCollection {
+   /// of it which satisfy the given predicate.
+   ///
+   /// This example uses `trimSuffix(while:)` to remove the white space at the
+-  /// beginning of the string:
++  /// end of the string:
+   ///
+-  ///     let myString = "  hello, world  "
++  ///     var myString = "  hello, world  "
+   ///     myString.trimSuffix(while: \.isWhitespace)
+   ///     print(myString) // "  hello, world"
+   ///
+@@ -198,9 +199,9 @@ extension BidirectionalCollection where Self == Self.SubSequence {
+   /// start and at the end of it which satisfy the given predicate.
+   ///
+   /// This example uses `trim(while:)` to remove the white space at the
+-  /// beginning of the string:
++  /// beginning and end of the string:
+   ///
+-  ///     let myString = "  hello, world  "
++  ///     var myString = "  hello, world  "
+   ///     myString.trim(while: \.isWhitespace)
+   ///     print(myString) // "hello, world"
+   ///
+@@ -220,9 +221,9 @@ extension BidirectionalCollection where Self == Self.SubSequence {
+   /// of it which satisfy the given predicate.
+   ///
+   /// This example uses `trimSuffix(while:)` to remove the white space at the
+-  /// beginning of the string:
++  /// end of the string:
+   ///
+-  ///     let myString = "  hello, world  "
++  ///     var myString = "  hello, world  "
+   ///     myString.trimSuffix(while: \.isWhitespace)
+   ///     print(myString) // "  hello, world"
+   ///
+diff --git a/Sources/Algorithms/Unique.swift b/Sources/Algorithms/Unique.swift
+index 074f8d0..83c174b 100644
+--- a/Sources/Algorithms/Unique.swift
++++ b/Sources/Algorithms/Unique.swift
+@@ -81,7 +81,7 @@ extension Sequence where Element: Hashable {
+   ///     // Prints '["dog", "pig", "cat", "ox"]'
+   ///
+   /// - Returns: A sequence with only the unique elements of this sequence.
+-  ///  .
++  ///
+   /// - Complexity: O(1).
+   @inlinable
+   public func uniqued() -> UniquedSequence<Self, Element> {
+diff --git a/Sources/Algorithms/Windows.swift b/Sources/Algorithms/Windows.swift
+index bee7b86..bfbea33 100644
+--- a/Sources/Algorithms/Windows.swift
++++ b/Sources/Algorithms/Windows.swift
+@@ -26,7 +26,7 @@ extension Collection {
+   ///     // "Hello"
+   ///     // "ello,"
+   ///     // "llo, "
+-  ///     // "lo, W"
++  ///     // "lo, w"
+   ///     // ...
+   ///     // "orld!"
+   ///
+@@ -58,7 +58,7 @@ public struct WindowsOfCountCollection<Base: Collection> {
+ 
+   @inlinable
+   internal init(base: Base, windowSize: Int) {
+-    precondition(windowSize > 0, "Windows size must be greater than zero")
++    precondition(windowSize > 0, "Window size must be greater than zero")
+     self.base = base
+     self.windowSize = windowSize
+     self.endOfFirstWindow =
+diff --git a/Tests/SwiftAlgorithmsTests/ReductionsTests.swift b/Tests/SwiftAlgorithmsTests/ReductionsTests.swift
+index 76322d3..23e51b9 100644
+--- a/Tests/SwiftAlgorithmsTests/ReductionsTests.swift
++++ b/Tests/SwiftAlgorithmsTests/ReductionsTests.swift
+@@ -91,4 +91,90 @@ final class ReductionsTests: XCTestCase {
+     validator.validate((0..<1).lazy.reductions(+), expectedCount: 1)
+     validator.validate((0..<4).lazy.reductions(+), expectedCount: 4)
+   }
++
++  // MARK: - Deprecated scan
++
++  // The six `scan` entry points are deprecated shims that forward to the
++  // matching `reductions` overload. Each is pinned both to a known answer and
++  // to the overload it forwards to, so a shim wired to the wrong one fails
++  // here rather than shipping a wrong result under a deprecation warning.
++  // The test methods carry `@available(*, deprecated)` so that calling
++  // deprecated API from them does not warn.
++
++  @available(*, deprecated)
++  func testDeprecatedScanEager() {
++    XCTAssertEqual([1, 2, 3, 4].scan(0, +), [0, 1, 3, 6, 10])
++    XCTAssertEqual([1, 2, 3, 4].scan(0, +), [1, 2, 3, 4].reductions(0, +))
++    XCTAssertEqual([1, 2, 3, 4].scan(10, +), [10, 11, 13, 16, 20])
++    XCTAssertEqual([1, 2, 3, 4].scan(1, *), [1, 1, 2, 6, 24])
++    XCTAssertEqual([1].scan(0, +), [0, 1])
++    XCTAssertEqual(EmptyCollection<Int>().scan(7, +), [7])
++
++    XCTAssertNoThrow(try [].scan(0) { _, _ in throw TestError() })
++    XCTAssertThrowsError(try [1].scan(0) { _, _ in throw TestError() })
++  }
++
++  @available(*, deprecated)
++  func testDeprecatedScanIntoEager() {
++    XCTAssertEqual([1, 2, 3, 4].scan(into: 0, +=), [0, 1, 3, 6, 10])
++    XCTAssertEqual([1, 2, 3, 4].scan(into: 0, +=), [1, 2, 3, 4].reductions(into: 0, +=))
++    XCTAssertEqual([1, 2, 3, 4].scan(into: 100, +=), [100, 101, 103, 106, 110])
++    XCTAssertEqual([1].scan(into: 0, +=), [0, 1])
++    XCTAssertEqual(EmptyCollection<Int>().scan(into: 7, +=), [7])
++
++    XCTAssertThrowsError(
++      try [1].scan(into: 0) { (_: inout Int, _: Int) in throw TestError() })
++  }
++
++  @available(*, deprecated)
++  func testDeprecatedScanInclusiveEager() {
++    XCTAssertEqual([1, 2, 3, 4].scan(+), [1, 3, 6, 10])
++    XCTAssertEqual([1, 2, 3, 4].scan(+), [1, 2, 3, 4].reductions(+))
++    XCTAssertEqual([1, 2, 3, 4].scan(*), [1, 2, 6, 24])
++    XCTAssertEqual([1].scan(+), [1])
++    XCTAssertEqual(EmptyCollection<Int>().scan(+), [])
++
++    XCTAssertNoThrow(try [1].scan { _, _ in throw TestError() })
++    XCTAssertThrowsError(try [1, 1].scan { _, _ in throw TestError() })
++  }
++
++  @available(*, deprecated)
++  func testDeprecatedScanLazy() {
++    XCTAssertEqualCollections([1, 2, 3, 4].lazy.scan(0, +), [0, 1, 3, 6, 10])
++    XCTAssertEqualCollections(
++      [1, 2, 3, 4].lazy.scan(0, +), [1, 2, 3, 4].lazy.reductions(0, +))
++    XCTAssertEqualCollections([1, 2, 3, 4].lazy.scan(100, +), [100, 101, 103, 106, 110])
++    XCTAssertEqualCollections([1, 2, 3, 4].lazy.scan(1, *), [1, 1, 2, 6, 24])
++    XCTAssertEqualCollections([1].lazy.scan(0, +), [0, 1])
++    XCTAssertEqualCollections(EmptyCollection<Int>().lazy.scan(0, +), [0])
++
++    XCTAssertEqualSequences((1...).prefix(4).lazy.scan(0, +), [0, 1, 3, 6, 10])
++    XCTAssertLazySequence([1].lazy.scan(0, +))
++    XCTAssertLazyCollection([1].lazy.scan(0, +))
++  }
++
++  @available(*, deprecated)
++  func testDeprecatedScanIntoLazy() {
++    XCTAssertEqualCollections([1, 2, 3, 4].lazy.scan(into: 0, +=), [0, 1, 3, 6, 10])
++    XCTAssertEqualCollections(
++      [1, 2, 3, 4].lazy.scan(into: 0, +=), [1, 2, 3, 4].lazy.reductions(into: 0, +=))
++    XCTAssertEqualCollections([1, 2, 3, 4].lazy.scan(into: 5, +=), [5, 6, 8, 11, 15])
++    XCTAssertEqualCollections([1].lazy.scan(into: 0, +=), [0, 1])
++    XCTAssertEqualCollections(EmptyCollection<Int>().lazy.scan(into: 7, +=), [7])
++
++    XCTAssertLazySequence([1].lazy.scan(into: 0, +=))
++  }
++
++  @available(*, deprecated)
++  func testDeprecatedScanInclusiveLazy() {
++    XCTAssertEqualCollections([1, 2, 3, 4].lazy.scan(+), [1, 3, 6, 10])
++    XCTAssertEqualCollections([1, 2, 3, 4].lazy.scan(+), [1, 2, 3, 4].lazy.reductions(+))
++    XCTAssertEqualCollections([1, 2, 3, 4].lazy.scan(*), [1, 2, 6, 24])
++    XCTAssertEqualCollections([1].lazy.scan(+), [1])
++    XCTAssertEqualCollections(EmptyCollection<Int>().lazy.scan(+), [])
++
++    XCTAssertEqualSequences((1...).prefix(4).lazy.scan(+), [1, 3, 6, 10])
++    XCTAssertLazySequence([1].lazy.scan(+))
++    XCTAssertLazyCollection([1].lazy.scan(+))
++  }
+ }
