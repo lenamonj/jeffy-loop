@@ -1,0 +1,1358 @@
+diff --git a/.github/workflows/ubuntu.yml b/.github/workflows/ubuntu.yml
+index d087591..7b696c0 100644
+--- a/.github/workflows/ubuntu.yml
++++ b/.github/workflows/ubuntu.yml
+@@ -85,3 +85,22 @@ jobs:
+     - name: Bazel Test
+       working-directory: test
+       run: bazelisk test //... --config=ci
++
++  module:
++    name: "C++20 module (g++-15)"
++    runs-on: ubuntu-24.04
++    steps:
++    - uses: actions/checkout@v6
++
++    - name: Install toolchain
++      run: |
++        sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
++        sudo apt update
++        sudo apt install g++-15 ninja-build -y
++
++    - name: Build and test the module interface
++      run: |
++        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++-15 \
++          -DMAGIC_ENUM_OPT_BUILD_MODULE=ON -DMAGIC_ENUM_OPT_BUILD_TESTS=OFF -DMAGIC_ENUM_OPT_BUILD_EXAMPLES=OFF
++        cmake --build build -j 4
++        ctest --test-dir build --output-on-failure
+diff --git a/.gitignore b/.gitignore
+index 3e67509..36efd9d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -54,3 +54,4 @@ _deps
+ ### Bazel build artifacts ###
+ /bazel-*
+ /test/bazel-*
++.claude/jeffy-loop.local.md
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ffcd192..e4e8600 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -23,6 +23,9 @@ endif()
+ 
+ option(MAGIC_ENUM_OPT_BUILD_EXAMPLES "Build magic_enum examples" ${IS_TOPLEVEL_PROJECT})
+ option(MAGIC_ENUM_OPT_BUILD_TESTS "Build and perform magic_enum tests" ${IS_TOPLEVEL_PROJECT})
++option(MAGIC_ENUM_OPT_BUILD_MODULE "Build and test the C++20 module interface. Needs CMake 3.28+ and a
++generator with C++20 module support (Ninja or Visual Studio)." NO
++)
+ option(MAGIC_ENUM_OPT_INSTALL "Generate and install magic_enum target" ${IS_TOPLEVEL_PROJECT})
+ option(MAGIC_ENUM_OPT_INSTALL_PACKAGE_XML "Include package.xml when installing"
+        ${MAGIC_ENUM_OPT_INSTALL}
+@@ -58,6 +61,11 @@ if(MAGIC_ENUM_OPT_BUILD_TESTS)
+   add_subdirectory(test)
+ endif()
+ 
++if(MAGIC_ENUM_OPT_BUILD_MODULE)
++  enable_testing()
++  add_subdirectory(module)
++endif()
++
+ if(MAGIC_ENUM_OPT_INSTALL)
+   list(APPEND CMAKE_MODULE_PATH "${ADDITIONAL_MODULES_DIR}/GenPkgConfig")
+   include(GenPkgConfig)
+diff --git a/doc/limitations.md b/doc/limitations.md
+index 94940b7..2ba6963 100644
+--- a/doc/limitations.md
++++ b/doc/limitations.md
+@@ -129,6 +129,25 @@ enum Number {
+ // magic_enum::enum_name(Number::ONE) -> ""
+ ```
+ 
++## C++20 Module
++
++* `module/magic_enum.cppm` exports magic_enum's own names. It does not make the standard library's operators reachable, because the standard headers it consumes are in its global module fragment and entities there are not exported. A translation unit that only does `import magic_enum;` therefore gets the types magic_enum returns without the free operators those types rely on, and code that looks correct fails to compile:
++
++  ```cpp
++  import magic_enum;
++  enum class Color { RED, GREEN, BLUE };
++
++  // error: no match for 'operator!=' (operand types are
++  // 'std::basic_string_view<char>' and 'const char [5]')
++  bool blue = magic_enum::enum_name(Color::BLUE) != "BLUE";
++  ```
++
++* Include the standard headers for the types you use before the import - `<optional>`, `<string>` and `<string_view>` cover the whole API. This is not compiler-specific: it reproduces on GCC 15.2 and Clang 17. Dropping either `<optional>` or `<string>` from a consumer that compares an `enum_fuse` result and an `enum_flags_name` result breaks that consumer's build on GCC 15.2, one error each.
++
++* Put the includes before the `import`, not after: GCC reports redefinitions across the module's global module fragment when a standard header is included after it.
++
++* `module/magic_enum.cppm` builds only under a generator with C++20 module support. CMake refuses it under Unix Makefiles, so configure with `-G Ninja` and `-DMAGIC_ENUM_OPT_BUILD_MODULE=ON`, which needs CMake 3.28 or newer.
++
+ ## Other Compiler Issues
+ 
+ * If you hit a message like this:
+diff --git a/doc/reference.md b/doc/reference.md
+index 074f002..354cc78 100644
+--- a/doc/reference.md
++++ b/doc/reference.md
+@@ -16,6 +16,8 @@
+ * [`enum_fuse` returns a bijective mix of enum values.](#enum_fuse)
+ * [`enum_switch` allows runtime enum value transformation to constexpr context.](#enum_switch)
+ * [`enum_for_each` calls a function with all enum constexpr value.](#enum_for_each)
++* [`enum_next_value` moves along the enum value sequence.](#enum_next_value)
++* [`enum_constant` carries an enum value as a type.](#enum_constant)
+ * [`enum_flags_*` functions for flags.](#enum_flags)
+ * [`is_unscoped_enum` checks whether type is an Unscoped enumeration.](#is_unscoped_enum)
+ * [`is_scoped_enum` checks whether type is an Scoped enumeration.](#is_scoped_enum)
+@@ -24,8 +26,10 @@
+ * [`istream_operators` istream operators for enums.](#istream_operators)
+ * [`bitwise_operators` bitwise operators for enums.](#bitwise_operators)
+ * [`containers::array` array container for enums.](#containersarray)
++* [`containers::to_array` builds a containers::array from a plain array or a pack.](#containersto_array)
+ * [`containers::bitset` bitset container for enums.](#containersbitset)
+ * [`containers::set` set container for enums.](#containersset)
++* [Configuration macros](#configuration-macros)
+ 
+ ## Synopsis
+ 
+@@ -65,6 +69,26 @@
+   ```
+ 
+ 
++## Configuration macros
++
++Define these before including any magic_enum header, or in the header named by `MAGIC_ENUM_CONFIG_FILE`. None of them is defined by default.
++
++* `MAGIC_ENUM_ENABLE_HASH` - resolves `enum_cast`, `enum_index` and `enum_contains` for sparse and flags enums through a compile-time switch built from a hash of the reflected values, instead of a linear scan, and also selects that implementation for `enum_switch`. Results are unchanged; only the generated code differs.
++
++* `MAGIC_ENUM_ENABLE_HASH_SWITCH` - selects the same compile-time switch for `enum_switch` alone, leaving `enum_cast`, `enum_index` and `enum_contains` on the linear scan. Defining `MAGIC_ENUM_ENABLE_HASH` already implies it.
++
++* `MAGIC_ENUM_NO_ASSERT` - makes magic_enum's internal assertion macro expand to nothing. By default it expands to `assert` from `<cassert>`, so a violated precondition aborts in a build with assertions live; with this macro the call returns the function's fallback value instead. Defining `MAGIC_ENUM_ASSERT` yourself routes the same checks to your own handler.
++
++* `MAGIC_ENUM_NO_CHECK_REFLECTED_ENUM` - skips the check that an enum has at least one value inside the reflected range. Without it, such an enum fails to compile with "magic_enum requires enum implementation and valid max and min"; with it the code compiles and the functions return empty results.
++
++* `MAGIC_ENUM_NO_CHECK_SUPPORT` - compiles on a compiler magic_enum does not support instead of failing with a compilation error. See the Synopsis above and [limitations](limitations.md).
++
++* `MAGIC_ENUM_NO_EXCEPTION` - makes the container error paths call `std::abort()` rather than throw. By default, and when the compiler has exceptions enabled, `containers::bitset` and `containers::set` throw `std::out_of_range` and `std::invalid_argument`; the macro is implied when the compiler has exceptions disabled.
++
++* `MAGIC_ENUM_USE_STD_MODULE` - stops the headers from including the standard headers they use, so a translation unit that has done `import std;` supplies them instead. `module/magic_enum.cppm` uses it for that configuration; see the C++20 Module section of [limitations](limitations.md).
++
++The remaining configuration macros are documented where the feature they affect is: `MAGIC_ENUM_RANGE_MIN` and `MAGIC_ENUM_RANGE_MAX` under [`customize::enum_range`](#customizeenum_range), `MAGIC_ENUM_USING_ALIAS_OPTIONAL`, `MAGIC_ENUM_USING_ALIAS_STRING`, `MAGIC_ENUM_USING_ALIAS_STRING_VIEW` and `MAGIC_ENUM_CONFIG_FILE` in the Synopsis above, `MAGIC_ENUM_NO_TYPESAFE_ENUM_FUSE` under [`enum_fuse`](#enum_fuse), and `MAGIC_ENUM_SUPPORTED` in the Synopsis and in [limitations](limitations.md).
++
+ ## `enum_cast`
+ 
+ ```cpp
+@@ -498,6 +522,68 @@ constexpr auto enum_for_each(Lambda&& lambda);
+   });
+   ```
+ 
++## `enum_next_value`
++
++```cpp
++template <typename E>
++constexpr optional<E> enum_next_value(E value, std::ptrdiff_t n = 1) noexcept;
++
++template <typename E>
++constexpr E enum_next_value_circular(E value, std::ptrdiff_t n = 1) noexcept;
++
++template <typename E>
++constexpr optional<E> enum_prev_value(E value, std::ptrdiff_t n = 1) noexcept;
++
++template <typename E>
++constexpr E enum_prev_value_circular(E value, std::ptrdiff_t n = 1) noexcept;
++```
++
++* Defined in header `<magic_enum/magic_enum_utility.hpp>`
++
++* Moves `n` positions along the enum value sequence, the same order [`enum_values`](#enum_values) returns.
++
++* `n` may be negative, which moves the other way.
++
++* The non-circular forms return an empty `optional` when the destination falls outside the sequence, or when `value` is not an enumerator. The circular forms wrap around instead, and require `value` to be an enumerator.
++
++* Examples
++
++  ```cpp
++  magic_enum::enum_next_value(Color::RED);              // -> optional, value() is Color::BLUE
++  magic_enum::enum_next_value(Color::RED, 2);           // -> optional, value() is Color::GREEN
++  magic_enum::enum_next_value(Color::GREEN);            // -> empty optional, GREEN is last
++  magic_enum::enum_next_value(Color::GREEN, -1);        // -> optional, value() is Color::BLUE
++
++  magic_enum::enum_prev_value(Color::GREEN);            // -> optional, value() is Color::BLUE
++  magic_enum::enum_prev_value(Color::RED);              // -> empty optional, RED is first
++
++  magic_enum::enum_next_value_circular(Color::GREEN);   // -> Color::RED
++  magic_enum::enum_prev_value_circular(Color::RED);     // -> Color::GREEN
++  ```
++
++## `enum_constant`
++
++```cpp
++template <auto V>
++using enum_constant = std::integral_constant<decltype(V), V>;
++```
++
++* Defined in header `<magic_enum/magic_enum.hpp>`
++
++* Carries an enum value as a type, so it can be used where a compile-time constant is needed. It is what [`enum_switch`](#enum_switch) and [`enum_for_each`](#enum_for_each) pass to the lambda, which is why those lambdas take `auto` and read the value back out.
++
++* Examples
++
++  ```cpp
++  magic_enum::enum_constant<Color::GREEN>::value        // -> Color::GREEN
++  magic_enum::enum_constant<Color::GREEN>{}()           // -> Color::GREEN
++
++  magic_enum::enum_for_each<Color>([](auto val) {
++    // val is magic_enum::enum_constant<...>
++    constexpr Color c = decltype(val)::value;
++  });
++  ```
++
+ ## `enum_flags`
+ 
+ ```cpp
+@@ -800,17 +886,17 @@ struct array {
+ 
+   constexpr const_iterator cend() const noexcept;
+ 
+-  constexpr iterator rbegin() noexcept;
++  constexpr reverse_iterator rbegin() noexcept;
+ 
+-  constexpr const_iterator rbegin() const noexcept;
++  constexpr const_reverse_iterator rbegin() const noexcept;
+ 
+-  constexpr const_iterator crbegin() const noexcept;
++  constexpr const_reverse_iterator crbegin() const noexcept;
+ 
+-  constexpr iterator rend() noexcept;
++  constexpr reverse_iterator rend() noexcept;
+ 
+-  constexpr const_iterator rend() const noexcept;
++  constexpr const_reverse_iterator rend() const noexcept;
+ 
+-  constexpr const_iterator crend() const noexcept;
++  constexpr const_reverse_iterator crend() const noexcept;
+ 
+   constexpr bool empty() const noexcept;
+ 
+@@ -854,6 +940,35 @@ struct array {
+   magic_enum::containers::get<Color::BLUE>(color_rgb_array) // -> RGB{0, 0, 255}
+   ```
+ 
++## `containers::to_array`
++
++```cpp
++template <typename E, typename T, std::size_t N>
++constexpr array<E, T> to_array(T (&a)[N]);
++
++template <typename E, typename T, std::size_t N>
++constexpr array<E, T> to_array(T (&&a)[N]);
++
++template <typename E, typename... Ts>
++constexpr array<E, std::common_type_t<Ts...>> make_array(Ts&&... ts);
++```
++
++* Defined in header `<magic_enum/magic_enum_containers.hpp>`
++
++* Builds a [`containers::array`](#containersarray) from a plain array or from a pack of values. The elements are taken in the order [`enum_values`](#enum_values) returns, so the first element belongs to the first enumerator.
++
++* Both require exactly `enum_count<E>()` elements; a different count does not compile.
++
++* Examples
++
++  ```cpp
++  constexpr auto by_array = magic_enum::containers::to_array<Color>({1, 2, 3});
++  // by_array[Color::RED] -> 1, by_array[Color::BLUE] -> 2, by_array[Color::GREEN] -> 3
++
++  constexpr auto by_pack = magic_enum::containers::make_array<Color>(1, 2, 3);
++  // decltype(by_pack) is magic_enum::containers::array<Color, int>
++  ```
++
+ ## `containers::bitset`
+ 
+ ```cpp
+diff --git a/example/example_nonascii_name.cpp b/example/example_nonascii_name.cpp
+index b974180..865ad13 100644
+--- a/example/example_nonascii_name.cpp
++++ b/example/example_nonascii_name.cpp
+@@ -29,14 +29,14 @@ enum class Language : int {
+     日本語 = 10,
+     한국어 = 20,
+     English = 30,
+-    😃 = 40,
++    Ελληνικά = 40,
+ };
+ 
+ int main() {
+   std::cout << magic_enum::enum_name(Language::日本語) << std::endl; // Japanese
+   std::cout << magic_enum::enum_name(Language::한국어) << std::endl; // Korean
+   std::cout << magic_enum::enum_name(Language::English) << std::endl; // English
+-  std::cout << magic_enum::enum_name(Language::😃) << std::endl; // Emoji
++  std::cout << magic_enum::enum_name(Language::Ελληνικά) << std::endl; // Greek
+ 
+   std::cout << std::boolalpha;
+   std::cout << (magic_enum::enum_cast<Language>("日本語").value() == Language::日本語) << std::endl; // true
+diff --git a/include/magic_enum/magic_enum_containers.hpp b/include/magic_enum/magic_enum_containers.hpp
+index 31e2598..03b7c3c 100644
+--- a/include/magic_enum/magic_enum_containers.hpp
++++ b/include/magic_enum/magic_enum_containers.hpp
+@@ -400,17 +400,17 @@ struct array {
+ 
+   [[nodiscard]] constexpr const_iterator cend() const noexcept { return a.cend(); }
+ 
+-  [[nodiscard]] constexpr iterator rbegin() noexcept { return a.rbegin(); }
++  [[nodiscard]] constexpr reverse_iterator rbegin() noexcept { return a.rbegin(); }
+ 
+-  [[nodiscard]] constexpr const_iterator rbegin() const noexcept { return a.rbegin(); }
++  [[nodiscard]] constexpr const_reverse_iterator rbegin() const noexcept { return a.rbegin(); }
+ 
+-  [[nodiscard]] constexpr const_iterator crbegin() const noexcept { return a.crbegin(); }
++  [[nodiscard]] constexpr const_reverse_iterator crbegin() const noexcept { return a.crbegin(); }
+ 
+-  [[nodiscard]] constexpr iterator rend() noexcept { return a.rend(); }
++  [[nodiscard]] constexpr reverse_iterator rend() noexcept { return a.rend(); }
+ 
+-  [[nodiscard]] constexpr const_iterator rend() const noexcept { return a.rend(); }
++  [[nodiscard]] constexpr const_reverse_iterator rend() const noexcept { return a.rend(); }
+ 
+-  [[nodiscard]] constexpr const_iterator crend() const noexcept { return a.crend(); }
++  [[nodiscard]] constexpr const_reverse_iterator crend() const noexcept { return a.crend(); }
+ 
+   [[nodiscard]] constexpr bool empty() const noexcept { return a.empty(); }
+ 
+@@ -590,7 +590,7 @@ class bitset {
+   }
+ 
+   constexpr explicit bitset(detail::raw_access_t, const char_type* str, std::size_t n = ~std::size_t{0}, char_type zero = static_cast<char_type>('0'), char_type one = static_cast<char_type>('1'))
+-      : bitset(string_view{str, (std::min)(std::char_traits<char_type>::length(str), n)}, 0, n, zero, one) {}
++      : bitset(raw_access, string_view{str, (std::min)(std::char_traits<char_type>::length(str), n)}, 0, n, zero, one) {}
+ 
+   constexpr bitset(std::initializer_list<E> starters) : a{{}} {
+     if constexpr (magic_enum::detail::subtype_v<E> == magic_enum::detail::enum_subtype::flags) {
+@@ -618,7 +618,7 @@ class bitset {
+   }
+ 
+   template <typename Cmp = std::equal_to<>>
+-  constexpr explicit bitset(string_view sv, Cmp&& cmp = {}, char_type sep = static_cast<char_type>('|')) {
++  constexpr explicit bitset(string_view sv, Cmp&& cmp = {}, char_type sep = static_cast<char_type>('|')) : a{{}} {
+     for (std::size_t to = 0; (to = magic_enum::detail::find(sv, sep)) != string_view::npos; sv.remove_prefix(to + 1)) {
+       if (auto v = enum_cast<E>(sv.substr(0, to), cmp)) {
+         set(*v);
+@@ -662,14 +662,17 @@ class bitset {
+     }
+ 
+     for (std::size_t i = 0; i < base_type_count - (not_interested > 0); ++i) {
+-      auto check = ~a[i];
+-      if (check) {
++      // Compare against the saturated word: ~a[i] would promote a narrow base_type to int,
++      // so a full uint8_t word yields -256 rather than 0 and every word looks incomplete.
++      if (a[i] != static_cast<base_type>(~base_type{0})) {
+         return false;
+       }
+     }
+ 
+     if constexpr (not_interested > 0) {
+       return a[base_type_count - 1] == last_value_max;
++    } else {
++      return true;
+     }
+   }
+ 
+@@ -864,6 +867,36 @@ class set {
+   using reverse_iterator = std::reverse_iterator<iterator>;
+   using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+ 
++ private:
++  // Split a flags value into the enumerators it names. A combined value such as
++  // read|exec is not itself a reflected enumerator, so insert would reject it.
++  // A bit no enumerator names is an error rather than something to drop, which
++  // is what containers::bitset does with the same input.
++  constexpr void insert_flags(E value) {
++    auto u = enum_underlying(value);
++    for (E v : enum_values<E>()) {
++      if (const auto ul = enum_underlying(v); (ul & u) != 0) {
++        u &= ~ul;
++        insert(v);
++      }
++    }
++    if (u != 0) {
++      MAGIC_ENUM_THROW(std::invalid_argument("magic_enum::containers::set::constructor: Unrecognized enum value in flag"));
++    }
++  }
++
++  // What a braced list of enumerators means. For a flags enum every element may
++  // carry several bits, exactly as containers::bitset treats its own list.
++  constexpr void insert_listed(E value) {
++    if constexpr (magic_enum::detail::subtype_v<E> == magic_enum::detail::enum_subtype::flags) {
++      insert_flags(value);
++    } else {
++      insert(value);
++    }
++  }
++
++ public:
++
+   constexpr set() noexcept = default;
+ 
+   template <typename InputIt>
+@@ -875,17 +908,12 @@ class set {
+ 
+   constexpr set(std::initializer_list<E> ilist) {
+     for (auto e : ilist) {
+-      insert(e);
++      insert_listed(e);
+     }
+   }
+   template <typename V, std::enable_if_t<std::is_same_v<V, E> && magic_enum::detail::subtype_v<V> == magic_enum::detail::enum_subtype::flags, int> = 0>
+   constexpr explicit set(V starter) {
+-    auto u = enum_underlying(starter);
+-    for (E v : enum_values<E>()) {
+-      if ((enum_underlying(v) & u) != 0) {
+-        insert(v);
+-      }
+-    }
++    insert_flags(starter);
+   }
+ 
+   constexpr set(const set&) noexcept = default;
+@@ -894,9 +922,13 @@ class set {
+   constexpr set& operator=(const set&) noexcept = default;
+   constexpr set& operator=(set&&) noexcept = default;
+   constexpr set& operator=(std::initializer_list<E> ilist) {
++    // Assignment replaces the contents, as std::set does; inserting alone would
++    // merge the list into whatever was already here.
++    clear();
+     for (auto e : ilist) {
+-      insert(e);
++      insert_listed(e);
+     }
++    return *this;
+   }
+ 
+   constexpr const_iterator begin() const noexcept {
+@@ -911,9 +943,11 @@ class set {
+ 
+   constexpr const_iterator cend() const noexcept { return end(); }
+ 
+-  constexpr const_reverse_iterator rbegin() const noexcept { return {end()}; }
++  // std::reverse_iterator's converting constructor is explicit, so these cannot
++  // be written as copy-list-initialized returns.
++  constexpr const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator{end()}; }
+ 
+-  constexpr const_reverse_iterator rend() const noexcept { return {begin()}; }
++  constexpr const_reverse_iterator rend() const noexcept { return const_reverse_iterator{begin()}; }
+ 
+   constexpr const_reverse_iterator crbegin() const noexcept { return rbegin(); }
+ 
+diff --git a/include/magic_enum/magic_enum_format.hpp b/include/magic_enum/magic_enum_format.hpp
+index 6b6ed61..0c55996 100644
+--- a/include/magic_enum/magic_enum_format.hpp
++++ b/include/magic_enum/magic_enum_format.hpp
+@@ -35,6 +35,16 @@
+ #include "magic_enum.hpp"
+ #include "magic_enum_flags.hpp"
+ 
++// <version> is what publishes __cpp_lib_format, and the specialization below is
++// guarded on it. Without this include the macro is only visible when something
++// else already pulled it in, so the formatter silently disappears whenever this
++// header is the first one a translation unit includes.
++#ifndef MAGIC_ENUM_USE_STD_MODULE
++#if __has_include(<version>)
++#  include <version>
++#endif
++#endif
++
+ namespace magic_enum::detail {
+ 
+ template <typename E, std::enable_if_t<std::is_enum_v<std::decay_t<E>>, int> = 0>
+diff --git a/module/CMakeLists.txt b/module/CMakeLists.txt
+new file mode 100644
+index 0000000..d677624
+--- /dev/null
++++ b/module/CMakeLists.txt
+@@ -0,0 +1,24 @@
++if(CMAKE_VERSION VERSION_LESS 3.28)
++  message(FATAL_ERROR "MAGIC_ENUM_OPT_BUILD_MODULE needs CMake 3.28 or newer for C++20 module support")
++endif()
++
++if((CMAKE_CXX_COMPILER_ID MATCHES "GNU") OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
++  set(OPTIONS -Wall -Wextra -Wshadow -pedantic-errors -Werror)
++elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
++  set(OPTIONS /W4 /WX)
++endif()
++
++add_library(magic_enum_module STATIC)
++target_sources(magic_enum_module PUBLIC FILE_SET CXX_MODULES FILES magic_enum.cppm)
++target_link_libraries(magic_enum_module PUBLIC magic_enum::magic_enum)
++target_compile_features(magic_enum_module PUBLIC cxx_std_20)
++target_compile_options(magic_enum_module PRIVATE ${OPTIONS})
++set_target_properties(magic_enum_module PROPERTIES CXX_EXTENSIONS OFF)
++
++add_executable(test_module test_module.cpp)
++target_link_libraries(test_module PRIVATE magic_enum_module)
++target_compile_options(test_module PRIVATE ${OPTIONS})
++# The importer has no CXX_MODULES file set of its own, so CMake would leave it
++# unscanned and the compiler would never see the module-consuming dialect flag.
++set_target_properties(test_module PROPERTIES CXX_EXTENSIONS OFF CXX_SCAN_FOR_MODULES ON)
++add_test(NAME test_module COMMAND test_module)
+diff --git a/module/magic_enum.cppm b/module/magic_enum.cppm
+index fd6db90..8e5e3d3 100644
+--- a/module/magic_enum.cppm
++++ b/module/magic_enum.cppm
+@@ -1,3 +1,8 @@
++// This module exports magic_enum's own names only. The standard headers below
++// sit in the global module fragment, so the operators of the types magic_enum
++// returns - optional, string, string_view - are not reachable to an importer.
++// A consumer includes <optional>, <string> and <string_view> itself, before the
++// import; see the C++20 Module section of doc/limitations.md.
+ module;
+ 
+ #include <version>
+@@ -37,7 +42,14 @@ extern "C++" {
+ 
+ export namespace magic_enum {
+ namespace customize {
++    using customize::adl_info;
++    using customize::adl_info_holder;
++    using customize::customize_t;
++    using customize::default_tag;
++    using customize::enum_name;
+     using customize::enum_range;
++    using customize::enum_type_name;
++    using customize::invalid_tag;
+ }
+ 
+ namespace iostream_operators {
+@@ -58,7 +70,17 @@ namespace bitwise_operators {
+ namespace containers {
+     using containers::array;
+     using containers::bitset;
++    using containers::comparator_indexing;
++    using containers::default_indexing;
++    using containers::get;
++    using containers::make_array;
++    using containers::name_greater;
++    using containers::name_greater_case_insensitive;
++    using containers::name_less;
++    using containers::name_less_case_insensitive;
++    using containers::raw_access;
+     using containers::set;
++    using containers::to_array;
+ }
+ 
+     using magic_enum::enum_name;
+@@ -74,16 +96,34 @@ namespace containers {
+     using magic_enum::enum_for_each;
+     using magic_enum::enum_contains;
+     using magic_enum::enum_index;
++    using magic_enum::enum_reflected;
++    using magic_enum::enum_underlying;
++    using magic_enum::enum_next_value;
++    using magic_enum::enum_next_value_circular;
++    using magic_enum::enum_prev_value;
++    using magic_enum::enum_prev_value_circular;
+     using magic_enum::enum_flags_name;
+     using magic_enum::enum_flags_contains;
+     using magic_enum::enum_flags_cast;
++    using magic_enum::enum_flags_test;
++    using magic_enum::enum_flags_test_any;
+     using magic_enum::enum_type_name;
++    using magic_enum::enum_constant;
+     using magic_enum::is_unscoped_enum;
+     using magic_enum::is_unscoped_enum_v;
+     using magic_enum::is_scoped_enum;
+     using magic_enum::is_scoped_enum_v;
++    using magic_enum::is_magic_enum_supported;
+     using magic_enum::underlying_type;
+     using magic_enum::underlying_type_t;
++    using magic_enum::Enum;
++    using magic_enum::as_common;
++    using magic_enum::as_flags;
++    using magic_enum::case_insensitive;
++    using magic_enum::char_type;
++    using magic_enum::optional;
++    using magic_enum::string;
++    using magic_enum::string_view;
+ }
+ 
+ #if defined(__cpp_lib_format)
+diff --git a/module/test_module.cpp b/module/test_module.cpp
+new file mode 100644
+index 0000000..2a2d73d
+--- /dev/null
++++ b/module/test_module.cpp
+@@ -0,0 +1,288 @@
++// Consumer of the C++20 module interface. It names every entity the export list
++// in magic_enum.cppm publishes, so a name dropped from that list fails this
++// build instead of rotting unnoticed, and it checks hand-computed answers so a
++// module that exports the names but reflects the wrong values fails too.
++
++// These includes are the requirement documented in the C++20 Module section of
++// doc/limitations.md, not incidental: the module does not make the standard
++// library's operators reachable, so a consumer that omits <optional> or
++// <string> cannot compare what magic_enum returns. They come before the import
++// because GCC reports redefinitions across the module's global module fragment
++// when a standard header is included after it.
++#include <cstdint>
++#include <cstdio>
++#include <optional>
++#include <sstream>
++#include <string>
++#include <string_view>
++#include <type_traits>
++
++import magic_enum;
++
++enum class Color : int { RED = -10, GREEN = 0, BLUE = 10 };
++enum Direction : int { LEFT = 1, RIGHT = 2 };
++enum class Perm : unsigned { read = 1, write = 2, exec = 4 };
++enum class Wide : int { LOW = -300, HIGH = 300 };
++enum class Mixed : unsigned { one = 1, two = 2, both = 3 };
++
++template <>
++struct magic_enum::customize::enum_range<Wide> {
++  static constexpr int min = -400;
++  static constexpr int max = 400;
++};
++
++static_assert(magic_enum::is_scoped_enum<Color>::value);
++static_assert(magic_enum::is_scoped_enum_v<Color>);
++static_assert(!magic_enum::is_scoped_enum_v<Direction>);
++static_assert(magic_enum::is_unscoped_enum<Direction>::value);
++static_assert(magic_enum::is_unscoped_enum_v<Direction>);
++static_assert(!magic_enum::is_unscoped_enum_v<Color>);
++static_assert(std::is_same_v<typename magic_enum::underlying_type<Color>::type, int>);
++static_assert(std::is_same_v<magic_enum::underlying_type_t<Perm>, unsigned>);
++static_assert(std::is_same_v<magic_enum::Enum<Color>, Color>);
++static_assert(std::is_same_v<magic_enum::char_type, char>);
++static_assert(std::is_same_v<magic_enum::string, std::string>);
++static_assert(std::is_same_v<magic_enum::string_view, std::string_view>);
++static_assert(std::is_same_v<magic_enum::optional<int>, std::optional<int>>);
++static_assert(magic_enum::enum_constant<Color::BLUE>::value == Color::BLUE);
++static_assert(magic_enum::is_magic_enum_supported);
++
++// Named only to keep the export list honest: these are index and comparator
++// policies a caller passes as a container template argument.
++using default_indexed = magic_enum::containers::default_indexing<Color>;
++using comparator_indexed = magic_enum::containers::comparator_indexing<>;
++using adl_defaults = magic_enum::customize::adl_info_holder<>;
++static_assert(adl_defaults::min == -128 && adl_defaults::max == 127 && !adl_defaults::is_flags);
++static_assert(std::is_same_v<decltype(magic_enum::customize::adl_info()), adl_defaults>);
++static_assert(std::is_same_v<magic_enum::containers::array<Color, int>::index_type, default_indexed>);
++
++static int failures = 0;
++
++#define CHECK(expr)                                                     \
++  do {                                                                  \
++    if (!(expr)) {                                                      \
++      std::printf("FAILED line %d: %s\n", __LINE__, #expr);             \
++      ++failures;                                                       \
++    }                                                                   \
++  } while (false)
++
++static void check_queries() {
++  CHECK(magic_enum::enum_type_name<Color>() == "Color");
++  CHECK(magic_enum::enum_count<Color>() == 3);
++  CHECK(magic_enum::enum_name(Color::GREEN) == "GREEN");
++  CHECK(magic_enum::enum_name<Color::BLUE>() == "BLUE");
++  CHECK(magic_enum::enum_names<Color>()[0] == "RED");
++  CHECK(magic_enum::enum_values<Color>()[2] == Color::BLUE);
++  CHECK(magic_enum::enum_value<Color>(1) == Color::GREEN);
++  CHECK(magic_enum::enum_entries<Color>()[1].first == Color::GREEN);
++  CHECK(magic_enum::enum_entries<Color>()[1].second == "GREEN");
++  CHECK(magic_enum::enum_integer(Color::BLUE) == 10);
++  CHECK(magic_enum::enum_index(Color::RED).value() == 0);
++  CHECK(magic_enum::enum_contains(Color::RED));
++  CHECK(!magic_enum::enum_contains<Color>(5));
++}
++
++static void check_cast() {
++  CHECK(magic_enum::enum_cast<Color>("BLUE").value() == Color::BLUE);
++  CHECK(magic_enum::enum_cast<Color>(0).value() == Color::GREEN);
++  CHECK(!magic_enum::enum_cast<Color>("PURPLE").has_value());
++  CHECK(!magic_enum::enum_cast<Color>(5).has_value());
++}
++
++static void check_customize() {
++  // Without the enum_range specialization above, both values sit outside the
++  // default -128..127 window and the count would be 0.
++  CHECK(magic_enum::enum_count<Wide>() == 2);
++  CHECK(magic_enum::enum_name(Wide::HIGH) == "HIGH");
++}
++
++static void check_utility() {
++  CHECK(magic_enum::enum_underlying(Color::BLUE) == 10);
++  CHECK(magic_enum::enum_reflected(Color::RED));
++  CHECK(magic_enum::enum_reflected<Color>(5));
++  CHECK(!magic_enum::enum_reflected<Color>(200));
++
++  CHECK(magic_enum::enum_next_value(Color::RED).value() == Color::GREEN);
++  CHECK(magic_enum::enum_next_value(Color::RED, 2).value() == Color::BLUE);
++  CHECK(!magic_enum::enum_next_value(Color::BLUE).has_value());
++  CHECK(magic_enum::enum_prev_value(Color::BLUE).value() == Color::GREEN);
++  CHECK(!magic_enum::enum_prev_value(Color::RED).has_value());
++  CHECK(magic_enum::enum_next_value_circular(Color::BLUE) == Color::RED);
++  CHECK(magic_enum::enum_prev_value_circular(Color::RED) == Color::BLUE);
++}
++
++static void check_customize_entities() {
++  CHECK(magic_enum::customize::enum_name(Color::RED) == magic_enum::customize::default_tag);
++  CHECK(magic_enum::customize::enum_type_name<Color>() == magic_enum::customize::default_tag);
++  CHECK(magic_enum::customize::invalid_tag != magic_enum::customize::default_tag);
++
++  const magic_enum::customize::customize_t named{"custom"};
++  CHECK(named.second == "custom");
++  CHECK(named != magic_enum::customize::default_tag);
++}
++
++static void check_case_insensitive() {
++  CHECK(magic_enum::enum_cast<Color>("red", magic_enum::case_insensitive).value() == Color::RED);
++  CHECK(!magic_enum::enum_cast<Color>("red").has_value());
++  CHECK(magic_enum::enum_contains<Color>("bLuE", magic_enum::case_insensitive));
++}
++
++static void check_subtype_tags() {
++  // Mixed::both is a combination, so the common reading counts it as an
++  // enumerator and the flags reading, which enumerates single bits, does not.
++  CHECK((magic_enum::enum_count<Mixed, magic_enum::as_common<>>()) == 3);
++  CHECK((magic_enum::enum_count<Mixed, magic_enum::as_flags<>>()) == 2);
++  CHECK(magic_enum::enum_name<magic_enum::as_common<>>(Mixed::both) == "both");
++  CHECK(magic_enum::enum_name<magic_enum::as_flags<>>(Mixed::both).empty());
++}
++
++static void check_switch_and_for_each() {
++  const auto doubled = magic_enum::enum_switch(
++      [](auto val) { return magic_enum::enum_integer(decltype(val)::value) * 2; }, Color::BLUE, 0);
++  CHECK(doubled == 20);
++
++  int sum = 0;
++  magic_enum::enum_for_each<Color>([&sum](auto val) { sum += magic_enum::enum_integer(decltype(val)::value); });
++  CHECK(sum == 0);
++}
++
++static void check_fuse() {
++  CHECK(magic_enum::enum_fuse(Color::RED, Color::BLUE).has_value());
++  CHECK(magic_enum::enum_fuse(Color::RED, Color::BLUE) != magic_enum::enum_fuse(Color::BLUE, Color::RED));
++  CHECK(magic_enum::enum_fuse(Color::RED, Color::BLUE) == magic_enum::enum_fuse(Color::RED, Color::BLUE));
++
++  // The result type is unique per argument pack, which is what stops two
++  // different fusions being compared by accident.
++  using cc = decltype(magic_enum::enum_fuse(Color::RED, Color::BLUE))::value_type;
++  using cd = decltype(magic_enum::enum_fuse(Color::RED, Direction::LEFT))::value_type;
++  static_assert(!std::is_same_v<cc, cd>);
++  static_assert(std::is_same_v<std::underlying_type_t<cc>, std::uintmax_t>);
++
++  switch (magic_enum::enum_fuse(Color::BLUE, Direction::RIGHT).value()) {
++    case magic_enum::enum_fuse(Color::RED, Direction::LEFT).value():
++      CHECK(false);
++      break;
++    case magic_enum::enum_fuse(Color::BLUE, Direction::RIGHT).value():
++      break;
++    default:
++      CHECK(false);
++      break;
++  }
++}
++
++static void check_flags() {
++  using namespace magic_enum::bitwise_operators;
++
++  const Perm rw = Perm::read | Perm::write;
++  CHECK(magic_enum::enum_integer(rw) == 3);
++  CHECK(magic_enum::enum_integer(rw & Perm::read) == 1);
++  CHECK(magic_enum::enum_integer(rw ^ Perm::read) == 2);
++  CHECK(magic_enum::enum_integer(~Perm::read) == ~1u);
++
++  Perm acc = Perm::read;
++  acc |= Perm::exec;
++  CHECK(magic_enum::enum_integer(acc) == 5);
++  acc &= rw;
++  CHECK(magic_enum::enum_integer(acc) == 1);
++  acc ^= Perm::write;
++  CHECK(magic_enum::enum_integer(acc) == 3);
++
++  CHECK(magic_enum::enum_flags_name(rw) == "read|write");
++  CHECK(magic_enum::enum_flags_contains(rw));
++  CHECK(!magic_enum::enum_flags_contains<Perm>(8u));
++  CHECK(magic_enum::enum_flags_cast<Perm>(5u).value() == (Perm::read | Perm::exec));
++  CHECK(magic_enum::enum_flags_cast<Perm>("read|exec").value() == (Perm::read | Perm::exec));
++
++  const Perm re = Perm::read | Perm::exec;
++  CHECK(magic_enum::enum_flags_test(re, Perm::read));
++  CHECK(!magic_enum::enum_flags_test(re, Perm::write));
++  CHECK(!magic_enum::enum_flags_test(re, static_cast<Perm>(0)));
++  CHECK(magic_enum::enum_flags_test_any(re, rw));
++  CHECK(!magic_enum::enum_flags_test_any(Perm::read, Perm::write));
++}
++
++static void check_containers_free() {
++  const auto from_array = magic_enum::containers::to_array<Color>({1, 2, 3});
++  CHECK(from_array[Color::RED] == 1);
++  CHECK(from_array[Color::BLUE] == 3);
++
++  auto made = magic_enum::containers::make_array<Color>(4, 5, 6);
++  CHECK(made[Color::GREEN] == 5);
++  CHECK(magic_enum::containers::get<0>(made) == 4);
++  CHECK(magic_enum::containers::get<Color::BLUE>(made) == 6);
++
++  // Names in value order are RED, GREEN, BLUE, so name order is BLUE, GREEN, RED.
++  CHECK(magic_enum::containers::name_less<Color>{}(Color::BLUE, Color::GREEN));
++  CHECK(!magic_enum::containers::name_less<Color>{}(Color::GREEN, Color::BLUE));
++  CHECK(magic_enum::containers::name_greater<Color>{}(Color::GREEN, Color::BLUE));
++  CHECK(magic_enum::containers::name_less_case_insensitive{}(Color::BLUE, Color::GREEN));
++  CHECK(magic_enum::containers::name_greater_case_insensitive{}(Color::GREEN, Color::BLUE));
++
++  magic_enum::containers::bitset<Color> bits;
++  bits.set(Color::RED);
++  bits.set(Color::BLUE);
++  CHECK(bits.to_string(magic_enum::containers::raw_access) == "101");
++}
++
++static void check_containers() {
++  magic_enum::containers::array<Color, int> arr{};
++  arr[Color::GREEN] = 7;
++  CHECK(arr.size() == 3);
++  CHECK(arr[Color::GREEN] == 7);
++  CHECK(arr[Color::RED] == 0);
++
++  magic_enum::containers::bitset<Color> bits;
++  bits.set(Color::RED);
++  bits.set(Color::BLUE);
++  CHECK(bits.count() == 2);
++  CHECK(bits.test(Color::RED));
++  CHECK(!bits.test(Color::GREEN));
++
++  magic_enum::containers::set<Color> items;
++  items.insert(Color::BLUE);
++  CHECK(items.size() == 1);
++  CHECK(items.count(Color::BLUE) == 1);
++  CHECK(items.count(Color::RED) == 0);
++}
++
++static void check_iostream() {
++  using namespace magic_enum::iostream_operators;
++
++  std::ostringstream out;
++  out << Color::BLUE;
++  CHECK(out.str() == "BLUE");
++
++  std::istringstream in{"GREEN"};
++  Color parsed{};
++  in >> parsed;
++  CHECK(!in.fail());
++  CHECK(parsed == Color::GREEN);
++
++  std::istringstream bad{"PURPLE"};
++  Color rejected{};
++  bad >> rejected;
++  CHECK(bad.fail());
++}
++
++int main() {
++  check_queries();
++  check_cast();
++  check_customize();
++  check_utility();
++  check_customize_entities();
++  check_case_insensitive();
++  check_subtype_tags();
++  check_switch_and_for_each();
++  check_fuse();
++  check_flags();
++  check_containers();
++  check_containers_free();
++  check_iostream();
++
++  if (failures == 0) {
++    std::printf("test_module: all checks passed\n");
++    return 0;
++  }
++  std::printf("test_module: %d check(s) failed\n", failures);
++  return 1;
++}
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index 4312d52..ddf3bf1 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -98,6 +98,7 @@ make_test(test.cpp test-cpp17 c++17)
+ make_test(test_flags.cpp test_flags-cpp17 c++17)
+ make_test(test_aliases.cpp test_aliases-cpp17 c++17)
+ make_test(test_containers.cpp test_containers-cpp17 c++17)
++make_test(test_containers_instantiation.cpp test_containers_instantiation-cpp17 c++17)
+ make_test(test_wchar_t.cpp test_wchar_t-cpp17 c++17)
+ 
+ if(MAGIC_ENUM_OPT_ENABLE_NONASCII)
+@@ -109,6 +110,7 @@ if(HAS_CPP20_FLAG)
+   make_test(test_flags.cpp test_flags-cpp20 c++20)
+   make_test(test_aliases.cpp test_aliases-cpp20 c++20)
+   make_test(test_containers.cpp test_containers-cpp20 c++20)
++  make_test(test_containers_instantiation.cpp test_containers_instantiation-cpp20 c++20)
+   make_test(test_wchar_t.cpp test_wchar_t-cpp20 c++20)
+   if(MAGIC_ENUM_OPT_ENABLE_NONASCII)
+     make_test(test_nonascii.cpp test_nonascii-cpp20 c++20)
+@@ -120,6 +122,7 @@ if(HAS_CPP23_FLAG)
+   make_test(test_flags.cpp test_flags-cpp23 c++23)
+   make_test(test_aliases.cpp test_aliases-cpp23 c++23)
+   make_test(test_containers.cpp test_containers-cpp23 c++23)
++  make_test(test_containers_instantiation.cpp test_containers_instantiation-cpp23 c++23)
+   make_test(test_wchar_t.cpp test_wchar_t-cpp23 c++23)
+   if(MAGIC_ENUM_OPT_ENABLE_NONASCII)
+     make_test(test_nonascii.cpp test_nonascii-cpp23 c++23)
+@@ -131,6 +134,7 @@ if(HAS_CPPLATEST_FLAG)
+   make_test(test_flags.cpp test_flags-cpplatest c++latest)
+   make_test(test_aliases.cpp test_aliases-cpplatest c++latest)
+   make_test(test_containers.cpp test_containers-cpplatest c++latest)
++  make_test(test_containers_instantiation.cpp test_containers_instantiation-cpplatest c++latest)
+   make_test(test_wchar_t.cpp test_wchar_t-cpplatest c++latest)
+   if(MAGIC_ENUM_OPT_ENABLE_NONASCII)
+     make_test(test_nonascii.cpp test_nonascii-cpplatest c++latest)
+diff --git a/test/test_containers_instantiation.cpp b/test/test_containers_instantiation.cpp
+new file mode 100644
+index 0000000..a4feb8d
+--- /dev/null
++++ b/test/test_containers_instantiation.cpp
+@@ -0,0 +1,189 @@
++// Licensed under the MIT License <http://opensource.org/licenses/MIT>.
++// SPDX-License-Identifier: MIT
++// Copyright (c) 2019 - 2024 Daniil Goncharov <neargye@gmail.com>.
++// Copyright (c) 2022 - 2023 Bela Schaum <schaumb@gmail.com>.
++//
++// Permission is hereby  granted, free of charge, to any  person obtaining a copy
++// of this software and associated  documentation files (the "Software"), to deal
++// in the Software  without restriction, including without  limitation the rights
++// to  use, copy,  modify, merge,  publish, distribute,  sublicense, and/or  sell
++// copies  of  the Software,  and  to  permit persons  to  whom  the Software  is
++// furnished to do so, subject to the following conditions:
++//
++// The above copyright notice and this permission notice shall be included in all
++// copies or substantial portions of the Software.
++//
++// THE SOFTWARE  IS PROVIDED "AS  IS", WITHOUT WARRANTY  OF ANY KIND,  EXPRESS OR
++// IMPLIED,  INCLUDING BUT  NOT  LIMITED TO  THE  WARRANTIES OF  MERCHANTABILITY,
++// FITNESS FOR  A PARTICULAR PURPOSE AND  NONINFRINGEMENT. IN NO EVENT  SHALL THE
++// AUTHORS  OR COPYRIGHT  HOLDERS  BE  LIABLE FOR  ANY  CLAIM,  DAMAGES OR  OTHER
++// LIABILITY, WHETHER IN AN ACTION OF  CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++// OUT OF OR IN CONNECTION WITH THE SOFTWARE  OR THE USE OR OTHER DEALINGS IN THE
++// SOFTWARE.
++
++#if defined(__clang__)
++#  pragma clang diagnostic push
++#elif defined(__GNUC__)
++#  pragma GCC diagnostic push
++#elif defined(_MSC_VER)
++#  pragma warning(push)
++#endif
++
++#define CATCH_CONFIG_MAIN
++#include <catch2/catch.hpp>
++
++#include <magic_enum/magic_enum_containers.hpp>
++
++#include <functional>
++#include <iterator>
++#include <stdexcept>
++#include <type_traits>
++
++enum class Color : int { red = -12, green = 7, blue = 15 };
++
++enum class Perm : unsigned { read = 1, write = 2, exec = 4 };
++
++template <>
++struct magic_enum::customize::enum_range<Perm> {
++  static constexpr bool is_flags = true;
++};
++
++// A member of a class template is only compiled when something names it, so a
++// member no test calls is a member no build checks. These explicit instantiations
++// compile every non-template member of each container, which is a compile-time
++// check with no runtime counterpart: several members once shipped with return
++// types nothing could convert to, a missing return statement and a delegating
++// constructor naming an overload that did not exist, and the suite stayed green
++// because nothing instantiated them. Keep these lines even if no test below uses
++// the member they cover.
++template class magic_enum::containers::array<Color, int>;
++template class magic_enum::containers::bitset<Color>;
++template class magic_enum::containers::set<Color>;
++template class magic_enum::containers::bitset<Perm>;
++template class magic_enum::containers::set<Perm>;
++
++TEST_CASE("containers_array_reverse_iteration") {
++  using arr_t = magic_enum::containers::array<Color, int>;
++
++  static_assert(std::is_same_v<decltype(std::declval<arr_t&>().rbegin()), arr_t::reverse_iterator>);
++  static_assert(std::is_same_v<decltype(std::declval<const arr_t&>().rbegin()), arr_t::const_reverse_iterator>);
++  static_assert(std::is_same_v<decltype(std::declval<const arr_t&>().crbegin()), arr_t::const_reverse_iterator>);
++  static_assert(std::is_same_v<decltype(std::declval<arr_t&>().rend()), arr_t::reverse_iterator>);
++  static_assert(std::is_same_v<decltype(std::declval<const arr_t&>().rend()), arr_t::const_reverse_iterator>);
++  static_assert(std::is_same_v<decltype(std::declval<const arr_t&>().crend()), arr_t::const_reverse_iterator>);
++
++  arr_t arr{{1, 2, 3}};
++  const arr_t& carr = arr;
++
++  int reversed = 0;
++  for (auto it = arr.rbegin(); it != arr.rend(); ++it) {
++    reversed = reversed * 10 + *it;
++  }
++  REQUIRE(reversed == 321);
++
++  int const_reversed = 0;
++  for (auto it = carr.crbegin(); it != carr.crend(); ++it) {
++    const_reversed = const_reversed * 10 + *it;
++  }
++  REQUIRE(const_reversed == 321);
++
++  REQUIRE(std::distance(arr.rbegin(), arr.rend()) == 3);
++  REQUIRE(arr.rend().base() == arr.begin());
++
++  *arr.rbegin() = 30;
++  REQUIRE(arr[Color::blue] == 30);
++}
++
++TEST_CASE("containers_set_list_assignment_replaces") {
++  magic_enum::containers::set<Color> s{Color::red, Color::green};
++  REQUIRE(s.size() == 2);
++
++  s = {Color::blue};
++  REQUIRE(s.size() == 1);
++  REQUIRE(s.contains(Color::blue));
++  REQUIRE_FALSE(s.contains(Color::red));
++
++  s = {};
++  REQUIRE(s.empty());
++}
++
++TEST_CASE("containers_set_reverse_iteration") {
++  magic_enum::containers::set<Color> s{Color::red, Color::blue};
++
++  std::string order;
++  for (auto it = s.rbegin(); it != s.rend(); ++it) {
++    order += magic_enum::enum_name(*it);
++    order += ',';
++  }
++  REQUIRE(order == "blue,red,");
++}
++
++TEST_CASE("containers_bitset_all_at_word_boundaries") {
++  // The base word type widens with the enumerator count, and the "leftover bits"
++  // branch is discarded when the count exactly fills a word - so a small enum
++  // never exercises the full-word path where all() does its work.
++  magic_enum::containers::bitset<Color> bs;
++  REQUIRE_FALSE(bs.all());
++  bs.set();
++  REQUIRE(bs.all());
++  REQUIRE(bs.count() == magic_enum::enum_count<Color>());
++  REQUIRE((~bs).count() == 0);
++}
++
++TEST_CASE("containers_bitset_raw_string_constructors") {
++  using bs_t = magic_enum::containers::bitset<Color>;
++  const auto raw = magic_enum::containers::raw_access;
++
++  REQUIRE(bs_t(raw, "101").to_string(raw) == "101");
++  REQUIRE(bs_t(raw, "101").to_string() == "red|blue");
++  REQUIRE(bs_t(raw, "111", 2).to_string() == "red|green");
++  REQUIRE(bs_t(raw, "bab", 3, 'a', 'b').to_string() == "red|blue");
++  REQUIRE(bs_t(raw, magic_enum::string_view{"XX010"}, 2).to_string() == "green");
++  REQUIRE(bs_t(raw, "101").to_ullong(raw) == 5);
++}
++
++TEST_CASE("containers_bitset_name_constructor_initializes_storage") {
++  // This constructor once had no member initializer, so the bits its names did
++  // not set were whatever the storage already held.
++  REQUIRE(magic_enum::containers::bitset<Color>{magic_enum::string_view{"green"}}.count() == 1);
++  REQUIRE(magic_enum::containers::bitset<Color>{magic_enum::string_view{"red|blue"}}.to_string(magic_enum::containers::raw_access) == "101");
++}
++
++TEST_CASE("containers_flags_construction_agrees_across_spellings") {
++  using flag_set_t = magic_enum::containers::set<Perm>;
++  const auto read_exec = static_cast<Perm>(5);
++
++  flag_set_t paren(read_exec);
++  flag_set_t braced{read_exec};
++  flag_set_t named{Perm::read, Perm::exec};
++  flag_set_t assigned;
++  assigned = {read_exec};
++
++  REQUIRE(paren.size() == 2);
++  REQUIRE(braced == paren);
++  REQUIRE(braced == named);
++  REQUIRE(braced == assigned);
++  REQUIRE(magic_enum::containers::bitset<Perm>{read_exec}.count() == 2);
++
++  // A plain enum is unaffected: a braced list still means one element each.
++  magic_enum::containers::set<Color> plain{Color::red, Color::blue};
++  REQUIRE(plain.size() == 2);
++}
++
++TEST_CASE("containers_flags_reject_unnamed_bits") {
++  // 8 names no enumerator; 9 is read plus an unnamed bit. Both containers must
++  // refuse rather than quietly drop the bit.
++  for (unsigned raw : {8u, 9u}) {
++    const auto bad = static_cast<Perm>(raw);
++    REQUIRE_THROWS_AS(magic_enum::containers::set<Perm>(bad), std::invalid_argument);
++    REQUIRE_THROWS_AS(magic_enum::containers::bitset<Perm>{bad}, std::invalid_argument);
++  }
++}
++
++#if defined(__clang__)
++#  pragma clang diagnostic pop
++#elif defined(__GNUC__)
++#  pragma GCC diagnostic pop
++#elif defined(_MSC_VER)
++#  pragma warning(pop)
++#endif
+diff --git a/test/test_nonascii.cpp b/test/test_nonascii.cpp
+index 3f10c00..01e4f81 100644
+--- a/test/test_nonascii.cpp
++++ b/test/test_nonascii.cpp
+@@ -36,13 +36,13 @@
+ #include <string_view>
+ #include <sstream>
+ 
+-enum class Language : int { 日本語 = 10, 한국어 = 20, English = 30, 😃 = 40, TVÅ = 50 };
++enum class Language : int { 日本語 = 10, 한국어 = 20, English = 30, Ελληνικά = 40, TVÅ = 50 };
+ 
+ enum class LanguageFlag : int {
+   日本語 = 1 << 1,
+   한국어 = 1 << 2,
+   English = 1 << 3,
+-  😃 = 1 << 4
++  Ελληνικά = 1 << 4
+ };
+ 
+ using namespace magic_enum;
+@@ -55,7 +55,7 @@ TEST_CASE("enum_cast") {
+       REQUIRE(enum_cast<Language&>("한국어").value() == Language::한국어);
+       REQUIRE(enum_cast<const Language>("English").value() == Language::English);
+       REQUIRE(lang.value() == Language::日本語);
+-      REQUIRE(enum_cast<Language>("😃").value() == Language::😃);
++      REQUIRE(enum_cast<Language>("Ελληνικά").value() == Language::Ελληνικά);
+       REQUIRE(enum_cast<Language>("TVÅ").value() == Language::TVÅ);
+       REQUIRE_FALSE(enum_cast<Language>("Französisch").has_value());
+   }
+@@ -65,7 +65,7 @@ TEST_CASE("enum_cast") {
+     REQUIRE(enum_cast<Language&>(20).value() == Language::한국어);
+     REQUIRE(enum_cast<const Language>(30).value() == Language::English);
+     REQUIRE(lang.value() == Language::日本語);
+-    REQUIRE(enum_cast<Language>(40).value() == Language::😃);
++    REQUIRE(enum_cast<Language>(40).value() == Language::Ελληνικά);
+     REQUIRE_FALSE(enum_cast<Language>(0).has_value());
+   }
+ }
+@@ -75,7 +75,7 @@ TEST_CASE("enum_integer") {
+     Language korean = Language::한국어;
+     REQUIRE(enum_integer<Language&>(korean) == 20);
+     REQUIRE(enum_integer<const Language>(Language::English) == 30);
+-    REQUIRE(enum_integer(Language::😃) == 40);
++    REQUIRE(enum_integer(Language::Ελληνικά) == 40);
+     REQUIRE(lang == 10);
+     REQUIRE(enum_integer(static_cast<Language>(0)) == 0);
+ }
+@@ -85,7 +85,7 @@ TEST_CASE("enum_index") {
+     Language korean = Language::한국어;
+     REQUIRE(enum_index<Language&>(korean) == 1);
+     REQUIRE(enum_index<const Language>(Language::English).value() == 2);
+-    REQUIRE(enum_index(Language::😃) == 3);
++    REQUIRE(enum_index(Language::Ελληνικά) == 3);
+     REQUIRE(lang.value() == 0);
+     REQUIRE_FALSE(enum_index(static_cast<Language>(0)).has_value());
+ }
+@@ -96,7 +96,7 @@ TEST_CASE("enum_contains") {
+     Language korean = Language::한국어;
+     REQUIRE(enum_contains<Language&>(korean));
+     REQUIRE(enum_contains<const Language>(Language::English));
+-    REQUIRE(enum_contains(Language::😃));
++    REQUIRE(enum_contains(Language::Ελληνικά));
+     REQUIRE(lang);
+   }
+ 
+@@ -104,7 +104,7 @@ TEST_CASE("enum_contains") {
+     constexpr auto lang = enum_integer(Language::日本語);
+     REQUIRE(enum_contains<Language&>(lang));
+     REQUIRE(enum_contains<const Language>(Language::한국어));
+-    REQUIRE(enum_contains<Language>(Language::😃));
++    REQUIRE(enum_contains<Language>(Language::Ελληνικά));
+     REQUIRE_FALSE(enum_contains<Language>(static_cast<Language>(0)));
+   }
+ 
+@@ -113,7 +113,7 @@ TEST_CASE("enum_contains") {
+     REQUIRE(enum_contains<Language&>("한국어"));
+     REQUIRE(enum_contains<Language>("English"));
+     REQUIRE(enum_contains<const Language>(lang));
+-    REQUIRE(enum_contains<Language>("😃"));
++    REQUIRE(enum_contains<Language>("Ελληνικά"));
+     REQUIRE_FALSE(enum_contains<Language>("None"));
+   }
+ }
+@@ -123,12 +123,12 @@ TEST_CASE("enum_value") {
+     REQUIRE(enum_value<Language&>(0) == Language::日本語);
+     REQUIRE(enum_value<const Language>(1) == Language::한국어);
+     REQUIRE(enum_value<Language>(2) == Language::English);
+-    REQUIRE(lang == Language::😃);
++    REQUIRE(lang == Language::Ελληνικά);
+ }
+ 
+ TEST_CASE("enum_values") {
+   constexpr auto& s7 = enum_values<const Language>();
+-  REQUIRE(s7 == std::array<Language, 5>{{Language::日本語, Language::한국어, Language::English, Language::😃, Language::TVÅ}});
++  REQUIRE(s7 == std::array<Language, 5>{{Language::日本語, Language::한국어, Language::English, Language::Ελληνικά, Language::TVÅ}});
+ }
+ 
+ TEST_CASE("enum_count") {
+@@ -144,7 +144,7 @@ TEST_CASE("enum_name") {
+     REQUIRE(enum_name<Language&>(lk) == "한국어");
+     REQUIRE(enum_name<const Language>(Language::English) == "English");
+     REQUIRE(lang_name == "日本語");
+-    REQUIRE(enum_name(Language::😃) == "😃");
++    REQUIRE(enum_name(Language::Ελληνικά) == "Ελληνικά");
+     REQUIRE(enum_name(Language::TVÅ) == "TVÅ");
+     REQUIRE(enum_name(static_cast<Language>(0)).empty());
+   }
+@@ -155,18 +155,18 @@ TEST_CASE("enum_name") {
+     REQUIRE(enum_name<Language::한국어>() == "한국어");
+     REQUIRE(enum_name<Language::English>() == "English");
+     REQUIRE(lang_name == "日本語");
+-    REQUIRE(enum_name<Language::😃>() == "😃");
++    REQUIRE(enum_name<Language::Ελληνικά>() == "Ελληνικά");
+   }
+ }
+ 
+ TEST_CASE("enum_names") {
+   constexpr auto& s5 = enum_names<const Language>();
+-  REQUIRE(s5 == std::array<std::string_view, 5>{{"日本語", "한국어", "English", "😃", "TVÅ"}});
++  REQUIRE(s5 == std::array<std::string_view, 5>{{"日本語", "한국어", "English", "Ελληνικά", "TVÅ"}});
+ }
+ 
+ TEST_CASE("enum_entries") {
+   constexpr auto& s5 = enum_entries<const Language>();
+-  REQUIRE(s5 == std::array<std::pair<Language, std::string_view>, 5>{{{Language::日本語, "日本語"}, {Language::한국어, "한국어"}, {Language::English, "English"}, {Language::😃, "😃"}, {Language::TVÅ, "TVÅ"}}});
++  REQUIRE(s5 == std::array<std::pair<Language, std::string_view>, 5>{{{Language::日本語, "日本語"}, {Language::한국어, "한국어"}, {Language::English, "English"}, {Language::Ελληνικά, "Ελληνικά"}, {Language::TVÅ, "TVÅ"}}});
+ }
+ 
+ TEST_CASE("ostream_operators") {
+@@ -181,7 +181,7 @@ TEST_CASE("ostream_operators") {
+   test_ostream(std::make_optional(Language::日本語), "日本語");
+   test_ostream(Language::한국어, "한국어");
+   test_ostream(Language::English, "English");
+-  test_ostream(Language::😃, "😃");
++  test_ostream(Language::Ελληνικά, "Ελληνικά");
+   test_ostream(static_cast<Language>(0), "0");
+   test_ostream(std::make_optional(static_cast<Language>(0)), "0");
+ }
+@@ -198,7 +198,7 @@ TEST_CASE("istream_operators") {
+ 
+   test_istream(Language::한국어, "한국어");
+   test_istream(Language::English, "English");
+-  test_istream(Language::😃, "😃");
++  test_istream(Language::Ελληνικά, "Ελληνικά");
+ }
+ 
+ TEST_CASE("bitwise_operators") {
+@@ -268,7 +268,7 @@ TEST_CASE("flag enum_cast") {
+     REQUIRE(enum_cast<LanguageFlag&>("한국어").value() == LanguageFlag::한국어);
+     REQUIRE(enum_cast<const LanguageFlag>("English").value() == LanguageFlag::English);
+     REQUIRE(lang.value() == LanguageFlag::日本語);
+-    REQUIRE(enum_cast<LanguageFlag>("😃").value() == LanguageFlag::😃);
++    REQUIRE(enum_cast<LanguageFlag>("Ελληνικά").value() == LanguageFlag::Ελληνικά);
+     REQUIRE_FALSE(enum_cast<LanguageFlag>("None").has_value());
+   }
+ 
+@@ -277,7 +277,7 @@ TEST_CASE("flag enum_cast") {
+     REQUIRE(enum_cast<LanguageFlag&>(1 << 2).value() == LanguageFlag::한국어);
+     REQUIRE(enum_cast<const LanguageFlag>(1 << 3).value() == LanguageFlag::English);
+     REQUIRE(lang.value() == LanguageFlag::日本語);
+-    REQUIRE(enum_cast<LanguageFlag>(1 << 4).value() == LanguageFlag::😃);
++    REQUIRE(enum_cast<LanguageFlag>(1 << 4).value() == LanguageFlag::Ελληνικά);
+     REQUIRE_FALSE(enum_cast<LanguageFlag>(0).has_value());
+   }
+ }
+@@ -287,7 +287,7 @@ TEST_CASE("flag enum_index") {
+     LanguageFlag korean = LanguageFlag::한국어;
+     REQUIRE(enum_index<LanguageFlag&>(korean).value() == 1);
+     REQUIRE(enum_index<const LanguageFlag>(LanguageFlag::English).value() == 2);
+-    REQUIRE(enum_index(LanguageFlag::😃).value() == 3);
++    REQUIRE(enum_index(LanguageFlag::Ελληνικά).value() == 3);
+     REQUIRE(lang.value() == 0);
+     REQUIRE_FALSE(enum_index(static_cast<LanguageFlag>(0)).has_value());
+ }
+@@ -298,7 +298,7 @@ TEST_CASE("flag enum_contains") {
+     LanguageFlag korean = LanguageFlag::한국어;
+     REQUIRE(enum_contains<LanguageFlag&>(korean));
+     REQUIRE(enum_contains<const LanguageFlag>(LanguageFlag::English));
+-    REQUIRE(enum_contains(LanguageFlag::😃));
++    REQUIRE(enum_contains(LanguageFlag::Ελληνικά));
+     REQUIRE(lang);
+     REQUIRE_FALSE(enum_contains(static_cast<LanguageFlag>(0)));
+   }
+@@ -317,7 +317,7 @@ TEST_CASE("flag enum_contains") {
+     REQUIRE(enum_contains<LanguageFlag&>("한국어"));
+     REQUIRE(enum_contains<LanguageFlag>("English"));
+     REQUIRE(enum_contains<const LanguageFlag>(lang));
+-    REQUIRE(enum_contains<LanguageFlag>("😃"));
++    REQUIRE(enum_contains<LanguageFlag>("Ελληνικά"));
+     REQUIRE_FALSE(enum_contains<LanguageFlag>("None"));
+   }
+ }
+@@ -328,12 +328,12 @@ TEST_CASE("flag enum_value") {
+   REQUIRE(enum_value<LanguageFlag&>(0) == LanguageFlag::日本語);
+   REQUIRE(enum_value<const LanguageFlag>(1) == LanguageFlag::한국어);
+   REQUIRE(enum_value<LanguageFlag>(2) == LanguageFlag::English);
+-  REQUIRE(lang == LanguageFlag::😃);
++  REQUIRE(lang == LanguageFlag::Ελληνικά);
+ }
+ 
+ TEST_CASE("flag enum_values") {
+   constexpr auto& s5 = enum_values<const LanguageFlag>();
+-  REQUIRE(s5 == std::array<LanguageFlag, 4>{{LanguageFlag::日本語, LanguageFlag::한국어, LanguageFlag::English, LanguageFlag::😃}});
++  REQUIRE(s5 == std::array<LanguageFlag, 4>{{LanguageFlag::日本語, LanguageFlag::한국어, LanguageFlag::English, LanguageFlag::Ελληνικά}});
+ }
+ 
+ TEST_CASE("flag enum_count") {
+@@ -349,7 +349,7 @@ TEST_CASE("flag enum_name") {
+     REQUIRE(enum_name<LanguageFlag&>(lk) == "한국어");
+     REQUIRE(enum_name<const LanguageFlag>(LanguageFlag::English) == "English");
+     REQUIRE(lang_name == "日本語");
+-    REQUIRE(enum_name(LanguageFlag::😃) == "😃");
++    REQUIRE(enum_name(LanguageFlag::Ελληνικά) == "Ελληνικά");
+     REQUIRE(enum_name(static_cast<LanguageFlag>(0)).empty());
+   }
+ }
+@@ -361,18 +361,18 @@ TEST_CASE("flag enum_flags_name") {
+   REQUIRE(enum_flags_name<LanguageFlag&>(lk) == "한국어");
+   REQUIRE(enum_flags_name<const LanguageFlag>(LanguageFlag::English) == "English");
+   REQUIRE(lang_name == "日本語");
+-  REQUIRE(enum_flags_name(LanguageFlag::😃) == "😃");
++  REQUIRE(enum_flags_name(LanguageFlag::Ελληνικά) == "Ελληνικά");
+   REQUIRE(enum_flags_name(static_cast<LanguageFlag>(0)).empty());
+ }
+ 
+ TEST_CASE("flag enum_names") {
+   constexpr auto& s5 = enum_names<const LanguageFlag>();
+-  REQUIRE(s5 == std::array<std::string_view, 4>{{"日本語", "한국어", "English", "😃"}});
++  REQUIRE(s5 == std::array<std::string_view, 4>{{"日本語", "한국어", "English", "Ελληνικά"}});
+ }
+ 
+ TEST_CASE("flag enum_entries") {
+   constexpr auto& s5 = enum_entries<const LanguageFlag>();
+-  REQUIRE(s5 == std::array<std::pair<LanguageFlag, std::string_view>, 4>{{{LanguageFlag::日本語, "日本語"}, {LanguageFlag::한국어, "한국어"}, {LanguageFlag::English, "English"}, {LanguageFlag::😃, "😃"}}});
++  REQUIRE(s5 == std::array<std::pair<LanguageFlag, std::string_view>, 4>{{{LanguageFlag::日本語, "日本語"}, {LanguageFlag::한국어, "한국어"}, {LanguageFlag::English, "English"}, {LanguageFlag::Ελληνικά, "Ελληνικά"}}});
+ }
+ 
+ TEST_CASE("flag ostream_operators") {
+@@ -386,7 +386,7 @@ TEST_CASE("flag ostream_operators") {
+   test_ostream(std::make_optional(LanguageFlag::日本語), "日本語");
+   test_ostream(LanguageFlag::한국어, "한국어");
+   test_ostream(LanguageFlag::English, "English");
+-  test_ostream(LanguageFlag::😃, "😃");
++  test_ostream(LanguageFlag::Ελληνικά, "Ελληνικά");
+   test_ostream(static_cast<LanguageFlag>(0), "0");
+   test_ostream(std::make_optional(static_cast<LanguageFlag>(0)), "0");
+ }
+@@ -403,7 +403,7 @@ TEST_CASE("flag istream_operators") {
+ 
+   test_istream(LanguageFlag::한국어, "한국어");
+   test_istream(LanguageFlag::English, "English");
+-  test_istream(LanguageFlag::😃, "😃");
++  test_istream(LanguageFlag::Ελληνικά, "Ελληνικά");
+ }
+ 
+ 

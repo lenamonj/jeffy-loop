@@ -33,6 +33,7 @@ loss rather than hiding it.
 | image-rs (attempt 1) | 2 | 10 | **not converged** | n/a | 2 |
 | image-rs (attempt 2) | 3 | 30 | **not converged** | n/a | 0 |
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
+| magic_enum | 2 | 19 | converged | evaluator countersigned | 0 |
 | mruby (attempt 1) | 5 | 50 | **not converged** | n/a | 0 |
 | mruby (attempt 2) | 5 | 63 | **not converged** | n/a | 1 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
@@ -49,6 +50,7 @@ loss rather than hiding it.
 | speedtest-cli | 1 | 5 | converged | pre-evaluator | 0 |
 | swift-algorithms | 3 | 24 | converged | evaluator countersigned | 1 |
 | ta | 6 | 64 | converged | evaluator **unavailable**, recorded | 0 |
+| thor | 2 | 20 | **not converged** | n/a | 0 |
 | yfinance | 1 | 9 | converged | evaluator countersigned | 0 |
 | PapaParse | audit only | - | audit, not a loop run | n/a | - |
 | **libuv** | at least 1 | at least 1 | **abandoned, no receipt** | n/a | - |
@@ -63,12 +65,12 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 23 brownfield convergences:
+The engine tightened over time. Of the 24 brownfield convergences:
 
-- **18** were countersigned by the adversarial evaluator, the current standard.
-  Sixteen of those met the empty-ledger rule; `cJSON` and `swift-algorithms`
-  met the v1.9.0 severity floor described below, `cJSON` being the first
-  convergence in the study that the empty-ledger rule would have refused.
+- **19** were countersigned by the adversarial evaluator, the current standard.
+  Sixteen of those met the empty-ledger rule; `cJSON`, `swift-algorithms` and
+  `magic_enum` met the v1.9.0 severity floor described below, `cJSON` being the
+  first convergence in the study that the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
   standing instruction against sub-agents, and the receipt says so rather than
   working around it.
@@ -76,7 +78,7 @@ The engine tightened over time. Of the 23 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 23 as one number
+Every receipt names the standard its own run met. Pooling all 24 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -90,9 +92,10 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 23 convergences above predate v1.9.0 and met the stricter
-empty-ledger rule; `cJSON` is the first under this one and `swift-algorithms`
-the second, and each receipt names the three Lows it carried.** Receipts from v1.9.0 onward name this
+REJECT reason in itself. **21 of the 24 convergences above predate v1.9.0 and met the stricter
+empty-ledger rule; `cJSON` is the first under this one, `swift-algorithms` the
+second and `magic_enum` the third, and each receipt names the Lows it carried -
+three, three and five.** Receipts from v1.9.0 onward name this
 standard and list their carried Lows; the eras are never pooled.
 
 ## What was started and never published
@@ -121,7 +124,7 @@ Convergence here is per-run, and a blocked run is relaunched from written
 state with a fresh evaluator budget. Under that protocol, persistence raises
 the chance of eventually converging - dotenv took eight runs, dayjs eight,
 gitignore five with three terminal rejections along the way. The run counts
-above are published precisely so that "23 converged" is read with the cost
+above are published precisely so that "24 converged" is read with the cost
 attached rather than as a success rate.
 
 Targets from here on carry a **pre-registered run budget** committed before
@@ -186,6 +189,50 @@ converged inside two. cJSON was picked to test the replacement rule against its
 own prediction, with the stopping point fixed in advance so the prediction could
 fail. It converged in one run of ten iterations, the same figure as `jsoncpp`,
 the sibling it was reasoned from.
+
+The cohort after it carried a budget of **three runs**, amended up from two
+before any of its targets had produced an outcome and recorded as an amendment:
+two had been chosen to make the selection rule falsifiable rather than to
+measure the targets well, and the counterexample was already on the record,
+since `swift-algorithms` is exactly the shape the rule predicts and needed
+three. `magic_enum` used two of the three and converged. `thor` used two of the
+three and **did not spend the third**, because the run was closed by a decision
+rather than by the stopping rule - the opposite of `goldmark`, where the budget
+bound and returned the unwelcome answer. That distinction is the whole point of
+publishing budgets, so it is stated plainly here rather than left to be inferred
+from a run count: `thor`'s row is a decision to stop, not a budget that ran out.
+
+## thor, where the surface outran the budget
+
+`rails/thor` is the command-line framework Rails generators are built on, and
+its two runs closed **fourteen findings, seven of them High**, in code with 942
+green examples and a clean RuboCop. Among them: all three `Thor::Shell` printers
+crashing on ordinary input; `insert_into_file` splicing caller data in as a
+`String#gsub` replacement, so backslash sequences in the data were expanded
+rather than inserted; `ask` with `:limited_to` re-prompting forever once stdin
+reached EOF; a command a subclass inherited from its parent being silently
+replaced by the class's default command; and `comment_lines` splicing a string
+flag into a regexp unescaped.
+
+It did not converge, and the reason is not the ledger. **The ledger was empty at
+the end of both runs.** What was not empty was the map: the Surface inventory
+holds 20 rows and the two runs swept **11** of them, so the declaration path was
+never open, and **the evaluator gate was never invoked at all - zero invocations
+across 20 iterations**. That is the third target to end this way, after `mruby`
+and `eemeli/yaml`, and it is the most informative of the three, because the
+other two could be dismissed as size. thor is a small Ruby library that this
+loop fixed seven Highs in.
+
+The mechanism is worth naming precisely, because it is not slowness. Sweeping
+batches: elsewhere a single opening audit has swept 20 of 21 rows and 28 of 32.
+Here each audit replenished the ledger with real defects instead, and the loop's
+own rule - work the top unblocked item - then spent every remaining iteration
+fixing them. **A target that never runs out of genuine bugs never gets to the
+part where it proves it looked everywhere.** Nothing in the engine schedules a
+sweep against a fix, which is filed on the release backlog as the leading item
+for the next version: make an unswept inventory row a ledger item, so the
+existing ordering rule schedules it and the budget arithmetic becomes one
+number.
 
 ## BurntSushi/toml, where the gate was the only thing standing in the way
 
