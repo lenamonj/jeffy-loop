@@ -549,7 +549,7 @@ Both installers run non-interactively against sandboxed profiles (skills and eng
 
 </details>
 
-Core checks need only bash and coreutils; shellcheck, PowerShell, and jq passes skip cleanly when absent. CI runs the same validator on Linux, Windows, and macOS - the macOS leg exists because BSD userland differs from GNU in `sed`, `grep`, and `stat`, and nothing exercised it before.
+Core checks need only bash and coreutils; shellcheck, PowerShell, and jq passes skip cleanly when absent, and the closing line reports how many checks ran against how many were skipped, reprinting each skip with its reason - a check that did not run covers nothing, and an exit code alone cannot say which is which. The one exception is shellcheck in the maintainer tree, where a release is cut: there it is a failure rather than a skip, because that lint rides the Linux CI leg and a skip would put its first real run after the push. CI runs the same validator on Linux, Windows, and macOS - the macOS leg exists because BSD userland differs from GNU in `sed`, `grep`, and `stat`, and nothing exercised it before.
 
 ## License
 

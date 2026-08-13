@@ -12,7 +12,7 @@ bash scripts/validate.sh
 
 It gates installer syntax and behavior, skill integrity, the governance markers, and the Stop hook's full lifecycle - the README's [Contributing](README.md#contributing) section describes what each pass covers. CI runs the same validator on Linux, Windows, and macOS.
 
-A green local run is not the whole gate. The validator skips any check whose tool is missing, and it prints each skip with the reason, so read those lines rather than the exit code alone. The one that catches people out is `shellcheck`: it rides the Linux CI leg, and if you do not have it installed locally the lint pass skips silently and a shell change that is green on your machine can still go red in CI. This repository has shipped a shellcheck-only breakage twice. Install it, or expect CI to find it for you.
+A green local run is not the whole gate. The validator skips any check whose tool is missing, so the closing line reports both numbers - `All checks passed (N ran, M skipped)` - and reprints every skip with its reason underneath. Read that block: a skipped check covers nothing, and the exit code alone cannot tell you which ones ran. The one that catches people out is `shellcheck`, which rides the Linux CI leg: without it installed, the lint pass skips and a shell change that is green on your machine can still go red in CI. This repository has shipped a shellcheck-only breakage twice. Install it, or expect CI to find it for you. In the maintainer tree, where releases are cut, a missing `shellcheck` is a failure rather than a skip, because there the first machine to run that lint would otherwise be one the push has already reached.
 
 ## Ground rules
 

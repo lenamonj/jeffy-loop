@@ -16,8 +16,16 @@ cd "$repo_root" || exit 1
 
 fail=0
 ok_n=0
+skip_n=0
+skipped=""
 pass() { echo "[OK] $1"; ok_n=$((ok_n + 1)); }
 fault() { echo "[FAIL] $1"; fail=1; }
+# A skipped check is not a passed one, and the closing line has to say so.
+# Skips are printed where they happen and reprinted in the summary, because a
+# run that ends "All checks passed." after scrolling a skip past the reader is
+# telling the truth about what it ran and the wrong thing about what it covered.
+skip() { echo "[SKIP] $1"; skip_n=$((skip_n + 1)); skipped="$skipped$1
+"; }
 
 # Interrupt safety: the runtime checks (8 and 9) build mktemp sandboxes; an
 # aborted run must not leak them.
@@ -52,7 +60,7 @@ if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; th
     fi
   done
 else
-  echo "[SKIP] exec-bit checks (not a git checkout)"
+  skip "exec-bit checks (not a git checkout)"
 fi
 
 # 2. Every skill carries name: and description: frontmatter.
@@ -118,20 +126,27 @@ if [ -n "$ps" ]; then
   fi
   unset JEFFY_PS1_PATH
 else
-  echo "[SKIP] install.ps1 parse check (no pwsh or powershell on PATH)"
+  skip "install.ps1 parse check (no pwsh or powershell on PATH)"
 fi
 
-# 5. shellcheck lint of the shell scripts, when shellcheck is available. Optional:
-#    hosts without shellcheck skip cleanly. bash -n (check 1) is parse-only and
-#    misses the bugs shellcheck catches (unquoted expansions, unreachable code).
+# 5. shellcheck lint of the shell scripts, when shellcheck is available. Optional
+#    for a contributor: a clone without shellcheck skips cleanly, and bash -n
+#    (check 1) is parse-only, so it misses what shellcheck catches (unquoted
+#    expansions, unreachable code). Not optional in the maintainer tree, which
+#    is where releases are cut: this lint rides the Linux CI leg, so a skip here
+#    means the first machine to run it is a machine the push has already reached.
+#    That has shipped a shellcheck-only breakage twice. CHANGELOG.md marks the
+#    maintainer tree, the same predicate the pairing and count checks use.
 if command -v shellcheck >/dev/null 2>&1; then
   if shellcheck install.sh scripts/validate.sh skills/jeffy/hooks/stop-hook.sh; then
     pass "shell scripts lint clean (shellcheck)"
   else
     fault "shellcheck reported issues (see output above)"
   fi
+elif [ -f CHANGELOG.md ]; then
+  fault "shellcheck is not on PATH, and this is the maintainer tree releases are cut from - a skip here is a lint that first runs in CI, after the push"
 else
-  echo "[SKIP] shellcheck lint (shellcheck not on PATH)"
+  skip "shellcheck lint (shellcheck not on PATH)"
 fi
 
 # 6. The jeffy skill's convergence-governance blocks survive edits: every
@@ -354,7 +369,7 @@ if [ -z "$hook_ver" ]; then
 elif [ "${hook_ver#* }" != "$hook_ver" ]; then
   fault "stop-hook.sh states more than one JEFFY_VERSION [$hook_ver]; no single version is shipped"
 elif [ ! -f CHANGELOG.md ]; then
-  echo "[SKIP] JEFFY_VERSION/CHANGELOG pairing (no CHANGELOG.md; maintainer-only file)"
+  skip "JEFFY_VERSION/CHANGELOG pairing (no CHANGELOG.md; maintainer-only file)"
 else
   cl_ver="$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' CHANGELOG.md | head -n 1)"
   if [ "$hook_ver" = "$cl_ver" ]; then
@@ -800,7 +815,7 @@ fi
 #    exact Standard met value ATTEMPTS.md records for that target, and this
 #    check extracts that clause and compares it. Nothing is inferred.
 if [ ! -f "evals/ATTEMPTS.md" ]; then
-  echo "[SKIP] receipt convergence-standard check (no evals/ATTEMPTS.md)"
+  skip "receipt convergence-standard check (no evals/ATTEMPTS.md)"
 elif ! n_msg="$(awk -v att="evals/ATTEMPTS.md" -v rme="README.md" '
   function trim(s) { gsub(/^[ 	]+|[ 	]+$/, "", s); return s }
   function unbold(s) { s = trim(s); gsub(/\*\*/, "", s); return trim(s) }
@@ -964,7 +979,7 @@ p_files="README.md
 skills/jeffy/SKILL.md
 skills/jeffy/references/plan-default.md"
 if [ ! -f "$p_hook" ]; then
-  echo "[SKIP] verify-bound derivation chain (no $p_hook)"
+  skip "verify-bound derivation chain (no $p_hook)"
 else
   # The single quotes are deliberate: these are sed scripts matching the
   # hook's literal $ characters, not shell expansions. Without the directives
@@ -1253,7 +1268,7 @@ else
       fault "install.sh did not upgrade a legacy hook registration with the timeout"
     fi
   else
-    echo "[SKIP] install.sh hook-registration assertions (jq not on PATH)"
+    skip "install.sh hook-registration assertions (jq not on PATH)"
   fi
   rm -rf "$rt_tmp"
 fi
@@ -1352,7 +1367,7 @@ if [ -n "$ps" ]; then
     rm -rf "$pr_tmp"
   fi
 else
-  echo "[SKIP] install.ps1 runtime check (no pwsh or powershell on PATH)"
+  skip "install.ps1 runtime check (no pwsh or powershell on PATH)"
 fi
 
 # 10. The fenced bash blocks in skills/jeffy/SKILL.md are executed verbatim at
@@ -2064,7 +2079,7 @@ if command -v jq >/dev/null 2>&1; then
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
-      echo "[SKIP] converged-hash git scenarios (git not on PATH)"
+      skip "converged-hash git scenarios (git not on PATH)"
     fi
 
     # Verify-command check: the project's own gate runs at the converged
@@ -2951,7 +2966,7 @@ if command -v jq >/dev/null 2>&1; then
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
-      echo "[SKIP] stall-gate commit scenarios (git not on PATH)"
+      skip "stall-gate commit scenarios (git not on PATH)"
     fi
 
     # --- P1-1b: both tree gates in a project below the repository root ----
@@ -3014,7 +3029,7 @@ if command -v jq >/dev/null 2>&1; then
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
-      echo "[SKIP] subdirectory-project scenarios (git not on PATH)"
+      skip "subdirectory-project scenarios (git not on PATH)"
     fi
 
     hb_write_state sess-other 1 3
@@ -3269,7 +3284,7 @@ if command -v jq >/dev/null 2>&1; then
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
-      echo "[SKIP] Converged-line and Command-line scenarios (git not on PATH)"
+      skip "Converged-line and Command-line scenarios (git not on PATH)"
     fi
 
     # E6: the archive counter must anchor on real entries. journal-default's
@@ -4528,7 +4543,7 @@ if command -v jq >/dev/null 2>&1; then
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
-      echo "[SKIP] evaluator-verdict scenarios (git not on PATH)"
+      skip "evaluator-verdict scenarios (git not on PATH)"
     fi
 
     # --- v1.5.0 Phase 3 expectations (P8) --------------------------------
@@ -4608,7 +4623,7 @@ if command -v jq >/dev/null 2>&1; then
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
-      echo "[SKIP] probe-battery converged-tree scenarios (git not on PATH)"
+      skip "probe-battery converged-tree scenarios (git not on PATH)"
     fi
 
     # --- P1-15: the Converged hash has to be reachable, and a repoint is
@@ -4753,13 +4768,13 @@ if command -v jq >/dev/null 2>&1; then
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
-      echo "[SKIP] converged-hash reachability scenarios (git not on PATH)"
+      skip "converged-hash reachability scenarios (git not on PATH)"
     fi
 
     rm -rf "$hb_tmp"
   fi
 else
-  echo "[SKIP] stop hook behavior checks (jq not on PATH)"
+  skip "stop hook behavior checks (jq not on PATH)"
 fi
 
 # K. The check count the README publishes is derived from this run, never
@@ -4791,7 +4806,7 @@ elif [ "${claim_checks#* }" != "$claim_checks" ]; then
   fault "README states the behavioural check count as [$claim_checks]; its own count:checks markers disagree, so no single number is published"
 elif [ ! -f CHANGELOG.md ] || [ -z "$ps" ] \
   || ! command -v jq >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
-  echo "[SKIP] README check-count derivation (asserts in a maintainer tree with jq, git and PowerShell, where the marker is written)"
+  skip "README check-count derivation (asserts in a maintainer tree with jq, git and PowerShell, where the marker is written)"
 else
   cc_extra=2
   if command -v shellcheck >/dev/null 2>&1; then cc_extra=$((cc_extra + 1)); fi
@@ -4804,9 +4819,14 @@ else
 fi
 
 echo ""
+if [ "$skip_n" -gt 0 ]; then
+  echo "$skip_n check(s) did not run on this host, and a check that did not run covers nothing:"
+  printf '%s' "$skipped" | sed 's/^/  - /'
+  echo ""
+fi
 if [ "$fail" -eq 0 ]; then
-  echo "All checks passed."
+  echo "All checks passed ($ok_n ran, $skip_n skipped)."
   exit 0
 fi
-echo "Validation failed."
+echo "Validation failed ($ok_n ran, $skip_n skipped)."
 exit 1
