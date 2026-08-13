@@ -26,6 +26,7 @@ loss rather than hiding it.
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
 | commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
+| diff-so-fancy | 3 | 30 | **not converged** | n/a | 2 |
 | eemeli/yaml | 5 | 50 | **not converged** | n/a | 0 |
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
 | go-yaml | 3 | 29 | converged | evaluator countersigned | 0 |
@@ -126,7 +127,7 @@ Convergence here is per-run, and a blocked run is relaunched from written
 state with a fresh evaluator budget. Under that protocol, persistence raises
 the chance of eventually converging - dotenv took eight runs, dayjs eight,
 gitignore five with three terminal rejections along the way. The run counts
-above are published precisely so that "24 converged" is read with the cost
+above are published precisely so that "25 converged" is read with the cost
 attached rather than as a success rate.
 
 Targets from here on carry a **pre-registered run budget** committed before
@@ -203,6 +204,64 @@ rather than by the stopping rule - the opposite of `goldmark`, where the budget
 bound and returned the unwelcome answer. That distinction is the whole point of
 publishing budgets, so it is stated plainly here rather than left to be inferred
 from a run count: `thor`'s row is a decision to stop, not a budget that ran out.
+
+`diff-so-fancy` spent all three and did not converge. It is the second
+pre-registered budget to bind and return the unwelcome answer, after `goldmark`,
+and the first to bind on a target the selection rule predicted would converge in
+one run or two.
+
+## diff-so-fancy, where the shape rule met its counterexample
+
+`so-fancy/diff-so-fancy` is the Perl filter that makes `git diff` readable, at
+18,080 stars, run from tag `v1.4.12`. Three runs, 30 iterations, **23 findings
+closed - 7 High, 8 Medium, 8 Low** - and no convergence. Perl therefore does not
+appear in the language chart, which is the point of counting languages off the
+receipts table rather than off the targets attempted.
+
+It was picked by the shape rule that had just been adopted: a single-purpose
+library with a bounded surface, the shape that had converged inside two runs
+every previous time it was tried. **It is that rule's first counterexample, and
+the diagnosis is worth more than the row.** The rule sorts on what the code is,
+and this target is a library by that test - one 1,764-line script and one module.
+What it consumes is not a library input. It is git's diff output, a format git
+defines by producing it, with no specification and no conformance corpus, whose
+edge shapes are discovered rather than enumerated. Every High the gate found
+came from one: a directory name carrying regexp metacharacters, a file named
+exactly `0`, a filename git writes in quotes because it holds a byte outside
+ASCII. That is the protocol-implementation failure mode wearing a library's
+clothes, and no star count or file count distinguishes the two.
+
+The stopping condition here is the opposite of `thor`'s and `mruby`'s. The
+surface was not the problem: **19 of 21 rows swept, the other 2 recorded as
+unreachable on this host** with their reasons - `sem` and `zsh` are not
+installable here. The ledger was worked down repeatedly. What did not happen was
+a PASS: **the gate was invoked four times across the second and third runs and
+returned REJECT four times**, and the run that never invoked it was the first,
+whose ledger never emptied.
+
+The recurring class is one the receipts should name plainly, because it repeated
+across all four rejections: **a settled class kept being declared complete on an
+enumeration narrower than the defect.** Run 2 recorded zero-truthiness as fixed
+class-complete over every documented configuration key, colour spec and ruler
+width, and never over the filenames parsed out of the diff - so a file named `0`
+still rendered zero bytes, and in `--patch` mode its 3 input lines produced 0
+output lines, which breaks the 1:1 contract `interactive.diffFilter` requires and
+makes a real `git add -p` abort for the whole repository. Run 3 fixed the quoted
+path parse at the site it had found and wrote a Lesson saying an enumeration is
+only as wide as the producers it samples, then built an enumeration sampling one
+shape from the producer it had just learned about: its battery drives quoted
+names only on files with content, which always carry a `---`/`+++` pair, while
+the battery that drives empty adds, mode changes and binaries uses ASCII names
+only. Their intersection is driven by neither, and the final gate found it -
+`DSF-33`, filed High and left open on the ledger, where an empty add of
+`café.txt` makes the file vanish from a normal diff and aborts `git add -p`.
+
+Each of those rejections also falsified an audit score this loop had written.
+The iteration 7 audit of run 3 scored Correctness None over swept rows, and
+`DSF-33` reproduces at the base commit inside a row that audit had swept. The
+record says so in the journal rather than leaving the score standing. Four
+gate invocations, four reproductions the loop confirmed itself before accepting,
+zero arguments with the verdict.
 
 ## thor, where the surface outran the budget
 
