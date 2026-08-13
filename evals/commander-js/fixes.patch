@@ -1,0 +1,440 @@
+diff --git a/.gitignore b/.gitignore
+index ef04ddf..989ac52 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -4,3 +4,4 @@ node_modules
+ .idea
+ .vscode/
+ coverage/
++.claude/jeffy-loop.local.md
+diff --git a/Readme.md b/Readme.md
+index 9f1ff3c..6aae1e6 100644
+--- a/Readme.md
++++ b/Readme.md
+@@ -175,7 +175,7 @@ const program = new Command();
+ 
+ ## Options
+ 
+-Options are defined with the `.option()` method, also serving as documentation for the options. Each option can have a short flag (single character) and a long name, separated by a comma, a space, or a vertical bar (`|`). To allow a wider range of short-ish flags than just single characters, you may also have two long options.
++Options are defined with the `.option()` method, also serving as documentation for the options. Each option can have a short flag (single character) and a long name, separated by a comma, a space, or a vertical bar (`|`). To allow a wider range of short-ish flags than just single characters, you may also have two long options. A long name is split on dashes to make the option property name, so it may not contain a doubled dash or end with a dash.
+ 
+ ```js
+ program
+diff --git a/lib/command.js b/lib/command.js
+index 9a3d03e..79b18cb 100644
+--- a/lib/command.js
++++ b/lib/command.js
+@@ -57,6 +57,12 @@ export class Command extends EventEmitter {
+     this._showHelpAfterError = false;
+     this._showSuggestionAfterError = true;
+     this._savedState = null; // used in save/restoreStateBeforeParse
++    // Splitting a group of short options like -abc leaves a token the user
++    // never typed, so parseOptions records {leftover, origin} when the first
++    // unknown option is such a leftover, and passes it to a subcommand that
++    // is handed that leftover, so error messages can name the whole argument.
++    this._unknownOptionSplit = undefined;
++    this._inheritedOptionSplit = undefined;
+ 
+     // see configureOutput() for docs
+     this._outputConfiguration = {
+@@ -348,6 +354,8 @@ export class Command extends EventEmitter {
+   /**
+    * Define argument syntax for command, adding multiple at once (without descriptions).
+    *
++   * The names are separated by spaces, and an empty or blank string adds no arguments.
++   *
+    * See also .argument().
+    *
+    * @example
+@@ -361,6 +369,7 @@ export class Command extends EventEmitter {
+     names
+       .trim()
+       .split(/ +/)
++      .filter((detail) => detail !== '') // an empty or blank names string declares no arguments
+       .forEach((detail) => {
+         this.argument(detail);
+       });
+@@ -1366,6 +1375,13 @@ Expecting one of '${allowedValues.join("', '")}'`);
+     if (!subCommand) this.help({ error: true });
+ 
+     subCommand._prepareForParse();
++    // Hand on the split when the subcommand is being given the leftover, so it
++    // can name the whole argument rather than the part it received.
++    subCommand._inheritedOptionSplit =
++      unknown[0] !== undefined &&
++      unknown[0] === this._unknownOptionSplit?.leftover
++        ? this._unknownOptionSplit
++        : undefined;
+     let promiseChain;
+     promiseChain = this._chainOrCallSubCommandHook(
+       promiseChain,
+@@ -1394,6 +1410,7 @@ Expecting one of '${allowedValues.join("', '")}'`);
+       this.help();
+     }
+     const subCommand = this._findCommand(subcommandName);
++    if (!subCommand) this.unknownCommand(subcommandName);
+     if (subCommand && !subCommand._executableHandler) {
+       subCommand.help();
+     }
+@@ -1601,7 +1618,9 @@ Expecting one of '${allowedValues.join("', '")}'`);
+     // We do not always call this check to avoid masking a "better" error, like unknown command.
+     const checkForUnknownOptions = () => {
+       if (parsed.unknown.length > 0) {
+-        this.unknownOption(parsed.unknown[0]);
++        this.unknownOption(
++          this._unknownOptionSplit?.origin ?? parsed.unknown[0],
++        );
+       }
+     };
+ 
+@@ -1761,6 +1780,11 @@ Expecting one of '${allowedValues.join("', '")}'`);
+     const operands = []; // operands, not options or values
+     const unknown = []; // first unknown option and remaining unknown args
+     let dest = operands;
++    this._unknownOptionSplit = undefined;
++    // A split this command's parent made, when the leftover it produced is the
++    // first argument being parsed here.
++    const inheritedSplit = this._inheritedOptionSplit;
++    this._inheritedOptionSplit = undefined;
+ 
+     function maybeOption(arg) {
+       return arg.length > 1 && arg[0] === '-';
+@@ -1780,9 +1804,20 @@ Expecting one of '${allowedValues.join("', '")}'`);
+     // parse options
+     let activeVariadicOption = null;
+     let activeGroup = null; // working through group of short options, like -abc
++    let activeGroupSource = null; // the argument activeGroup was expanded from
+     let i = 0;
+     while (i < args.length || activeGroup) {
++      const fromGroup = activeGroup !== null;
++      const argIndex = fromGroup ? -1 : i;
+       const arg = activeGroup ?? args[i++];
++      // What the user typed, which is the whole group for a leftover like the
++      // "-bc" of "-abc", and is what an error message should name. A leftover
++      // handed down by the parent arrives as the first argument here.
++      const argAsTyped = fromGroup
++        ? activeGroupSource
++        : argIndex === 0 && arg === inheritedSplit?.leftover
++          ? inheritedSplit.origin
++          : arg;
+       activeGroup = null;
+ 
+       // literal
+@@ -1843,6 +1878,7 @@ Expecting one of '${allowedValues.join("', '")}'`);
+             this.emit(`option:${option.name()}`);
+             // remove the processed option and keep processing group
+             activeGroup = `-${arg.slice(2)}`;
++            activeGroupSource = argAsTyped;
+           }
+           continue;
+         }
+@@ -1869,6 +1905,9 @@ Expecting one of '${allowedValues.join("', '")}'`);
+         !(this.commands.length === 0 && negativeNumberArg(arg))
+       ) {
+         dest = unknown;
++        if (arg !== argAsTyped) {
++          this._unknownOptionSplit = { leftover: arg, origin: argAsTyped };
++        }
+       }
+ 
+       // If using positionalOptions, stop processing our options at subcommand.
+@@ -2170,11 +2209,11 @@ Expecting one of '${allowedValues.join("', '")}'`);
+   /**
+    * Unknown command.
+    *
++   * @param {string} [unknownName] - the name to report, defaults to the first command-argument
+    * @private
+    */
+ 
+-  unknownCommand() {
+-    const unknownName = this.args[0];
++  unknownCommand(unknownName = this.args[0]) {
+     let suggestion = '';
+ 
+     if (this._showSuggestionAfterError) {
+diff --git a/lib/option.js b/lib/option.js
+index 4b4daaf..a38f73d 100644
+--- a/lib/option.js
++++ b/lib/option.js
+@@ -4,6 +4,9 @@ export class Option {
+   /**
+    * Initialize a new `Option` with the given `flags` and `description`.
+    *
++   * A long flag name is split on dashes to make the option attribute name, so it
++   * may not contain a doubled dash or end with a dash.
++   *
+    * @param {string} flags
+    * @param {string} [description]
+    */
+@@ -373,5 +376,18 @@ function splitOptionFlags(flags) {
+       `option creation failed due to no flags found in '${flags}'.`,
+     );
+ 
++  // A long flag name is split on dashes to make the option attribute name, so a
++  // doubled or trailing dash leaves an empty word and no usable attribute name.
++  [shortFlag, longFlag].forEach((flag) => {
++    if (flag === undefined || !flag.startsWith('--')) return;
++    const name = flag.slice(2);
++    if (name.includes('--') || name.endsWith('-')) {
++      throw new Error(
++        `option creation failed due to '${flag}' in option flags '${flags}'
++- a long flag name may not contain a doubled dash or end with a dash`,
++      );
++    }
++  });
++
+   return { shortFlag, longFlag };
+ }
+diff --git a/package-lock.json b/package-lock.json
+index 9b1020f..42befde 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -709,16 +709,16 @@
+       }
+     },
+     "node_modules/brace-expansion": {
+-      "version": "5.0.6",
+-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.6.tgz",
+-      "integrity": "sha512-kLpxurY4Z4r9sgMsyG0Z9uzsBlgiU/EFKhj/h91/8yHu0edo7XuixOIH3VcJ8kkxs6/jPzoI6U9Vj3WqbMQ94g==",
++      "version": "5.0.9",
++      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz",
++      "integrity": "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "balanced-match": "^4.0.2"
+       },
+       "engines": {
+-        "node": "18 || 20 || >=22"
++        "node": "20 || >=22"
+       }
+     },
+     "node_modules/braces": {
+diff --git a/tests/command.argumentVariations.test.js b/tests/command.argumentVariations.test.js
+index cd17e04..7e7aa66 100644
+--- a/tests/command.argumentVariations.test.js
++++ b/tests/command.argumentVariations.test.js
+@@ -115,6 +115,18 @@ describe('Command arguments added using different methods', () => {
+     ];
+   }
+ 
++  test('when .arguments("") then no argument added', () => {
++    const cmd = new commander.Command('empty').arguments('');
++    assert.deepEqual(cmd.registeredArguments, []);
++    assert.equal(cmd.usage(), '[options]');
++  });
++
++  test('when .arguments("   ") then no argument added', () => {
++    const cmd = new commander.Command('blank').arguments('   ');
++    assert.deepEqual(cmd.registeredArguments, []);
++    assert.equal(cmd.usage(), '[options]');
++  });
++
+   test('when add arguments using multiple methods then all added', () => {
+     // This is not a key use case, but explicitly test that additive behaviour.
+     const program = new commander.Command();
+diff --git a/tests/command.copySettings.test.js b/tests/command.copySettings.test.js
+index 0ec3ef8..734fe1a 100644
+--- a/tests/command.copySettings.test.js
++++ b/tests/command.copySettings.test.js
+@@ -147,4 +147,32 @@ describe('Command.copyInheritedSettings()', () => {
+     cmd.copyInheritedSettings(source);
+     assert.ok(cmd._showHelpAfterError);
+   });
++
++  test('when copyInheritedSettings then copies showSuggestionAfterError()', () => {
++    const source = new commander.Command();
++    const cmd = new commander.Command();
++
++    assert.ok(cmd._showSuggestionAfterError);
++    source.showSuggestionAfterError(false);
++    cmd.copyInheritedSettings(source);
++    assert.ok(!cmd._showSuggestionAfterError);
++  });
++
++  test('when subcommand added then inherits showSuggestionAfterError(false)', () => {
++    const program = new commander.Command();
++    program.showSuggestionAfterError(false);
++    const sub = program.command('sub');
++    let errorMessage = '';
++    sub.exitOverride().configureOutput({
++      writeOut: () => {},
++      writeErr: (str) => {
++        errorMessage += str;
++      },
++    });
++    sub.command('serve');
++    assert.throws(() => {
++      sub.parse(['serv'], { from: 'user' });
++    });
++    assert.doesNotMatch(errorMessage, /Did you mean/);
++  });
+ });
+diff --git a/tests/command.helpCommand.test.js b/tests/command.helpCommand.test.js
+index 841fca3..d35ec76 100644
+--- a/tests/command.helpCommand.test.js
++++ b/tests/command.helpCommand.test.js
+@@ -89,6 +89,39 @@ describe('help handling of subcommands', () => {
+       }, /program/);
+     });
+ 
++    test('when "program help unknown" then error names the unknown command', () => {
++      const program = createTestCommand();
++      let errorMessage = '';
++      program.configureOutput({
++        writeErr: (str) => {
++          errorMessage += str;
++        },
++      });
++      program.command('sub1');
++      assert.throws(
++        () => {
++          program.parse(['help', 'unknown'], { from: 'user' });
++        },
++        { code: 'commander.unknownCommand' },
++      );
++      assert.match(errorMessage, /unknown command 'unknown'/);
++    });
++
++    test('when "program help sub" with a close name then suggests it', () => {
++      const program = createTestCommand();
++      let errorMessage = '';
++      program.configureOutput({
++        writeErr: (str) => {
++          errorMessage += str;
++        },
++      });
++      program.command('serve');
++      assert.throws(() => {
++        program.parse(['help', 'serv'], { from: 'user' });
++      });
++      assert.match(errorMessage, /Did you mean serve\?/);
++    });
++
+     test('when "program help sub1" then sub1', () => {
+       const program = makeCommand();
+       program.exitOverride();
+diff --git a/tests/command.unknownOption.test.js b/tests/command.unknownOption.test.js
+index 280374d..1aa2753 100644
+--- a/tests/command.unknownOption.test.js
++++ b/tests/command.unknownOption.test.js
+@@ -54,6 +54,91 @@ describe('parsing unknown option', () => {
+     );
+   });
+ 
++  describe('error message names the argument as typed', () => {
++    function makeCommand() {
++      const program = createTestCommand();
++      program._probeErr = '';
++      program.configureOutput({
++        writeErr: (str) => {
++          program._probeErr += str;
++        },
++      });
++      return program;
++    }
++
++    test('when unknown short flag follows a known one then error names the whole argument', () => {
++      const program = makeCommand().option('-a');
++      assert.throws(() => {
++        program.parse(['-abc'], { from: 'user' });
++      });
++      assert.match(program._probeErr, /unknown option '-abc'/);
++    });
++
++    test('when long name given with a single dash then error names the whole argument', () => {
++      const program = makeCommand().option('-v, --verbose');
++      assert.throws(() => {
++        program.parse(['-verbose'], { from: 'user' });
++      });
++      assert.match(program._probeErr, /unknown option '-verbose'/);
++    });
++
++    test('when no short flag is known then error names the whole argument', () => {
++      const program = makeCommand();
++      assert.throws(() => {
++        program.parse(['-xyz'], { from: 'user' });
++      });
++      assert.match(program._probeErr, /unknown option '-xyz'/);
++    });
++
++    test('when parent parses part of a group then subcommand error names the whole argument', () => {
++      const program = makeCommand().option('-a');
++      const sub = program.command('sub').option('-b');
++      sub.action(() => {});
++      assert.throws(() => {
++        program.parse(['sub', '-abz'], { from: 'user' });
++      });
++      assert.match(program._probeErr, /unknown option '-abz'/);
++    });
++
++    test('when long name given with a single dash to a subcommand then error names the whole argument', () => {
++      const program = makeCommand().option('-d, --debug');
++      const sub = program.command('deploy').option('--dry-run');
++      sub.action(() => {});
++      assert.throws(() => {
++        program.parse(['deploy', '-dry-run'], { from: 'user' });
++      });
++      assert.match(program._probeErr, /unknown option '-dry-run'/);
++    });
++
++    test('when a sibling subcommand runs next then it names its own argument', () => {
++      const program = makeCommand().option('-a');
++      const one = program.command('one').option('-b');
++      const two = program.command('two').option('-b');
++      one.action(() => {});
++      two.action(() => {});
++      assert.throws(() => {
++        program.parse(['one', '-abz'], { from: 'user' });
++      });
++      program._probeErr = '';
++      assert.throws(() => {
++        program.parse(['two', '-bq'], { from: 'user' });
++      });
++      assert.match(program._probeErr, /unknown option '-bq'/);
++    });
++
++    test('when unknown option follows a parsed group then a later parse names its own argument', () => {
++      const program = makeCommand().option('-a');
++      assert.throws(() => {
++        program.parse(['-abc'], { from: 'user' });
++      });
++      program._probeErr = '';
++      assert.throws(() => {
++        program.parse(['-q'], { from: 'user' });
++      });
++      assert.match(program._probeErr, /unknown option '-q'/);
++    });
++  });
++
+   test('when specify unknown option with simple program then error', () => {
+     const program = createTestCommand();
+     assert.throws(
+diff --git a/tests/option.bad-flags.test.js b/tests/option.bad-flags.test.js
+index f6da551..77ba8ca 100644
+--- a/tests/option.bad-flags.test.js
++++ b/tests/option.bad-flags.test.js
+@@ -15,6 +15,10 @@ describe('when construct Option with unsupported flags then throw', () => {
+     { flags: '-a,-b' }, // try all the separators
+     { flags: '-a|-b' },
+     { flags: '-a -b' },
++    { flags: '--foo--bar' }, // doubled dash leaves an empty word in the property name
++    { flags: '--foo-' }, // trailing dash leaves an empty word in the property name
++    { flags: '--no-' }, // negated with nothing left to name
++    { flags: '--ws, --workspace-' }, // second long flag checked too
+   ];
+   for (const { flags } of flagsList) {
+     test(`when construct Option with flags ${flags} then throw`, () => {
+diff --git a/typings/index.d.ts b/typings/index.d.ts
+index e3d0b72..45fd947 100644
+--- a/typings/index.d.ts
++++ b/typings/index.d.ts
+@@ -502,6 +502,8 @@ export class Command {
+   /**
+    * Define argument syntax for command, adding multiple at once (without descriptions).
+    *
++   * The names are separated by spaces, and an empty or blank string adds no arguments.
++   *
+    * See also .argument().
+    *
+    * @example

@@ -24,6 +24,7 @@ loss rather than hiding it.
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
+| commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
 | eemeli/yaml | 5 | 50 | **not converged** | n/a | 0 |
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
@@ -65,12 +66,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 24 brownfield convergences:
+The engine tightened over time. Of the 25 brownfield convergences:
 
-- **19** were countersigned by the adversarial evaluator, the current standard.
-  Sixteen of those met the empty-ledger rule; `cJSON`, `swift-algorithms` and
-  `magic_enum` met the v1.9.0 severity floor described below, `cJSON` being the
-  first convergence in the study that the empty-ledger rule would have refused.
+- **20** were countersigned by the adversarial evaluator, the current standard.
+  Sixteen of those met the empty-ledger rule; `cJSON`, `swift-algorithms`,
+  `magic_enum` and `commander.js` met the v1.9.0 severity floor described below,
+  `cJSON` being the first convergence in the study that the empty-ledger rule
+  would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
   standing instruction against sub-agents, and the receipt says so rather than
   working around it.
@@ -78,7 +80,7 @@ The engine tightened over time. Of the 24 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 24 as one number
+Every receipt names the standard its own run met. Pooling all 25 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -92,10 +94,10 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 24 convergences above predate v1.9.0 and met the stricter
-empty-ledger rule; `cJSON` is the first under this one, `swift-algorithms` the
-second and `magic_enum` the third, and each receipt names the Lows it carried -
-three, three and five.** Receipts from v1.9.0 onward name this
+REJECT reason in itself. **21 of the 25 convergences above predate v1.9.0 and met the stricter
+empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
+`magic_enum` and `commander.js`, and each receipt names the Lows it carried -
+three, three, five and two.** Receipts from v1.9.0 onward name this
 standard and list their carried Lows; the eras are never pooled.
 
 ## What was started and never published
@@ -195,7 +197,7 @@ before any of its targets had produced an outcome and recorded as an amendment:
 two had been chosen to make the selection rule falsifiable rather than to
 measure the targets well, and the counterexample was already on the record,
 since `swift-algorithms` is exactly the shape the rule predicts and needed
-three. `magic_enum` used two of the three and converged. `thor` used two of the
+three. `magic_enum` used two of the three and converged, and `commander.js` used one. `thor` used two of the
 three and **did not spend the third**, because the run was closed by a decision
 rather than by the stopping rule - the opposite of `goldmark`, where the budget
 bound and returned the unwelcome answer. That distinction is the whole point of
