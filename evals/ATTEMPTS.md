@@ -24,6 +24,7 @@ loss rather than hiding it.
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
+| claude-agent-sdk-python | 3 | 30 | **not converged** | n/a | 0 |
 | claude-code-action | 3 | 30 | **not converged** | n/a | 0 |
 | commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
@@ -277,6 +278,41 @@ The iteration 7 audit of run 3 scored Correctness None over swept rows, and
 record says so in the journal rather than leaving the score standing. Four
 gate invocations, four reproductions the loop confirmed itself before accepting,
 zero arguments with the verdict.
+
+## claude-agent-sdk-python, the same wall from the other side
+
+`anthropics/claude-agent-sdk-python` is the SDK for building agents on Claude
+Code, at 7,881 stars, run from tag `v0.2.138`. Three runs, 30 iterations,
+**18 findings filed and all 18 closed - 1 High, 10 Medium, 7 Low** - a shipped
+change of 25 files, +1,835/-283, and no convergence.
+
+The High is worth naming because nothing in the project's own gate could see it:
+on Python 3.11+, `create_sdk_mcp_server` published
+`{"type": "object", "properties": {}}` for **any** tool whose `input_schema` is a
+`typing_extensions.TypedDict` - the tool shipped to the model with no schema at
+all. The suite was green, `mypy --strict` was green, and the tools were empty.
+
+It ends in the same place as `claude-code-action` and for the same reason, which
+is why the two rows are published together:
+
+| End of | Rows swept | Unswept | Evaluator invocations |
+|---|---:|---:|---:|
+| run 1 | 4 of 44 | 37 | **0** |
+| run 2 | 12 of 44 | 29 | **0** |
+| run 3 | 19 of 44 | 22 | **0** |
+
+**Every finding on the ledger was closed and the surface was still less than half
+examined.** Three of the 44 rows are recorded unreachable on this host and the
+remaining 22 are concentrated in the session modules and the entry points, named
+in the final journal entry rather than left as a number.
+
+The contrast with its sibling is the useful part. `claude-code-action` had 23
+rows and reached 17; this one had 44 and reached 19. Same engine, same budget,
+same behaviour - the run closes findings because findings are what the scheduler
+can see, and the map fills only when an audit elects to fill it. A target's row
+count, not its difficulty, decides whether three runs can open the declaration
+path at all. That is an engine property, and it is the item the next release is
+built around.
 
 ## claude-code-action, an empty ledger that could not declare
 
