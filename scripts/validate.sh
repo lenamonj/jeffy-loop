@@ -171,6 +171,8 @@ check_markers() {
 }
 check_markers skills/jeffy/references/plan-default.md \
   "## Operating envelope" \
+  "then unswept or stale Surface inventory rows, then open Low" \
+  "never the mapping of unswept surface" \
   "in-envelope" \
   "Convergence ratchet:" \
   "(repoints <old hash>, tree unchanged)" \
@@ -220,6 +222,7 @@ check_markers skills/jeffy/references/plan-default.md \
   "write a line number into a state file"
 check_markers skills/jeffy/references/backlog-default.md \
   "## Proposed" \
+  "unswept Surface inventory rows above every open Low" \
   "## Settled classes" \
   "## Converged" \
   "(repoints <old hash>, tree unchanged)" \
@@ -237,6 +240,8 @@ check_markers skills/jeffy/references/journal-default.md \
   "or AUDIT or EVALUATOR or RATCHET"
 check_markers skills/jeffy/references/iteration-prompt.txt \
   "Salvage first:" \
+  "then unswept or stale Surface inventory rows, then open Low" \
+  "never the mapping of unswept surface" \
   "Ratchet next:" \
   "(repoints <old hash>, tree unchanged)" \
   "A Converged line is never edited" \
@@ -326,6 +331,8 @@ check_markers skills/jeffy/SKILL.md \
 check_markers skills/jeffy/references/enhance-plan-default.md \
   "## Mode" \
   "Enhance." \
+  "never waits for an empty ledger" \
+  "never the mapping of unswept surface" \
   "## Topic" \
   "<filled at bootstrap with the sanitized topic>" \
   "never files defect findings at severity" \
@@ -4769,6 +4776,52 @@ if command -v jq >/dev/null 2>&1; then
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
       skip "converged-hash reachability scenarios (git not on PATH)"
+    fi
+
+    # P1-39 (1.10.0): the sweep-arithmetic note. When nothing on the ledger
+    # outranks the map - no open High, no open Medium, no unparseable
+    # severity - and rows are unswept, the re-feed says the arithmetic out
+    # loud; a known High or Medium keeps it silent, because those outrank
+    # sweeping in the queue. The absent case carries a control that the hook
+    # still counted the rows, so silence cannot be a crash wearing a pass.
+    hb_write_state sess-1 3 10
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T1 (Low, docs, documentation): doc gap. Acceptance: grep.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      printf -- '- [ ] rowA: scope\n- [ ] rowB: scope\n- [x] rowC: swept at abc123 - probed\n'
+    } > "$hb_proj/PLAN.md"
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Sweep arithmetic: 2 rows are unswept' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'unswept rows outrank open Lows in the queue'; then
+      pass "stop hook says the sweep arithmetic when only Lows sit above unswept rows"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook stayed silent about unswept rows on a Low-only ledger, which is how five targets ended runs with the gate never due"
+    fi
+
+    hb_write_state sess-1 3 10
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T2 (Medium, runtime, correctness): real bug. Acceptance: test.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      printf -- '- [ ] rowA: scope\n'
+    } > "$hb_proj/PLAN.md"
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Sweep arithmetic:' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'unswept rows 1'; then
+      pass "stop hook keeps the sweep note silent while a Medium outranks the map"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook either nudged sweeping past an open Medium or lost the unswept count entirely"
     fi
 
     rm -rf "$hb_tmp"

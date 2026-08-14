@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.9.0"
+JEFFY_VERSION="1.10.0"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -1170,6 +1170,20 @@ reason="$reason $run_state."
 # that did not know that spent their last iterations discovering it.
 if [ "$open_now" = "0" ] && [ "$open_next" = "0" ] && [ "$open_later" = "0" ] && [ "$unswept_rows" = "0" ]; then
   reason="$reason Only the convergence sequence remains; it typically needs 2 to 3 iterations (closing audit, evaluator gate, declaration); plan the remaining $((max - next)) accordingly."
+fi
+# P1-39 (1.10.0): when nothing on the ledger outranks the map - no open High,
+# no open Medium, no unparseable severity, which fails closed exactly as the
+# closing rule's parse does - and rows are still unswept, say the sweep
+# arithmetic out loud. Five targets ended runs with the gate never due because
+# every iteration went to the ledger while the map sat unfilled; the count was
+# already in the run state, but a number nobody is told to act on is not a
+# schedule. Findings above Low keep the note silent, because a known High or
+# Medium legitimately outranks mapping in the queue.
+if [ -n "$unswept_rows" ] && [ "$unswept_rows" != "0" ] && [ -f "$root/BACKLOG.md" ]; then
+  hm_open="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \(Low[,)]/ { n++ } END { printf "%d", n }' "$root/BACKLOG.md")"
+  if [ "$hm_open" = "0" ]; then
+    reason="$reason Sweep arithmetic: $unswept_rows rows are unswept with $((max - next + 1)) iterations left including this one; unswept rows outrank open Lows in the queue, so sweeping is the top item now."
+  fi
 fi
 jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'
 exit 0

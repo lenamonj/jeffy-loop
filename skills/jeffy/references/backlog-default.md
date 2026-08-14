@@ -1,6 +1,6 @@
 # Backlog
 
-Ledger, not narrative. Top unblocked item is next. Markers: [ ] open, [b] blocked.
+Ledger, not narrative. Top unblocked item is next, in the queue that also holds unswept Surface inventory rows above every open Low; see PLAN.md. Markers: [ ] open, [b] blocked.
 
 Rules:
 - One line per item: `- [ ] <ID> (<Severity>, <class>, <dimension>): <finding>. Acceptance: <runnable command or observable fact>.`
