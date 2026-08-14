@@ -24,6 +24,7 @@ loss rather than hiding it.
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
+| claude-code-action | 3 | 30 | **not converged** | n/a | 0 |
 | commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
 | diff-so-fancy | 3 | 30 | **not converged** | n/a | 2 |
@@ -276,6 +277,60 @@ The iteration 7 audit of run 3 scored Correctness None over swept rows, and
 record says so in the journal rather than leaving the score standing. Four
 gate invocations, four reproductions the loop confirmed itself before accepting,
 zero arguments with the verdict.
+
+## claude-code-action, an empty ledger that could not declare
+
+`anthropics/claude-code-action` is the GitHub Action that runs Claude against
+issues and pull requests, at 8,618 stars, run from `main` at `e63208c` because
+its only release tag is a rolling `v1`. Three runs, 30 iterations, **21 findings
+filed and 20 closed - 3 High, 7 Medium, 11 Low** - a shipped change of 37 files,
++1,401/-737, and **no convergence**.
+
+**All three Highs are security findings, and all three are in the path between an
+untrusted contributor and the model:**
+
+- `sanitizeContent` did not remove the Unicode Tags block (U+E0000-U+E007F) or
+  ten other invisible format characters, so issue, PR, comment and review text
+  from anyone could carry **arbitrary hidden ASCII into the model prompt**.
+- Fork-controlled PR identifiers reached the prompt **without passing through
+  `sanitizeContent` at all** - `headRefName` and `baseRefName` in `formatContext`,
+  file paths in `formatChangedFiles` and `formatChangedFilesWithSHA`, and the
+  inline-comment path.
+- `scripts/git-push.sh` rejected only leading-dash flags, so a `+`-prefixed
+  refspec passed `git check-ref-format --branch` and the wrapper ran
+  `git push origin +main` - **a force push, which the wrapper's own header says
+  it exists to prevent**.
+
+**Why it did not converge is the whole point of this row, and it is not the
+findings.** The ledger closed empty except for one Low. The suite was green. What
+stopped it was the map:
+
+| End of | Rows swept | Unswept | Evaluator invocations |
+|---|---:|---:|---:|
+| run 1 | 4 of 23 | 19 | **0** |
+| run 2 | 14 of 23 | 9 | **0** |
+| run 3 | 17 of 23 | 6 | **0** |
+
+**Thirty iterations, and the adversarial gate was never invoked once**, because
+convergence requires no unswept row and the declaration path therefore never
+opened. The six rows still unswept are named rather than counted:
+`mcp-comment-servers`, `mcp-actions-server`, `modes`, `entrypoint-run`,
+`entrypoint-aux`, `agent-approval-check`.
+
+This is the cleanest statement in the corpus of a defect in the engine rather
+than in the target. `thor` made the same point with a ledger that never emptied;
+this one makes it with a ledger that **did** empty. Nothing was left to fix, the
+suite was green, and the run was still refused the gate, because sweeping the map
+and fixing findings compete for iterations and only one of them is scheduled.
+Five targets have now ended a run with zero evaluator invocations - `mruby`,
+`eemeli/yaml`, `thor`, `claude-agent-sdk-python` and this one - and the engine
+item that addresses it is the defining change of the next release.
+
+The three runs did make the map move, 4 to 14 to 17, and the sweeps batch when an
+audit elects to do them: run 2's iteration 6 took two rows and its iteration 8
+took two more. That is the argument for scheduling sweeps rather than for a
+bigger budget: a fourth run at the same sweep rate reaches the gate, and the
+budget was pre-registered at three before the target launched.
 
 ## thor, where the surface outran the budget
 
