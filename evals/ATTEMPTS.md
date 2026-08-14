@@ -39,6 +39,7 @@ loss rather than hiding it.
 | mruby (attempt 1) | 5 | 50 | **not converged** | n/a | 0 |
 | mruby (attempt 2) | 5 | 63 | **not converged** | n/a | 1 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
+| path-to-regexp | 3 | 27 | converged | evaluator countersigned | 1 |
 | PHP-Parser | 3 | 29 | converged | evaluator countersigned | 0 |
 | PyPortfolioOpt | 6 | 58 | converged | evaluator countersigned | 1 |
 | python-dotenv | 8 | 73 | converged | evaluator countersigned | 1 |
@@ -67,13 +68,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 25 brownfield convergences:
+The engine tightened over time. Of the 26 brownfield convergences:
 
-- **20** were countersigned by the adversarial evaluator, the current standard.
+- **21** were countersigned by the adversarial evaluator, the current standard.
   Sixteen of those met the empty-ledger rule; `cJSON`, `swift-algorithms`,
-  `magic_enum` and `commander.js` met the v1.9.0 severity floor described below,
-  `cJSON` being the first convergence in the study that the empty-ledger rule
-  would have refused.
+  `magic_enum`, `commander.js` and `path-to-regexp` met the v1.9.0 severity
+  floor described below, `cJSON` being the first convergence in the study that
+  the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
   standing instruction against sub-agents, and the receipt says so rather than
   working around it.
@@ -95,11 +96,17 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 25 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 26 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
-`magic_enum` and `commander.js`, and each receipt names the Lows it carried -
-three, three, five and two.** Receipts from v1.9.0 onward name this
-standard and list their carried Lows; the eras are never pooled.
+`magic_enum`, `commander.js` and `path-to-regexp`, and each receipt names what it
+carried - three Lows, three, five, two, and in `path-to-regexp`'s case no Low at
+all but one open Medium, blocked with its reason recorded.** That last one is the
+floor's edge and is worth stating plainly: `PTR-2` is a security finding, rated
+unsafe by the project's own ReDoS checker on three of 48 generated regexps, and
+every formulation that clears the verdict drops a documented parse. Closing it is
+a public behaviour change, so it sits under Proposed as an owner's decision
+rather than as work the loop declined. Receipts from v1.9.0 onward name this
+standard and list what they carried; the eras are never pooled.
 
 ## What was started and never published
 
@@ -127,7 +134,7 @@ Convergence here is per-run, and a blocked run is relaunched from written
 state with a fresh evaluator budget. Under that protocol, persistence raises
 the chance of eventually converging - dotenv took eight runs, dayjs eight,
 gitignore five with three terminal rejections along the way. The run counts
-above are published precisely so that "25 converged" is read with the cost
+above are published precisely so that "26 converged" is read with the cost
 attached rather than as a success rate.
 
 Targets from here on carry a **pre-registered run budget** committed before
@@ -204,6 +211,13 @@ rather than by the stopping rule - the opposite of `goldmark`, where the budget
 bound and returned the unwelcome answer. That distinction is the whole point of
 publishing budgets, so it is stated plainly here rather than left to be inferred
 from a run count: `thor`'s row is a decision to stop, not a budget that ran out.
+
+`path-to-regexp` also spent all three and **converged on the last one**, at
+iteration 8 of 10 with two iterations unspent - the second time a pre-registered
+budget came down to its final run, after `sqlparse`. Its run 1 is the one
+asterisk in that arithmetic: it **ended when the host crashed** during iteration
+10, not when the rule said stop, and the receipt says so. Nine of its iterations
+are on the record and the tenth does not exist.
 
 `diff-so-fancy` spent all three and did not converge. It is the second
 pre-registered budget to bind and return the unwelcome answer, after `goldmark`,

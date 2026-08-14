@@ -1,0 +1,436 @@
+diff --git a/.gitignore b/.gitignore
+index 0bf643a..627e6f4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -5,3 +5,4 @@ dist/
+ dist.es2015/
+ *.tsbuildinfo
+ package-lock.json
++.claude/jeffy-loop.local.md
+diff --git a/.prettierignore b/.prettierignore
+new file mode 100644
+index 0000000..14e9e04
+--- /dev/null
++++ b/.prettierignore
+@@ -0,0 +1,5 @@
++# Jeffy loop state files (loop memory, not project source)
++PLAN.md
++BACKLOG.md
++JOURNAL.md
++JOURNAL-archive.md
+diff --git a/Readme.md b/Readme.md
+index f33e392..e62fd3c 100644
+--- a/Readme.md
++++ b/Readme.md
+@@ -74,6 +74,30 @@ The `match` function returns a function for matching strings against a path:
+ const fn = match("/foo/:bar");
+ ```
+ 
++The default `decode` is `decodeURIComponent`, which throws on percent-encoding a URL is not allowed to contain. Matched input is usually a request path, so a client can reach this:
++
++```js
++const fn = match("/:foo");
++
++fn("/%"); //=> throws URIError: URI malformed
++```
++
++Catch it at the call site, or pass a `decode` that decides what a bad escape means:
++
++```js
++const fn = match("/:foo", {
++  decode: (value) => {
++    try {
++      return decodeURIComponent(value);
++    } catch {
++      return value;
++    }
++  },
++});
++
++fn("/%"); //=> { path: '/%', params: { foo: '%' } }
++```
++
+ **Please note:** `path-to-regexp` is intended for ordered data (e.g. paths, hosts). It can not handle arbitrarily ordered data (e.g. query strings, URL fragments, JSON, etc).
+ 
+ ## PathToRegexp
+@@ -84,7 +108,7 @@ The `pathToRegexp` function returns the `regexp` for matching strings against pa
+ - **options** _(optional)_ (See [parse](#parse) for more options)
+   - **sensitive** Regexp will be case sensitive. (default: `false`)
+   - **end** Validate the match reaches the end of the string. (default: `true`)
+-  - **delimiter** The default delimiter for segments, e.g. `[^/]` for `:named` parameters. (default: `'/'`)
++  - **delimiter** The default delimiter for segments, e.g. `[^/]` for `:named` parameters. Must be a non-empty string. (default: `'/'`)
+   - **trailing** Allows optional trailing delimiter to match. (default: `true`)
+ 
+ ```js
+@@ -99,7 +123,7 @@ The `compile` function will return a function for transforming parameters into a
+ 
+ - **path** A string or `TokenData` object.
+ - **options** (See [parse](#parse) for more options)
+-  - **delimiter** The default delimiter for segments, e.g. `[^/]` for `:named` parameters. (default: `'/'`)
++  - **delimiter** The default delimiter for segments, e.g. `[^/]` for `:named` parameters. Must be a non-empty string. (default: `'/'`)
+   - **encode** Function for encoding input strings for output into the path, or `false` to disable entirely. (default: `encodeURIComponent`)
+ 
+ ```js
+@@ -178,9 +202,28 @@ fn("/test"); //=> { path: '/test', params: { foo: 'test' } }
+ 
+ An effort has been made to ensure ambiguous paths from previous releases throw an error. This means you might be seeing an error when things worked before.
+ 
++A failure caused by the path itself is thrown as a `PathError`: every parse error, and the structural errors `pathToRegexp` reports, `Missing text before ... param` and `Too many path combinations`. It extends `TypeError`, so a `catch` that already tests for a `TypeError` keeps working, and it carries the offending path on `originalPath`:
++
++```js
++const { parse, PathError } = require("path-to-regexp");
++
++let caught;
++try {
++  parse("/:");
++} catch (error) {
++  caught = error;
++}
++
++caught instanceof PathError; //=> true
++caught.originalPath; //=> "/:"
++caught.message; //=> "Missing parameter name at index 2: /:; visit https://git.new/pathToRegexpError for info"
++```
++
++`originalPath` is `undefined` when the failing path was a `TokenData` object built by hand, because there is no source string to point at. Failures about anything other than the path stay plain `TypeError`s: an option value (`Expected "delimiter" to be a non-empty string`), a token object carrying an unknown `type`, and the params handed to a compile function (`Missing parameters: a`, `Expected "foo" to be a non-empty array`). A bad percent-escape in matched input surfaces as whatever `decode` throws, `URIError` from the default.
++
+ ### Missing parameter name
+ 
+-Parameter names must be provided after `:` or `*`, for example `/*path`. They can be valid JavaScript identifiers (e.g. `:myName`) or JSON strings (`:"my-name"`).
++Parameter names must be provided after `:` or `*`, for example `/*path`. They can be valid JavaScript identifiers (e.g. `:myName`), or double quoted to use any other characters (`:"my-name"`). Inside the quotes a backslash escapes the next character, so `:"my\"name"` is the name `my"name`; a backslash is not a JSON escape, and `\n` is the letter `n`.
+ 
+ ### Unexpected `?` or `+`
+ 
+@@ -221,4 +264,4 @@ MIT
+ [coverage-image]: https://img.shields.io/codecov/c/gh/pillarjs/path-to-regexp
+ [coverage-url]: https://codecov.io/gh/pillarjs/path-to-regexp
+ [license-image]: http://img.shields.io/npm/l/path-to-regexp.svg?style=flat
+-[license-url]: LICENSE.md
++[license-url]: LICENSE
+diff --git a/src/cases.spec.ts b/src/cases.fixture.ts
+similarity index 100%
+rename from src/cases.spec.ts
+rename to src/cases.fixture.ts
+diff --git a/src/index.spec.ts b/src/index.spec.ts
+index 40a503d..180c70c 100644
+--- a/src/index.spec.ts
++++ b/src/index.spec.ts
+@@ -13,7 +13,7 @@ import {
+   COMPILE_TESTS,
+   MATCH_TESTS,
+   STRINGIFY_TESTS,
+-} from "./cases.spec.js";
++} from "./cases.fixture.js";
+ 
+ /**
+  * Dynamically generate the entire test suite.
+@@ -160,6 +160,28 @@ describe("path-to-regexp", () => {
+     });
+   });
+ 
++  describe("delimiter option errors", () => {
++    // An empty delimiter has no failure of its own to report: `:a` silently
++    // spans segments, and a wildcard round-trip loses its element boundaries
++    // (`{ foo: ["ab", "c"] }` compiled to `/abc`, matching back as three).
++    it.each([
++      ["pathToRegexp", () => pathToRegexp("/:foo", { delimiter: "" })],
++      ["compile", () => compile("/*foo", { delimiter: "" })],
++      ["match", () => match("/:foo", { delimiter: "" })],
++    ])("should throw from %s when the delimiter is empty", (_, fn) => {
++      expect(fn).toThrow(
++        new TypeError('Expected "delimiter" to be a non-empty string'),
++      );
++    });
++
++    it("should accept any non-empty delimiter", () => {
++      expect(match("/*foo", { delimiter: "." })("/a.b")).toEqual({
++        path: "/a.b",
++        params: { foo: ["a", "b"] },
++      });
++    });
++  });
++
+   describe("pathToRegexp errors", () => {
+     it("should throw when missing text between params", () => {
+       expect(() => pathToRegexp("/:foo:bar")).toThrow(
+diff --git a/src/index.ts b/src/index.ts
+index a1f162f..4399787 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -58,6 +58,19 @@ export interface CompileOptions {
+   delimiter?: string;
+ }
+ 
++/**
++ * Resolve the delimiter option. An empty one has no failure of its own to
++ * report - it silently turns `:param` into a pattern that spans segments and
++ * splits wildcard values between every character - so it is rejected here,
++ * the single place all three entry points read the option.
++ */
++function toDelimiter(value = DEFAULT_DELIMITER) {
++  if (!value) {
++    throw new TypeError(`Expected "delimiter" to be a non-empty string`);
++  }
++  return value;
++}
++
+ /**
+  * Escape text for stringify to path.
+  */
+@@ -269,8 +282,8 @@ export function compile<P extends ParamData = ParamData>(
+   path: Path,
+   options: CompileOptions & ParseOptions = {},
+ ) {
+-  const { encode = encodeURIComponent, delimiter = DEFAULT_DELIMITER } =
+-    options;
++  const { encode = encodeURIComponent } = options;
++  const delimiter = toDelimiter(options.delimiter);
+   const data = typeof path === "object" ? path : parse(path, options);
+   const fn = tokensToFunction(data.tokens, delimiter, encode);
+ 
+@@ -411,8 +424,8 @@ export function match<P extends ParamData>(
+   path: Path | Path[],
+   options: MatchOptions & ParseOptions = {},
+ ): MatchFunction<P> {
+-  const { decode = decodeURIComponent, delimiter = DEFAULT_DELIMITER } =
+-    options;
++  const { decode = decodeURIComponent } = options;
++  const delimiter = toDelimiter(options.delimiter);
+   const { regexp, keys } = pathToRegexp(path, options);
+ 
+   const decoders = keys.map((key) => {
+@@ -447,12 +460,8 @@ export function pathToRegexp(
+   path: Path | Path[],
+   options: PathToRegexpOptions & ParseOptions = {},
+ ) {
+-  const {
+-    delimiter = DEFAULT_DELIMITER,
+-    end = true,
+-    sensitive = false,
+-    trailing = true,
+-  } = options;
++  const { end = true, sensitive = false, trailing = true } = options;
++  const delimiter = toDelimiter(options.delimiter);
+   const keys: Keys = [];
+   let source = "";
+   let combinations = 0;
+@@ -583,7 +592,7 @@ function toRegExpSource(
+           hasSegmentCapture & 2 // Seen wildcard in segment.
+             ? `(${negate(backtrack, "")}+)`
+             : wildcardBacktrack // No capture in segment, seen wildcard in path.
+-              ? `(${negate(wildcardBacktrack, "")}+|${negate(delimiter, "")}+)`
++              ? alternate(negate(wildcardBacktrack, ""), negate(delimiter, ""))
+               : `([^]+)`;
+ 
+         wildcardBacktrack = "";
+@@ -601,6 +610,14 @@ function toRegExpSource(
+   return result;
+ }
+ 
++/**
++ * Alternate two repeated negations, collapsing when they are the same
++ * expression - a branch identical to its sibling can only add backtracking.
++ */
++function alternate(a: string, b: string): string {
++  return a === b ? `(${a}+)` : `(${a}+|${b}+)`;
++}
++
+ /**
+  * Block backtracking on previous text/delimiter.
+  */
+@@ -655,14 +672,23 @@ export function stringify(data: TokenData): string {
+   return stringifyTokens(data.tokens, 0);
+ }
+ 
++/**
++ * Quote a parameter name. Inside quotes `parse` reads a backslash as "take the
++ * next character literally", so only the quote and the backslash are escaped -
++ * a JSON escape such as `\n` would be read back as the letter `n`.
++ */
++function quoteName(name: string) {
++  return `"${name.replace(/["\\]/g, "\\$&")}"`;
++}
++
+ /**
+  * Stringify a parameter name, escaping when it cannot be emitted directly.
+  */
+ function stringifyName(name: string, next: Token | undefined): string {
+-  if (!ID.test(name)) return JSON.stringify(name);
++  if (!ID.test(name)) return quoteName(name);
+ 
+   if (next?.type === "text" && ID_CONTINUE.test(next.value[0])) {
+-    return JSON.stringify(name);
++    return quoteName(name);
+   }
+ 
+   return name;
+diff --git a/src/redos.spec.ts b/src/redos.spec.ts
+index 3daf471..19ae933 100644
+--- a/src/redos.spec.ts
++++ b/src/redos.spec.ts
+@@ -1,8 +1,39 @@
+ import { check } from "recheck";
+-import { pathToRegexp } from "./index.js";
+-import { MATCH_TESTS } from "./cases.spec.js";
++import { pathToRegexp, type PathToRegexpOptions } from "./index.js";
++import { MATCH_TESTS } from "./cases.fixture.js";
+ import { describe, expect, it } from "vitest";
+ 
++/**
++ * `recheck` ends each search stage on whichever comes first, a step budget or
++ * a wall clock. The clocks are the problem, in both directions: a busy machine
++ * runs one out while the matching itself is fine and the case fails, and a
++ * search cut short reports `safe`, which is what 146 of the 151 assertions
++ * below expect - so a starved run can turn most of the ReDoS stage green
++ * without checking anything. Of the 5 that expect `vulnerable`, 4 go through
++ * the fuzzer and only the exponential sentinel is decided by the automaton
++ * checker, which never looks at a clock. Both were seen: with every core loaded this file once
++ * failed 15 of its 101 cases, and once returned `safe` for the polynomial
++ * source of `/:a--:b--:c`, against an assertion of `vulnerable`, on an
++ * unmodified tree.
++ *
++ * So the search stages are bounded by their step limits alone. Their clocks
++ * are disabled rather than widened, because widening only moves the machine
++ * speed at which the verdict changes. `randomSeed` is left alone: it already
++ * defaults to 0, so the genetic search is seeded deterministically and the
++ * clocks were the only source of run-to-run drift.
++ *
++ * Two clocks stay. `timeout` bounds the whole check and reports `timeout`,
++ * which fails an assertion loudly instead of passing as `safe`, so it is a
++ * backstop rather than a silent degradation. `attackTimeout` is the oracle's
++ * own threshold, not a budget: raising it to 10s reports that same polynomial
++ * source as safe, which is the gate quietly going blind.
++ */
++const STEP_BOUNDED = {
++  timeout: 120_000,
++  seedingTimeout: null,
++  incubationTimeout: null,
++};
++
+ describe.concurrent("redos", () => {
+   it.each(
+     // Array regex currently has false positives.
+@@ -10,8 +41,97 @@ describe.concurrent("redos", () => {
+       x.path,
+       pathToRegexp(x.path).regexp,
+     ]),
+-  )("%s - %s", { timeout: 10_000 }, async (_, regexp) => {
+-    const result = await check(regexp.source, regexp.flags);
++  )("%s - %s", { timeout: 60_000 }, async (_, regexp) => {
++    const result = await check(regexp.source, regexp.flags, STEP_BOUNDED);
+     expect(result.status).toBe("safe");
+   });
++
++  // The gate has to be able to fail, on both of the paths it uses. An
++  // exponential backtracker is caught by the automaton checker, which never
++  // looks at a clock.
++  it("reports a known vulnerable pattern", { timeout: 60_000 }, async () => {
++    const result = await check("^(?:a+)+$", "", STEP_BOUNDED);
++    expect(result.status).toBe("vulnerable");
++  });
++
++  // Every source above is checked by the fuzzer instead, because they all
++  // carry lookaheads, and the fuzzer is the part these settings could blind.
++  // This source is one this library really generates: two parameters joined
++  // by a repeated-character separator are ambiguous, since a parameter may
++  // absorb the separator, and no rewrite of it is both safe and unchanged in
++  // what it matches. It is the polynomial case the corpus has none of, so it
++  // is what proves the fuzzer is still looking.
++  it("reports a known polynomial pattern", { timeout: 60_000 }, async () => {
++    const { regexp } = pathToRegexp("/:a--:b--:c");
++    const result = await check(regexp.source, regexp.flags, STEP_BOUNDED);
++    expect(result.status).toBe("vulnerable");
++  });
++});
++
++/**
++ * The corpus above is checked under default options only, so `delimiter`,
++ * `end`, `trailing` and `sensitive` had no gate here: each of them changes the
++ * emitted source, and a delimiter of `--` changes what the negated character
++ * classes contain. This matrix pairs the shapes that put two repeatable
++ * constructs either side of a repeated-character separator - the arrangement
++ * every unsafe verdict this project has seen came from - with each option that
++ * rewrites those sources.
++ */
++const SEPARATORS = ["--", "%25"];
++
++const SKELETONS = [
++  (s: string) => `/*a${s}*b${s}:c`,
++  (s: string) => `/*a${s}:b${s}*c/:d`,
++  (s: string) => `/:a${s}:b${s}:c`,
++  (s: string) => `/x/*a${s}*c/y`,
++];
++
++const OPTION_SETS: [string, PathToRegexpOptions][] = [
++  ["default", {}],
++  ["end:false", { end: false }],
++  ["trailing:false", { trailing: false }],
++  ["sensitive", { sensitive: true }],
++  ["delimiter:.", { delimiter: "." }],
++  ["delimiter:--", { delimiter: "--" }],
++];
++
++/**
++ * Accepted exceptions, each a verdict no rewrite of the generated source
++ * removes: two params joined by a repeated-character separator are genuinely
++ * ambiguous, because the leading param may absorb the separator
++ * (`match("/:a-:b")("/a-b-c")` gives `a = "a-b"`), and every formulation
++ * `recheck` rates safe changes which strings the pattern matches. Filed and
++ * blocked as PTR-2, with the semantic choice under Proposed. An entry that
++ * turns safe fails this suite too: the exception has then outlived its cause
++ * and belongs back in the gate.
++ */
++const KNOWN_UNSAFE = new Set([
++  "/:a--:b--:c | default",
++  "/:a--:b--:c | trailing:false",
++  "/:a--:b--:c | sensitive",
++]);
++
++const MATRIX = SKELETONS.flatMap((skeleton) =>
++  SEPARATORS.flatMap((separator) => {
++    const path = skeleton(separator);
++    return OPTION_SETS.map(([label, options]): [string, string, RegExp] => [
++      path,
++      label,
++      pathToRegexp(path, options).regexp,
++    ]);
++  }),
++);
++
++describe.concurrent("redos under non-default options", () => {
++  it.each(MATRIX)(
++    "%s | %s",
++    { timeout: 60_000 },
++    async (path, label, regexp) => {
++      const result = await check(regexp.source, regexp.flags, STEP_BOUNDED);
++      const expected = KNOWN_UNSAFE.has(`${path} | ${label}`)
++        ? "vulnerable"
++        : "safe";
++      expect(result.status).toBe(expected);
++    },
++  );
+ });
+diff --git a/tsconfig.build.json b/tsconfig.build.json
+index 3db8e88..0925fed 100644
+--- a/tsconfig.build.json
++++ b/tsconfig.build.json
+@@ -3,5 +3,5 @@
+   "compilerOptions": {
+     "types": []
+   },
+-  "exclude": ["src/**/*.spec.ts", "src/**/*.bench.ts"]
++  "exclude": ["src/**/*.spec.ts", "src/**/*.bench.ts", "src/**/*.fixture.ts"]
+ }
+diff --git a/vitest.config.mts b/vitest.config.mts
+index 80d0569..7600269 100644
+--- a/vitest.config.mts
++++ b/vitest.config.mts
+@@ -5,7 +5,7 @@ export default defineConfig({
+   test: {
+     coverage: {
+       include: ["src/**/*"],
+-      exclude: ["**/*.bench.ts"],
++      exclude: ["**/*.bench.ts", "**/*.fixture.ts"],
+     },
+   },
+ });
