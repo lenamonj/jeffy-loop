@@ -1,0 +1,1111 @@
+diff --git a/.gitignore b/.gitignore
+index 20e34de..949a51f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -54,3 +54,4 @@ htmlcov/
+ dmypy.json
+ .pyre/
+ .claude/worktrees/
++.claude/jeffy-loop.local.md
+diff --git a/examples/hooks.py b/examples/hooks.py
+index a8001d4..27f2c33 100644
+--- a/examples/hooks.py
++++ b/examples/hooks.py
+@@ -73,10 +73,16 @@ async def check_bash_command(
+ async def add_custom_instructions(
+     input_data: HookInput, tool_use_id: str | None, context: HookContext
+ ) -> HookJSONOutput:
+-    """Add custom instructions when a session starts."""
++    """Add custom instructions to every prompt the user submits.
++
++    ``hookEventName`` has to be the event this hook is registered under: the
++    CLI rejects a response whose name does not match the hook that fired
++    ("Hook returned incorrect event name"), so a mismatch drops the context
++    instead of injecting it.
++    """
+     return {
+         "hookSpecificOutput": {
+-            "hookEventName": "SessionStart",
++            "hookEventName": "UserPromptSubmit",
+             "additionalContext": "My favorite color is hot pink",
+         }
+     }
+diff --git a/examples/tool_permission_callback.py b/examples/tool_permission_callback.py
+index 82c324b..aaea45e 100644
+--- a/examples/tool_permission_callback.py
++++ b/examples/tool_permission_callback.py
+@@ -64,6 +64,13 @@ async def my_permission_callback(
+                 updated_input=modified_input
+             )
+ 
++        # Already a safe path: allow it as written. Every branch of this tool
++        # has to return - falling through here would send an ordinary write to
++        # the interactive prompt at the end, which raises EOFError in a host
++        # with no terminal.
++        print(f"   Allowing write to safe path: {file_path}")
++        return PermissionResultAllow()
++
+     # Check dangerous bash commands
+     if tool_name == "Bash":
+         command = input_data.get("command", "")
+diff --git a/scripts/update_version.py b/scripts/update_version.py
+index b980d52..98f7653 100755
+--- a/scripts/update_version.py
++++ b/scripts/update_version.py
+@@ -1,49 +1,118 @@
+ #!/usr/bin/env python3
+-"""Update version in pyproject.toml and __init__.py files."""
++"""Update version in pyproject.toml and _version.py."""
+ 
++import json
+ import re
+ import sys
+ from pathlib import Path
+ 
++# The release workflow passes this value through from a maintainer's workflow
++# input and it ends up inside a Python string literal in a real source file, so
++# it is validated before anything is written -- the same discipline
++# update_cli_version.py applies to the CLI pin. This admits PEP 440's public
++# forms this project releases and nothing carrying a quote, backslash or
++# semicolon. Deliberately unanchored and matched with fullmatch(): with
++# "^...$" a swap to match() would silently accept a trailing newline.
++VERSION_PATTERN = re.compile(
++    r"[0-9]+\.[0-9]+\.[0-9]+(?:(?:a|b|rc)[0-9]+)?(?:\.post[0-9]+)?(?:\.dev[0-9]+)?"
++)
++
++PYPROJECT_PATH = Path("pyproject.toml")
++VERSION_FILE_PATH = Path("src/claude_agent_sdk/_version.py")
++
++
++def validate_version(new_version: str) -> str:
++    """Return the usable form of ``new_version``, or raise.
++
++    Raises:
++        ValueError: If it is not a fullmatch of VERSION_PATTERN.
++    """
++    candidate = new_version.strip()
++    if VERSION_PATTERN.fullmatch(candidate):
++        return candidate
++
++    # Never normalized away: a leading "v" is a tag name, not a version, and
++    # silently publishing a different string is worse than refusing.
++    hint = ""
++    if candidate[:1] in ("v", "V") and VERSION_PATTERN.fullmatch(candidate[1:]):
++        hint = f" Did you mean {candidate[1:]!r}? (no leading 'v')"
++    raise ValueError(
++        f"Invalid version: {new_version!r}. Expected a version matching "
++        f"{VERSION_PATTERN.pattern}.{hint}"
++    )
+ 
+-def update_version(new_version: str) -> None:
+-    """Update version in project files."""
+-    # Update pyproject.toml
+-    pyproject_path = Path("pyproject.toml")
+-    content = pyproject_path.read_text()
+ 
+-    # Only update the version field in [project] section
+-    content = re.sub(
++def _rewrite_project_version(content: str, literal: str) -> str:
++    """Replace the version assignment in the ``[project]`` table only.
++
++    A line-anchored search over the whole file would rewrite whichever table
++    happens to come first, which is not what the release means by "the
++    version".
++    """
++    table = re.search(r"^\[project\][ \t]*$", content, flags=re.MULTILINE)
++    if table is None:
++        raise ValueError(f"No [project] table found in {PYPROJECT_PATH}")
++    start = table.end()
++    following = re.search(r"^\[", content[start:], flags=re.MULTILINE)
++    end = start + (following.start() if following else len(content) - start)
++
++    # A callable replacement: re.sub() applies backslash-escape processing to a
++    # string replacement, so \1 and \g<0> would expand inside the literal.
++    section, count = re.subn(
+         r'^version = "[^"]*"',
+-        f'version = "{new_version}"',
+-        content,
++        lambda _match: literal,
++        content[start:end],
+         count=1,
+         flags=re.MULTILINE,
+     )
++    if count != 1:
++        raise ValueError(
++            f"No version assignment in the [project] table of {PYPROJECT_PATH}"
++        )
++    return content[:start] + section + content[end:]
+ 
+-    pyproject_path.write_text(content)
+-    print(f"Updated pyproject.toml to version {new_version}")
+ 
+-    # Update _version.py
+-    version_path = Path("src/claude_agent_sdk/_version.py")
+-    content = version_path.read_text()
++def update_version(new_version: str) -> None:
++    """Update version in project files.
++
++    Raises:
++        ValueError: If ``new_version`` is unusable, or if either file has no
++            assignment to replace. Both files are left untouched in every
++            failing case, since both rewrites are computed before either write.
++    """
++    new_version = validate_version(new_version)
+ 
+-    # Only update __version__ assignment
+-    content = re.sub(
++    # json.dumps() rather than an f-string: it always emits a closed,
++    # double-quoted, fully escaped literal, so a widened VERSION_PATTERN could
++    # never make _version.py unparseable or inject code.
++    literal = json.dumps(new_version)
++
++    pyproject = _rewrite_project_version(
++        PYPROJECT_PATH.read_text(), f"version = {literal}"
++    )
++    version_file, count = re.subn(
+         r'^__version__ = "[^"]*"',
+-        f'__version__ = "{new_version}"',
+-        content,
++        lambda _match: f"__version__ = {literal}",
++        VERSION_FILE_PATH.read_text(),
+         count=1,
+         flags=re.MULTILINE,
+     )
++    if count != 1:
++        raise ValueError(f"No __version__ assignment found in {VERSION_FILE_PATH}")
+ 
+-    version_path.write_text(content)
+-    print(f"Updated _version.py to version {new_version}")
++    PYPROJECT_PATH.write_text(pyproject)
++    print(f"Updated {PYPROJECT_PATH} to version {new_version}")
++    VERSION_FILE_PATH.write_text(version_file)
++    print(f"Updated {VERSION_FILE_PATH} to version {new_version}")
+ 
+ 
+ if __name__ == "__main__":
+     if len(sys.argv) != 2:
+-        print("Usage: python scripts/update_version.py <version>")
++        print("Usage: python scripts/update_version.py <version>", file=sys.stderr)
+         sys.exit(1)
+ 
+-    update_version(sys.argv[1])
++    try:
++        update_version(sys.argv[1])
++    except ValueError as exc:
++        print(f"Error: {exc}", file=sys.stderr)
++        sys.exit(1)
+diff --git a/src/claude_agent_sdk/__init__.py b/src/claude_agent_sdk/__init__.py
+index f76e7ae..3cd43c3 100644
+--- a/src/claude_agent_sdk/__init__.py
++++ b/src/claude_agent_sdk/__init__.py
+@@ -3,7 +3,7 @@
+ import logging
+ import sys
+ import types as builtin_types
+-from collections.abc import Awaitable, Callable
++from collections.abc import Awaitable, Callable, Mapping
+ from dataclasses import dataclass
+ from typing import Annotated, Any, Generic, TypeVar, Union, get_args, get_origin
+ 
+@@ -169,14 +169,14 @@ class SdkMcpTool(Generic[T]):
+     description: str
+     input_schema: type[T] | dict[str, Any]
+     handler: Callable[[T], Awaitable[dict[str, Any]]]
+-    annotations: ToolAnnotations | None = None
++    annotations: ToolAnnotations | Mapping[str, Any] | None = None
+ 
+ 
+ def tool(
+     name: str,
+     description: str,
+     input_schema: type | dict[str, Any],
+-    annotations: ToolAnnotations | None = None,
++    annotations: ToolAnnotations | Mapping[str, Any] | None = None,
+ ) -> Callable[[Callable[[Any], Awaitable[dict[str, Any]]]], SdkMcpTool[Any]]:
+     """Decorator for defining MCP tools with type safety.
+ 
+@@ -196,6 +196,11 @@ def tool(
+             - A JSON Schema dictionary for full validation
+             Use ``Annotated[type, "description"]`` to add a description to a
+             parameter in either dict-style or TypedDict schemas.
++        annotations: Optional MCP tool annotations, as a ``ToolAnnotations``
++            instance or a plain mapping of the same fields. Anthropic-specific
++            hints are accepted here too: ``maxResultSizeChars`` sets the CLI's
++            tool-result spill threshold for this tool and is republished to the
++            CLI under the ``_meta`` key ``anthropic/maxResultSizeChars``.
+ 
+     Returns:
+         A decorator function that wraps the tool implementation and returns
+@@ -430,9 +435,16 @@ def create_sdk_mcp_server(
+             # Anthropic-specific hints use _meta with namespaced keys instead.
+             # maxResultSizeChars controls the CLI's layer-2 tool-result spill
+             # threshold (toolResultStorage.ts maybePersistLargeToolResult).
+-            if tool_def.annotations is None:
++            annotations = tool_def.annotations
++            if annotations is None:
+                 return None
+-            max_size = getattr(tool_def.annotations, "maxResultSizeChars", None)
++            # Annotations may be a ToolAnnotations model or a plain mapping —
++            # Tool.model_validate accepts both, so both must reach _meta.
++            max_size = (
++                annotations.get("maxResultSizeChars")
++                if isinstance(annotations, Mapping)
++                else getattr(annotations, "maxResultSizeChars", None)
++            )
+             if max_size is None:
+                 return None
+             return {"anthropic/maxResultSizeChars": max_size}
+diff --git a/src/claude_agent_sdk/_internal/message_parser.py b/src/claude_agent_sdk/_internal/message_parser.py
+index 931cc2a..bb76973 100644
+--- a/src/claude_agent_sdk/_internal/message_parser.py
++++ b/src/claude_agent_sdk/_internal/message_parser.py
+@@ -129,6 +129,15 @@ def parse_message(data: dict[str, Any]) -> Message | None:
+                                         is_error=block.get("is_error"),
+                                     )
+                                 )
++                            case _:
++                                # A block type this SDK has no dataclass for is
++                                # dropped, so leave a trace naming it - parity
++                                # with the unknown-message-type arm below.
++                                logger.debug(
++                                    "Skipping unknown content block type in "
++                                    "user message: %s",
++                                    block["type"],
++                                )
+                     return UserMessage(
+                         content=user_content_blocks,
+                         uuid=uuid,
+@@ -206,6 +215,15 @@ def parse_message(data: dict[str, Any]) -> Message | None:
+                                     content=block["content"],
+                                 )
+                             )
++                        case _:
++                            # A block type this SDK has no dataclass for is
++                            # dropped, so leave a trace naming it - parity with
++                            # the unknown-message-type arm below.
++                            logger.debug(
++                                "Skipping unknown content block type in "
++                                "assistant message: %s",
++                                block["type"],
++                            )
+ 
+                 return AssistantMessage(
+                     content=content_blocks,
+diff --git a/src/claude_agent_sdk/_internal/query.py b/src/claude_agent_sdk/_internal/query.py
+index e986934..eaa0a55 100644
+--- a/src/claude_agent_sdk/_internal/query.py
++++ b/src/claude_agent_sdk/_internal/query.py
+@@ -401,8 +401,16 @@ class Query:
+                 if request_id not in self.pending_control_results:
+                     self.pending_control_results[request_id] = pending_error
+                     event.set()
+-            # Put error in stream so iterators can handle it
+-            await self._message_send.send({"type": "error", "error": error_text})
++            # Put error in stream so iterators can handle it. The exception
++            # object rides along under "exception" so receive_messages can
++            # re-raise it unchanged: the SDK's documented error handling
++            # (README "Error Handling") is written around catching
++            # ProcessError / CLIJSONDecodeError, and rebuilding a bare
++            # Exception from the text alone drops both the type and the
++            # payload (ProcessError.exit_code, CLIJSONDecodeError.line).
++            await self._message_send.send(
++                {"type": "error", "error": error_text, "exception": pending_error}
++            )
+         finally:
+             # Flush any remaining transcript mirror entries before closing so
+             # an early stdout EOF or transport error doesn't drop entries
+@@ -962,6 +970,14 @@ class Query:
+             if message.get("type") == "end":
+                 break
+             elif message.get("type") == "error":
++                # Re-raise the original exception when the frame carries one
++                # (see _read_messages), so ProcessError / CLIJSONDecodeError
++                # reach the caller as themselves. A frame without it -- an
++                # "error"-typed message straight off the CLI's stdout -- keeps
++                # the previous text-only behavior.
++                exc = message.get("exception")
++                if isinstance(exc, BaseException):
++                    raise exc
+                 raise Exception(message.get("error", "Unknown error"))
+ 
+             yield message
+diff --git a/src/claude_agent_sdk/_internal/sessions.py b/src/claude_agent_sdk/_internal/sessions.py
+index cb1cb13..79ebf0a 100644
+--- a/src/claude_agent_sdk/_internal/sessions.py
++++ b/src/claude_agent_sdk/_internal/sessions.py
+@@ -42,8 +42,10 @@ _STORE_LIST_LOAD_CONCURRENCY = 16
+ # the hash suffix and separator.
+ MAX_SANITIZED_LENGTH = 200
+ 
++# \Z rather than $: in Python $ also matches before a single trailing
++# newline, so "<uuid>\n" would pass this guard and be returned intact.
+ _UUID_RE = re.compile(
+-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
++    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z",
+     re.IGNORECASE,
+ )
+ 
+@@ -78,10 +80,37 @@ def _validate_uuid(maybe_uuid: str) -> str | None:
+ # ---------------------------------------------------------------------------
+ 
+ 
++def _as_utf16_units(s: str) -> str:
++    """Re-express ``s`` with one character per UTF-16 code unit.
++
++    The CLI derives project directory names in JS, where a string iterates
++    code units: an astral character (emoji, and everything else above the
++    BMP) is two steps there and one in Python. Both functions below have to
++    reproduce the CLI's output exactly -- they name the directory it created
++    -- so both walk this expansion rather than the str itself.
++
++    ASCII is returned untouched, which is the overwhelmingly common case and
++    the one on the listing hot path.
++    """
++    if s.isascii():
++        return s
++    # surrogatepass so a path carrying a lone surrogate (a filesystem name
++    # decoded with surrogateescape) expands instead of raising; JS would see
++    # the same unpaired unit.
++    data = s.encode("utf-16-le", "surrogatepass")
++    return "".join(
++        chr(int.from_bytes(data[i : i + 2], "little")) for i in range(0, len(data), 2)
++    )
++
++
+ def _simple_hash(s: str) -> str:
+-    """32-bit integer hash to base36, matching the CLI's directory naming."""
++    """32-bit integer hash to base36, matching the CLI's directory naming.
++
++    Walks UTF-16 code units because the CLI's ``charCodeAt`` loop does; see
++    :func:`_as_utf16_units`.
++    """
+     h = 0
+-    for ch in s:
++    for ch in _as_utf16_units(s):
+         char = ord(ch)
+         h = (h << 5) - h + char
+         # Emulate JS `hash |= 0` (coerce to 32-bit signed int)
+@@ -106,8 +135,13 @@ def _sanitize_path(name: str) -> str:
+ 
+     Replaces all non-alphanumeric characters with hyphens. For paths
+     exceeding MAX_SANITIZED_LENGTH, truncates and appends a hash suffix.
++
++    Substitution and length are both counted in UTF-16 code units, because
++    that is what the CLI's regex and its ``.length`` cut operate on; see
++    :func:`_as_utf16_units`. The result holds only ASCII alphanumerics and
++    hyphens, so its Python length and its JS length agree from here on.
+     """
+-    sanitized = _SANITIZE_RE.sub("-", name)
++    sanitized = _SANITIZE_RE.sub("-", _as_utf16_units(name))
+     if len(sanitized) <= MAX_SANITIZED_LENGTH:
+         return sanitized
+     h = _simple_hash(name)
+@@ -157,11 +191,15 @@ def _canonicalize_path(d: str) -> str:
+ def _find_project_dir(project_path: str) -> Path | None:
+     """Finds the project directory for a given path.
+ 
+-    Tolerates hash mismatches for long paths (>200 chars). The CLI uses
+-    Bun.hash while the SDK under Node.js uses simpleHash — for paths that
+-    exceed MAX_SANITIZED_LENGTH, these produce different directory suffixes.
+-    This function falls back to prefix-based scanning when the exact match
+-    doesn't exist.
++    A sanitized name longer than MAX_SANITIZED_LENGTH is truncated and given
++    a hash suffix, so a directory whose suffix was computed differently
++    cannot be found by name at all. This falls back to scanning for the
++    truncated prefix in that case.
++
++    The fallback is defensive rather than a fix for a known mismatch: every
++    directory-naming function in the paired CLI bundle suffixes with the same
++    absolute-value simple hash in base 36 that ``_simple_hash`` computes, and
++    the two agree over the corpus this SDK checks them against.
+     """
+     exact = _get_project_dir(project_path)
+     if exact.is_dir():
+@@ -695,9 +733,13 @@ def list_sessions(
+         directory: Directory to list sessions for. When provided, returns
+             sessions for this project directory (and optionally its git
+             worktrees). When omitted, returns sessions across all projects.
+-        limit: Maximum number of sessions to return.
++        limit: Maximum number of sessions to return. A positive value caps
++            the result; ``None`` and any value <= 0 alike mean no limit, so a
++            caller computing a limit must not let it reach 0 expecting an
++            empty result.
+         offset: Number of sessions to skip from the start of the sorted
+-            result set. Use with ``limit`` for pagination. Defaults to 0.
++            result set. Use with ``limit`` for pagination. Defaults to 0;
++            a value <= 0 skips nothing.
+         include_worktrees: When ``directory`` is provided and the directory
+             is inside a git repository, include sessions from all git
+             worktree paths. Defaults to ``True``.
+@@ -754,8 +796,9 @@ def get_session_info(
+             directories are searched for the session file.
+ 
+     Returns:
+-        ``SDKSessionInfo`` for the session, or ``None`` if the session file
+-        is not found, is a sidechain session, or has no extractable summary.
++        ``SDKSessionInfo`` for the session, or ``None`` if ``session_id`` is
++        not a valid UUID, the session file is not found, is a sidechain
++        session, or has no extractable summary.
+ 
+     See Also:
+         :func:`get_session_info_from_store` for the
+@@ -1066,8 +1109,14 @@ def get_session_messages(
+         session_id: UUID of the session to read.
+         directory: Project directory to find the session in. If omitted,
+             searches all project directories under ``~/.claude/projects/``.
+-        limit: Maximum number of messages to return.
+-        offset: Number of messages to skip from the start.
++        limit: Maximum number of messages to return. A positive value caps
++            the result; ``None`` and any value <= 0 alike mean no limit, so a
++            caller computing a limit must not let it reach 0 expecting an
++            empty result.
++        offset: Number of messages to skip from the start. Defaults to 0. A
++            value <= 0 skips nothing when ``limit`` is unset or non-positive;
++            combined with a positive ``limit`` a negative offset slices
++            relative to the end of the list, which is not a supported shape.
+ 
+     Returns:
+         List of ``SessionMessage`` objects in chronological order. Returns
+@@ -1338,8 +1387,14 @@ def get_subagent_messages(
+         agent_id: ID of the subagent (as returned by ``list_subagents``).
+         directory: Project directory to find the session in. If omitted,
+             searches all project directories under ``~/.claude/projects/``.
+-        limit: Maximum number of messages to return.
+-        offset: Number of messages to skip from the start.
++        limit: Maximum number of messages to return. A positive value caps
++            the result; ``None`` and any value <= 0 alike mean no limit, so a
++            caller computing a limit must not let it reach 0 expecting an
++            empty result.
++        offset: Number of messages to skip from the start. Defaults to 0. A
++            value <= 0 skips nothing when ``limit`` is unset or non-positive;
++            combined with a positive ``limit`` a negative offset slices
++            relative to the end of the list, which is not a supported shape.
+ 
+     Returns:
+         List of ``SessionMessage`` objects in chronological order. Returns
+@@ -1594,9 +1649,12 @@ async def list_sessions_from_store(
+             :meth:`SessionStore.list_sessions` (or both).
+         directory: Project directory used to compute the ``project_key``.
+             Defaults to the current working directory.
+-        limit: Maximum number of sessions to return.
++        limit: Maximum number of sessions to return. A positive value caps
++            the result; ``None`` and any value <= 0 alike mean no limit, so a
++            caller computing a limit must not let it reach 0 expecting an
++            empty result.
+         offset: Number of sessions to skip from the start of the sorted
+-            result set.
++            result set. A value <= 0 skips nothing.
+ 
+     Returns:
+         List of ``SDKSessionInfo`` sorted by ``last_modified`` descending.
+@@ -1780,8 +1838,14 @@ async def get_session_messages_from_store(
+         session_id: UUID of the session to read.
+         directory: Project directory used to compute the ``project_key``.
+             Defaults to the current working directory.
+-        limit: Maximum number of messages to return.
+-        offset: Number of messages to skip from the start.
++        limit: Maximum number of messages to return. A positive value caps
++            the result; ``None`` and any value <= 0 alike mean no limit, so a
++            caller computing a limit must not let it reach 0 expecting an
++            empty result.
++        offset: Number of messages to skip from the start. Defaults to 0. A
++            value <= 0 skips nothing when ``limit`` is unset or non-positive;
++            combined with a positive ``limit`` a negative offset slices
++            relative to the end of the list, which is not a supported shape.
+ 
+     Returns:
+         List of ``SessionMessage`` objects in chronological order. Empty
+@@ -1870,12 +1934,19 @@ async def get_subagent_messages_from_store(
+         agent_id: ID of the subagent.
+         directory: Project directory used to compute the ``project_key``.
+             Defaults to the current working directory.
+-        limit: Maximum number of messages to return.
+-        offset: Number of messages to skip from the start.
++        limit: Maximum number of messages to return. A positive value caps
++            the result; ``None`` and any value <= 0 alike mean no limit, so a
++            caller computing a limit must not let it reach 0 expecting an
++            empty result.
++        offset: Number of messages to skip from the start. Defaults to 0. A
++            value <= 0 skips nothing when ``limit`` is unset or non-positive;
++            combined with a positive ``limit`` a negative offset slices
++            relative to the end of the list, which is not a supported shape.
+ 
+     Returns:
+         List of ``SessionMessage`` objects in chronological order. Empty
+-        list if the session/subagent is not found.
++        list if ``session_id`` is invalid or the session/subagent is not
++        found.
+     """
+     if not _validate_uuid(session_id):
+         return []
+diff --git a/src/claude_agent_sdk/_internal/transcript_mirror_batcher.py b/src/claude_agent_sdk/_internal/transcript_mirror_batcher.py
+index 3efec83..1b1a879 100644
+--- a/src/claude_agent_sdk/_internal/transcript_mirror_batcher.py
++++ b/src/claude_agent_sdk/_internal/transcript_mirror_batcher.py
+@@ -195,7 +195,7 @@ class TranscriptMirrorBatcher:
+                     last_err = e
+                     logger.debug(
+                         "[TranscriptMirrorBatcher] append timed out after "
+-                        "%.1fs for %s — not retrying",
++                        "%gs for %s — not retrying",
+                         self.send_timeout,
+                         file_path,
+                     )
+@@ -211,9 +211,16 @@ class TranscriptMirrorBatcher:
+                         e,
+                     )
+             if not succeeded:
++                reason = str(last_err)
++                if isinstance(last_err, TimeoutError):
++                    # anyio.fail_after raises a bare TimeoutError whose str()
++                    # is empty, and this message is the consumer's only signal
++                    # for the dropped batch, so name the bound that fired.
++                    bound = f"append timed out after {self.send_timeout:g}s"
++                    reason = f"{bound}: {reason}" if reason else bound
+                 logger.error(
+                     "[TranscriptMirrorBatcher] flush failed for %s: %s",
+                     file_path,
+-                    last_err,
++                    reason,
+                 )
+-                errors.append((key, str(last_err)))
++                errors.append((key, reason))
+diff --git a/src/claude_agent_sdk/_internal/transport/subprocess_cli.py b/src/claude_agent_sdk/_internal/transport/subprocess_cli.py
+index 58abc43..97b13cc 100644
+--- a/src/claude_agent_sdk/_internal/transport/subprocess_cli.py
++++ b/src/claude_agent_sdk/_internal/transport/subprocess_cli.py
+@@ -462,6 +462,38 @@ class SubprocessCLITransport(Transport):
+                 f"are unsafe to pass on a Windows command line: {bad!r}"
+             )
+ 
++    def _read_settings_file(self, settings_path: Path) -> dict[str, Any]:
++        """Read a settings file for the sandbox merge, or warn and drop it.
++
++        A missing file leaves the merge with nothing but the sandbox settings,
++        which is the caller's settings silently disappearing, so say so.
++
++        Raises:
++            ValueError: If the file is not readable as a JSON object. The
++                message names the file, which neither the raw JSONDecodeError
++                nor the TypeError from merging into a non-dict does.
++        """
++        if not settings_path.exists():
++            logger.warning(
++                "Settings file not found: %s -- sending sandbox settings only, "
++                "the value passed in settings= is dropped",
++                settings_path,
++            )
++            return {}
++        try:
++            with settings_path.open(encoding="utf-8") as f:
++                obj = json.load(f)
++        except json.JSONDecodeError as e:
++            raise ValueError(
++                f"Settings file is not valid JSON: {settings_path} ({e})"
++            ) from e
++        if not isinstance(obj, dict):
++            raise ValueError(
++                f"Settings file must hold a JSON object: {settings_path} "
++                f"holds {type(obj).__name__}"
++            )
++        return obj
++
+     def _build_settings_value(self) -> str | None:
+         """Build settings value, merging sandbox settings if provided.
+ 
+@@ -496,19 +528,10 @@ class SubprocessCLITransport(Transport):
+                     logger.warning(
+                         f"Failed to parse settings as JSON, treating as file path: {settings_str}"
+                     )
+-                    # Read the file
+-                    settings_path = Path(settings_str)
+-                    if settings_path.exists():
+-                        with settings_path.open(encoding="utf-8") as f:
+-                            settings_obj = json.load(f)
++                    settings_obj = self._read_settings_file(Path(settings_str))
+             else:
+                 # It's a file path - read and parse
+-                settings_path = Path(settings_str)
+-                if settings_path.exists():
+-                    with settings_path.open(encoding="utf-8") as f:
+-                        settings_obj = json.load(f)
+-                else:
+-                    logger.warning(f"Settings file not found: {settings_path}")
++                settings_obj = self._read_settings_file(Path(settings_str))
+ 
+         # Merge sandbox settings
+         if has_sandbox:
+@@ -597,7 +620,14 @@ class SubprocessCLITransport(Transport):
+         if effective_allowed_tools:
+             cmd.extend(["--allowedTools", ",".join(effective_allowed_tools)])
+ 
+-        if self._options.max_turns:
++        # `is not None`, not truthiness, for the same reason resume_drops_turn
++        # below is: 0 is a value the caller can mean. The CLI documents
++        # --max-turns as "early exit the conversation after the specified
++        # number of turns" and parses it with a NaN check only, so 0 is zero
++        # turns -- while dropping the flag hands back the CLI default, which
++        # is unbounded. Silently disarming a cap the caller believes is armed
++        # is the one outcome neither reading of 0 wants.
++        if self._options.max_turns is not None:
+             cmd.extend(["--max-turns", str(self._options.max_turns)])
+ 
+         if self._options.max_budget_usd is not None:
+diff --git a/src/claude_agent_sdk/types.py b/src/claude_agent_sdk/types.py
+index b0f5ce5..074a184 100644
+--- a/src/claude_agent_sdk/types.py
++++ b/src/claude_agent_sdk/types.py
+@@ -455,13 +455,6 @@ class UserPromptSubmitHookSpecificOutput(TypedDict):
+     additionalContext: NotRequired[str]
+ 
+ 
+-class SessionStartHookSpecificOutput(TypedDict):
+-    """Hook-specific output for SessionStart events."""
+-
+-    hookEventName: Literal["SessionStart"]
+-    additionalContext: NotRequired[str]
+-
+-
+ class NotificationHookSpecificOutput(TypedDict):
+     """Hook-specific output for Notification events."""
+ 
+@@ -488,7 +481,6 @@ HookSpecificOutput = (
+     | PostToolUseHookSpecificOutput
+     | PostToolUseFailureHookSpecificOutput
+     | UserPromptSubmitHookSpecificOutput
+-    | SessionStartHookSpecificOutput
+     | NotificationHookSpecificOutput
+     | SubagentStartHookSpecificOutput
+     | PermissionRequestHookSpecificOutput
+diff --git a/tests/test_message_parser.py b/tests/test_message_parser.py
+index e55fd15..b21242a 100644
+--- a/tests/test_message_parser.py
++++ b/tests/test_message_parser.py
+@@ -987,6 +987,26 @@ class TestMessageParser:
+         result = parse_message({"type": "unknown_type"})
+         assert result is None
+ 
++    @pytest.mark.parametrize("role", ["assistant", "user"])
++    def test_parse_unknown_content_block_logs(self, caplog, role):
++        """A block type this SDK has no dataclass for is dropped from content,
++        so both block loops name it at debug rather than losing it silently."""
++        import logging
++
++        message = {"content": [{"type": "brand_new_block", "x": 1}]}
++        if role == "assistant":
++            message["model"] = "claude-x"
++
++        with caplog.at_level(
++            logging.DEBUG, logger="claude_agent_sdk._internal.message_parser"
++        ):
++            result = parse_message({"type": role, "message": message})
++
++        assert result is not None
++        assert result.content == []
++        assert "brand_new_block" in caplog.text
++        assert f"{role} message" in caplog.text
++
+     def test_parse_user_message_missing_fields(self):
+         """Test that user message with missing fields raises MessageParseError."""
+         with pytest.raises(MessageParseError) as exc_info:
+diff --git a/tests/test_query.py b/tests/test_query.py
+index f6e98d1..f47e5b1 100644
+--- a/tests/test_query.py
++++ b/tests/test_query.py
+@@ -22,7 +22,7 @@ from claude_agent_sdk import (
+     query,
+     tool,
+ )
+-from claude_agent_sdk._errors import ProcessError
++from claude_agent_sdk._errors import CLIJSONDecodeError, ProcessError
+ from claude_agent_sdk._internal.query import Query
+ from claude_agent_sdk.types import HookMatcher
+ 
+@@ -1583,3 +1583,62 @@ class TestProcessExitAfterErrorResult:
+             assert isinstance(q.pending_control_results["req_1"], ProcessError)
+ 
+         anyio.run(_test)
++
++
++class TestErrorTypePropagation:
++    """The README documents catching ``ProcessError`` / ``CLIJSONDecodeError``
++    around ``async for message in query(...)``. Transport failures reach the
++    consumer through Query's internal error frame, so that frame has to carry
++    the original exception object rather than only its text -- otherwise the
++    documented ``except ProcessError as e: e.exit_code`` never matches."""
++
++    @staticmethod
++    def _transport_raising(exc: Exception):
++        """A transport that answers the initialize request, then raises ``exc``
++        out of ``read_messages`` exactly as SubprocessCLITransport does when the
++        CLI exits non-zero or writes an undecodable line."""
++        transport = AsyncMock()
++        transport.is_ready = Mock(return_value=True)
++        state: dict = {"request_id": None, "seen": anyio.Event()}
++
++        async def write(data: str) -> None:
++            msg = json.loads(data)
++            if msg.get("type") == "control_request" and state["request_id"] is None:
++                state["request_id"] = msg["request_id"]
++                state["seen"].set()
++
++        async def read_messages():
++            await state["seen"].wait()
++            yield {
++                "type": "control_response",
++                "response": {
++                    "subtype": "success",
++                    "request_id": state["request_id"],
++                    "response": {},
++                },
++            }
++            raise exc
++
++        transport.write = write
++        transport.read_messages = read_messages
++        return transport
++
++    @pytest.mark.anyio
++    async def test_query_propagates_process_error_type(self) -> None:
++        transport = self._transport_raising(
++            ProcessError("Command failed with exit code 1", exit_code=1, stderr="")
++        )
++        with pytest.raises(ProcessError) as exc_info:
++            async for _ in query(prompt="hi", transport=transport):
++                pass  # pragma: no cover - the transport never yields a message
++        assert exc_info.value.exit_code == 1
++
++    @pytest.mark.anyio
++    async def test_query_propagates_json_decode_error_type(self) -> None:
++        transport = self._transport_raising(
++            CLIJSONDecodeError("{not json", ValueError("boom"))
++        )
++        with pytest.raises(CLIJSONDecodeError) as exc_info:
++            async for _ in query(prompt="hi", transport=transport):
++                pass  # pragma: no cover - the transport never yields a message
++        assert exc_info.value.line == "{not json"
+diff --git a/tests/test_sdk_mcp_integration.py b/tests/test_sdk_mcp_integration.py
+index 1e456ad..8400238 100644
+--- a/tests/test_sdk_mcp_integration.py
++++ b/tests/test_sdk_mcp_integration.py
+@@ -493,6 +493,61 @@ def test_max_result_size_chars_annotation_flows_to_cli():
+     )
+ 
+ 
++def test_mapping_annotations_reach_meta_like_the_model_form():
++    """A plain mapping passed as annotations must produce the same tools/list entry.
++
++    ``Tool.model_validate`` turns a mapping into a real ``ToolAnnotations``, so the
++    annotation fields survive either way; ``_meta`` has to follow the same rule or
++    the CLI silently keeps its default spill threshold for a tool that asked for a
++    different one.
++    """
++    import anyio
++
++    from claude_agent_sdk._internal.query import Query
++
++    async def handler(args: dict[str, Any]) -> dict[str, Any]:
++        return {"content": [{"type": "text", "text": "ok"}]}
++
++    as_model = tool(
++        "as_model", "", {}, annotations=ToolAnnotations(maxResultSizeChars=500_000)
++    )(handler)
++    as_mapping = tool(
++        "as_mapping", "", {}, annotations={"maxResultSizeChars": 500_000}
++    )(handler)
++    mapping_without_hint = tool(
++        "mapping_without_hint", "", {}, annotations={"readOnlyHint": True}
++    )(handler)
++
++    server_config = create_sdk_mcp_server(
++        name="mapping-annotations-test",
++        tools=[as_model, as_mapping, mapping_without_hint],
++    )
++
++    async def _run():
++        query_instance = Query.__new__(Query)
++        query_instance.sdk_mcp_servers = {
++            "mapping-annotations-test": server_config["instance"]
++        }
++        return await query_instance._handle_sdk_mcp_request(
++            "mapping-annotations-test",
++            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
++        )
++
++    tools_by_name = {t["name"]: t for t in anyio.run(_run)["result"]["tools"]}
++
++    assert tools_by_name["as_mapping"].get("_meta") == tools_by_name["as_model"].get(
++        "_meta"
++    ), "a mapping annotation must produce the same _meta as the ToolAnnotations form"
++    assert (
++        tools_by_name["as_mapping"]["_meta"]["anthropic/maxResultSizeChars"] == 500_000
++    )
++    assert tools_by_name["as_mapping"]["annotations"]["maxResultSizeChars"] == 500_000
++    # A mapping without the hint must not invent one.
++    assert "anthropic/maxResultSizeChars" not in tools_by_name[
++        "mapping_without_hint"
++    ].get("_meta", {})
++
++
+ @pytest.mark.anyio
+ async def test_resource_link_content_converted_to_text():
+     """Test that resource_link content blocks are converted to text."""
+diff --git a/tests/test_sessions.py b/tests/test_sessions.py
+index 1f324f0..512073f 100644
+--- a/tests/test_sessions.py
++++ b/tests/test_sessions.py
+@@ -14,12 +14,17 @@ from claude_agent_sdk import (
+     SessionMessage,
+     get_session_info,
+     get_session_messages,
++    get_session_messages_from_store,
+     get_subagent_messages,
++    get_subagent_messages_from_store,
+     list_sessions,
++    list_sessions_from_store,
+     list_subagents,
+ )
+ from claude_agent_sdk._internal.sessions import (
++    _apply_sort_limit_offset,
+     _build_conversation_chain,
++    _entries_to_session_messages,
+     _extract_first_prompt_from_head,
+     _extract_json_string_field,
+     _extract_last_json_string_field,
+@@ -139,6 +144,9 @@ class TestHelpers:
+         assert _validate_uuid("not-a-uuid") is None
+         assert _validate_uuid("") is None
+         assert _validate_uuid("550e8400-e29b-41d4-a716") is None
++        # `$` also matches before one trailing newline, so the pattern anchors
++        # with \Z instead — this shape used to pass and be returned intact.
++        assert _validate_uuid("550e8400-e29b-41d4-a716-446655440000\n") is None
+ 
+     def test_sanitize_path_basic(self):
+         assert _sanitize_path("/Users/foo/my-project") == "-Users-foo-my-project"
+@@ -153,6 +161,40 @@ class TestHelpers:
+         # The hash suffix is appended after the 200-char prefix
+         assert "-" in result[200:]
+ 
++    # Expected values below are the output of the CLI's own directory-naming
++    # functions, taken verbatim from the installed bundle and executed as JS:
++    #   Ynt(e){let t=0;for(let r=0;r<e.length;r++)t=(t<<5)-t+e.charCodeAt(r)|0;return t}
++    #   MFc(e){let t=e.replace(/[^a-zA-Z0-9]/g,"-");if(t.length<=200)return t;
++    #          return `${t.slice(0,200)}-${Math.abs(Ynt(e)).toString(36)}`}
++    # A JS string iterates UTF-16 code units, so an astral character counts
++    # twice there and once in Python. Both functions must agree with the CLI
++    # or the SDK addresses a project directory the CLI never created.
++    def test_sanitize_path_astral_matches_cli(self):
++        assert _sanitize_path("/home/user/\U0001f4c1project") == "-home-user---project"
++        assert _sanitize_path("/Users/me/\U0001f600\U0001f600/repo") == (
++            "-Users-me------repo"
++        )
++
++    def test_sanitize_path_astral_at_truncation_boundary(self):
++        # The astral character straddles the 200-code-unit cut, so the CLI
++        # keeps only its leading surrogate's hyphen.
++        path = "/" + "a" * 195 + "\U0001f4c1" + "bcdefghij"
++        assert _sanitize_path(path) == "-" + "a" * 195 + "--bc" + "-l1xy9c"
++
++    def test_simple_hash_astral_matches_cli(self):
++        assert _simple_hash("/home/user/\U0001f4c1project") == "xcchm6"
++        assert _simple_hash("/Users/me/\U0001f600\U0001f600/repo") == "upr5ga"
++
++    def test_sanitize_and_hash_bmp_and_ascii_unchanged(self):
++        # Regression guard: every input without an astral character must keep
++        # the exact values the CLI produces for it today.
++        assert _sanitize_path("/home/user/café") == "-home-user-caf-"
++        assert _simple_hash("/home/user/café") == "rprexo"
++        assert _sanitize_path("/plain/ascii/path") == "-plain-ascii-path"
++        assert _simple_hash("/plain/ascii/path") == "ecjoon"
++        assert _sanitize_path("/" + "a" * 230) == "-" + "a" * 199 + "-sajx69"
++        assert _simple_hash("/" + "a" * 230) == "sajx69"
++
+     def test_simple_hash_deterministic(self):
+         assert _simple_hash("hello") == _simple_hash("hello")
+         assert _simple_hash("hello") != _simple_hash("world")
+@@ -1872,3 +1914,69 @@ class TestGetSubagentMessages:
+         (subagents_dir / "agent-empty.jsonl").write_text("")
+ 
+         assert get_subagent_messages(sid, "empty", directory=project_path) == []
++
++
++class TestPagingContractIsDocumented:
++    """The paging helpers treat a non-positive ``limit`` as "no limit", which
++    is deliberate (see ``test_limit_zero_returns_all``). These tests couple
++    that behaviour to the docstrings that describe it, so neither can drift
++    without the other failing: the behaviour asserts what the code does, and
++    the docstring assert catches a doc rewritten to promise a cap it does not
++    deliver.
++    """
++
++    PAGING_FUNCTIONS = [
++        list_sessions,
++        get_session_messages,
++        get_subagent_messages,
++        list_sessions_from_store,
++        get_session_messages_from_store,
++        get_subagent_messages_from_store,
++    ]
++
++    def test_every_paging_docstring_states_the_non_positive_rule(self):
++        for fn in self.PAGING_FUNCTIONS:
++            doc = fn.__doc__ or ""
++            assert "any value <= 0 alike mean no limit" in doc, (
++                f"{fn.__name__} does not document what a non-positive limit does"
++            )
++            assert "skips nothing" in doc, (
++                f"{fn.__name__} does not document what a non-positive offset does"
++            )
++
++    @pytest.mark.parametrize("limit", [0, -1])
++    def test_non_positive_limit_returns_everything(self, limit):
++        infos = [
++            SDKSessionInfo(session_id=f"s{i}", summary="x", last_modified=i)
++            for i in range(3)
++        ]
++        assert len(_apply_sort_limit_offset(list(infos), limit, 0)) == 3
++
++        entries = []
++        prev = None
++        for i in range(3):
++            entry = {
++                "type": "user",
++                "uuid": f"u{i}",
++                "message": {"role": "user", "content": str(i)},
++            }
++            if prev:
++                entry["parentUuid"] = prev
++            prev = f"u{i}"
++            entries.append(entry)
++        assert len(_entries_to_session_messages(entries, limit, 0)) == 3
++
++    def test_a_positive_limit_still_caps(self):
++        infos = [
++            SDKSessionInfo(session_id=f"s{i}", summary="x", last_modified=i)
++            for i in range(3)
++        ]
++        assert len(_apply_sort_limit_offset(list(infos), 2, 0)) == 2
++
++    @pytest.mark.parametrize("offset", [0, -1])
++    def test_non_positive_offset_skips_nothing(self, offset):
++        infos = [
++            SDKSessionInfo(session_id=f"s{i}", summary="x", last_modified=i)
++            for i in range(3)
++        ]
++        assert len(_apply_sort_limit_offset(list(infos), None, offset)) == 3
+diff --git a/tests/test_transcript_mirror.py b/tests/test_transcript_mirror.py
+index 9d621bc..91e113f 100644
+--- a/tests/test_transcript_mirror.py
++++ b/tests/test_transcript_mirror.py
+@@ -315,6 +315,9 @@ class TestTranscriptMirrorBatcher:
+             await batcher.flush()
+         assert len(calls) == 1  # not retried on timeout
+         assert len(errors) == 1
++        # The report is the consumer's only signal for the dropped batch, and
++        # str(TimeoutError()) is empty, so it names the bound that fired.
++        assert errors[0] == "append timed out after 0.05s"
+         sleep_mock.assert_not_awaited()  # no backoff sleep
+ 
+     @pytest.mark.anyio
+diff --git a/tests/test_transport.py b/tests/test_transport.py
+index 2a0ed35..50a616e 100644
+--- a/tests/test_transport.py
++++ b/tests/test_transport.py
+@@ -293,6 +293,36 @@ class TestSubprocessCLITransport:
+         assert "--max-turns" in cmd
+         assert "5" in cmd
+ 
++    def test_build_command_max_turns_boundary_values(self):
++        """``max_turns`` reaches the CLI at every value the caller can set.
++
++        The CLI declares ``--max-turns <turns>`` with a parser that only
++        rejects NaN, and documents it as "early exit the conversation after
++        the specified number of turns" -- so 0 means zero turns, not "no
++        limit". Dropping it on a falsy check would hand a caller who asked
++        for a hard cap the CLI's default instead, which is unbounded.
++        """
++
++        def argv_for(**kw: object) -> list[str]:
++            return SubprocessCLITransport(
++                prompt="test", options=make_options(**kw)
++            )._build_command()
++
++        zero = argv_for(max_turns=0)
++        assert "--max-turns" in zero
++        assert zero[zero.index("--max-turns") + 1] == "0"
++
++        one = argv_for(max_turns=1)
++        assert one[one.index("--max-turns") + 1] == "1"
++
++        # Negative side of the domain: bound to the flag, not left to be
++        # parsed as a separate one.
++        negative = argv_for(max_turns=-5)
++        assert negative[negative.index("--max-turns") + 1] == "-5"
++
++        # Unset still means unset.
++        assert "--max-turns" not in argv_for()
++
+     def test_build_command_with_dont_ask_permission_mode(self):
+         """Test building CLI command with dontAsk permission mode."""
+         transport = SubprocessCLITransport(
+@@ -1821,6 +1851,60 @@ class TestSubprocessCLITransport:
+         settings_idx = cmd.index("--settings")
+         assert cmd[settings_idx + 1] == "/path/to/settings.json"
+ 
++    def test_sandbox_merge_warns_when_settings_cannot_be_loaded(self, caplog):
++        """An unloadable settings value is dropped from the merge, so both
++        ways of failing to load one say so — the JSON-looking string that
++        parses as neither JSON nor a path used to fall through in silence."""
++        import json
++        import logging
++
++        from claude_agent_sdk import SandboxSettings
++
++        sandbox: SandboxSettings = {"enabled": True}
++
++        for settings in ("/nonexistent/settings.json", '{"permissions": {'):
++            caplog.clear()
++            with caplog.at_level(
++                logging.WARNING, logger="claude_agent_sdk._internal.transport"
++            ):
++                transport = SubprocessCLITransport(
++                    prompt="test",
++                    options=make_options(settings=settings, sandbox=sandbox),
++                )
++                cmd = transport._build_command()
++
++            # The caller's settings really are gone from what the CLI is sent.
++            parsed = json.loads(cmd[cmd.index("--settings") + 1])
++            assert parsed == {"sandbox": {"enabled": True}}
++
++            dropped = [
++                r.getMessage() for r in caplog.records if "is dropped" in r.getMessage()
++            ]
++            assert len(dropped) == 1, caplog.text
++            assert settings in dropped[0]
++
++    def test_sandbox_merge_rejects_settings_file_that_is_not_an_object(self, tmp_path):
++        """A settings file that exists but holds no JSON object fails with a
++        message naming it — a bare JSONDecodeError or the TypeError from
++        merging into a list names neither the file nor the option."""
++        from claude_agent_sdk import SandboxSettings
++
++        sandbox: SandboxSettings = {"enabled": True}
++
++        corrupt = tmp_path / "corrupt.json"
++        corrupt.write_text("{not json")
++        array = tmp_path / "array.json"
++        array.write_text("[1, 2]")
++
++        for path in (corrupt, array):
++            transport = SubprocessCLITransport(
++                prompt="test",
++                options=make_options(settings=str(path), sandbox=sandbox),
++            )
++            with pytest.raises(ValueError) as exc_info:
++                transport._build_command()
++            assert str(path) in str(exc_info.value)
++
+     def test_build_command_sandbox_minimal(self):
+         """Test sandbox with minimal configuration."""
+         import json
