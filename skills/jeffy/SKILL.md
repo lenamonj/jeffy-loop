@@ -2,7 +2,7 @@
 name: jeffy
 description: Use when the user runs /jeffy to start an autonomous Jeffy improvement loop on the current project
 disable-model-invocation: true
-argument-hint: "[N] [enhance <topic> | focus...]"
+argument-hint: "[N] [focus...]"
 ---
 
 # Jeffy
@@ -13,7 +13,7 @@ Project root means the directory Claude Code was started in - the session's prim
 
 ## Arguments
 
-Parse $ARGUMENTS: if the first token is an integer, it is the iteration budget N, default 10. If the token after the optional budget is exactly `enhance`, this is an Enhance run and all remaining text is the topic; otherwise all remaining text is a focus directive for this run. An Enhance run with no topic is refused: report the usage `/jeffy [N] enhance <topic>` and stop, because an unbounded make-it-better run is exactly the invented work the standard envelope exists to prevent. The topic is carried in the loop state's focus field, so the hook and the ratchet treat it as a focus directive, which is what it is. On a fresh project, iteration 1 is always consumed by the audit that generates the backlog - in an Enhance run, the opportunity audit - so N=2 executes exactly one task; if the user picks N below 5, proceed but note that larger budgets make materially more progress.
+Parse $ARGUMENTS: if the first token is an integer, it is the iteration budget N, default 10; all remaining text is a focus directive for this run. If the token after the optional budget is exactly `enhance`, refuse the launch and stop: Enhance mode was removed in v1.11.0 - the defect loop is the product - and the last release that carries it is v1.10.0. On a fresh project, iteration 1 is always consumed by the audit that generates the backlog, so N=2 executes exactly one task; if the user picks N below 5, proceed but note that larger budgets make materially more progress.
 
 ## Step 1: Pre-flight
 
@@ -38,21 +38,15 @@ Create each file at the project root only if it is missing. The default contents
 
 First resolve REF, the absolute path of this skill's references directory. Glob for `<home>/.claude/skills/jeffy/references/iteration-prompt.txt`, substituting the absolute home directory with forward slashes as in pre-flight check 2. REF is the directory of the match. If nothing matches, stop and report a broken install: the references directory is missing, so re-run the installer. Substitute the resolved REF below and wherever later steps say REF.
 
-Mode guard: when PLAN.md already exists at the project root, read the first word of its `## Mode` section body. An Enhance launch over a PLAN.md whose mode is not Enhance, and a standard launch over one whose mode is Enhance, are both refused: the two modes rank work differently and their ledgers and convergence records must never mix in one set of state files. Tell the user to finish or archive the other mode's state files first - commit them and delete them, or use a separate branch or checkout - and stop. A matching mode proceeds and reuses the existing state files exactly as any relaunch does; a PLAN.md with no `## Mode` section is a user-authored plan and is treated as standard.
+Mode guard: when PLAN.md already exists at the project root, read the first word of its `## Mode` section body. If it reads Enhance, refuse the launch: Enhance mode was removed in v1.11.0, and its ledger ranks work by impact rather than severity, so its state files must not continue under the standard rules. Tell the user to archive those state files first - commit them and delete them, or keep them on a separate branch or checkout - and relaunch standard, or to run v1.10.0, the last release that carries the mode; then stop. Any other mode proceeds and reuses the existing state files exactly as any relaunch does; a PLAN.md with no `## Mode` section is a user-authored plan and is treated as standard.
 
 ```bash
 REF="<resolved references dir>"
 PR="<PROJECT_ROOT>"
-# PLAN.md template is chosen by mode: enhance-plan-default.md on an Enhance
-# launch, plan-default.md otherwise.
-TPL="plan-default.md"            # standard launch
-# TPL="enhance-plan-default.md"  # Enhance launch: use this line instead
-[ -f "$PR/PLAN.md" ]    || cp "$REF/$TPL"                "$PR/PLAN.md"
+[ -f "$PR/PLAN.md" ]    || cp "$REF/plan-default.md"    "$PR/PLAN.md"
 [ -f "$PR/BACKLOG.md" ] || cp "$REF/backlog-default.md" "$PR/BACKLOG.md"
 [ -f "$PR/JOURNAL.md" ] || cp "$REF/journal-default.md" "$PR/JOURNAL.md"
 ```
-
-On an Enhance launch, set TPL to `enhance-plan-default.md` as the block shows; BACKLOG.md and JOURNAL.md are shared shapes and copy identically regardless of mode. After copying an Enhance PLAN.md, replace its placeholder line `<filled at bootstrap with the sanitized topic>` with the sanitized topic text - the same sanitation Step 3 applies to the focus - so the plan states what it is for.
 
 The templates define Improvement mode (PLAN.md with the Goal, Operating envelope, Method, severity rubric, and Definition of done), the BACKLOG.md ledger sections (Now, Next, Later, Proposed, Settled classes, Declined, Converged), and the append-only JOURNAL.md heading grammar. Edit the copies in the project to customize one run; edit the templates in references/ only to change every future run.
 
@@ -62,7 +56,7 @@ All work happens directly in the current project folder on the current branch. W
 
 Verify bound first: when PLAN.md exists at the project root and carries a `Command: ` line under `## Verify command`, look there for a labeled line reading `Verify duration: <N>s` (a measured figure earlier runs record). The launcher computes no bound of its own: it resolves the same chain the hook resolves when the state file carries no key - `verify_timeout_seconds`, else `Verify duration` x3 floored at 240s, else 240s. Found: resolve that chain against the measured seconds and add a `verify_timeout_seconds: <bound>` line to the frontmatter written below, so the Stop hook's converged-stop verify re-run inherits a bound sized to this suite across relaunches. Absent, with a `Command: ` line present: ask the user one question - roughly how long does the verify command run? Resolve the chain against their answer: if it lands on the floor, write no line, because the hook applies that same floor by default; if it lands above the floor, write `verify_timeout_seconds: <that resolved bound>`. This threshold is the chain's rather than a separate one, so it moved when the chain became the single statement of the bound: the replaced text wrote no line for any answer under four minutes, where the chain writes one for any answer above eighty seconds, always wider than the floor it replaces and never narrower. An answer of a minute still writes no line, because three times it lands on the floor. No PLAN.md yet, or no `Command: ` line: write no line and move on; the first run measures, records `Verify duration:` in PLAN.md, and every later launch inherits it from there.
 
-Write the loop state file yourself, at the project root, with an absolute path. If focus text was given, sanitize it first: remove double quotes, backticks, dollar signs, and newlines, which would break the heredoc or the frontmatter, then substitute it below; with no focus, leave the value empty (the line stays, its value blank). In an Enhance run, the focus value is the sanitized topic. Substitute PROJECT_ROOT, REF (resolved in Step 2), and N. `base_head` records the commit the run starts on, or `none` outside a repository; the Stop hook uses it to tell a genuine convergence ratchet, which re-declares a tree an earlier run certified, from a run that did the work itself and typed RATCHET over it. The heredoc terminator EOF must stay at column 0.
+Write the loop state file yourself, at the project root, with an absolute path. If focus text was given, sanitize it first: remove double quotes, backticks, dollar signs, and newlines, which would break the heredoc or the frontmatter, then substitute it below; with no focus, leave the value empty (the line stays, its value blank). Substitute PROJECT_ROOT, REF (resolved in Step 2), and N. `base_head` records the commit the run starts on, or `none` outside a repository; the Stop hook uses it to tell a genuine convergence ratchet, which re-declares a tree an earlier run certified, from a run that did the work itself and typed RATCHET over it. The heredoc terminator EOF must stay at column 0.
 
 ```bash
 PR="<PROJECT_ROOT>"
@@ -88,7 +82,7 @@ grep -n "session_id\|iteration:" "$PR/.claude/jeffy-loop.local.md"
 
 Verify the write: the grep output must show the current session id and `iteration: 1`. If the session id line is empty or wrong, delete the file, report the failure, and stop. The iteration prompt itself is a single line stored at `$REF/iteration-prompt.txt`; the hook reads it from disk at every turn end and JSON-encodes it with jq, so its content never needs to be injected through the shell. Never edit iteration-prompt.txt casually: the loop's journal grammar, checkpoint discipline, run report, and closing rule all live in it, and it must stay a single line.
 
-Then announce the launch in one line - Jeffy v<version>, N iterations, and the focus or enhance topic if one was given - reading the version from the installed hook with `sed -n 's/^JEFFY_VERSION="\(.*\)"/\1/p' <home>/.claude/skills/jeffy/hooks/stop-hook.sh`, so every run's transcript opens by naming the engine version a bug report needs.
+Then announce the launch in one line - Jeffy v<version>, N iterations, and the focus if one was given - reading the version from the installed hook with `sed -n 's/^JEFFY_VERSION="\(.*\)"/\1/p' <home>/.claude/skills/jeffy/hooks/stop-hook.sh`, so every run's transcript opens by naming the engine version a bug report needs.
 
 ## Step 4: Begin iteration 1
 

@@ -83,7 +83,6 @@ for required in skills/jeffy/SKILL.md skills/cancel-jeffy/SKILL.md \
   skills/jeffy/references/backlog-default.md \
   skills/jeffy/references/journal-default.md \
   skills/jeffy/references/iteration-prompt.txt \
-  skills/jeffy/references/enhance-plan-default.md \
   skills/jeffy/hooks/stop-hook.sh; do
   if [ -f "$required" ]; then
     pass "referenced path exists: $required"
@@ -323,34 +322,10 @@ check_markers skills/jeffy/SKILL.md \
   "show-toplevel" \
   "Nested Jeffy project:" \
   "mode \`120000\`" \
-  "enhance <topic>" \
   "Mode guard:" \
-  "whose mode is Enhance" \
+  "Enhance mode was removed in v1.11.0" \
   'base_head: $(git -C ' \
   "the Stop hook uses it to tell a genuine convergence ratchet"
-check_markers skills/jeffy/references/enhance-plan-default.md \
-  "## Mode" \
-  "Enhance." \
-  "never waits for an empty ledger" \
-  "never the mapping of unswept surface" \
-  "## Topic" \
-  "<filled at bootstrap with the sanitized topic>" \
-  "never files defect findings at severity" \
-  "## Impact ranking" \
-  "cost: exceeds one iteration" \
-  "## Surface inventory" \
-  "lists no unswept row" \
-  "## Verify command" \
-  "Command: " \
-  "Oracle class: " \
-  "Environment fingerprint: " \
-  "an acceptance check that can fail" \
-  "adversarial evaluator gate" \
-  "Evaluator: unavailable" \
-  "ends blocked, because the gate is not optional in either mode" \
-  ".jeffy/evaluator/<run-id>-<n>.md" \
-  "recorded in the run report for a standard run" \
-  "## Lessons"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
@@ -3601,17 +3576,156 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook granted a second closing extension"
     fi
 
-    # The conditions: an open task or an unswept row means the run is not
-    # in its convergence sequence, and the budget is the budget.
+    # The conditions: blocking open work or an unswept row means the run is
+    # not in its convergence sequence, and the budget is the budget. The
+    # counts helper writes task lines with no severity at all, so this case
+    # is also the fail-closed proof: a line the parse cannot read blocks the
+    # grant exactly as the declaration's floor blocks on it (P0-4).
     hb_write_backlog_counts 1 0 0
     hb_write_state sess-1 3 3
     hb_out="$(hb_run sess-1 'still working' '')"
     if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
-      pass "stop hook ends the run at budget exhaustion while a task is still open (no extension)"
+      pass "stop hook ends the run at budget exhaustion while a task with no parseable severity is open (fails closed, no extension)"
     else
       printf '%s\n' "$hb_out"
-      fault "stop hook extended a run that still had open tasks"
+      fault "stop hook extended a run past a task line whose severity it could not parse"
     fi
+
+    # P0-4: the grant's ledger test is the severity floor, not an empty
+    # ledger. The canonical endgame under P0-2 - swept map, zero open High
+    # or Medium, carried Lows named on the record - is exactly the shape the
+    # window exists for, and the raw-count test could never grant to it.
+    # Live instance: claude-code-action attempt 2 run 3 reached its last
+    # iteration carrying two accurately scored Lows with all 28 rows swept.
+    hb_write_journal 3 3
+    hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
+    {
+      printf '# Backlog\n\n## Now\n\n'
+      printf -- '- [ ] L1 (Low, docs, clarity): carried low one. Acceptance: x.\n'
+      printf -- '- [ ] L2 (Low, tests, hygiene): carried low two. Acceptance: x.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CLOSING EXTENSION' \
+      && grep -q '^max_iterations: 5$' "$hb_state" \
+      && grep -q '^extension_granted: 1$' "$hb_state" \
+      && grep -q '^extension_lows: 2$' "$hb_state"; then
+      pass "stop hook grants the closing extension over carried Lows (zero High/Medium, swept inventory) and records their count"
+    else
+      printf '%s\n' "$hb_out"
+      grep '^iteration: \|^max_iterations: \|^extension_granted: ' "$hb_state" 2>/dev/null
+      fault "stop hook refused the extension to the severity floor's own canonical endgame shape"
+    fi
+
+    # The floor's other face: one open Medium still refuses the grant.
+    hb_write_journal 3 3
+    hb_write_backlog '- [ ] M1 (Medium, runtime, correctness): open medium. Acceptance: x.' ''
+    hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook still withholds the closing extension past an open Medium"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook granted a closing extension over an open Medium"
+    fi
+
+    # And the window granted with carried Lows must survive them: before
+    # P0-4 the refill guard read the same raw counts, so the Lows the grant
+    # accepted killed the window one turn later as a false refill. This
+    # fixture carries no extension_lows key - the pre-1.11.0 granted shape -
+    # so it also proves the Low-delta arm fails open where it cannot
+    # evaluate, leaving the High/Medium arm as the only guard.
+    hb_write_journal_entries '## iter 4/5 | sess-1-000000 | 2026-01-01 | T7 | done:::Task: closed T7.'
+    {
+      printf '# Backlog\n\n## Now\n\n'
+      printf -- '- [ ] L1 (Low, docs, clarity): carried low one. Acceptance: x.\n'
+      printf -- '- [ ] L2 (Low, tests, hygiene): carried low two. Acceptance: x.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
+    hb_write_state_extra sess-1 4 5 'extension_granted: 1'
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^iteration: 5$' "$hb_state" \
+      && ! grep -q 'refilled inside the closing extension' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook carries a granted window over its own carried Lows (no false refill)"
+    else
+      printf '%s\n' "$hb_out"
+      cat "$hb_tmp/hb_err.txt"
+      fault "stop hook read the Lows a window was granted with as a refill and killed it"
+    fi
+
+    # The other face of the snapshot: a Low FILED inside the window - the
+    # count rising above what the grant recorded - is discovered work the
+    # prompt routes to the run report, and a ledger line for it is a genuine
+    # refill. The window ends honestly, named as a new-Low refill.
+    hb_write_journal_entries '## iter 4/5 | sess-1-000000 | 2026-01-01 | T8 | done:::Task: closed T8, filed discovered L2.'
+    {
+      printf '# Backlog\n\n## Now\n\n'
+      printf -- '- [ ] L1 (Low, docs, clarity): carried low one. Acceptance: x.\n'
+      printf -- '- [ ] L2 (Low, tests, hygiene): filed inside the window. Acceptance: x.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
+    hb_write_state_extra sess-1 4 5 'extension_granted: 1' 'extension_lows: 1'
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+      && grep -q 'refilled inside the closing extension with new Low tasks' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook ends the window when a Low is filed inside it (count above the grant's snapshot)"
+    else
+      printf '%s\n' "$hb_out"
+      cat "$hb_tmp/hb_err.txt"
+      fault "stop hook let a Low filed inside the window ride as carried"
+    fi
+
+    # And with the key present and no delta, the window continues: the
+    # snapshot discriminates, it does not merely re-arm the old raw test.
+    hb_write_journal_entries '## iter 4/5 | sess-1-000000 | 2026-01-01 | T8 | done:::Task: closed T8.'
+    {
+      printf '# Backlog\n\n## Now\n\n'
+      printf -- '- [ ] L1 (Low, docs, clarity): carried low one. Acceptance: x.\n'
+      printf -- '- [ ] L2 (Low, tests, hygiene): carried low two. Acceptance: x.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
+    hb_write_state_extra sess-1 4 5 'extension_granted: 1' 'extension_lows: 2'
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^iteration: 5$' "$hb_state" \
+      && ! grep -q 'refilled inside the closing extension' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook continues the window over exactly the Lows the grant recorded (snapshot discriminates)"
+    else
+      printf '%s\n' "$hb_out"
+      cat "$hb_tmp/hb_err.txt"
+      fault "stop hook's Low snapshot fired without a delta"
+    fi
+
+    # The endgame-cost note reads the same severity count as the grant: a
+    # run at zero High/Medium with a swept map is told the convergence
+    # sequence's cost even when its carried Lows keep the raw counts
+    # nonzero - the exact runs a note keyed to an empty ledger never
+    # reached.
+    hb_write_journal 1 3
+    {
+      printf '# Backlog\n\n## Now\n\n'
+      printf -- '- [ ] L1 (Low, docs, clarity): carried low one. Acceptance: x.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
+    hb_write_state sess-1 1 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Only the convergence sequence remains' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Open Lows are carried to the declaration'; then
+      pass "stop hook states the endgame cost over carried Lows (severity count, not raw totals)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook kept the endgame-cost note from the canonical severity-floor endgame"
+    fi
+    rm -f "$hb_state"
 
     hb_write_backlog_counts 0 0 0
     hb_write_plan_full none \
