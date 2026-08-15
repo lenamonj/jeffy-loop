@@ -1,0 +1,1986 @@
+diff --git a/.gitignore b/.gitignore
+index c7b459e..e931167 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -37,3 +37,5 @@ bin
+ 
+ .idea/
+ *.iml
++
++.claude/jeffy-loop.local.md
+diff --git a/args.go b/args.go
+index ed1e70c..98c456d 100644
+--- a/args.go
++++ b/args.go
+@@ -58,7 +58,7 @@ func OnlyValidArgs(cmd *Command, args []string) error {
+ 		}
+ 		for _, v := range args {
+ 			if !stringInSlice(v, validArgs) {
+-				return fmt.Errorf("invalid argument %q for %q%s", v, cmd.CommandPath(), cmd.findSuggestions(args[0]))
++				return fmt.Errorf("invalid argument %q for %q%s", v, cmd.CommandPath(), cmd.findSuggestions(v))
+ 			}
+ 		}
+ 	}
+diff --git a/args_test.go b/args_test.go
+index 90d174c..a429a1b 100644
+--- a/args_test.go
++++ b/args_test.go
+@@ -153,6 +153,32 @@ func TestOnlyValidArgs_WithInvalidArgs(t *testing.T) {
+ 	validOnlyWithInvalidArgs(err, t)
+ }
+ 
++func TestOnlyValidArgs_SuggestsForOffendingArg(t *testing.T) {
++	// The suggestion must be computed from the argument that failed validation,
++	// whatever its position, not from the first argument.
++	newCmd := func() *Command {
++		c := getCommand(OnlyValidArgs, true)
++		c.AddCommand(&Command{Use: "status", Run: emptyRun})
++		return c
++	}
++
++	first := OnlyValidArgs(newCmd(), []string{"statuz"})
++	later := OnlyValidArgs(newCmd(), []string{"one", "statuz"})
++
++	for i, err := range []error{first, later} {
++		if err == nil {
++			t.Fatalf("case %d: expected an error", i)
++		}
++		got := err.Error()
++		if !strings.Contains(got, `invalid argument "statuz"`) {
++			t.Errorf("case %d: expected the offending argument to be named, got: %q", i, got)
++		}
++		if !strings.Contains(got, "status") {
++			t.Errorf("case %d: expected a suggestion for \"statuz\", got: %q", i, got)
++		}
++	}
++}
++
+ // ArbitraryArgs
+ 
+ func TestArbitraryArgs(t *testing.T) {
+@@ -539,3 +565,46 @@ func TestLegacyArgsSubcmdAcceptsArgs(t *testing.T) {
+ 		t.Fatalf("Unexpected error: %v", err)
+ 	}
+ }
++
++// A nil Args is not ArbitraryArgs, and the user guide says so because this
++// test says so. Find applies legacyArgs on exactly the condition Args == nil,
++// so setting Args to any validator - ArbitraryArgs included - replaces that
++// behaviour rather than restating it. Every branch the guide enumerates is
++// driven here, and the last two subtests are the contrast itself: one tree,
++// two settings, two outcomes.
++func TestNilArgsIsNotArbitraryArgs(t *testing.T) {
++	withSub := func(args PositionalArgs) *Command {
++		rootCmd := &Command{Use: "root", Args: args, Run: emptyRun}
++		rootCmd.AddCommand(&Command{Use: "child", Run: emptyRun})
++		return rootCmd
++	}
++
++	t.Run("no subcommands accepts args", func(t *testing.T) {
++		if _, err := executeCommand(&Command{Use: "root", Args: nil, Run: emptyRun}, "somearg"); err != nil {
++			t.Errorf("unexpected error: %v", err)
++		}
++	})
++
++	t.Run("subcommand accepts args", func(t *testing.T) {
++		if _, err := executeCommand(withSub(nil), "child", "somearg"); err != nil {
++			t.Errorf("unexpected error: %v", err)
++		}
++	})
++
++	t.Run("nil on a root with subcommands rejects", func(t *testing.T) {
++		_, err := executeCommand(withSub(nil), "bogus")
++		if err == nil {
++			t.Fatal("expected an error, got nil: a nil Args would then mean ArbitraryArgs")
++		}
++		expected := `unknown command "bogus" for "root"`
++		if !strings.Contains(err.Error(), expected) {
++			t.Errorf("expected %q, got %q", expected, err.Error())
++		}
++	})
++
++	t.Run("ArbitraryArgs on the same root accepts", func(t *testing.T) {
++		if _, err := executeCommand(withSub(ArbitraryArgs), "bogus"); err != nil {
++			t.Errorf("unexpected error: %v", err)
++		}
++	})
++}
+diff --git a/bash_completions.go b/bash_completions.go
+index f4d198c..fe97b69 100644
+--- a/bash_completions.go
++++ b/bash_completions.go
+@@ -612,10 +612,19 @@ func writeRequiredFlag(buf io.StringWriter, cmd *Command) {
+ 	})
+ }
+ 
++// sortedCopy returns a sorted copy of values. The generators below are handed
++// the caller's own slices - cmd.ValidArgs, cmd.Aliases, cmd.ArgAliases - so
++// sorting in place would reorder the command tree the caller owns and change
++// what the program prints afterwards.
++func sortedCopy(values []string) []string {
++	sorted := append([]string(nil), values...)
++	sort.Strings(sorted)
++	return sorted
++}
++
+ func writeRequiredNouns(buf io.StringWriter, cmd *Command) {
+ 	WriteStringAndCheck(buf, "    must_have_one_noun=()\n")
+-	sort.Strings(cmd.ValidArgs)
+-	for _, value := range cmd.ValidArgs {
++	for _, value := range sortedCopy(cmd.ValidArgs) {
+ 		// Remove any description that may be included following a tab character.
+ 		// Descriptions are not supported by bash completion.
+ 		value = strings.SplitN(value, "\t", 2)[0]
+@@ -631,10 +640,8 @@ func writeCmdAliases(buf io.StringWriter, cmd *Command) {
+ 		return
+ 	}
+ 
+-	sort.Strings(cmd.Aliases)
+-
+ 	WriteStringAndCheck(buf, fmt.Sprint(`    if [[ -z "${BASH_VERSION:-}" || "${BASH_VERSINFO[0]:-}" -gt 3 ]]; then`, "\n"))
+-	for _, value := range cmd.Aliases {
++	for _, value := range sortedCopy(cmd.Aliases) {
+ 		WriteStringAndCheck(buf, fmt.Sprintf("        command_aliases+=(%q)\n", value))
+ 		WriteStringAndCheck(buf, fmt.Sprintf("        aliashash[%q]=%q\n", value, cmd.Name()))
+ 	}
+@@ -643,8 +650,7 @@ func writeCmdAliases(buf io.StringWriter, cmd *Command) {
+ }
+ func writeArgAliases(buf io.StringWriter, cmd *Command) {
+ 	WriteStringAndCheck(buf, "    noun_aliases=()\n")
+-	sort.Strings(cmd.ArgAliases)
+-	for _, value := range cmd.ArgAliases {
++	for _, value := range sortedCopy(cmd.ArgAliases) {
+ 		WriteStringAndCheck(buf, fmt.Sprintf("    noun_aliases+=(%q)\n", value))
+ 	}
+ }
+diff --git a/bash_completionsV2.go b/bash_completionsV2.go
+index d2397aa..6f65ff3 100644
+--- a/bash_completionsV2.go
++++ b/bash_completionsV2.go
+@@ -183,7 +183,7 @@ __%[1]s_process_completion_results() {
+ __%[1]s_handle_activeHelp() {
+     # Print the activeHelp statements
+     if ((${#activeHelp[*]} != 0)); then
+-        if [ -z $COMP_TYPE ]; then
++        if [ -z "$COMP_TYPE" ]; then
+             # Bash v3 does not set the COMP_TYPE variable.
+             printf "\n";
+             printf "%%s\n" "${activeHelp[@]}"
+@@ -193,7 +193,7 @@ __%[1]s_handle_activeHelp() {
+         fi
+ 
+         # Only print ActiveHelp on the second TAB press
+-        if [ $COMP_TYPE -eq 63 ]; then
++        if [ "$COMP_TYPE" -eq 63 ]; then
+             printf "\n"
+             printf "%%s\n" "${activeHelp[@]}"
+ 
+@@ -221,7 +221,7 @@ __%[1]s_handle_activeHelp() {
+                 # not be doing it itself.
+                 __%[1]s_reprint_commandLine
+             fi
+-        elif [ $COMP_TYPE -eq 37 ] || [ $COMP_TYPE -eq 42 ]; then
++        elif [ "$COMP_TYPE" -eq 37 ] || [ "$COMP_TYPE" -eq 42 ]; then
+             # For completion type: menu-complete/menu-complete-backward and insert-completions
+             # the completions are immediately inserted into the command-line, so we first
+             # print the activeHelp message and reprint the command-line since the shell won't.
+@@ -237,11 +237,11 @@ __%[1]s_reprint_commandLine() {
+     # The prompt format is only available from bash 4.4.
+     # We test if it is available before using it.
+     if (x=${PS1@P}) 2> /dev/null; then
+-        printf "%%s" "${PS1@P}${COMP_LINE[@]}"
++        printf "%%s" "${PS1@P}${COMP_LINE}"
+     else
+         # Can't print the prompt.  Just print the
+         # text the user had typed, it is workable enough.
+-        printf "%%s" "${COMP_LINE[@]}"
++        printf "%%s" "${COMP_LINE}"
+     fi
+ }
+ 
+@@ -254,7 +254,7 @@ __%[1]s_extract_activeHelp() {
+     while IFS='' read -r comp; do
+         [[ -z $comp ]] && continue
+ 
+-        if [[ ${comp:0:endIndex} == $activeHelpMarker ]]; then
++        if [[ ${comp:0:endIndex} == "$activeHelpMarker" ]]; then
+             comp=${comp:endIndex}
+             __%[1]s_debug "ActiveHelp found: $comp"
+             if [[ -n $comp ]]; then
+@@ -334,7 +334,7 @@ __%[1]s_handle_standard_completion_case() {
+         # characters because those escape characters are part of what the user typed.
+         # Don't call "printf" in a sub-shell because it will be much slower
+         # since we are in a loop.
+-        printf -v comp "%%q" "${compline%%%%$tab*}" &>/dev/null || comp=$(printf "%%q" "${compline%%%%$tab*}")
++        printf -v comp "%%q" "${compline%%%%"$tab"*}" &>/dev/null || comp=$(printf "%%q" "${compline%%%%"$tab"*}")
+ 
+         # Only consider the completions that match
+         [[ $comp == "$cur"* ]] || continue
+@@ -348,7 +348,7 @@ __%[1]s_handle_standard_completion_case() {
+         # Strip any description before checking the length, and again, don't escape
+         # the completion because this length is only used when printing the completions
+         # in a list and we don't want show escape characters in that list.
+-        comp=${compline%%%%$tab*}
++        comp=${compline%%%%"$tab"*}
+         if ((${#comp}>longest)); then
+             longest=${#comp}
+         fi
+@@ -361,7 +361,7 @@ __%[1]s_handle_standard_completion_case() {
+         __%[1]s_debug "Removed description from single completion, which is now: ${COMPREPLY[0]}"
+     else
+         # Format the descriptions
+-        __%[1]s_format_comp_descriptions $longest
++        __%[1]s_format_comp_descriptions "$longest"
+     fi
+ }
+ 
+@@ -370,7 +370,7 @@ __%[1]s_handle_special_char()
+     local comp="$1"
+     local char=$2
+     if [[ "$comp" == *${char}* && "$COMP_WORDBREAKS" == *${char}* ]]; then
+-        local word=${comp%%"${comp##*${char}}"}
++        local word=${comp%%"${comp##*"${char}"}"}
+         local idx=${#COMPREPLY[*]}
+         while ((--idx >= 0)); do
+             COMPREPLY[idx]=${COMPREPLY[idx]#"$word"}
+@@ -390,8 +390,8 @@ __%[1]s_format_comp_descriptions()
+         # Properly format the description string which follows a tab character if there is one
+         if [[ "$comp" == *$tab* ]]; then
+             __%[1]s_debug "Original comp: $comp"
+-            desc=${comp#*$tab}
+-            comp=${comp%%%%$tab*}
++            desc=${comp#*"$tab"}
++            comp=${comp%%%%"$tab"*}
+ 
+             # $COLUMNS stores the current shell width.
+             # Remove an extra 4 because we add 2 spaces and 2 parentheses.
+diff --git a/bash_completionsV2_test.go b/bash_completionsV2_test.go
+index 88587e2..067bfdb 100644
+--- a/bash_completionsV2_test.go
++++ b/bash_completionsV2_test.go
+@@ -17,6 +17,7 @@ package cobra
+ import (
+ 	"bytes"
+ 	"fmt"
++	"os/exec"
+ 	"testing"
+ )
+ 
+@@ -31,3 +32,25 @@ func TestBashCompletionV2WithActiveHelp(t *testing.T) {
+ 	activeHelpVar := activeHelpEnvVar(c.Name())
+ 	checkOmit(t, output, fmt.Sprintf("%s=0", activeHelpVar))
+ }
++
++func TestBashCompletionV2ShellCheck(t *testing.T) {
++	rootCmd := &Command{Use: "root", Run: emptyRun}
++	rootCmd.AddCommand(&Command{Use: "child", Short: "child cmd", Run: emptyRun})
++	rootCmd.Flags().String("opt", "", "an option")
++	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "be loud")
++
++	if err := exec.Command("which", "shellcheck").Run(); err != nil {
++		t.Skip("shellcheck not available")
++	}
++
++	for _, includeDesc := range []bool{true, false} {
++		buf := new(bytes.Buffer)
++		assertNoErr(t, rootCmd.GenBashCompletionV2(buf, includeDesc))
++
++		// SC2048 is deliberate: the script comments that quoting $completions
++		// there would keep newline characters.
++		if err := runShellCheck(buf.String(), "SC2048"); err != nil {
++			t.Errorf("shellcheck failed for includeDesc=%v: %v", includeDesc, err)
++		}
++	}
++}
+diff --git a/bash_completions_test.go b/bash_completions_test.go
+index 4441257..aa246d2 100644
+--- a/bash_completions_test.go
++++ b/bash_completions_test.go
+@@ -53,9 +53,14 @@ func checkRegex(t *testing.T, found, pattern string) {
+ 	}
+ }
+ 
+-func runShellCheck(s string) error {
+-	cmd := exec.Command("shellcheck", "-s", "bash", "-", "-e",
++// runShellCheck pipes a generated script through shellcheck. Callers pass any
++// further diagnostic codes the script deliberately triggers.
++func runShellCheck(s string, exclude ...string) error {
++	excluded := append([]string{
+ 		"SC2034", // PREFIX appears unused. Verify it or export it.
++	}, exclude...)
++	cmd := exec.Command("shellcheck", "-s", "bash", "-", "-e",
++		strings.Join(excluded, ","),
+ 	)
+ 	cmd.Stderr = os.Stderr
+ 	cmd.Stdout = os.Stdout
+@@ -287,3 +292,76 @@ func TestBashCompletionNoActiveHelp(t *testing.T) {
+ 	activeHelpVar := activeHelpEnvVar(c.Name())
+ 	check(t, output, fmt.Sprintf("%s=0", activeHelpVar))
+ }
++
++// Generating a completion script must not reorder the caller's command tree.
++// The generators are handed the caller's own slices, so sorting them in place
++// changes what the program prints afterwards: the Aliases: line of the help
++// output is built from the same slice the bash generator sorts.
++func TestGenerationDoesNotMutateCommandTree(t *testing.T) {
++	// Deliberately unsorted, so an in-place sort is visible.
++	const (
++		wantAliases    = "zeta, alpha, mid"
++		wantValidArgs  = "pod, node, cluster"
++		wantArgAliases = "pods, nodes, clusters"
++	)
++
++	newTree := func() (*Command, *Command) {
++		root := &Command{Use: "app", Run: emptyRun}
++		child := &Command{
++			Use:        "get",
++			Short:      "get things",
++			Aliases:    strings.Split(wantAliases, ", "),
++			ValidArgs:  strings.Split(wantValidArgs, ", "),
++			ArgAliases: strings.Split(wantArgAliases, ", "),
++			Run:        emptyRun,
++		}
++		root.AddCommand(child)
++		return root, child
++	}
++
++	generators := map[string]func(*Command, *bytes.Buffer) error{
++		"GenBashCompletion":   func(c *Command, w *bytes.Buffer) error { return c.GenBashCompletion(w) },
++		"GenBashCompletionV2": func(c *Command, w *bytes.Buffer) error { return c.GenBashCompletionV2(w, true) },
++		"GenZshCompletion":    func(c *Command, w *bytes.Buffer) error { return c.GenZshCompletion(w) },
++		"GenFishCompletion":   func(c *Command, w *bytes.Buffer) error { return c.GenFishCompletion(w, true) },
++		"GenPowerShellCompletion": func(c *Command, w *bytes.Buffer) error {
++			return c.GenPowerShellCompletion(w)
++		},
++	}
++
++	// The help text of an untouched tree is the reference every generator is
++	// held to; comparing whole help output rather than only the slices catches
++	// a mutation wherever it happens to surface.
++	refRoot, _ := newTree()
++	wantHelp, err := executeCommand(refRoot, "get", "--help")
++	if err != nil {
++		t.Fatalf("reference help failed: %v", err)
++	}
++
++	for name, generate := range generators {
++		t.Run(name, func(t *testing.T) {
++			root, child := newTree()
++			if err := generate(root, new(bytes.Buffer)); err != nil {
++				t.Fatalf("%s returned %v", name, err)
++			}
++
++			if got := strings.Join(child.Aliases, ", "); got != wantAliases {
++				t.Errorf("%s reordered Aliases: got %q, want %q", name, got, wantAliases)
++			}
++			if got := strings.Join(child.ValidArgs, ", "); got != wantValidArgs {
++				t.Errorf("%s reordered ValidArgs: got %q, want %q", name, got, wantValidArgs)
++			}
++			if got := strings.Join(child.ArgAliases, ", "); got != wantArgAliases {
++				t.Errorf("%s reordered ArgAliases: got %q, want %q", name, got, wantArgAliases)
++			}
++
++			gotHelp, err := executeCommand(root, "get", "--help")
++			if err != nil {
++				t.Fatalf("help after %s failed: %v", name, err)
++			}
++			if gotHelp != wantHelp {
++				t.Errorf("%s changed the help output.\ngot:\n%s\nwant:\n%s", name, gotHelp, wantHelp)
++			}
++		})
++	}
++}
+diff --git a/cobra.go b/cobra.go
+index d9cd241..5a48df2 100644
+--- a/cobra.go
++++ b/cobra.go
+@@ -189,22 +189,25 @@ func tmpl(text string) *tmplFunc {
+ }
+ 
+ // ld compares two strings and returns the levenshtein distance between them.
++// The unit of distance is one rune, not one byte, so a command name outside
++// ASCII costs the same per differing character as an ASCII one.
+ func ld(s, t string, ignoreCase bool) int {
+ 	if ignoreCase {
+ 		s = strings.ToLower(s)
+ 		t = strings.ToLower(t)
+ 	}
+-	d := make([][]int, len(s)+1)
++	sr, tr := []rune(s), []rune(t)
++	d := make([][]int, len(sr)+1)
+ 	for i := range d {
+-		d[i] = make([]int, len(t)+1)
++		d[i] = make([]int, len(tr)+1)
+ 		d[i][0] = i
+ 	}
+ 	for j := range d[0] {
+ 		d[0][j] = j
+ 	}
+-	for j := 1; j <= len(t); j++ {
+-		for i := 1; i <= len(s); i++ {
+-			if s[i-1] == t[j-1] {
++	for j := 1; j <= len(tr); j++ {
++		for i := 1; i <= len(sr); i++ {
++			if sr[i-1] == tr[j-1] {
+ 				d[i][j] = d[i-1][j-1]
+ 			} else {
+ 				min := d[i-1][j]
+@@ -219,7 +222,7 @@ func ld(s, t string, ignoreCase bool) int {
+ 		}
+ 
+ 	}
+-	return d[len(s)][len(t)]
++	return d[len(sr)][len(tr)]
+ }
+ 
+ func stringInSlice(a string, list []string) bool {
+diff --git a/cobra_test.go b/cobra_test.go
+index f1c5b0a..8b585fb 100644
+--- a/cobra_test.go
++++ b/cobra_test.go
+@@ -82,6 +82,28 @@ func TestLevenshteinDistance(t *testing.T) {
+ 			ignoreCase: true,
+ 			expected:   3,
+ 		},
++		{
++			// One differing rune costs one, whatever the rune encodes to.
++			name:       "Non-ASCII substitution (case-sensitive)",
++			s:          "café",
++			t:          "cafe",
++			ignoreCase: false,
++			expected:   1,
++		},
++		{
++			name:       "Non-ASCII deletion (case-sensitive)",
++			s:          "日本語",
++			t:          "日本",
++			ignoreCase: false,
++			expected:   1,
++		},
++		{
++			name:       "Non-ASCII lowering (case-insensitive)",
++			s:          "ÉCOLE",
++			t:          "ecole",
++			ignoreCase: true,
++			expected:   1,
++		},
+ 		{
+ 			name:       "Empty strings",
+ 			s:          "",
+diff --git a/command.go b/command.go
+index c05fed4..afc2298 100644
+--- a/command.go
++++ b/command.go
+@@ -89,7 +89,15 @@ type Command struct {
+ 	// Only one of ValidArgs and ValidArgsFunction can be used for a command.
+ 	ValidArgsFunction CompletionFunc
+ 
+-	// Expected arguments
++	// Expected arguments.
++	//
++	// Leaving this nil is not the same as setting it to ArbitraryArgs: Find
++	// applies legacyArgs on exactly the condition that this field is nil, so a
++	// nil Args keeps the pre-Args behaviour, under which a root command that
++	// has subcommands rejects a positional argument that names none of them.
++	// Setting this field to any validator, ArbitraryArgs included, replaces
++	// that behaviour rather than restating it. TestNilArgsIsNotArbitraryArgs
++	// drives every branch legacyArgs distinguishes.
+ 	Args PositionalArgs
+ 
+ 	// ArgAliases is List of aliases for ValidArgs.
+@@ -782,11 +790,15 @@ func (c *Command) findSuggestions(arg string) string {
+ 	if c.DisableSuggestions {
+ 		return ""
+ 	}
+-	if c.SuggestionsMinimumDistance <= 0 {
+-		c.SuggestionsMinimumDistance = 2
++	// Resolve the default into a local rather than writing it back: this is a
++	// read path, and storing it would make the public SuggestionsFor depend on
++	// whether an earlier Execute happened to take this branch.
++	minDistance := c.SuggestionsMinimumDistance
++	if minDistance <= 0 {
++		minDistance = 2
+ 	}
+ 	var sb strings.Builder
+-	if suggestions := c.SuggestionsFor(arg); len(suggestions) > 0 {
++	if suggestions := c.suggestionsFor(arg, minDistance); len(suggestions) > 0 {
+ 		sb.WriteString("\n\nDid you mean this?\n")
+ 		for _, s := range suggestions {
+ 			_, _ = fmt.Fprintf(&sb, "\t%v\n", s)
+@@ -819,6 +831,14 @@ func (c *Command) findNext(next string) *Command {
+ // Traverse the command tree to find the command, and parse args for
+ // each parent.
+ func (c *Command) Traverse(args []string) (*Command, []string, error) {
++	// The lookups below ask c.Flags() whether a flag takes a value, and the
++	// persistent flags are not in it until they are merged, so a persistent
++	// flag that takes no value would otherwise look like one that does and
++	// swallow the word naming the subcommand. stripFlags and argsMinusFirstX,
++	// which answer the same question on the Find path, merge for the same
++	// reason.
++	c.mergePersistentFlags()
++
+ 	flags := []string{}
+ 	inFlag := false
+ 
+@@ -860,12 +880,21 @@ func (c *Command) Traverse(args []string) (*Command, []string, error) {
+ }
+ 
+ // SuggestionsFor provides suggestions for the typedName.
++//
++// It uses SuggestionsMinimumDistance exactly as it finds it, so the zero value
++// offers only prefix and SuggestFor matches; the default of 2 belongs to the
++// Execute path and is not written back here. TestSuggestionsForIsIndependentOfExecute
++// pins both halves.
+ func (c *Command) SuggestionsFor(typedName string) []string {
++	return c.suggestionsFor(typedName, c.SuggestionsMinimumDistance)
++}
++
++func (c *Command) suggestionsFor(typedName string, minDistance int) []string {
+ 	suggestions := []string{}
+ 	for _, cmd := range c.commands {
+ 		if cmd.IsAvailableCommand() {
+ 			levenshteinDistance := ld(typedName, cmd.Name(), true)
+-			suggestByLevenshtein := levenshteinDistance <= c.SuggestionsMinimumDistance
++			suggestByLevenshtein := levenshteinDistance <= minDistance
+ 			suggestByPrefix := strings.HasPrefix(strings.ToLower(cmd.Name()), strings.ToLower(typedName))
+ 			if suggestByLevenshtein || suggestByPrefix {
+ 				suggestions = append(suggestions, cmd.Name())
+@@ -1185,8 +1214,11 @@ func (c *Command) ValidateRequiredFlags() error {
+ 	flags := c.Flags()
+ 	missingFlagNames := []string{}
+ 	flags.VisitAll(func(pflag *flag.Flag) {
++		// MarkFlagRequired writes a single "true", but the annotation is
++		// reachable through pflag's SetAnnotation and may carry no value at
++		// all; an empty one says nothing and is read as not required.
+ 		requiredAnnotation, found := pflag.Annotations[BashCompOneRequiredFlag]
+-		if !found {
++		if !found || len(requiredAnnotation) == 0 {
+ 			return
+ 		}
+ 		if (requiredAnnotation[0] == "true") && !pflag.Changed {
+@@ -1316,9 +1348,11 @@ Simply type ` + c.DisplayName() + ` help [path to command] for full details.`,
+ // ResetCommands delete parent, subcommand and help command from c.
+ func (c *Command) ResetCommands() {
+ 	c.parent = nil
++	// before c.commands is dropped, so the children this detaches - which keep
++	// their parent pointer at c - lose the ancestry c no longer has either.
++	c.invalidateParentFlagCaches()
+ 	c.commands = nil
+ 	c.helpCommand = nil
+-	c.parentsPflags = nil
+ }
+ 
+ // Sorts commands by their names.
+@@ -1345,6 +1379,7 @@ func (c *Command) AddCommand(cmds ...*Command) {
+ 			panic("Command can't be a child of itself")
+ 		}
+ 		cmds[i].parent = c
++		cmds[i].invalidateParentFlagCaches()
+ 		// update max lengths
+ 		usageLen := len(x.Use)
+ 		if usageLen > c.commandsMaxUseLen {
+@@ -1405,6 +1440,7 @@ main:
+ 		for _, cmd := range cmds {
+ 			if command == cmd {
+ 				command.parent = nil
++				command.invalidateParentFlagCaches()
+ 				continue main
+ 			}
+ 		}
+@@ -1470,7 +1506,7 @@ func (c *Command) CommandPath() string {
+ }
+ 
+ // DisplayName returns the name to display in help text. Returns command Name()
+-// If CommandDisplayNameAnnoation is not set
++// if the CommandDisplayNameAnnotation annotation is not set.
+ func (c *Command) DisplayName() string {
+ 	if displayName, ok := c.Annotations[CommandDisplayNameAnnotation]; ok {
+ 		return displayName
+@@ -1683,8 +1719,14 @@ func (c *Command) GlobalNormalizationFunc() func(f *flag.FlagSet, name string) f
+ 	return c.globNormFunc
+ }
+ 
+-// Flags returns the complete FlagSet that applies
+-// to this command (local and persistent declared here and by all parents).
++// Flags returns the FlagSet this command parses: the flags declared directly on
++// it, plus the persistent flags of this command and of all its parents once
++// those have been merged in. That merge is lazy and is done by the functions
++// that need the complete set - among them ParseFlags, LocalFlags,
++// InheritedFlags, the helpers that route an argument vector, and the default
++// help and usage funcs - because mergePersistentFlags calls this function and so
++// cannot be called from it. Until one of those has run, the set holds only the
++// flags declared on this command with Flags, not even its own persistent ones.
+ func (c *Command) Flags() *flag.FlagSet {
+ 	if c.flags == nil {
+ 		c.flags = flag.NewFlagSet(c.DisplayName(), flag.ContinueOnError)
+@@ -1698,7 +1740,10 @@ func (c *Command) Flags() *flag.FlagSet {
+ }
+ 
+ // LocalNonPersistentFlags are flags specific to this command which will NOT persist to subcommands.
+-// This function does not modify the flags of the current command, it's purpose is to return the current state.
++// The returned set is a view, but asking for it merges: the persistent flags of
++// this command and of its parents are folded into the set Flags returns, and
++// pflag.CommandLine is folded into the root's persistent set, so calling this
++// changes what Flags reports both here and at the root.
+ func (c *Command) LocalNonPersistentFlags() *flag.FlagSet {
+ 	persistentFlags := c.PersistentFlags()
+ 
+@@ -1712,7 +1757,10 @@ func (c *Command) LocalNonPersistentFlags() *flag.FlagSet {
+ }
+ 
+ // LocalFlags returns the local FlagSet specifically set in the current command.
+-// This function does not modify the flags of the current command, it's purpose is to return the current state.
++// The returned set is a view, but asking for it merges: the persistent flags of
++// this command and of its parents are folded into the set Flags returns, and
++// pflag.CommandLine is folded into the root's persistent set, so calling this
++// changes what Flags reports both here and at the root.
+ func (c *Command) LocalFlags() *flag.FlagSet {
+ 	c.mergePersistentFlags()
+ 
+@@ -1740,7 +1788,10 @@ func (c *Command) LocalFlags() *flag.FlagSet {
+ }
+ 
+ // InheritedFlags returns all flags which were inherited from parent commands.
+-// This function does not modify the flags of the current command, it's purpose is to return the current state.
++// The returned set is a view, but asking for it merges: the persistent flags of
++// this command and of its parents are folded into the set Flags returns, and
++// pflag.CommandLine is folded into the root's persistent set, so calling this
++// changes what Flags reports both here and at the root.
+ func (c *Command) InheritedFlags() *flag.FlagSet {
+ 	c.mergePersistentFlags()
+ 
+@@ -1766,7 +1817,10 @@ func (c *Command) InheritedFlags() *flag.FlagSet {
+ }
+ 
+ // NonInheritedFlags returns all flags which were not inherited from parent commands.
+-// This function does not modify the flags of the current command, it's purpose is to return the current state.
++// The returned set is a view, but asking for it merges: the persistent flags of
++// this command and of its parents are folded into the set Flags returns, and
++// pflag.CommandLine is folded into the root's persistent set, so calling this
++// changes what Flags reports both here and at the root.
+ func (c *Command) NonInheritedFlags() *flag.FlagSet {
+ 	return c.LocalFlags()
+ }
+@@ -1922,6 +1976,68 @@ func (c *Command) updateParentsPflags() {
+ 	})
+ }
+ 
++// invalidateParentFlagCaches drops everything c derived from its ancestors, so
++// that it is recomputed against the parent chain c has now, and recurses into
++// c's children, whose own ancestry changed with c's. Every site that assigns
++// c.parent calls it: the derived state is cumulative and none of it is rebuilt
++// from scratch on its own, so without this a re-parented command keeps
++// reporting - and accepting - the persistent flags of the parent it no longer
++// has.
++func (c *Command) invalidateParentFlagCaches() {
++	c.lflags = nil
++	c.iflags = nil
++	c.dropParentsPflagsFromFlags()
++	c.parentsPflags = nil
++
++	for _, child := range c.commands {
++		child.invalidateParentFlagCaches()
++	}
++}
++
++// dropParentsPflagsFromFlags rebuilds c.flags without the ancestors' persistent
++// flags that mergePersistentFlags copied into it. It is a rebuild rather than a
++// removal because pflag has no way to take a flag back out of a set; a flag is
++// the ancestors' when the pointer under its name is the one c.parentsPflags
++// holds, which is the same test LocalFlags uses to tell the two apart.
++//
++// The rebuilt set carries over every setting pflag lets a caller read back, and
++// carries the flags themselves by pointer, so anything recorded on a Flag
++// survives. What it cannot carry is the state pflag keeps on the set and offers
++// no way to put back: the record a parse leaves behind, and the interspersed
++// mode. That reaches only a command re-parented after it has been parsed.
++// TestReparentingParseStateAcrossRebuild is the enumeration of which side each
++// accessor falls on, and it is the copy of that list to trust, because it is
++// the one that gets re-run.
++func (c *Command) dropParentsPflagsFromFlags() {
++	if c.flags == nil || c.parentsPflags == nil {
++		return
++	}
++
++	inherited := false
++	c.flags.VisitAll(func(f *flag.Flag) {
++		if f == c.parentsPflags.Lookup(f.Name) {
++			inherited = true
++		}
++	})
++	if !inherited {
++		return
++	}
++
++	own := flag.NewFlagSet(c.flags.Name(), flag.ContinueOnError)
++	own.SetOutput(c.flags.Output())
++	own.SetNormalizeFunc(c.flags.GetNormalizeFunc())
++	own.SortFlags = c.flags.SortFlags
++	own.Usage = c.flags.Usage
++	own.ParseErrorsAllowlist = c.flags.ParseErrorsAllowlist
++	own.ParseErrorsWhitelist = c.flags.ParseErrorsWhitelist
++	c.flags.VisitAll(func(f *flag.Flag) {
++		if f != c.parentsPflags.Lookup(f.Name) {
++			own.AddFlag(f)
++		}
++	})
++	c.flags = own
++}
++
+ // commandNameMatches checks if two command names are equal
+ // taking into account case sensitivity according to
+ // EnableCaseInsensitive global configuration.
+diff --git a/command_test.go b/command_test.go
+index a86e57f..ce8c756 100644
+--- a/command_test.go
++++ b/command_test.go
+@@ -868,6 +868,28 @@ func TestRequiredFlags(t *testing.T) {
+ 	}
+ }
+ 
++// The required annotation is reachable through pflag's SetAnnotation, which
++// accepts any value slice including an empty one. An empty slice says nothing
++// about the flag, so it must be read as not required rather than indexed.
++func TestRequiredFlagsWithEmptyAnnotation(t *testing.T) {
++	c := &Command{Use: "c", Run: emptyRun}
++	c.Flags().String("foo", "", "")
++	assertNoErr(t, c.Flags().SetAnnotation("foo", BashCompOneRequiredFlag, []string{}))
++	c.Flags().String("bar", "", "")
++	assertNoErr(t, c.MarkFlagRequired("bar"))
++
++	// The empty annotation is ignored and the genuinely required flag is still
++	// reported, so the guard cannot be satisfied by skipping the whole check.
++	_, err := executeCommand(c)
++	if err == nil {
++		t.Fatal("Expected an error naming the required flag, got nil")
++	}
++	expected := fmt.Sprintf("required flag(s) %q not set", "bar")
++	if err.Error() != expected {
++		t.Errorf("Expected error: %q, got: %q", expected, err.Error())
++	}
++}
++
+ func TestPersistentRequiredFlags(t *testing.T) {
+ 	parent := &Command{Use: "parent", Run: emptyRun}
+ 	parent.PersistentFlags().String("foo1", "", "")
+@@ -1475,6 +1497,25 @@ func TestSuggestions(t *testing.T) {
+ 	}
+ }
+ 
++// A typo two runes away from a non-ASCII command name is within the default
++// SuggestionsMinimumDistance of 2 and must be offered; measured in bytes the
++// same typo scores 4 and the suggestion is lost. Neither name is a prefix of
++// the other, so the prefix branch of SuggestionsFor cannot supply the answer.
++func TestSuggestionsNonASCII(t *testing.T) {
++	rootCmd := &Command{Use: "root", Run: emptyRun, SuggestionsMinimumDistance: 2}
++	rootCmd.AddCommand(&Command{Use: "naïvé", Run: emptyRun})
++
++	if got := rootCmd.SuggestionsFor("naive"); len(got) != 1 || got[0] != "naïvé" {
++		t.Errorf("SuggestionsFor(naive) = %v, want [naïvé]", got)
++	}
++
++	output, _ := executeCommand(rootCmd, "naive")
++	expected := "Error: unknown command \"naive\" for \"root\"\n\nDid you mean this?\n\tnaïvé\n\nRun 'root --help' for usage.\n"
++	if output != expected {
++		t.Errorf("Unexpected response.\nExpected:\n %q\nGot:\n %q\n", expected, output)
++	}
++}
++
+ func TestCaseInsensitive(t *testing.T) {
+ 	rootCmd := &Command{Use: "root", Run: emptyRun}
+ 	childCmd := &Command{Use: "child", Run: emptyRun, Aliases: []string{"alternative"}}
+@@ -2952,3 +2993,352 @@ func TestHelpFuncExecuted(t *testing.T) {
+ 
+ 	checkStringContains(t, output, helpText)
+ }
++
++func TestInheritedFlagsFollowReparenting(t *testing.T) {
++	// A command's lflags, iflags and parentsPflags are all derived from its
++	// parent chain and none is rebuilt from scratch, so every site that changes
++	// c.parent has to invalidate them. The three sites are AddCommand,
++	// RemoveCommand and ResetCommands; each detach path is driven here.
++	detachers := map[string]func(oldRoot, child *Command){
++		"ResetCommands": func(_, child *Command) { child.ResetCommands() },
++		"RemoveCommand": func(oldRoot, child *Command) { oldRoot.RemoveCommand(child) },
++		"AddCommandOnly": func(_, _ *Command) {
++			// re-parenting with no detach call at all: AddCommand is the only
++			// site that runs, and it has to invalidate on its own.
++		},
++	}
++
++	for name, detach := range detachers {
++		t.Run(name, func(t *testing.T) {
++			oldRoot := &Command{Use: "oldroot", Run: emptyRun}
++			oldRoot.PersistentFlags().String("from-old", "", "flag from the old parent")
++			newRoot := &Command{Use: "newroot", Run: emptyRun}
++			newRoot.PersistentFlags().String("from-new", "", "flag from the new parent")
++
++			child := &Command{Use: "child", Run: emptyRun}
++			oldRoot.AddCommand(child)
++
++			// Warm the caches the way help, completion and doc generation do.
++			if child.InheritedFlags().Lookup("from-old") == nil {
++				t.Fatal("expected from-old to be inherited while attached to oldroot")
++			}
++
++			detach(oldRoot, child)
++			newRoot.AddCommand(child)
++
++			inherited := child.InheritedFlags()
++			if inherited.Lookup("from-old") != nil {
++				t.Error("expected from-old to stop being inherited after re-parenting")
++			}
++			if inherited.Lookup("from-new") == nil {
++				t.Error("expected from-new to be inherited after re-parenting")
++			}
++		})
++	}
++}
++
++func TestInheritedFlagsClearedOnDetach(t *testing.T) {
++	// Detaching without re-attaching leaves no ancestor at all, so nothing is
++	// inherited. This is the shrinking direction of the same cache.
++	root := &Command{Use: "root", Run: emptyRun}
++	root.PersistentFlags().String("persistent", "", "a persistent flag")
++	child := &Command{Use: "child", Run: emptyRun}
++	root.AddCommand(child)
++
++	if child.InheritedFlags().Lookup("persistent") == nil {
++		t.Fatal("expected persistent to be inherited while attached")
++	}
++
++	root.RemoveCommand(child)
++
++	if child.InheritedFlags().Lookup("persistent") != nil {
++		t.Error("expected persistent to stop being inherited after RemoveCommand")
++	}
++	if child.HasInheritedFlags() {
++		t.Error("expected a detached command to report no inherited flags")
++	}
++}
++
++func TestFlagsDroppedWithOldParent(t *testing.T) {
++	// mergePersistentFlags copies the ancestors' persistent flags into c.flags,
++	// so dropping the derived caches is not enough: the copies have to go too,
++	// or the command keeps accepting a flag no ancestor defines.
++	oldRoot := &Command{Use: "oldroot", Run: emptyRun}
++	oldValue := oldRoot.PersistentFlags().String("from-old", "unset", "flag from the old parent")
++	newRoot := &Command{Use: "newroot", Run: emptyRun}
++	newRoot.PersistentFlags().String("from-new", "", "flag from the new parent")
++
++	child := &Command{Use: "child", Run: emptyRun}
++	oldRoot.AddCommand(child)
++	// The merge is lazy; help, completion and doc generation all trigger it.
++	child.InheritedFlags()
++	if child.Flags().Lookup("from-old") == nil {
++		t.Fatal("expected from-old to be merged into the child's flags while attached")
++	}
++
++	oldRoot.RemoveCommand(child)
++	newRoot.AddCommand(child)
++
++	if child.LocalFlags().Lookup("from-old") != nil {
++		t.Error("expected from-old to stop being a local flag of the re-parented child")
++	}
++	if child.Flags().Lookup("from-old") != nil {
++		t.Error("expected from-old to be gone from the re-parented child's flags")
++	}
++	if child.Flags().Lookup("from-new") == nil {
++		t.Error("expected from-new to be merged into the re-parented child's flags")
++	}
++
++	output, err := executeCommand(newRoot, "child", "--from-old", "leaked")
++	if err == nil {
++		t.Error("expected the re-parented child to reject --from-old")
++	} else {
++		checkStringContains(t, err.Error(), "unknown flag: --from-old")
++	}
++	checkStringContains(t, output, "unknown flag: --from-old")
++	if *oldValue != "unset" {
++		t.Errorf("the old parent's flag was written through a detached command: got %q", *oldValue)
++	}
++}
++
++func TestReparentingReachesDescendants(t *testing.T) {
++	// A command's ancestry changes when any command above it is re-parented,
++	// so the invalidation has to reach the whole subtree, not just the command
++	// whose parent pointer moved.
++	oldRoot := &Command{Use: "oldroot", Run: emptyRun}
++	oldRoot.PersistentFlags().String("from-old", "", "flag from the old parent")
++	newRoot := &Command{Use: "newroot", Run: emptyRun}
++	newRoot.PersistentFlags().String("from-new", "", "flag from the new parent")
++
++	child := &Command{Use: "child", Run: emptyRun}
++	grand := &Command{Use: "grand", Run: emptyRun}
++	child.AddCommand(grand)
++	oldRoot.AddCommand(child)
++
++	if grand.InheritedFlags().Lookup("from-old") == nil {
++		t.Fatal("expected the grandchild to inherit from-old while attached")
++	}
++
++	oldRoot.RemoveCommand(child)
++	newRoot.AddCommand(child)
++
++	inherited := grand.InheritedFlags()
++	if inherited.Lookup("from-old") != nil {
++		t.Error("expected the grandchild to stop inheriting the old root's flag")
++	}
++	if inherited.Lookup("from-new") == nil {
++		t.Error("expected the grandchild to inherit the new root's flag")
++	}
++	if grand.Flags().Lookup("from-old") != nil {
++		t.Error("expected the old root's flag to be gone from the grandchild's flags")
++	}
++}
++
++func TestReparentingKeepsFlagSetSettings(t *testing.T) {
++	// Rebuilding c.flags must not quietly reset what the caller configured on it.
++	root := &Command{Use: "root", Run: emptyRun}
++	root.PersistentFlags().String("inherited", "", "an inherited flag")
++
++	child := &Command{Use: "child", Run: emptyRun}
++	child.Flags().StringP("own", "o", "", "the child's own flag")
++	child.Flags().SortFlags = false
++	child.Flags().Usage = func() {}
++	child.Flags().ParseErrorsAllowlist.UnknownFlags = true
++	normalize := func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
++		return pflag.NormalizedName(strings.ReplaceAll(name, "_", "-"))
++	}
++	child.Flags().SetNormalizeFunc(normalize)
++	buf := new(bytes.Buffer)
++	child.Flags().SetOutput(buf)
++	name := child.Flags().Name()
++
++	root.AddCommand(child)
++	child.InheritedFlags()
++	if child.Flags().Lookup("inherited") == nil {
++		t.Fatal("expected inherited to be merged into the child's flags")
++	}
++	if err := child.Flags().Set("own", "set-before-detach"); err != nil {
++		t.Fatal(err)
++	}
++
++	root.RemoveCommand(child)
++
++	flags := child.Flags()
++	if flags.Lookup("own") == nil {
++		t.Error("the child's own flag was dropped with the parent's")
++	}
++	if flags.ShorthandLookup("o") == nil {
++		t.Error("the child's own shorthand was dropped with the parent's")
++	}
++	if own := flags.Lookup("own"); own != nil && (!own.Changed || own.Value.String() != "set-before-detach") {
++		t.Errorf("the child's own flag lost its value: changed=%v value=%q", own.Changed, own.Value.String())
++	}
++	if flags.SortFlags {
++		t.Error("SortFlags was reset")
++	}
++	if flags.Usage == nil {
++		t.Error("Usage was reset")
++	}
++	if !flags.ParseErrorsAllowlist.UnknownFlags {
++		t.Error("ParseErrorsAllowlist was reset")
++	}
++	if flags.Output() != buf {
++		t.Error("the output writer was reset")
++	}
++	if flags.Name() != name {
++		t.Errorf("the flag set was renamed: got %q, want %q", flags.Name(), name)
++	}
++	if got := flags.GetNormalizeFunc()(flags, "a_b"); got != "a-b" {
++		t.Errorf("the normalize func was reset: normalized %q to %q", "a_b", got)
++	}
++}
++
++func TestTraverseWithPersistentFlags(t *testing.T) {
++	// Traverse asks c.Flags() whether a flag takes a value, and persistent
++	// flags are not in that set until they are merged. A persistent flag that
++	// takes no value therefore used to look like one that does and swallow the
++	// word naming the subcommand.
++	for _, tc := range []struct {
++		name string
++		args []string
++	}{
++		{"long", []string{"--verbose", "child", "arg"}},
++		{"short", []string{"-v", "child", "arg"}},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			rootCmd := &Command{Use: "root", TraverseChildren: true, Run: emptyRun}
++			verbose := rootCmd.PersistentFlags().BoolP("verbose", "v", false, "")
++			childCmd := &Command{Use: "child", Run: emptyRun}
++			rootCmd.AddCommand(childCmd)
++
++			c, args, err := rootCmd.Traverse(tc.args)
++			if err != nil {
++				t.Fatalf("Unexpected error: %v", err)
++			}
++			if c != childCmd {
++				t.Errorf("Expected command %q, got %q", childCmd.Name(), c.Name())
++			}
++			if len(args) != 1 || args[0] != "arg" {
++				t.Errorf("Wrong args: %v", args)
++			}
++			if !*verbose {
++				t.Error("The persistent flag was not parsed")
++			}
++		})
++	}
++}
++
++func TestTraverseWithPersistentValueFlag(t *testing.T) {
++	// The other half of the same lookup: a persistent flag that does take a
++	// value still swallows the word after it.
++	rootCmd := &Command{Use: "root", TraverseChildren: true, Run: emptyRun}
++	str := rootCmd.PersistentFlags().String("str", "", "")
++	childCmd := &Command{Use: "child", Run: emptyRun}
++	rootCmd.AddCommand(childCmd)
++
++	c, args, err := rootCmd.Traverse([]string{"--str", "value", "child", "arg"})
++	if err != nil {
++		t.Fatalf("Unexpected error: %v", err)
++	}
++	if c != childCmd {
++		t.Errorf("Expected command %q, got %q", childCmd.Name(), c.Name())
++	}
++	if len(args) != 1 || args[0] != "arg" {
++		t.Errorf("Wrong args: %v", args)
++	}
++	if *str != "value" {
++		t.Errorf("Expected --str to be %q, got %q", "value", *str)
++	}
++}
++
++func TestReparentingParseStateAcrossRebuild(t *testing.T) {
++	// This test is the enumeration the doc comment on dropParentsPflagsFromFlags
++	// defers to: which accessors survive the rebuild of c.flags and which do
++	// not. Every one is driven across a real parse, because a flag set with Set
++	// rather than Parse leaves no record to lose and would certify either answer.
++	root := &Command{Use: "root", Run: emptyRun}
++	root.PersistentFlags().String("from-old", "", "")
++	child := &Command{Use: "child", Run: emptyRun}
++	child.Flags().String("own", "", "")
++	root.AddCommand(child)
++	child.InheritedFlags() // force the merge, so the rebuild has something to drop
++
++	if err := child.Flags().Parse([]string{"--own", "v", "pos1", "--", "pos2"}); err != nil {
++		t.Fatal(err)
++	}
++	visited := func() []string {
++		var names []string
++		child.Flags().Visit(func(f *pflag.Flag) { names = append(names, f.Name) })
++		return names
++	}
++	if !child.Flags().Parsed() || !child.Flags().Changed("own") || len(child.Flags().Args()) != 2 ||
++		child.Flags().ArgsLenAtDash() != 1 || len(visited()) != 1 {
++		t.Fatal("setup: the parse did not populate the set-level record")
++	}
++
++	root.RemoveCommand(child)
++
++	if child.Flags().Lookup("from-old") != nil {
++		t.Fatal("setup: the rebuild did not run")
++	}
++	// Carried: both the flag's own Changed and the set's, which reads through to it.
++	if !child.Flags().Changed("own") {
++		t.Error("FlagSet.Changed was lost across the rebuild")
++	}
++	if own := child.Flags().Lookup("own"); !own.Changed || own.Value.String() != "v" {
++		t.Errorf("the flag lost its state: changed=%v value=%q", own.Changed, own.Value.String())
++	}
++	// Lost: the record the parse left on the set itself.
++	if child.Flags().Parsed() {
++		t.Error("Parsed survived the rebuild; the set-level parse record is not carried")
++	}
++	if got := child.Flags().Args(); len(got) != 0 {
++		t.Errorf("Args survived the rebuild as %v", got)
++	}
++	if got := child.Flags().ArgsLenAtDash(); got != -1 {
++		t.Errorf("ArgsLenAtDash survived the rebuild as %d", got)
++	}
++	if got := visited(); len(got) != 0 {
++		t.Errorf("Visit survived the rebuild as %v", got)
++	}
++}
++
++// SuggestionsFor must be a function of its argument alone. findSuggestions used
++// to write its default of 2 into SuggestionsMinimumDistance, so the same call on
++// the same tree answered differently depending on whether an earlier Execute had
++// taken the suggestion path. Both halves are pinned here: the public accessor
++// uses the field as it finds it, and the Execute path still defaults to 2.
++func TestSuggestionsForIsIndependentOfExecute(t *testing.T) {
++	build := func() *Command {
++		root := &Command{Use: "root", Run: emptyRun}
++		root.AddCommand(&Command{Use: "server", Run: emptyRun})
++		return root
++	}
++
++	fresh := build()
++	before := fresh.SuggestionsFor("srever")
++
++	used := build()
++	output, _ := executeCommand(used, "srever")
++	if !strings.Contains(output, "Did you mean this?") {
++		t.Fatalf("Execute did not take the suggestion path, so this test proves nothing: %q", output)
++	}
++	if got := used.SuggestionsMinimumDistance; got != 0 {
++		t.Errorf("Execute wrote SuggestionsMinimumDistance = %d, want it left at 0", got)
++	}
++
++	after := used.SuggestionsFor("srever")
++	if strings.Join(before, ",") != strings.Join(after, ",") {
++		t.Errorf("SuggestionsFor depends on a prior Execute: fresh gave %v, used gave %v", before, after)
++	}
++
++	// The Execute path keeps its default of 2: "srever" is two edits from
++	// "server" and is nobody's prefix, so it is offered only at distance >= 2.
++	if !strings.Contains(output, "server") {
++		t.Errorf("Execute lost the default distance of 2, output was %q", output)
++	}
++	// And the accessor at the zero value offers nothing for that same typo.
++	if len(before) != 0 {
++		t.Errorf("SuggestionsFor at the zero value = %v, want none", before)
++	}
++}
+diff --git a/completions.go b/completions.go
+index d3607c2..cbb986e 100644
+--- a/completions.go
++++ b/completions.go
+@@ -455,7 +455,7 @@ func (c *Command) getCompletions(args []string) (*Command, []Completion, ShellCo
+ 				}
+ 			}
+ 
+-			// We cannot use finalCmd.Flags() because we may not have called ParsedFlags() for commands
++			// We cannot use finalCmd.Flags() because we may not have called ParseFlags() for commands
+ 			// that have set DisableFlagParsing; it is ParseFlags() that merges the inherited and
+ 			// non-inherited flags.
+ 			finalCmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
+@@ -638,7 +638,7 @@ func completeRequireFlags(finalCmd *Command, toComplete string) []Completion {
+ 		}
+ 	}
+ 
+-	// We cannot use finalCmd.Flags() because we may not have called ParsedFlags() for commands
++	// We cannot use finalCmd.Flags() because we may not have called ParseFlags() for commands
+ 	// that have set DisableFlagParsing; it is ParseFlags() that merges the inherited and
+ 	// non-inherited flags.
+ 	finalCmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
+@@ -795,8 +795,19 @@ See each sub-command's help for details on how to use the generated script.
+ 		}
+ 	}
+ 
+-	out := c.OutOrStdout()
+-	noDesc := c.CompletionOptions.DisableDescriptions
++	// Both the writer and the descriptions setting are resolved per execution
++	// rather than captured here: these sub-commands are built once and every
++	// later call to this function returns early, so anything closed over now
++	// would be reused by a second Execute that meant something else.
++	noDescriptions := func(cmd *Command) bool {
++		if c.CompletionOptions.DisableDescriptions {
++			return true
++		}
++		// GetBool errors when the flag was never registered, which is the case
++		// whenever the program suppressed it.
++		v, err := cmd.Flags().GetBool(compCmdNoDescFlagName)
++		return err == nil && v
++	}
+ 	shortDesc := "Generate the autocompletion script for %s"
+ 	bash := &Command{
+ 		Use:   "bash",
+@@ -826,11 +837,11 @@ You will need to start a new shell for this setup to take effect.
+ 		DisableFlagsInUseLine: true,
+ 		ValidArgsFunction:     NoFileCompletions,
+ 		RunE: func(cmd *Command, args []string) error {
+-			return cmd.Root().GenBashCompletionV2(out, !noDesc)
++			return cmd.Root().GenBashCompletionV2(cmd.OutOrStdout(), !noDescriptions(cmd))
+ 		},
+ 	}
+ 	if haveNoDescFlag {
+-		bash.Flags().BoolVar(&noDesc, compCmdNoDescFlagName, compCmdNoDescFlagDefault, compCmdNoDescFlagDesc)
++		bash.Flags().Bool(compCmdNoDescFlagName, compCmdNoDescFlagDefault, compCmdNoDescFlagDesc)
+ 	}
+ 
+ 	zsh := &Command{
+@@ -862,14 +873,14 @@ You will need to start a new shell for this setup to take effect.
+ 		Args:              NoArgs,
+ 		ValidArgsFunction: NoFileCompletions,
+ 		RunE: func(cmd *Command, args []string) error {
+-			if noDesc {
+-				return cmd.Root().GenZshCompletionNoDesc(out)
++			if noDescriptions(cmd) {
++				return cmd.Root().GenZshCompletionNoDesc(cmd.OutOrStdout())
+ 			}
+-			return cmd.Root().GenZshCompletion(out)
++			return cmd.Root().GenZshCompletion(cmd.OutOrStdout())
+ 		},
+ 	}
+ 	if haveNoDescFlag {
+-		zsh.Flags().BoolVar(&noDesc, compCmdNoDescFlagName, compCmdNoDescFlagDefault, compCmdNoDescFlagDesc)
++		zsh.Flags().Bool(compCmdNoDescFlagName, compCmdNoDescFlagDefault, compCmdNoDescFlagDesc)
+ 	}
+ 
+ 	fish := &Command{
+@@ -890,11 +901,11 @@ You will need to start a new shell for this setup to take effect.
+ 		Args:              NoArgs,
+ 		ValidArgsFunction: NoFileCompletions,
+ 		RunE: func(cmd *Command, args []string) error {
+-			return cmd.Root().GenFishCompletion(out, !noDesc)
++			return cmd.Root().GenFishCompletion(cmd.OutOrStdout(), !noDescriptions(cmd))
+ 		},
+ 	}
+ 	if haveNoDescFlag {
+-		fish.Flags().BoolVar(&noDesc, compCmdNoDescFlagName, compCmdNoDescFlagDefault, compCmdNoDescFlagDesc)
++		fish.Flags().Bool(compCmdNoDescFlagName, compCmdNoDescFlagDefault, compCmdNoDescFlagDesc)
+ 	}
+ 
+ 	powershell := &Command{
+@@ -912,15 +923,14 @@ to your powershell profile.
+ 		Args:              NoArgs,
+ 		ValidArgsFunction: NoFileCompletions,
+ 		RunE: func(cmd *Command, args []string) error {
+-			if noDesc {
+-				return cmd.Root().GenPowerShellCompletion(out)
++			if noDescriptions(cmd) {
++				return cmd.Root().GenPowerShellCompletion(cmd.OutOrStdout())
+ 			}
+-			return cmd.Root().GenPowerShellCompletionWithDesc(out)
+-
++			return cmd.Root().GenPowerShellCompletionWithDesc(cmd.OutOrStdout())
+ 		},
+ 	}
+ 	if haveNoDescFlag {
+-		powershell.Flags().BoolVar(&noDesc, compCmdNoDescFlagName, compCmdNoDescFlagDefault, compCmdNoDescFlagDesc)
++		powershell.Flags().Bool(compCmdNoDescFlagName, compCmdNoDescFlagDefault, compCmdNoDescFlagDesc)
+ 	}
+ 
+ 	completionCmd.AddCommand(bash, zsh, fish, powershell)
+diff --git a/completions_test.go b/completions_test.go
+index ec7b907..5c3ab1c 100644
+--- a/completions_test.go
++++ b/completions_test.go
+@@ -4072,3 +4072,76 @@ func TestCustomDefaultShellCompDirective(t *testing.T) {
+ 		})
+ 	}
+ }
++
++// The completion sub-commands are built once, on the first execution, and every
++// later call to InitDefaultCompletionCmd returns early. Anything the built
++// sub-commands close over is therefore reused by a second execution that meant
++// something else, so the writer and the descriptions setting are resolved per
++// execution instead.
++func TestCompletionCmdResolvesWriterPerExecution(t *testing.T) {
++	rootCmd := &Command{Use: "root", Run: emptyRun}
++	rootCmd.AddCommand(&Command{Use: "child", Short: "a child", Run: emptyRun})
++	rootCmd.SetErr(new(bytes.Buffer))
++
++	first := new(bytes.Buffer)
++	rootCmd.SetOut(first)
++	rootCmd.SetArgs([]string{"completion", "bash"})
++	if err := rootCmd.Execute(); err != nil {
++		t.Fatalf("Unexpected error: %v", err)
++	}
++	if first.Len() == 0 {
++		t.Fatal("The first execution wrote no script")
++	}
++
++	second := new(bytes.Buffer)
++	rootCmd.SetOut(second)
++	rootCmd.SetArgs([]string{"completion", "bash"})
++	if err := rootCmd.Execute(); err != nil {
++		t.Fatalf("Unexpected error: %v", err)
++	}
++	if second.Len() == 0 {
++		t.Error("The second execution wrote nothing to the writer set for it")
++	}
++	if first.Len() != second.Len() {
++		t.Errorf("The two executions wrote %d and %d bytes; expected the same script twice",
++			first.Len(), second.Len())
++	}
++}
++
++func TestCompletionCmdNoDescriptionsIsPerShell(t *testing.T) {
++	// One shared variable behind all four shells meant --no-descriptions on one
++	// of them silently applied to the next shell asked in the same process.
++	rootCmd := &Command{Use: "root", Run: emptyRun}
++	rootCmd.AddCommand(&Command{Use: "child", Short: "a child", Run: emptyRun})
++	rootCmd.SetErr(new(bytes.Buffer))
++
++	buf := new(bytes.Buffer)
++	rootCmd.SetOut(buf)
++	rootCmd.SetArgs([]string{"completion", "bash", "--no-descriptions"})
++	if err := rootCmd.Execute(); err != nil {
++		t.Fatalf("Unexpected error: %v", err)
++	}
++	buf.Reset()
++	rootCmd.SetArgs([]string{"completion", "zsh"})
++	if err := rootCmd.Execute(); err != nil {
++		t.Fatalf("Unexpected error: %v", err)
++	}
++
++	refCmd := &Command{Use: "root", Run: emptyRun}
++	refCmd.AddCommand(&Command{Use: "child", Short: "a child", Run: emptyRun})
++	withDesc, noDesc := new(bytes.Buffer), new(bytes.Buffer)
++	if err := refCmd.GenZshCompletion(withDesc); err != nil {
++		t.Fatal(err)
++	}
++	if err := refCmd.GenZshCompletionNoDesc(noDesc); err != nil {
++		t.Fatal(err)
++	}
++
++	if got := buf.String(); got != withDesc.String() {
++		if got == noDesc.String() {
++			t.Error("zsh was generated without descriptions after bash was asked for none")
++		} else {
++			t.Errorf("zsh script matched neither reference form (%d bytes)", buf.Len())
++		}
++	}
++}
+diff --git a/doc/man_docs.go b/doc/man_docs.go
+index 560bc20..46cb463 100644
+--- a/doc/man_docs.go
++++ b/doc/man_docs.go
+@@ -20,7 +20,6 @@ import (
+ 	"io"
+ 	"os"
+ 	"path/filepath"
+-	"sort"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+@@ -106,7 +105,7 @@ func GenMan(cmd *cobra.Command, header *GenManHeader, w io.Writer) error {
+ 	if header == nil {
+ 		header = &GenManHeader{}
+ 	}
+-	if err := fillHeader(header, cmd.CommandPath(), cmd.DisableAutoGenTag); err != nil {
++	if err := fillHeader(header, cmd.CommandPath(), autoGenTagDisabled(cmd)); err != nil {
+ 		return err
+ 	}
+ 
+@@ -129,7 +128,10 @@ func fillHeader(header *GenManHeader, name string, disableAutoGen bool) error {
+ 			if err != nil {
+ 				return fmt.Errorf("invalid SOURCE_DATE_EPOCH: %v", err)
+ 			}
+-			now = time.Unix(unixEpoch, 0)
++			// SOURCE_DATE_EPOCH is specified in UTC, and reading it in the
++			// host's zone would make the output depend on where it was built,
++			// which is the one thing the variable exists to prevent.
++			now = time.Unix(unixEpoch, 0).UTC()
+ 		}
+ 		header.Date = &now
+ 	}
+@@ -222,14 +224,8 @@ func genMan(cmd *cobra.Command, header *GenManHeader) []byte {
+ 			dashParentPath := strings.ReplaceAll(parentPath, " ", "-")
+ 			seealso := fmt.Sprintf("**%s(%s)**", dashParentPath, header.Section)
+ 			seealsos = append(seealsos, seealso)
+-			cmd.VisitParents(func(c *cobra.Command) {
+-				if c.DisableAutoGenTag {
+-					cmd.DisableAutoGenTag = c.DisableAutoGenTag
+-				}
+-			})
+ 		}
+-		children := cmd.Commands()
+-		sort.Sort(byName(children))
++		children := sortedChildren(cmd)
+ 		for _, c := range children {
+ 			if !c.IsAvailableCommand() || c.IsAdditionalHelpTopicCommand() {
+ 				continue
+@@ -239,7 +235,7 @@ func genMan(cmd *cobra.Command, header *GenManHeader) []byte {
+ 		}
+ 		buf.WriteString(strings.Join(seealsos, ", ") + "\n")
+ 	}
+-	if !cmd.DisableAutoGenTag {
++	if !autoGenTagDisabled(cmd) {
+ 		fmt.Fprintf(buf, "# HISTORY\n%s Auto generated by spf13/cobra\n", header.Date.Format("2-Jan-2006"))
+ 	}
+ 	return buf.Bytes()
+diff --git a/doc/man_docs_test.go b/doc/man_docs_test.go
+index ae6c8e5..1fd6186 100644
+--- a/doc/man_docs_test.go
++++ b/doc/man_docs_test.go
+@@ -22,6 +22,7 @@ import (
+ 	"path/filepath"
+ 	"strings"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/spf13/cobra"
+ )
+@@ -229,3 +230,46 @@ func BenchmarkGenManToFile(b *testing.B) {
+ 		}
+ 	}
+ }
++
++// SOURCE_DATE_EPOCH exists to make output reproducible, so the date it names
++// must be read as UTC: the same epoch has to produce the same page on machines
++// in different time zones.
++func TestGenManSourceDateEpochIsReproducibleAcrossZones(t *testing.T) {
++	// 2001-09-09 01:46:40 UTC, which falls on a different calendar day in any
++	// zone more than about two hours west of Greenwich.
++	const epoch = "1000000000"
++
++	oldEpoch, hadEpoch := os.LookupEnv("SOURCE_DATE_EPOCH")
++	if err := os.Setenv("SOURCE_DATE_EPOCH", epoch); err != nil {
++		t.Fatal(err)
++	}
++	defer func() {
++		if hadEpoch {
++			assertNoErr(t, os.Setenv("SOURCE_DATE_EPOCH", oldEpoch))
++		} else {
++			assertNoErr(t, os.Unsetenv("SOURCE_DATE_EPOCH"))
++		}
++	}()
++
++	render := func(name string, offsetSeconds int) string {
++		saved := time.Local
++		defer func() { time.Local = saved }()
++		time.Local = time.FixedZone(name, offsetSeconds)
++
++		buf := new(bytes.Buffer)
++		if err := GenMan(&cobra.Command{Use: "solo", Short: "s", Run: emptyRun}, nil, buf); err != nil {
++			t.Fatal(err)
++		}
++		return buf.String()
++	}
++
++	west := render("WEST", -11*60*60) // 2001-09-08 locally
++	east := render("EAST", +13*60*60) // 2001-09-09 locally
++
++	if west != east {
++		t.Errorf("the same SOURCE_DATE_EPOCH produced different pages in different zones:\n--- west ---\n%s\n--- east ---\n%s", west, east)
++	}
++	if !strings.Contains(west, "9-Sep-2001") {
++		t.Errorf("SOURCE_DATE_EPOCH was not rendered as the UTC date 9-Sep-2001:\n%s", west)
++	}
++}
+diff --git a/doc/md_docs.go b/doc/md_docs.go
+index 6eae7cc..7955fca 100644
+--- a/doc/md_docs.go
++++ b/doc/md_docs.go
+@@ -20,7 +20,6 @@ import (
+ 	"io"
+ 	"os"
+ 	"path/filepath"
+-	"sort"
+ 	"strings"
+ 	"time"
+ 
+@@ -29,7 +28,7 @@ import (
+ 
+ const markdownExtension = ".md"
+ 
+-func printOptions(buf *bytes.Buffer, cmd *cobra.Command, name string) error {
++func printOptions(buf *bytes.Buffer, cmd *cobra.Command) {
+ 	flags := cmd.NonInheritedFlags()
+ 	flags.SetOutput(buf)
+ 	if flags.HasAvailableFlags() {
+@@ -45,7 +44,6 @@ func printOptions(buf *bytes.Buffer, cmd *cobra.Command, name string) error {
+ 		parentFlags.PrintDefaults()
+ 		buf.WriteString("```\n\n")
+ 	}
+-	return nil
+ }
+ 
+ // GenMarkdown creates markdown output.
+@@ -77,9 +75,7 @@ func GenMarkdownCustom(cmd *cobra.Command, w io.Writer, linkHandler func(string)
+ 		fmt.Fprintf(buf, "```\n%s\n```\n\n", cmd.Example)
+ 	}
+ 
+-	if err := printOptions(buf, cmd, name); err != nil {
+-		return err
+-	}
++	printOptions(buf, cmd)
+ 	if hasSeeAlso(cmd) {
+ 		buf.WriteString("### SEE ALSO\n\n")
+ 		if cmd.HasParent() {
+@@ -88,15 +84,9 @@ func GenMarkdownCustom(cmd *cobra.Command, w io.Writer, linkHandler func(string)
+ 			link := pname + markdownExtension
+ 			link = strings.ReplaceAll(link, " ", "_")
+ 			fmt.Fprintf(buf, "* [%s](%s)\t - %s\n", pname, linkHandler(link), parent.Short)
+-			cmd.VisitParents(func(c *cobra.Command) {
+-				if c.DisableAutoGenTag {
+-					cmd.DisableAutoGenTag = c.DisableAutoGenTag
+-				}
+-			})
+ 		}
+ 
+-		children := cmd.Commands()
+-		sort.Sort(byName(children))
++		children := sortedChildren(cmd)
+ 
+ 		for _, child := range children {
+ 			if !child.IsAvailableCommand() || child.IsAdditionalHelpTopicCommand() {
+@@ -109,7 +99,7 @@ func GenMarkdownCustom(cmd *cobra.Command, w io.Writer, linkHandler func(string)
+ 		}
+ 		buf.WriteString("\n")
+ 	}
+-	if !cmd.DisableAutoGenTag {
++	if !autoGenTagDisabled(cmd) {
+ 		buf.WriteString("###### Auto generated by spf13/cobra on " + time.Now().Format("2-Jan-2006") + "\n")
+ 	}
+ 	_, err := buf.WriteTo(w)
+diff --git a/doc/rest_docs.go b/doc/rest_docs.go
+index 4901ca9..8629a4e 100644
+--- a/doc/rest_docs.go
++++ b/doc/rest_docs.go
+@@ -20,14 +20,13 @@ import (
+ 	"io"
+ 	"os"
+ 	"path/filepath"
+-	"sort"
+ 	"strings"
+ 	"time"
+ 
+ 	"github.com/spf13/cobra"
+ )
+ 
+-func printOptionsReST(buf *bytes.Buffer, cmd *cobra.Command, name string) error {
++func printOptionsReST(buf *bytes.Buffer, cmd *cobra.Command) {
+ 	flags := cmd.NonInheritedFlags()
+ 	flags.SetOutput(buf)
+ 	if flags.HasAvailableFlags() {
+@@ -45,7 +44,6 @@ func printOptionsReST(buf *bytes.Buffer, cmd *cobra.Command, name string) error
+ 		parentFlags.PrintDefaults()
+ 		buf.WriteString("\n")
+ 	}
+-	return nil
+ }
+ 
+ // defaultLinkHandler for default ReST hyperlink markup
+@@ -91,9 +89,7 @@ func GenReSTCustom(cmd *cobra.Command, w io.Writer, linkHandler func(string, str
+ 		fmt.Fprintf(buf, "::\n\n%s\n\n", indentString(cmd.Example, "  "))
+ 	}
+ 
+-	if err := printOptionsReST(buf, cmd, name); err != nil {
+-		return err
+-	}
++	printOptionsReST(buf, cmd)
+ 	if hasSeeAlso(cmd) {
+ 		buf.WriteString("SEE ALSO\n")
+ 		buf.WriteString("~~~~~~~~\n\n")
+@@ -102,15 +98,9 @@ func GenReSTCustom(cmd *cobra.Command, w io.Writer, linkHandler func(string, str
+ 			pname := parent.CommandPath()
+ 			ref = strings.ReplaceAll(pname, " ", "_")
+ 			fmt.Fprintf(buf, "* %s \t - %s\n", linkHandler(pname, ref), parent.Short)
+-			cmd.VisitParents(func(c *cobra.Command) {
+-				if c.DisableAutoGenTag {
+-					cmd.DisableAutoGenTag = c.DisableAutoGenTag
+-				}
+-			})
+ 		}
+ 
+-		children := cmd.Commands()
+-		sort.Sort(byName(children))
++		children := sortedChildren(cmd)
+ 
+ 		for _, child := range children {
+ 			if !child.IsAvailableCommand() || child.IsAdditionalHelpTopicCommand() {
+@@ -122,7 +112,7 @@ func GenReSTCustom(cmd *cobra.Command, w io.Writer, linkHandler func(string, str
+ 		}
+ 		buf.WriteString("\n")
+ 	}
+-	if !cmd.DisableAutoGenTag {
++	if !autoGenTagDisabled(cmd) {
+ 		buf.WriteString("*Auto generated by spf13/cobra on " + time.Now().Format("2-Jan-2006") + "*\n")
+ 	}
+ 	_, err := buf.WriteTo(w)
+diff --git a/doc/util.go b/doc/util.go
+index 4de4cee..f320cd9 100644
+--- a/doc/util.go
++++ b/doc/util.go
+@@ -15,7 +15,7 @@
+ package doc
+ 
+ import (
+-	"strings"
++	"sort"
+ 
+ 	"github.com/spf13/cobra"
+ )
+@@ -36,13 +36,31 @@ func hasSeeAlso(cmd *cobra.Command) bool {
+ 	return false
+ }
+ 
+-// Temporary workaround for yaml lib generating incorrect yaml with long strings
+-// that do not contain \n.
+-func forceMultiLine(s string) string {
+-	if len(s) > 60 && !strings.Contains(s, "\n") {
+-		s += "\n"
++// autoGenTagDisabled reports whether the auto-generated tag should be left out
++// of cmd's documentation: either cmd disables it or some ancestor does. It
++// answers the question without writing to cmd, so generating documentation
++// never mutates the command tree the caller owns.
++func autoGenTagDisabled(cmd *cobra.Command) bool {
++	if cmd.DisableAutoGenTag {
++		return true
+ 	}
+-	return s
++	disabled := false
++	cmd.VisitParents(func(c *cobra.Command) {
++		if c.DisableAutoGenTag {
++			disabled = true
++		}
++	})
++	return disabled
++}
++
++// sortedChildren returns cmd's child commands ordered by name. Commands()
++// returns the command's own slice rather than a copy, so sorting what it
++// returns would reorder the command tree the caller owns; the copy is what
++// keeps generating documentation from rewriting the tree it documents.
++func sortedChildren(cmd *cobra.Command) []*cobra.Command {
++	children := append([]*cobra.Command(nil), cmd.Commands()...)
++	sort.Sort(byName(children))
++	return children
+ }
+ 
+ type byName []*cobra.Command
+diff --git a/doc/util_test.go b/doc/util_test.go
+new file mode 100644
+index 0000000..63bafc2
+--- /dev/null
++++ b/doc/util_test.go
+@@ -0,0 +1,153 @@
++// Copyright 2013-2023 The Cobra Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//      http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package doc
++
++import (
++	"bytes"
++	"io"
++	"strings"
++	"testing"
++
++	"github.com/spf13/cobra"
++)
++
++// autoGenTagGenerators is every generator that emits the auto-generated tag.
++// GenYaml is absent because the yaml documents carry no such tag.
++var autoGenTagGenerators = map[string]func(*cobra.Command, io.Writer) error{
++	"GenMarkdown": GenMarkdown,
++	"GenReST":     GenReST,
++	"GenMan": func(cmd *cobra.Command, w io.Writer) error {
++		return GenMan(cmd, nil, w)
++	},
++}
++
++// A parent's DisableAutoGenTag must reach the child's document without being
++// written into the child's own field: generating docs must not mutate the
++// command tree the caller owns, or the suppression outlives the setting that
++// caused it.
++func TestAutoGenTagInheritedWithoutMutation(t *testing.T) {
++	for name, gen := range autoGenTagGenerators {
++		t.Run(name, func(t *testing.T) {
++			root := &cobra.Command{Use: "root", Short: "root short", Run: emptyRun}
++			child := &cobra.Command{Use: "child", Short: "child short", Run: emptyRun}
++			root.AddCommand(child)
++
++			emits := func() bool {
++				buf := new(bytes.Buffer)
++				if err := gen(child, buf); err != nil {
++					t.Fatal(err)
++				}
++				return strings.Contains(buf.String(), "Auto generated by spf13/cobra")
++			}
++
++			if !emits() {
++				t.Fatal("the tag is missing although neither command disables it")
++			}
++
++			root.DisableAutoGenTag = true
++			if emits() {
++				t.Error("the parent's DisableAutoGenTag did not reach the child's document")
++			}
++			if child.DisableAutoGenTag {
++				t.Error("generating wrote the parent's DisableAutoGenTag into the child's own field")
++			}
++
++			root.DisableAutoGenTag = false
++			if !emits() {
++				t.Error("clearing the parent's DisableAutoGenTag did not restore the tag")
++			}
++		})
++	}
++}
++
++// The command's own flag still wins, and still suppresses the tag on its own.
++func TestAutoGenTagOwnFlag(t *testing.T) {
++	for name, gen := range autoGenTagGenerators {
++		t.Run(name, func(t *testing.T) {
++			c := &cobra.Command{Use: "solo", Short: "s", Run: emptyRun}
++			buf := new(bytes.Buffer)
++			if err := gen(c, buf); err != nil {
++				t.Fatal(err)
++			}
++			if !strings.Contains(buf.String(), "Auto generated by spf13/cobra") {
++				t.Fatal("the tag is missing although the command does not disable it")
++			}
++
++			c.DisableAutoGenTag = true
++			buf.Reset()
++			if err := gen(c, buf); err != nil {
++				t.Fatal(err)
++			}
++			if strings.Contains(buf.String(), "Auto generated by spf13/cobra") {
++				t.Error("DisableAutoGenTag did not suppress the tag")
++			}
++		})
++	}
++}
++
++// Generating documentation must not reorder the caller's child commands.
++// Commands() returns the command's own slice rather than a copy, so a
++// generator that sorts what it returns rewrites the tree the caller owns.
++// The reordering is only observable while EnableCommandSorting is off, which
++// is the setting whose whole purpose is preserving the declared order.
++func TestGenerationDoesNotReorderChildren(t *testing.T) {
++	restore := cobra.EnableCommandSorting
++	cobra.EnableCommandSorting = false
++	defer func() { cobra.EnableCommandSorting = restore }()
++
++	// Declared out of alphabetical order, so an in-place sort is visible.
++	const want = "zebra apple mango"
++
++	generators := map[string]func(*cobra.Command, io.Writer) error{
++		"GenMarkdown": GenMarkdown,
++		"GenReST":     GenReST,
++		"GenYaml":     GenYaml,
++		"GenMan": func(cmd *cobra.Command, w io.Writer) error {
++			return GenMan(cmd, nil, w)
++		},
++	}
++
++	for name, generate := range generators {
++		t.Run(name, func(t *testing.T) {
++			root := &cobra.Command{Use: "root", Short: "root", Run: emptyRun}
++			for _, child := range strings.Fields(want) {
++				root.AddCommand(&cobra.Command{Use: child, Short: child, Run: emptyRun})
++			}
++
++			if err := generate(root, io.Discard); err != nil {
++				t.Fatalf("%s returned %v", name, err)
++			}
++
++			// Generation adds the default help command, so compare the
++			// relative order of the declared children rather than the whole
++			// slice: the contract is that generating reorders nothing, not
++			// that it adds nothing.
++			declared := strings.Fields(want)
++			var got []string
++			for _, c := range root.Commands() {
++				for _, d := range declared {
++					if c.Name() == d {
++						got = append(got, c.Name())
++						break
++					}
++				}
++			}
++			if strings.Join(got, " ") != want {
++				t.Errorf("%s reordered the children: got %q, want %q",
++					name, strings.Join(got, " "), want)
++			}
++		})
++	}
++}
+diff --git a/doc/yaml_docs.go b/doc/yaml_docs.go
+index 20950fe..de8678e 100644
+--- a/doc/yaml_docs.go
++++ b/doc/yaml_docs.go
+@@ -15,11 +15,9 @@
+ package doc
+ 
+ import (
+-	"fmt"
+ 	"io"
+ 	"os"
+ 	"path/filepath"
+-	"sort"
+ 	"strings"
+ 
+ 	"github.com/spf13/cobra"
+@@ -97,8 +95,8 @@ func GenYamlCustom(cmd *cobra.Command, w io.Writer, linkHandler func(string) str
+ 	yamlDoc := cmdDoc{}
+ 	yamlDoc.Name = cmd.CommandPath()
+ 
+-	yamlDoc.Synopsis = forceMultiLine(cmd.Short)
+-	yamlDoc.Description = forceMultiLine(cmd.Long)
++	yamlDoc.Synopsis = cmd.Short
++	yamlDoc.Description = cmd.Long
+ 
+ 	if cmd.Runnable() {
+ 		yamlDoc.Usage = cmd.UseLine()
+@@ -123,8 +121,7 @@ func GenYamlCustom(cmd *cobra.Command, w io.Writer, linkHandler func(string) str
+ 			parent := cmd.Parent()
+ 			result = append(result, parent.CommandPath()+" - "+parent.Short)
+ 		}
+-		children := cmd.Commands()
+-		sort.Sort(byName(children))
++		children := sortedChildren(cmd)
+ 		for _, child := range children {
+ 			if !child.IsAvailableCommand() || child.IsAdditionalHelpTopicCommand() {
+ 				continue
+@@ -136,8 +133,7 @@ func GenYamlCustom(cmd *cobra.Command, w io.Writer, linkHandler func(string) str
+ 
+ 	final, err := yaml.Marshal(&yamlDoc)
+ 	if err != nil {
+-		fmt.Println(err)
+-		os.Exit(1)
++		return err
+ 	}
+ 
+ 	if _, err := w.Write(final); err != nil {
+@@ -150,25 +146,18 @@ func genFlagResult(flags *pflag.FlagSet) []cmdOption {
+ 	var result []cmdOption
+ 
+ 	flags.VisitAll(func(flag *pflag.Flag) {
++		opt := cmdOption{
++			Name:         flag.Name,
++			DefaultValue: flag.DefValue,
++			Usage:        flag.Usage,
++		}
+ 		// Todo, when we mark a shorthand is deprecated, but specify an empty message.
+ 		// The flag.ShorthandDeprecated is empty as the shorthand is deprecated.
+ 		// Using len(flag.ShorthandDeprecated) > 0 can't handle this, others are ok.
+ 		if len(flag.ShorthandDeprecated) == 0 && len(flag.Shorthand) > 0 {
+-			opt := cmdOption{
+-				flag.Name,
+-				flag.Shorthand,
+-				flag.DefValue,
+-				forceMultiLine(flag.Usage),
+-			}
+-			result = append(result, opt)
+-		} else {
+-			opt := cmdOption{
+-				Name:         flag.Name,
+-				DefaultValue: forceMultiLine(flag.DefValue),
+-				Usage:        forceMultiLine(flag.Usage),
+-			}
+-			result = append(result, opt)
++			opt.Shorthand = flag.Shorthand
+ 		}
++		result = append(result, opt)
+ 	})
+ 
+ 	return result
+diff --git a/doc/yaml_docs_test.go b/doc/yaml_docs_test.go
+index ddd4e24..2245b65 100644
+--- a/doc/yaml_docs_test.go
++++ b/doc/yaml_docs_test.go
+@@ -22,6 +22,7 @@ import (
+ 	"testing"
+ 
+ 	"github.com/spf13/cobra"
++	"go.yaml.in/yaml/v3"
+ )
+ 
+ func TestGenYamlDoc(t *testing.T) {
+@@ -83,6 +84,66 @@ func TestGenYamlDocRunnable(t *testing.T) {
+ 	checkStringContains(t, output, "usage: "+rootCmd.Use)
+ }
+ 
++// Every field GenYaml emits must parse back to the exact value it was given,
++// whether or not the flag carries a shorthand and whatever the string's length.
++func TestGenYamlRoundTripsValuesExactly(t *testing.T) {
++	const longDefault = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++	const longShort = "a short description that runs past sixty characters without any newline"
++	const longLong = "a long description that also runs past sixty characters without any newline in it"
++
++	newCmd := func(use string, withShorthand bool) *cobra.Command {
++		c := &cobra.Command{
++			Use:   use,
++			Short: longShort,
++			Long:  longLong,
++			Run:   func(*cobra.Command, []string) {},
++		}
++		if withShorthand {
++			c.Flags().StringP("opt", "o", longDefault, longShort)
++		} else {
++			c.Flags().String("opt", longDefault, longShort)
++		}
++		return c
++	}
++
++	for _, withShorthand := range []bool{true, false} {
++		name := fmt.Sprintf("shorthand=%v", withShorthand)
++		buf := new(bytes.Buffer)
++		if err := GenYaml(newCmd("cmd", withShorthand), buf); err != nil {
++			t.Fatalf("%s: %v", name, err)
++		}
++
++		var got cmdDoc
++		if err := yaml.Unmarshal(buf.Bytes(), &got); err != nil {
++			t.Fatalf("%s: unmarshal: %v\n%s", name, err, buf.String())
++		}
++
++		if got.Synopsis != longShort {
++			t.Errorf("%s: synopsis: got %q want %q", name, got.Synopsis, longShort)
++		}
++		if got.Description != longLong {
++			t.Errorf("%s: description: got %q want %q", name, got.Description, longLong)
++		}
++
++		var opt *cmdOption
++		for i := range got.Options {
++			if got.Options[i].Name == "opt" {
++				opt = &got.Options[i]
++			}
++		}
++		if opt == nil {
++			t.Fatalf("%s: flag 'opt' missing from generated options", name)
++		}
++		if opt.DefaultValue != longDefault {
++			t.Errorf("%s: default_value: got %d bytes %q want %d bytes %q",
++				name, len(opt.DefaultValue), opt.DefaultValue, len(longDefault), longDefault)
++		}
++		if opt.Usage != longShort {
++			t.Errorf("%s: usage: got %q want %q", name, opt.Usage, longShort)
++		}
++	}
++}
++
+ func BenchmarkGenYamlToFile(b *testing.B) {
+ 	file, err := os.CreateTemp("", "")
+ 	if err != nil {
+diff --git a/site/content/user_guide.md b/site/content/user_guide.md
+index d339185..db62c9c 100644
+--- a/site/content/user_guide.md
++++ b/site/content/user_guide.md
+@@ -448,7 +448,18 @@ The following validators are built in:
+ - Content of the arguments:
+   - `OnlyValidArgs` - report an error if there are any positional args not specified in the `ValidArgs` field of `Command`, which can optionally be set to a list of valid values for positional args.
+ 
+-If `Args` is undefined or `nil`, it defaults to `ArbitraryArgs`.
++If `Args` is undefined or `nil`, Cobra does not use `ArbitraryArgs`. It applies a legacy
++behaviour instead, which depends on where the command sits in the tree:
++
++- a command with no subcommands accepts any number of positional args
++- the root command, when it does have subcommands, reports
++  `unknown command "..." for "..."` for a positional arg that is not one of them
++- a subcommand accepts any number of positional args
++
++Setting `Args` to any validator replaces that behaviour entirely, so
++`Args: cobra.ArbitraryArgs` is not a no-op on a root command that has subcommands:
++it is what turns the `unknown command` check off and lets the root accept
++positional args of its own.
+ 
+ Moreover, `MatchAll(pargs ...PositionalArgs)` enables combining existing checks with arbitrary other checks.
+ For instance, if you want to report an error if there are not exactly N positional args OR if there are any positional
+@@ -652,7 +663,7 @@ Flags:
+   -l, --license string   name of license for the project
+       --viper            use Viper for configuration
+ 
+-Use "cobra [command] --help" for more information about a command.
++Use "cobra-cli [command] --help" for more information about a command.
+ ```
+ 
+ ### Defining your own usage

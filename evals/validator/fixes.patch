@@ -1,0 +1,1534 @@
+diff --git a/.github/workflows/workflow.yml b/.github/workflows/workflow.yml
+index f0c6566..ef34472 100644
+--- a/.github/workflows/workflow.yml
++++ b/.github/workflows/workflow.yml
+@@ -21,14 +21,54 @@ jobs:
+           go-version: ${{ matrix.go-version }}
+ 
+       - name: Test
++        run: go test -race ./...
++
++  # Coverage runs as its own job rather than as a step of one matrix combination.
++  # The step it replaces was gated on a go-version that had to be kept in step with
++  # the matrix by hand, and when the matrix moved to 1.25/1.26 the gate was left on
++  # 1.24 and stopped matching anything, so nothing was uploaded and nothing failed.
++  coverage:
++    name: coverage
++    runs-on: ubuntu-latest
++    steps:
++      - name: Checkout code
++        uses: actions/checkout@v6
++
++      - name: Install Go
++        uses: actions/setup-go@v6
++        with:
++          go-version: 1.25.x
++
++      - name: Test with coverage
+         run: go test -race -covermode=atomic -coverprofile="profile.cov" ./...
+ 
+       - name: Send Coverage
+-        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.24.x'
+         uses: shogo82148/actions-goveralls@v1
+         with:
+           path-to-profile: profile.cov
+ 
++  # A reachable advisory is invisible to the test suite: three standard-library
++  # advisories were reachable from this code and no job here would have said so.
++  # go-version is stable rather than a pinned release, because govulncheck's
++  # standard-library findings track the toolchain the runner installs, so pinning
++  # an affected patch release would keep this job red after upstream had fixed it.
++  govulncheck:
++    name: vulncheck
++    runs-on: ubuntu-latest
++    steps:
++      - name: Checkout code
++        uses: actions/checkout@v6
++
++      - name: Install Go
++        uses: actions/setup-go@v6
++        with:
++          go-version: stable
++
++      - name: govulncheck
++        run: |
++          go install golang.org/x/vuln/cmd/govulncheck@latest
++          govulncheck ./...
++
+   golangci:
+     name: lint
+     runs-on: ubuntu-latest
+diff --git a/Makefile b/Makefile
+index e7caab7..0b18c16 100644
+--- a/Makefile
++++ b/Makefile
+@@ -15,4 +15,7 @@ test:
+ bench:
+ 	$(GOCMD) test -run=NONE -bench=. -benchmem ./...
+ 
+-.PHONY: test lint linters-install
++vulncheck:
++	$(GOCMD) run golang.org/x/vuln/cmd/govulncheck@latest ./...
++
++.PHONY: test lint linters-install bench vulncheck
+diff --git a/README.md b/README.md
+index 8462d21..96091a3 100644
+--- a/README.md
++++ b/README.md
+@@ -105,6 +105,7 @@ validate := validator.New(validator.WithRequiredStructEnabled())
+ | cidrv4 | Classless Inter-Domain Routing CIDRv4 |
+ | cidrv6 | Classless Inter-Domain Routing CIDRv6 |
+ | datauri | Data URL |
++| dns_rfc1035_label | DNS RFC 1035 label |
+ | fqdn | Full Qualified Domain Name (FQDN) |
+ | hostname | Hostname RFC 952 |
+ | hostname_rfc1123 | Hostname RFC 1123 |
+@@ -165,6 +166,7 @@ validate := validator.New(validator.WithRequiredStructEnabled())
+ ### Format:
+ | Tag | Description |
+ | - | - |
++| base32 | Base32 String |
+ | base64 | Base64 String |
+ | base64url | Base64URL String |
+ | base64rawurl | Base64RawURL String |
+@@ -184,6 +186,7 @@ validate := validator.New(validator.WithRequiredStructEnabled())
+ | ein | U.S. Employer Identification Number |
+ | email | E-mail String
+ | eth_addr | Ethereum Address |
++| eth_addr_checksum | Ethereum Address (EIP-55 checksum) |
+ | hexadecimal | Hexadecimal String |
+ | hexcolor | Hexcolor String |
+ | hsl | HSL String |
+@@ -196,10 +199,14 @@ validate := validator.New(validator.WithRequiredStructEnabled())
+ | isbn13 | International Standard Book Number 13 |
+ | issn | International Standard Serial Number |
+ | iso3166_1_alpha2 | Two-letter country code (ISO 3166-1 alpha-2) |
++| iso3166_1_alpha2_eu | Two-letter country code of an EU member state (ISO 3166-1 alpha-2) |
+ | iso3166_1_alpha3 | Three-letter country code (ISO 3166-1 alpha-3) |
++| iso3166_1_alpha3_eu | Three-letter country code of an EU member state (ISO 3166-1 alpha-3) |
+ | iso3166_1_alpha_numeric | Numeric country code (ISO 3166-1 numeric) |
++| iso3166_1_alpha_numeric_eu | Numeric country code of an EU member state (ISO 3166-1 numeric) |
+ | iso3166_2 | Country subdivision code (ISO 3166-2) |
+ | iso4217 | Currency code (ISO 4217) |
++| iso4217_numeric | Numeric currency code (ISO 4217 numeric) |
+ | json | JSON |
+ | jwt | JSON Web Token (JWT) |
+ | latitude | Latitude |
+@@ -259,7 +266,9 @@ validate := validator.New(validator.WithRequiredStructEnabled())
+ | max | Maximum |
+ | min | Minimum |
+ | oneof | One Of |
++| oneofci | One Of, Case Insensitive |
+ | noneof | None Of |
++| noneofci | None Of, Case Insensitive |
+ | required | Required |
+ | required_if | Required If |
+ | required_unless | Required Unless |
+@@ -267,6 +276,7 @@ validate := validator.New(validator.WithRequiredStructEnabled())
+ | required_with_all | Required With All |
+ | required_without | Required Without |
+ | required_without_all | Required Without All |
++| skip_unless | Required Only If All Listed Fields Match |
+ | excluded_if | Excluded If |
+ | excluded_unless | Excluded Unless |
+ | excluded_with | Excluded With |
+@@ -282,6 +292,7 @@ validate := validator.New(validator.WithRequiredStructEnabled())
+ | - | - |
+ | iscolor | hexcolor\|rgb\|rgba\|hsl\|hsla\|cmyk |
+ | country_code | iso3166_1_alpha2\|iso3166_1_alpha3\|iso3166_1_alpha_numeric |
++| eu_country_code | iso3166_1_alpha2_eu\|iso3166_1_alpha3_eu\|iso3166_1_alpha_numeric_eu |
+ 
+ Benchmarks
+ ------
+diff --git a/_examples/gin-upgrading-overriding/go.mod b/_examples/gin-upgrading-overriding/go.mod
+new file mode 100644
+index 0000000..aaa09f0
+--- /dev/null
++++ b/_examples/gin-upgrading-overriding/go.mod
+@@ -0,0 +1,34 @@
++module github.com/go-playground/validator/v10/_examples/gin-upgrading-overriding
++
++go 1.25.0
++
++replace github.com/go-playground/validator/v10 => ../..
++
++require (
++	github.com/gin-gonic/gin v1.11.0
++	github.com/go-playground/validator/v10 v10.27.0
++)
++
++require (
++	github.com/bytedance/sonic v1.14.0 // indirect
++	github.com/bytedance/sonic/loader v0.3.0 // indirect
++	github.com/cloudwego/base64x v0.1.6 // indirect
++	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
++	github.com/go-playground/locales v0.14.1 // indirect
++	github.com/go-playground/universal-translator v0.18.1 // indirect
++	github.com/goccy/go-json v0.10.2 // indirect
++	github.com/goccy/go-yaml v1.18.0 // indirect
++	github.com/json-iterator/go v1.1.12 // indirect
++	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
++	github.com/leodido/go-urn v1.4.0 // indirect
++	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect
++	github.com/modern-go/reflect2 v1.0.2 // indirect
++	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
++	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
++	github.com/ugorji/go/codec v1.3.0 // indirect
++	golang.org/x/arch v0.20.0 // indirect
++	golang.org/x/crypto v0.52.0 // indirect
++	golang.org/x/sys v0.45.0 // indirect
++	golang.org/x/text v0.37.0 // indirect
++	google.golang.org/protobuf v1.36.9 // indirect
++)
+diff --git a/_examples/gin-upgrading-overriding/go.sum b/_examples/gin-upgrading-overriding/go.sum
+new file mode 100644
+index 0000000..7782f93
+--- /dev/null
++++ b/_examples/gin-upgrading-overriding/go.sum
+@@ -0,0 +1,67 @@
++github.com/bytedance/sonic v1.14.0 h1:/OfKt8HFw0kh2rj8N0F6C/qPGRESq0BbaNZgcNXXzQQ=
++github.com/bytedance/sonic v1.14.0/go.mod h1:WoEbx8WTcFJfzCe0hbmyTGrfjt8PzNEBdxlNUO24NhA=
++github.com/bytedance/sonic/loader v0.3.0 h1:dskwH8edlzNMctoruo8FPTJDF3vLtDT0sXZwvZJyqeA=
++github.com/bytedance/sonic/loader v0.3.0/go.mod h1:N8A3vUdtUebEY2/VQC0MyhYeKUFosQU6FxH2JmUe6VI=
++github.com/cloudwego/base64x v0.1.6 h1:t11wG9AECkCDk5fMSoxmufanudBtJ+/HemLstXDLI2M=
++github.com/cloudwego/base64x v0.1.6/go.mod h1:OFcloc187FXDaYHvrNIjxSe8ncn0OOM8gEHfghB2IPU=
++github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
++github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
++github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
++github.com/gabriel-vasile/mimetype v1.4.13 h1:46nXokslUBsAJE/wMsp5gtO500a4F3Nkz9Ufpk2AcUM=
++github.com/gabriel-vasile/mimetype v1.4.13/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=
++github.com/gin-gonic/gin v1.11.0 h1:OW/6PLjyusp2PPXtyxKHU0RbX6I/l28FTdDlae5ueWk=
++github.com/gin-gonic/gin v1.11.0/go.mod h1:+iq/FyxlGzII0KHiBGjuNn4UNENUlKbGlNmc+W50Dls=
++github.com/go-playground/assert/v2 v2.2.0 h1:JvknZsQTYeFEAhQwI4qEt9cyV5ONwRHC+lYKSsYSR8s=
++github.com/go-playground/assert/v2 v2.2.0/go.mod h1:VDjEfimB/XKnb+ZQfWdccd7VUvScMdVu0Titje2rxJ4=
++github.com/go-playground/locales v0.14.1 h1:EWaQ/wswjilfKLTECiXz7Rh+3BjFhfDFKv/oXslEjJA=
++github.com/go-playground/locales v0.14.1/go.mod h1:hxrqLVvrK65+Rwrd5Fc6F2O76J/NuW9t0sjnWqG1slY=
++github.com/go-playground/universal-translator v0.18.1 h1:Bcnm0ZwsGyWbCzImXv+pAJnYK9S473LQFuzCbDbfSFY=
++github.com/go-playground/universal-translator v0.18.1/go.mod h1:xekY+UJKNuX9WP91TpwSH2VMlDf28Uj24BCp08ZFTUY=
++github.com/goccy/go-json v0.10.2 h1:CrxCmQqYDkv1z7lO7Wbh2HN93uovUHgrECaO5ZrCXAU=
++github.com/goccy/go-json v0.10.2/go.mod h1:6MelG93GURQebXPDq3khkgXZkazVtN9CRI+MGFi0w8I=
++github.com/goccy/go-yaml v1.18.0 h1:8W7wMFS12Pcas7KU+VVkaiCng+kG8QiFeFwzFb+rwuw=
++github.com/goccy/go-yaml v1.18.0/go.mod h1:XBurs7gK8ATbW4ZPGKgcbrY1Br56PdM69F7LkFRi1kA=
++github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
++github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
++github.com/google/gofuzz v1.0.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=
++github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
++github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
++github.com/klauspost/cpuid/v2 v2.3.0 h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=
++github.com/klauspost/cpuid/v2 v2.3.0/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
++github.com/leodido/go-urn v1.4.0 h1:WT9HwE9SGECu3lg4d/dIA+jxlljEa1/ffXKmRjqdmIQ=
++github.com/leodido/go-urn v1.4.0/go.mod h1:bvxc+MVxLKB4z00jd1z+Dvzr47oO32F/QSNjSBOlFxI=
++github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 h1:ZqeYNhU3OHLH3mGKHDcjJRFFRrJa6eAM5H+CtDdOsPc=
++github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
++github.com/modern-go/reflect2 v1.0.2 h1:xBagoLtFs94CBntxluKeaWgTMpvLxC4ur3nMaC9Gz0M=
++github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
++github.com/pelletier/go-toml/v2 v2.2.4 h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4=
++github.com/pelletier/go-toml/v2 v2.2.4/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
++github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
++github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
++github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
++github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
++github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
++github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
++github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
++github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
++github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
++github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
++github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
++github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS4MhqMhdFk5YI=
++github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
++github.com/ugorji/go/codec v1.3.0 h1:Qd2W2sQawAfG8XSvzwhBeoGq71zXOC/Q1E9y/wUcsUA=
++github.com/ugorji/go/codec v1.3.0/go.mod h1:pRBVtBSKl77K30Bv8R2P+cLSGaTtex6fsA2Wjqmfxj4=
++golang.org/x/arch v0.20.0 h1:dx1zTU0MAE98U+TQ8BLl7XsJbgze2WnNKF/8tGp/Q6c=
++golang.org/x/arch v0.20.0/go.mod h1:bdwinDaKcfZUGpH09BB7ZmOfhalA8lQdzl62l8gGWsk=
++golang.org/x/crypto v0.52.0 h1:RMs7fP2rXdep0CftQlK8Uf+kibLm7qkCcradZWYz988=
++golang.org/x/crypto v0.52.0/go.mod h1:1QgfPxDqh0T2M/elOJtp9RvuR95kVjir0e6/BvEmGbc=
++golang.org/x/sys v0.45.0 h1:dO4czNzziLiiXplLQgBCEpCvXQ3dnkn0SdaZSYdQ+FY=
++golang.org/x/sys v0.45.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
++golang.org/x/text v0.37.0 h1:Cqjiwd9eSg8e0QAkyCaQTNHFIIzWtidPahFWR83rTrc=
++golang.org/x/text v0.37.0/go.mod h1:a5sjxXGs9hsn/AJVwuElvCAo9v8QYLzvavO5z2PiM38=
++google.golang.org/protobuf v1.36.9 h1:w2gp2mA27hUeUzj9Ex9FBjsBm40zfaDtEWow293U7Iw=
++google.golang.org/protobuf v1.36.9/go.mod h1:fuxRtAxBytpl4zzqUh6/eyUujkJdNiuEkXntxiD/uRU=
++gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
++gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
++gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
++gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+diff --git a/_examples/validate_fn/go.mod b/_examples/validate_fn/go.mod
+index 8d6da51..8498dfe 100644
+--- a/_examples/validate_fn/go.mod
++++ b/_examples/validate_fn/go.mod
+@@ -1,20 +1,17 @@
+-module github.com/peczenyj/validator/_examples/validate_fn
++module github.com/go-playground/validator/v10/_examples/validate_fn
+ 
+-go 1.23.0
++go 1.25.0
+ 
+-toolchain go1.24.4
+-
+-replace github.com/go-playground/validator/v10 => ../../../validator
++replace github.com/go-playground/validator/v10 => ../..
+ 
+ require github.com/go-playground/validator/v10 v10.26.0
+ 
+ require (
+-	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
++	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
+ 	github.com/go-playground/locales v0.14.1 // indirect
+ 	github.com/go-playground/universal-translator v0.18.1 // indirect
+ 	github.com/leodido/go-urn v1.4.0 // indirect
+-	golang.org/x/crypto v0.36.0 // indirect
+-	golang.org/x/net v0.38.0 // indirect
+-	golang.org/x/sys v0.31.0 // indirect
+-	golang.org/x/text v0.23.0 // indirect
++	golang.org/x/crypto v0.52.0 // indirect
++	golang.org/x/sys v0.45.0 // indirect
++	golang.org/x/text v0.37.0 // indirect
+ )
+diff --git a/_examples/validate_fn/go.sum b/_examples/validate_fn/go.sum
+index acb0dc1..69a28ec 100644
+--- a/_examples/validate_fn/go.sum
++++ b/_examples/validate_fn/go.sum
+@@ -1,7 +1,9 @@
+ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+-github.com/gabriel-vasile/mimetype v1.4.8 h1:FfZ3gj38NjllZIeJAmMhr+qKL8Wu+nOoI3GqacKw1NM=
+-github.com/gabriel-vasile/mimetype v1.4.8/go.mod h1:ByKUIKGjh1ODkGM1asKUbQZOLGrPjydw3hYPU2YU9t8=
++github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
++github.com/gabriel-vasile/mimetype v1.4.13 h1:46nXokslUBsAJE/wMsp5gtO500a4F3Nkz9Ufpk2AcUM=
++github.com/gabriel-vasile/mimetype v1.4.13/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=
+ github.com/go-playground/assert/v2 v2.2.0 h1:JvknZsQTYeFEAhQwI4qEt9cyV5ONwRHC+lYKSsYSR8s=
++github.com/go-playground/assert/v2 v2.2.0/go.mod h1:VDjEfimB/XKnb+ZQfWdccd7VUvScMdVu0Titje2rxJ4=
+ github.com/go-playground/locales v0.14.1 h1:EWaQ/wswjilfKLTECiXz7Rh+3BjFhfDFKv/oXslEjJA=
+ github.com/go-playground/locales v0.14.1/go.mod h1:hxrqLVvrK65+Rwrd5Fc6F2O76J/NuW9t0sjnWqG1slY=
+ github.com/go-playground/universal-translator v0.18.1 h1:Bcnm0ZwsGyWbCzImXv+pAJnYK9S473LQFuzCbDbfSFY=
+@@ -9,23 +11,14 @@ github.com/go-playground/universal-translator v0.18.1/go.mod h1:xekY+UJKNuX9WP91
+ github.com/leodido/go-urn v1.4.0 h1:WT9HwE9SGECu3lg4d/dIA+jxlljEa1/ffXKmRjqdmIQ=
+ github.com/leodido/go-urn v1.4.0/go.mod h1:bvxc+MVxLKB4z00jd1z+Dvzr47oO32F/QSNjSBOlFxI=
+ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
++github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+ github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcUk=
+-golang.org/x/crypto v0.33.0 h1:IOBPskki6Lysi0lo9qQvbxiQ+FvsCC/YWOecCHAixus=
+-golang.org/x/crypto v0.33.0/go.mod h1:bVdXmD7IV/4GdElGPozy6U7lWdRXA4qyRVGJV57uQ5M=
+-golang.org/x/crypto v0.35.0 h1:b15kiHdrGCHrP6LvwaQ3c03kgNhhiMgvlhxHQhmg2Xs=
+-golang.org/x/crypto v0.35.0/go.mod h1:dy7dXNW32cAb/6/PRuTNsix8T+vJAqvuIy5Bli/x0YQ=
+-golang.org/x/crypto v0.36.0 h1:AnAEvhDddvBdpY+uR+MyHmuZzzNqXSe/GvuDeob5L34=
+-golang.org/x/crypto v0.36.0/go.mod h1:Y4J0ReaxCR1IMaabaSMugxJES1EpwhBHhv2bDHklZvc=
+-golang.org/x/net v0.34.0 h1:Mb7Mrk043xzHgnRM88suvJFwzVrRfHEHJEl5/71CKw0=
+-golang.org/x/net v0.34.0/go.mod h1:di0qlW3YNM5oh6GqDGQr92MyTozJPmybPK4Ev/Gm31k=
+-golang.org/x/net v0.38.0 h1:vRMAPTMaeGqVhG5QyLJHqNDwecKTomGeqbnfZyKlBI8=
+-golang.org/x/net v0.38.0/go.mod h1:ivrbrMbzFq5J41QOQh0siUuly180yBYtLp+CKbEaFx8=
+-golang.org/x/sys v0.30.0 h1:QjkSwP/36a20jFYWkSue1YwXzLmsV5Gfq7Eiy72C1uc=
+-golang.org/x/sys v0.30.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
+-golang.org/x/sys v0.31.0 h1:ioabZlmFYtWhL+TRYpcnNlLwhyxaM9kWTDEmfnprqik=
+-golang.org/x/sys v0.31.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=
+-golang.org/x/text v0.22.0 h1:bofq7m3/HAFvbF51jz3Q9wLg3jkvSPuiZu/pD1XwgtM=
+-golang.org/x/text v0.22.0/go.mod h1:YRoo4H8PVmsu+E3Ou7cqLVH8oXWIHVoX0jqUWALQhfY=
+-golang.org/x/text v0.23.0 h1:D71I7dUrlY+VX0gQShAThNGHFxZ13dGLBHQLVl1mJlY=
+-golang.org/x/text v0.23.0/go.mod h1:/BLNzu4aZCJ1+kcD0DNRotWKage4q2rGVAg4o22unh4=
++github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
++golang.org/x/crypto v0.52.0 h1:RMs7fP2rXdep0CftQlK8Uf+kibLm7qkCcradZWYz988=
++golang.org/x/crypto v0.52.0/go.mod h1:1QgfPxDqh0T2M/elOJtp9RvuR95kVjir0e6/BvEmGbc=
++golang.org/x/sys v0.45.0 h1:dO4czNzziLiiXplLQgBCEpCvXQ3dnkn0SdaZSYdQ+FY=
++golang.org/x/sys v0.45.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
++golang.org/x/text v0.37.0 h1:Cqjiwd9eSg8e0QAkyCaQTNHFIIzWtidPahFWR83rTrc=
++golang.org/x/text v0.37.0/go.mod h1:a5sjxXGs9hsn/AJVwuElvCAo9v8QYLzvavO5z2PiM38=
+ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
++gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+diff --git a/baked_in.go b/baked_in.go
+index 679729a..aa997d0 100644
+--- a/baked_in.go
++++ b/baked_in.go
+@@ -321,7 +321,17 @@ func isHTMLEncoded(fl FieldLevel) bool {
+ }
+ 
+ func isHTML(fl FieldLevel) bool {
+-	return hTMLRegex().MatchString(fl.Field().String())
++	field := fl.Field()
++
++	// The pattern is unanchored, so it matches the "<int Value>" that
++	// reflect.Value.String() renders for a non-string kind - an ordinary string
++	// like "abc" is rejected while an int was accepted. Same guard, and the same
++	// reason, as isUnixAddrResolvable.
++	if field.Kind() != reflect.String {
++		return false
++	}
++
++	return hTMLRegex().MatchString(field.String())
+ }
+ 
+ func isOneOf(fl FieldLevel) bool {
+@@ -543,7 +553,7 @@ func isIP(fl FieldLevel) bool {
+ func isSSN(fl FieldLevel) bool {
+ 	field := fl.Field()
+ 
+-	if field.Len() != 11 {
++	if len(field.String()) != 11 {
+ 		return false
+ 	}
+ 
+@@ -615,7 +625,7 @@ func isDataURI(fl FieldLevel) bool {
+ func hasMultiByteCharacter(fl FieldLevel) bool {
+ 	field := fl.Field()
+ 
+-	if field.Len() == 0 {
++	if len(field.String()) == 0 {
+ 		return true
+ 	}
+ 
+@@ -1751,14 +1761,25 @@ func detectFileMIMEType(field reflect.Value) (string, bool) {
+ 			return "", false
+ 		}
+ 
+-		return mime.String(), true
++		return mediaType(mime.String()), true
+ 	}
+ 
+ 	panic(fmt.Sprintf("Bad field type %s", field.Type()))
+ }
+ 
++// mediaType returns the type/subtype of a media type, dropping any parameters
++// that follow a semicolon. RFC 2045 allows parameters such as "; charset=utf-8"
++// on any media type, and the detector emits them for the text formats, so both
++// sides of a comparison are reduced to this form before being compared.
++func mediaType(s string) string {
++	if i := strings.IndexByte(s, ';'); i != -1 {
++		s = s[:i]
++	}
++	return strings.TrimSpace(s)
++}
++
+ func matchesMIMEType(mime, expected string) bool {
+-	expectedType, expectedSubtype, ok := strings.Cut(strings.TrimSpace(expected), "/")
++	expectedType, expectedSubtype, ok := strings.Cut(mediaType(expected), "/")
+ 	if !ok || expectedType == "" || expectedSubtype == "" {
+ 		return false
+ 	}
+@@ -1884,12 +1905,19 @@ func isE164(fl FieldLevel) bool {
+ }
+ 
+ // isEmail is the validation function for validating if the current field's value is a valid email address.
++//
++// The regex runs first on purpose. Both checks are pure and the result is their
++// conjunction, so the order cannot change a verdict, but mail.ParseAddress
++// consumes comments and phrases quadratically and accepts shapes the regex
++// rejects - a trailing "(aaa...)" comment among them - so parsing first spends
++// that cost on values the linear check was always going to reject.
+ func isEmail(fl FieldLevel) bool {
+-	_, err := mail.ParseAddress(fl.Field().String())
+-	if err != nil {
++	value := fl.Field().String()
++	if !emailRegex().MatchString(value) {
+ 		return false
+ 	}
+-	return emailRegex().MatchString(fl.Field().String())
++	_, err := mail.ParseAddress(value)
++	return err == nil
+ }
+ 
+ // isHSLA is the validation function for validating if the current field's value is a valid HSLA color.
+@@ -2789,10 +2817,26 @@ func isIPAddrResolvable(fl FieldLevel) bool {
+ }
+ 
+ // isUnixAddrResolvable is the validation function for validating if the field's value is a resolvable unix address.
++//
++// net.ResolveUnixAddr is not consulted: for a unix network it returns the name
++// unexamined and reports an error only for an unknown network, so with the
++// network fixed here it can never fail and every value would pass. A unix address
++// names a filesystem path, or on Linux an abstract socket that Go spells with a
++// leading @, and neither form can be empty or carry a NUL byte.
+ func isUnixAddrResolvable(fl FieldLevel) bool {
+-	_, err := net.ResolveUnixAddr("unix", fl.Field().String())
++	field := fl.Field()
+ 
+-	return err == nil
++	// Every sibling in this family rejects a non-string kind, but each does it by
++	// accident: reflect.Value.String() renders "<int Value>" for one, and their
++	// parsers reject that. This one has no parser to reject it - a non-empty
++	// string with no NUL is all it asks for - so the kind is checked here.
++	if field.Kind() != reflect.String {
++		return false
++	}
++
++	addr := field.String()
++
++	return addr != "" && !strings.ContainsRune(addr, 0)
+ }
+ 
+ // isUnixDomainSocketExists is the validation function for validating if the field's value is an existing Unix domain socket.
+@@ -2862,6 +2906,13 @@ func isAbstractSocketExists(sockpath string) bool {
+ func isIP4Addr(fl FieldLevel) bool {
+ 	val := fl.Field().String()
+ 
++	// Only the host part is parsed below, so without this the port reaches net's
++	// resolver unexamined and its Windows path panics on a NUL byte. No network
++	// address contains one, so nothing that was accepted is rejected here.
++	if strings.IndexByte(val, 0) != -1 {
++		return false
++	}
++
+ 	if idx := strings.LastIndex(val, ":"); idx != -1 {
+ 		val = val[0:idx]
+ 	}
+@@ -2874,6 +2925,11 @@ func isIP4Addr(fl FieldLevel) bool {
+ func isIP6Addr(fl FieldLevel) bool {
+ 	val := fl.Field().String()
+ 
++	// Same reason as isIP4Addr: the port is never parsed here.
++	if strings.IndexByte(val, 0) != -1 {
++		return false
++	}
++
+ 	if idx := strings.LastIndex(val, ":"); idx != -1 {
+ 		if idx != 0 && val[idx-1:idx] == "]" {
+ 			val = val[1 : idx-1]
+@@ -3024,7 +3080,27 @@ func isHostnamePort(fl FieldLevel) bool {
+ 
+ // IsPort validates if the current field's value represents a valid port
+ func isPort(fl FieldLevel) bool {
+-	val := fl.Field().Uint()
++	field := fl.Field()
++
++	var val uint64
++	switch field.Kind() {
++	case reflect.String:
++		n, err := strconv.ParseUint(field.String(), 10, 64)
++		if err != nil {
++			return false
++		}
++		val = n
++	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
++		n := field.Int()
++		if n < 0 {
++			return false
++		}
++		val = uint64(n)
++	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
++		val = field.Uint()
++	default:
++		panic(fmt.Sprintf("Bad field type %s", field.Type()))
++	}
+ 
+ 	return val >= 1 && val <= 65535
+ }
+@@ -3498,7 +3574,7 @@ func isCron(fl FieldLevel) bool {
+ func isEIN(fl FieldLevel) bool {
+ 	field := fl.Field()
+ 
+-	if field.Len() != 10 {
++	if len(field.String()) != 10 {
+ 		return false
+ 	}
+ 
+diff --git a/cache.go b/cache.go
+index b8052aa..93523f7 100644
+--- a/cache.go
++++ b/cache.go
+@@ -71,9 +71,50 @@ func (tc *tagCache) Set(key string, value *cTag) {
+ }
+ 
+ type cStruct struct {
+-	name   string
+-	fields []*cField
+-	fn     StructLevelFuncCtx
++	name string
++	// recursive reports whether a value of this struct type can reach another value of
++	// the same type, which is the precondition for a cyclic object graph. It is computed
++	// once per type here so the executor pays nothing for the types that cannot cycle.
++	recursive bool
++	fields    []*cField
++	fn        StructLevelFuncCtx
++}
++
++// typeReaches reports whether a value of from can hold a value of target. root is true
++// only for the initial call, so a type is not trivially considered to reach itself.
++//
++// Interface fields are deliberately not treated as reaching everything. Doing so marks
++// any struct holding an interface as recursive, which costs those structs the guard on
++// every validation for a cycle they almost never have. A cycle closed through an
++// interface is caught instead by the interface-hop counter in traverseField, which no
++// unbounded interface-mediated cycle can avoid incrementing.
++func typeReaches(from, target reflect.Type, seen map[reflect.Type]struct{}, root bool) bool {
++	if !root && from == target {
++		return true
++	}
++
++	if _, ok := seen[from]; ok {
++		return false
++	}
++	seen[from] = struct{}{}
++
++	switch from.Kind() {
++	case reflect.Ptr, reflect.Slice, reflect.Array:
++		return typeReaches(from.Elem(), target, seen, false)
++
++	case reflect.Map:
++		return typeReaches(from.Key(), target, seen, false) ||
++			typeReaches(from.Elem(), target, seen, false)
++
++	case reflect.Struct:
++		for i := 0; i < from.NumField(); i++ {
++			if typeReaches(from.Field(i).Type, target, seen, false) {
++				return true
++			}
++		}
++	}
++
++	return false
+ }
+ 
+ type cField struct {
+@@ -113,7 +154,12 @@ func (v *Validate) extractStructCache(current reflect.Value, sName string) *cStr
+ 		return cs
+ 	}
+ 
+-	cs = &cStruct{name: sName, fields: make([]*cField, 0), fn: v.structLevelFuncs[typ]}
++	cs = &cStruct{
++		name:      sName,
++		recursive: typeReaches(typ, typ, make(map[reflect.Type]struct{}), true),
++		fields:    make([]*cField, 0),
++		fn:        v.structLevelFuncs[typ],
++	}
+ 
+ 	numFields := current.NumField()
+ 	rules := v.rules[typ]
+diff --git a/doc.go b/doc.go
+index 7b1fd07..b600a0f 100644
+--- a/doc.go
++++ b/doc.go
+@@ -7,6 +7,16 @@ and has the ability to dive into arrays and maps of any type.
+ 
+ see more examples https://github.com/go-playground/validator/tree/master/_examples
+ 
++# Self-Referential Structures
++
++Validation follows pointers, slices, maps and interfaces, so a struct that is
++reachable from itself - a node with a parent pointer, a graph, a doubly linked
++list - forms a cycle. Each struct value is validated once per path: when a value
++already being validated on the current path is reached again, the traversal stops
++there rather than descending forever. The reported errors are unaffected, because
++the repeat visit would report what the first visit already did. Reaching the same
++value twice by two different paths is not a cycle and is validated both times.
++
+ # Singleton
+ 
+ Validator is designed to be thread-safe and used as a singleton instance.
+@@ -342,6 +352,24 @@ Examples:
+ 	// require the field unless the Field1 and Field2 is equal to the value respectively:
+ 	Usage: required_unless=Field1 foo Field2 bar
+ 
++# Skip Unless
++
++The field under validation must be present and not empty only when all the other
++specified fields are equal to the value following the specified field. When any of
++them differs the field is accepted whatever it holds. Despite the name this does not
++stop the remaining validations on the field from running: tags listed after it are
++still evaluated.
++
++	Usage: skip_unless
++
++Examples:
++
++	// require the field only when Field1 is equal to the parameter given:
++	Usage: skip_unless=Field1 foobar
++
++	// require the field only when Field1 and Field2 are equal to the values respectively:
++	Usage: skip_unless=Field1 foo Field2 bar
++
+ # Required With
+ 
+ The field under validation must be present and not empty only if any
+@@ -801,7 +829,7 @@ This does the same as contains except for struct fields. It should only be used
+ with string types. See the behavior of reflect.Value.String() for behavior on
+ other types.
+ 
+-	Usage: containsfield=InnerStructField.Field
++	Usage: fieldcontains=InnerStructField.Field
+ 
+ # Field Excludes Another Field
+ 
+@@ -809,7 +837,7 @@ This does the same as excludes except for struct fields. It should only be used
+ with string types. See the behavior of reflect.Value.String() for behavior on
+ other types.
+ 
+-	Usage: excludesfield=InnerStructField.Field
++	Usage: fieldexcludes=InnerStructField.Field
+ 
+ # Unique
+ 
+@@ -1094,6 +1122,15 @@ The format of the string is checked to ensure it matches the standard Ethereum a
+ 
+ 	Usage: eth_addr
+ 
++# Ethereum Address Checksum
++
++This validates that a string value contains a valid ethereum address and that its
++mixed-case form matches the EIP-55 checksum, which eth_addr does not check. An
++all-lowercase or all-uppercase address is rejected.
++see: https://eips.ethereum.org/EIPS/eip-55
++
++	Usage: eth_addr_checksum
++
+ # Contains
+ 
+ This validates that a string value contains the substring value.
+@@ -1348,7 +1385,9 @@ This validates that a string value contains a valid resolvable v6 IP Address.
+ 
+ # Unix domain socket end point Address
+ 
+-This validates that a string value contains a valid Unix Address.
++This validates that a string value contains a valid Unix Address. The address is
++checked for shape rather than resolved: it must be non-empty and must not contain
++a NUL byte, which no filesystem path and no Go-spelled abstract socket name can.
+ 
+ 	Usage: unix_addr
+ 
+@@ -1438,6 +1477,9 @@ can be used to validate fields typically passed to sockets and connections.
+ # Port
+ 
+ This validates that the value falls within the valid port number range of 1 to 65,535.
++It accepts the integer kinds and strings holding an unsigned decimal number, so a port
++read from configuration or an environment variable can be validated before conversion.
++Any other kind panics, as it does for the other numeric validations.
+ 
+ 	Usage: port
+ 
+@@ -1455,6 +1497,13 @@ see: https://www.iso.org/iso-3166-country-codes.html
+ 
+ 	Usage: iso3166_1_alpha2
+ 
++# Iso3166-1 alpha-2 EU
++
++This validates that a string value is the iso3166-1 alpha-2 country code of a member
++state of the European Union.
++
++	Usage: iso3166_1_alpha2_eu
++
+ # Iso3166-1 alpha-3
+ 
+ This validates that a string value is a valid country code based on iso3166-1 alpha-3 standard.
+@@ -1462,12 +1511,34 @@ see: https://www.iso.org/iso-3166-country-codes.html
+ 
+ 	Usage: iso3166_1_alpha3
+ 
++# Iso3166-1 alpha-3 EU
++
++This validates that a string value is the iso3166-1 alpha-3 country code of a member
++state of the European Union.
++
++	Usage: iso3166_1_alpha3_eu
++
+ # Iso3166-1 alpha-numeric
+ 
+ This validates that a string value is a valid country code based on iso3166-1 alpha-numeric standard.
+ see: https://www.iso.org/iso-3166-country-codes.html
+ 
+-	Usage: iso3166_1_alpha3
++	Usage: iso3166_1_alpha_numeric
++
++# Iso3166-1 alpha-numeric EU
++
++This validates that the value is the iso3166-1 numeric country code of a member state
++of the European Union. It accepts the integer kinds and strings holding a decimal
++number; any other kind panics.
++
++	Usage: iso3166_1_alpha_numeric_eu
++
++# Iso4217 Numeric
++
++This validates that the value is a valid numeric currency code as defined by ISO 4217.
++It accepts the integer kinds only; a string, and any other kind, panics.
++
++	Usage: iso4217_numeric
+ 
+ # BCP 47 Language Tag
+ 
+@@ -1576,9 +1647,11 @@ case will be the actual tag within the alias that failed.
+ Here is a list of the current built in alias tags:
+ 
+ 	"iscolor"
+-		alias is "hexcolor|rgb|rgba|hsl|hsla" (Usage: iscolor)
++		alias is "hexcolor|rgb|rgba|hsl|hsla|cmyk" (Usage: iscolor)
+ 	"country_code"
+ 		alias is "iso3166_1_alpha2|iso3166_1_alpha3|iso3166_1_alpha_numeric" (Usage: country_code)
++	"eu_country_code"
++		alias is "iso3166_1_alpha2_eu|iso3166_1_alpha3_eu|iso3166_1_alpha_numeric_eu" (Usage: eu_country_code)
+ 
+ Validator notes:
+ 
+diff --git a/errors.go b/errors.go
+index fd90625..63c6dbc 100644
+--- a/errors.go
++++ b/errors.go
+@@ -28,7 +28,10 @@ func (e *InvalidValidationError) Error() string {
+ 		return "validator: (nil)"
+ 	}
+ 
+-	return "validator: (nil " + e.Type.String() + ")"
++	// Not "nil": this error is returned for anything that is not a struct, and most
++	// of those values are not nil. Only the untyped-nil case above is, and it is the
++	// only one this can say so about, because the value itself is not carried here.
++	return "validator: (invalid " + e.Type.String() + ")"
+ }
+ 
+ // ValidationErrors is an array of FieldError's
+diff --git a/regexes.go b/regexes.go
+index 20c03b8..20a7416 100644
+--- a/regexes.go
++++ b/regexes.go
+@@ -17,9 +17,9 @@ const (
+ 	hexadecimalRegexString           = "^(0[xX])?[0-9a-fA-F]+$"
+ 	hexColorRegexString              = "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+ 	rgbRegexString                   = "^rgb\\(\\s*(?:(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])|(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])%\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])%\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])%)\\s*\\)$"
+-	rgbaRegexString                  = "^rgba\\(\\s*(?:(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])|(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])%\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])%\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])%)\\s*,\\s*(?:(?:0.[1-9]*)|[01])\\s*\\)$"
++	rgbaRegexString                  = "^rgba\\(\\s*(?:(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])|(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])%\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])%\\s*,\\s*(?:0|[1-9]\\d?|1\\d\\d?|2[0-4]\\d|25[0-5])%)\\s*,\\s*(?:0(?:\\.\\d+)?|1(?:\\.0+)?)\\s*\\)$"
+ 	hslRegexString                   = "^hsl\\(\\s*(?:0|[1-9]\\d?|[12]\\d\\d|3[0-5]\\d|360)\\s*,\\s*(?:(?:0|[1-9]\\d?|100)%)\\s*,\\s*(?:(?:0|[1-9]\\d?|100)%)\\s*\\)$"
+-	hslaRegexString                  = "^hsla\\(\\s*(?:0|[1-9]\\d?|[12]\\d\\d|3[0-5]\\d|360)\\s*,\\s*(?:(?:0|[1-9]\\d?|100)%)\\s*,\\s*(?:(?:0|[1-9]\\d?|100)%)\\s*,\\s*(?:(?:0.[1-9]*)|[01])\\s*\\)$"
++	hslaRegexString                  = "^hsla\\(\\s*(?:0|[1-9]\\d?|[12]\\d\\d|3[0-5]\\d|360)\\s*,\\s*(?:(?:0|[1-9]\\d?|100)%)\\s*,\\s*(?:(?:0|[1-9]\\d?|100)%)\\s*,\\s*(?:0(?:\\.\\d+)?|1(?:\\.0+)?)\\s*\\)$"
+ 	cmykRegexString                  = "^cmyk\\((100|[1-9]?\\d)%\\s*,\\s*(100|[1-9]?\\d)%\\s*,\\s*(100|[1-9]?\\d)%\\s*,\\s*(100|[1-9]?\\d)%\\)$"
+ 	emailRegexString                 = "^(?:(?:(?:(?:[a-zA-Z]|\\d|[!#\\$%&'\\*\\+\\-\\/=\\?\\^_`{\\|}~]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])+(?:\\.([a-zA-Z]|\\d|[!#\\$%&'\\*\\+\\-\\/=\\?\\^_`{\\|}~]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])+)*)|(?:(?:\\x22)(?:(?:(?:(?:\\x20|\\x09)*(?:\\x0d\\x0a))?(?:\\x20|\\x09)+)?(?:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]|\\x21|[\\x23-\\x5b]|[\\x5d-\\x7e]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])|(?:(?:[\\x01-\\x09\\x0b\\x0c\\x0d-\\x7f]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}]))))*(?:(?:(?:\\x20|\\x09)*(?:\\x0d\\x0a))?(\\x20|\\x09)+)?(?:\\x22))))@(?:(?:(?:[a-zA-Z]|\\d|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])|(?:(?:[a-zA-Z]|\\d|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])(?:[a-zA-Z]|\\d|-|\\.|~|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])*(?:[a-zA-Z]|\\d|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])))\\.)+(?:(?:[a-zA-Z]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])|(?:(?:[a-zA-Z]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])(?:[a-zA-Z]|\\d|-|\\.|~|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])*(?:[a-zA-Z]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])))\\.?$"
+ 	e164RegexString                  = "^\\+?[1-9]\\d{7,14}$"
+diff --git a/validator.go b/validator.go
+index 4779608..96f104f 100644
+--- a/validator.go
++++ b/validator.go
+@@ -8,6 +8,20 @@ import (
+ 	"unsafe"
+ )
+ 
++// cycleGuardDepth is the struct nesting depth past which the cycle guard engages even
++// for a type that is not statically recursive. It is the safety net for a cycle closed
++// through an interface field, whose dynamic type cannot be known when the struct cache
++// is built. Nesting this deep without recursion does not occur in practice, so ordinary
++// structs never reach it and never pay for the guard.
++const cycleGuardDepth = 32
++
++// structIdent identifies one struct value on the current validation path. Both halves
++// are needed: a struct and its first field share an address.
++type structIdent struct {
++	addr uintptr
++	typ  reflect.Type
++}
++
+ // per validate construct
+ type validate struct {
+ 	v              *Validate
+@@ -16,6 +30,8 @@ type validate struct {
+ 	actualNs       []byte
+ 	errs           ValidationErrors
+ 	includeExclude map[string]struct{} // reset only if StructPartial or StructExcept are called, no need otherwise
++	cycleGuard     map[structIdent]struct{}
++	depth          int
+ 	ffn            FilterFunc
+ 	slflParent     reflect.Value // StructLevel & FieldLevel
+ 	slCurrent      reflect.Value // StructLevel & FieldLevel
+@@ -37,6 +53,34 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
+ 		cs = v.v.extractStructCache(current, typ.Name())
+ 	}
+ 
++	// A struct reachable from itself would otherwise recurse until the goroutine stack
++	// is exhausted, which is a runtime throw the caller cannot recover from. Record each
++	// struct on the current path and stop at the first repeat: that node is already being
++	// validated on this path, so its errors are already reported and skipping it leaves
++	// the reported set unchanged. Only structs of a statically recursive type, or any
++	// struct past cycleGuardDepth, are tracked, so an ordinary struct pays one bool test
++	// and one integer compare and never touches the map. Only addressable structs are
++	// tracked, which is exactly the set reachable through the indirection a cycle needs.
++	var guard structIdent
++	var guarded bool
++
++	v.depth++
++	if (cs.recursive || v.depth > cycleGuardDepth) && current.CanAddr() {
++		guard = structIdent{addr: current.UnsafeAddr(), typ: typ}
++
++		if _, seen := v.cycleGuard[guard]; seen {
++			v.depth--
++			return
++		}
++
++		if v.cycleGuard == nil {
++			v.cycleGuard = make(map[structIdent]struct{})
++		}
++
++		v.cycleGuard[guard] = struct{}{}
++		guarded = true
++	}
++
+ 	if len(ns) == 0 && len(cs.name) != 0 {
+ 		ns = append(ns, cs.name...)
+ 		ns = append(ns, '.')
+@@ -84,6 +128,12 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
+ 
+ 		cs.fn(ctx, v)
+ 	}
++
++	if guarded {
++		delete(v.cycleGuard, guard)
++	}
++
++	v.depth--
+ }
+ 
+ // traverseField validates any field, be it a struct or single field, ensures it's validity and passes it along to be validated via it's tag options
+diff --git a/validator_instance.go b/validator_instance.go
+index 320cce6..2dfe8f8 100644
+--- a/validator_instance.go
++++ b/validator_instance.go
+@@ -585,8 +585,11 @@ func (v *Validate) StructExceptCtx(ctx context.Context, s interface{}, fields ..
+ //
+ // WARNING: a struct can be passed for validation eg. time.Time is a struct or
+ // if you have a custom type and have registered a custom type handler, so must
+-// allow it; however unforeseen validations will occur if trying to validate a
+-// struct that is meant to be passed to 'validate.Struct'
++// allow it. For any other struct the tag is ignored and the struct's own field
++// tags are validated instead, so a rule passed here is silently never applied -
++// pass such a value to 'validate.Struct'. A non-nil pointer to a struct is
++// dereferenced first and behaves the same way; a nil pointer and a type
++// convertible to time.Time both keep the tag.
+ //
+ // It returns InvalidValidationError for bad values passed in and nil or ValidationErrors as error otherwise.
+ // You will need to assert the error if it's not nil eg. err.(validator.ValidationErrors) to access the array of errors.
+@@ -603,8 +606,11 @@ func (v *Validate) Var(field interface{}, tag string) error {
+ //
+ // WARNING: a struct can be passed for validation eg. time.Time is a struct or
+ // if you have a custom type and have registered a custom type handler, so must
+-// allow it; however unforeseen validations will occur if trying to validate a
+-// struct that is meant to be passed to 'validate.Struct'
++// allow it. For any other struct the tag is ignored and the struct's own field
++// tags are validated instead, so a rule passed here is silently never applied -
++// pass such a value to 'validate.Struct'. A non-nil pointer to a struct is
++// dereferenced first and behaves the same way; a nil pointer and a type
++// convertible to time.Time both keep the tag.
+ //
+ // It returns InvalidValidationError for bad values passed in and nil or ValidationErrors as error otherwise.
+ // You will need to assert the error if it's not nil eg. err.(validator.ValidationErrors) to access the array of errors.
+@@ -638,8 +644,11 @@ func (v *Validate) VarCtx(ctx context.Context, field interface{}, tag string) (e
+ //
+ // WARNING: a struct can be passed for validation eg. time.Time is a struct or
+ // if you have a custom type and have registered a custom type handler, so must
+-// allow it; however unforeseen validations will occur if trying to validate a
+-// struct that is meant to be passed to 'validate.Struct'
++// allow it. For any other struct the tag is ignored and the struct's own field
++// tags are validated instead, so a rule passed here is silently never applied -
++// pass such a value to 'validate.Struct'. A non-nil pointer to a struct is
++// dereferenced first and behaves the same way; a nil pointer and a type
++// convertible to time.Time both keep the tag.
+ //
+ // It returns InvalidValidationError for bad values passed in and nil or ValidationErrors as error otherwise.
+ // You will need to assert the error if it's not nil eg. err.(validator.ValidationErrors) to access the array of errors.
+@@ -657,8 +666,11 @@ func (v *Validate) VarWithValue(field interface{}, other interface{}, tag string
+ //
+ // WARNING: a struct can be passed for validation eg. time.Time is a struct or
+ // if you have a custom type and have registered a custom type handler, so must
+-// allow it; however unforeseen validations will occur if trying to validate a
+-// struct that is meant to be passed to 'validate.Struct'
++// allow it. For any other struct the tag is ignored and the struct's own field
++// tags are validated instead, so a rule passed here is silently never applied -
++// pass such a value to 'validate.Struct'. A non-nil pointer to a struct is
++// dereferenced first and behaves the same way; a nil pointer and a type
++// convertible to time.Time both keep the tag.
+ //
+ // It returns InvalidValidationError for bad values passed in and nil or ValidationErrors as error otherwise.
+ // You will need to assert the error if it's not nil eg. err.(validator.ValidationErrors) to access the array of errors.
+@@ -689,8 +701,14 @@ func (v *Validate) VarWithValueCtx(ctx context.Context, field interface{}, other
+ //
+ // WARNING: a struct can be passed for validation eg. time.Time is a struct or
+ // if you have a custom type and have registered a custom type handler, so must
+-// allow it; however unforeseen validations will occur if trying to validate a
+-// struct that is meant to be passed to 'validate.Struct'
++// allow it. Unlike 'Var', the key supplied here means the tag is applied to the
++// struct as a whole and, if it passes, the struct's own field tags are validated
++// as well, both reported under the key - so a tag that cannot handle a struct
++// kind panics, and 'required' is ignored on a non-pointer struct unless
++// WithRequiredStructEnabled is set. A non-nil pointer to a struct is dereferenced
++// first, so both steps apply to the struct it points at; a nil pointer and a type
++// convertible to time.Time keep the tag alone, with no field tags validated after
++// it.
+ //
+ // It returns InvalidValidationError for bad values passed in and nil or ValidationErrors as error otherwise.
+ // You will need to assert the error if it's not nil eg. err.(validator.ValidationErrors) to access the array of errors.
+@@ -707,8 +725,14 @@ func (v *Validate) VarWithKey(key string, field interface{}, tag string) error {
+ //
+ // WARNING: a struct can be passed for validation eg. time.Time is a struct or
+ // if you have a custom type and have registered a custom type handler, so must
+-// allow it; however unforeseen validations will occur if trying to validate a
+-// struct that is meant to be passed to 'validate.Struct'
++// allow it. Unlike 'Var', the key supplied here means the tag is applied to the
++// struct as a whole and, if it passes, the struct's own field tags are validated
++// as well, both reported under the key - so a tag that cannot handle a struct
++// kind panics, and 'required' is ignored on a non-pointer struct unless
++// WithRequiredStructEnabled is set. A non-nil pointer to a struct is dereferenced
++// first, so both steps apply to the struct it points at; a nil pointer and a type
++// convertible to time.Time keep the tag alone, with no field tags validated after
++// it.
+ //
+ // It returns InvalidValidationError for bad values passed in and nil or ValidationErrors as error otherwise.
+ // You will need to assert the error if it's not nil eg. err.(validator.ValidationErrors) to access the array of errors.
+diff --git a/validator_test.go b/validator_test.go
+index 67d3f83..180d03f 100644
+--- a/validator_test.go
++++ b/validator_test.go
+@@ -13,6 +13,7 @@ import (
+ 	"image/jpeg"
+ 	"image/png"
+ 	"net"
++	"net/mail"
+ 	"os"
+ 	"path/filepath"
+ 	"reflect"
+@@ -3035,8 +3036,12 @@ func TestUnixAddrValidation(t *testing.T) {
+ 		param    string
+ 		expected bool
+ 	}{
+-		{"", true},
++		{"", false},
+ 		{"v.sock", true},
++		{"/tmp/v.sock", true},
++		{"@abstract", true},
++		{"\x00", false},
++		{"/tmp/has\x00nul.sock", false},
+ 	}
+ 
+ 	validate := New()
+@@ -6474,6 +6479,36 @@ func TestMIMETypeValidation(t *testing.T) {
+ 			expected:   false,
+ 			createFile: func() {},
+ 		},
++		{
++			// testdata/a.go is detected as "text/plain; charset=utf-8", so the
++			// documented type/subtype form has to match past the parameter.
++			title:      "detected type carrying a parameter matches type/subtype",
++			param:      paths["go"],
++			tag:        "mimetype=text/plain",
++			expected:   true,
++			createFile: func() {},
++		},
++		{
++			title:      "detected type carrying a parameter matches type/*",
++			param:      paths["go"],
++			tag:        "mimetype=text/*",
++			expected:   true,
++			createFile: func() {},
++		},
++		{
++			title:      "a parameter written out in the tag still matches",
++			param:      paths["go"],
++			tag:        "mimetype=text/plain; charset=utf-8",
++			expected:   true,
++			createFile: func() {},
++		},
++		{
++			title:      "a different subtype is still rejected past the parameter",
++			param:      paths["go"],
++			tag:        "mimetype=text/html",
++			expected:   false,
++			createFile: func() {},
++		},
+ 	}
+ 
+ 	for _, test := range tests {
+@@ -10108,7 +10143,8 @@ func TestInvalidStruct(t *testing.T) {
+ 
+ 	err := validate.Struct(s.Test)
+ 	NotEqual(t, err, nil)
+-	Equal(t, err.Error(), "validator: (nil string)")
++	// s.Test is a non-nil string; the message must not call it nil
++	Equal(t, err.Error(), "validator: (invalid string)")
+ 
+ 	err = validate.Struct(nil)
+ 	NotEqual(t, err, nil)
+@@ -10583,7 +10619,8 @@ func TestStructFiltered(t *testing.T) {
+ 	dt := time.Now()
+ 	err := validate.StructFiltered(&dt, func(ns []byte) bool { return true })
+ 	NotEqual(t, err, nil)
+-	Equal(t, err.Error(), "validator: (nil *time.Time)")
++	// &dt is a non-nil pointer; the message must not call it nil
++	Equal(t, err.Error(), "validator: (invalid *time.Time)")
+ }
+ 
+ func TestRequiredPtr(t *testing.T) {
+@@ -16684,3 +16721,485 @@ func TestValuerInterface(t *testing.T) {
+ 		}
+ 	})
+ }
++
++func TestStructCycleTermination(t *testing.T) {
++	type cycNode struct {
++		Name string   `validate:"required"`
++		Next *cycNode `validate:"omitempty"`
++	}
++	type cycSlice struct {
++		Name string      `validate:"required"`
++		Kids []*cycSlice `validate:"omitempty,dive"`
++	}
++	type cycMap struct {
++		Name string             `validate:"required"`
++		M    map[string]*cycMap `validate:"omitempty,dive"`
++	}
++	// Not statically recursive: the cycle can only close at runtime through the
++	// interface, which is what the depth safety net covers.
++	type cycIface struct {
++		Name string      `validate:"required"`
++		Any  interface{} `validate:"omitempty"`
++	}
++
++	validate := New(WithRequiredStructEnabled())
++
++	t.Run("pointer cycle", func(t *testing.T) {
++		a := &cycNode{Name: "a"}
++		b := &cycNode{Name: "b"}
++		a.Next, b.Next = b, a
++
++		Equal(t, validate.Struct(a), nil)
++	})
++
++	t.Run("self pointer", func(t *testing.T) {
++		a := &cycNode{Name: "a"}
++		a.Next = a
++
++		Equal(t, validate.Struct(a), nil)
++	})
++
++	t.Run("cycle still reports the failing field exactly once", func(t *testing.T) {
++		a := &cycNode{Name: "a"}
++		b := &cycNode{Name: ""}
++		a.Next, b.Next = b, a
++
++		errs := validate.Struct(a)
++		NotEqual(t, errs, nil)
++		Equal(t, len(errs.(ValidationErrors)), 1)
++		AssertError(t, errs, "cycNode.Next.Name", "cycNode.Next.Name", "Name", "Name", "required")
++	})
++
++	t.Run("slice cycle through dive", func(t *testing.T) {
++		a := &cycSlice{Name: "a"}
++		b := &cycSlice{Name: "b"}
++		a.Kids = []*cycSlice{b}
++		b.Kids = []*cycSlice{a}
++
++		Equal(t, validate.Struct(a), nil)
++	})
++
++	t.Run("map cycle through dive", func(t *testing.T) {
++		a := &cycMap{Name: "a"}
++		b := &cycMap{Name: "b"}
++		a.M = map[string]*cycMap{"b": b}
++		b.M = map[string]*cycMap{"a": a}
++
++		Equal(t, validate.Struct(a), nil)
++	})
++
++	t.Run("cycle closed through an interface field", func(t *testing.T) {
++		a := &cycIface{Name: "a"}
++		b := &cycIface{Name: "b"}
++		a.Any, b.Any = b, a
++
++		Equal(t, validate.Struct(a), nil)
++	})
++
++	t.Run("repeated non-cyclic references are not pruned", func(t *testing.T) {
++		// The same node reached twice is not a cycle; both visits must be reported.
++		shared := &cycSlice{Name: ""}
++		root := &cycSlice{Name: "", Kids: []*cycSlice{shared, shared}}
++
++		errs := validate.Struct(root)
++		NotEqual(t, errs, nil)
++		Equal(t, len(errs.(ValidationErrors)), 3)
++	})
++
++	t.Run("deep acyclic graph is validated in full", func(t *testing.T) {
++		// Recursive type, far past cycleGuardDepth, no cycle: every node must still
++		// be validated, so the guard cannot be short-circuiting legitimate work.
++		const n = 2000
++
++		head := &cycNode{Name: ""}
++		cur := head
++		for i := 0; i < n-1; i++ {
++			cur.Next = &cycNode{Name: ""}
++			cur = cur.Next
++		}
++
++		errs := validate.Struct(head)
++		NotEqual(t, errs, nil)
++		Equal(t, len(errs.(ValidationErrors)), n)
++	})
++
++	t.Run("guard state does not leak between validations", func(t *testing.T) {
++		// The validate struct is pooled, so a cycle in one call must not suppress
++		// nodes in the next.
++		a := &cycNode{Name: ""}
++		a.Next = a
++
++		for i := 0; i < 3; i++ {
++			errs := validate.Struct(a)
++			NotEqual(t, errs, nil)
++			Equal(t, len(errs.(ValidationErrors)), 1)
++		}
++	})
++}
++
++func TestTypeReaches(t *testing.T) {
++	type plain struct {
++		A string
++	}
++	type selfPtr struct {
++		Next *selfPtr
++	}
++	type selfSlice struct {
++		Kids []selfSlice
++	}
++	type selfMapVal struct {
++		M map[string]*selfMapVal
++	}
++	type withIface struct {
++		Any interface{}
++	}
++	type mutualB struct {
++		Back interface{}
++	}
++	type mutualA struct {
++		B *mutualB
++	}
++
++	tests := []struct {
++		name     string
++		typ      reflect.Type
++		expected bool
++	}{
++		{"plain struct", reflect.TypeOf(plain{}), false},
++		{"self pointer", reflect.TypeOf(selfPtr{}), true},
++		{"self slice", reflect.TypeOf(selfSlice{}), true},
++		{"self map value", reflect.TypeOf(selfMapVal{}), true},
++		// An interface is not treated as reaching everything; that case is covered
++		// by the depth safety net instead, so ordinary structs stay off the guard.
++		{"interface field", reflect.TypeOf(withIface{}), false},
++		{"no cycle back to root", reflect.TypeOf(mutualA{}), false},
++		{"time.Time", reflect.TypeOf(time.Time{}), false},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			got := typeReaches(tc.typ, tc.typ, make(map[reflect.Type]struct{}), true)
++			Equal(t, got, tc.expected)
++		})
++	}
++}
++
++func Test_port_validator_accepted_kinds(t *testing.T) {
++	validate := New()
++
++	t.Run("string ports", func(t *testing.T) {
++		tests := []struct {
++			value    string
++			expected bool
++		}{
++			{"1", true},
++			{"80", true},
++			{"8080", true},
++			{"65535", true},
++			{"0", false},
++			{"65536", false},
++			{"", false},
++			{"80x", false},
++			{" 80", false},
++			{"+80", false},
++			{"-80", false},
++			{"08 0", false},
++		}
++		for _, tc := range tests {
++			errs := validate.Var(tc.value, "port")
++			Equal(t, errs == nil, tc.expected)
++		}
++	})
++
++	t.Run("signed ports", func(t *testing.T) {
++		tests := []struct {
++			value    int
++			expected bool
++		}{
++			{1, true},
++			{8080, true},
++			{65535, true},
++			{0, false},
++			{65536, false},
++			{-1, false},
++		}
++		for _, tc := range tests {
++			errs := validate.Var(tc.value, "port")
++			Equal(t, errs == nil, tc.expected)
++		}
++	})
++
++	t.Run("struct field typed string", func(t *testing.T) {
++		type Host struct {
++			Port string `validate:"port"`
++		}
++
++		Equal(t, validate.Struct(Host{Port: "8080"}), nil)
++
++		errs := validate.Struct(Host{Port: "70000"})
++		NotEqual(t, errs, nil)
++		AssertError(t, errs, "Host.Port", "Host.Port", "Port", "Port", "port")
++	})
++
++	t.Run("unsupported kinds panic with the library message", func(t *testing.T) {
++		// Not a raw reflect panic: the message has to name the offending type.
++		for _, tc := range []struct {
++			value interface{}
++			msg   string
++		}{
++			{80.5, "Bad field type float64"},
++			{true, "Bad field type bool"},
++			{[]string{"80"}, "Bad field type []string"},
++		} {
++			PanicMatches(t, func() { _ = validate.Var(tc.value, "port") }, tc.msg)
++		}
++	})
++}
++
++func Test_string_validators_reject_non_strings(t *testing.T) {
++	// ssn, ein and multibyte read the field through Len before this was fixed, which
++	// panicked with a raw reflect message on every non-string kind. They follow the
++	// same idiom as their string-regex siblings now: a non-string is simply invalid.
++	validate := New()
++
++	tests := []struct {
++		tag      string
++		value    interface{}
++		expected bool
++	}{
++		{"ssn", "123-45-6789", true},
++		{"ssn", "123-45-678", false},
++		{"ssn", 12345678901, false},
++		{"ssn", true, false},
++		{"ssn", 1.5, false},
++		{"ein", "12-3456789", true},
++		{"ein", "123456789", false},
++		{"ein", 1234567890, false},
++		{"ein", false, false},
++		{"multibyte", "日本語", true},
++		{"multibyte", "abc", false},
++		{"multibyte", "", true},
++		{"multibyte", 123, false},
++		{"multibyte", true, false},
++	}
++
++	for _, tc := range tests {
++		// A panic here is the regression this test exists to catch, so name it.
++		func() {
++			defer func() {
++				if r := recover(); r != nil {
++					t.Fatalf("%s on %T panicked: %v", tc.tag, tc.value, r)
++				}
++			}()
++
++			Equal(t, validate.Var(tc.value, tc.tag) == nil, tc.expected)
++		}()
++	}
++}
++
++func TestRGBAAndHSLAAlphaChannel(t *testing.T) {
++	// The alpha group used to be `(?:0.[1-9]*)|[01]`, whose dot was an unescaped
++	// any-character. That accepted junk in the alpha position and rejected ordinary
++	// CSS alpha values, so the verdict was wrong in both directions.
++	validate := New()
++
++	valid := []string{"0", "1", "0.5", "0.12", "0.05", "0.999", "1.0", "1.00"}
++	invalid := []string{"0X", "0x", "09", "00", "01", "0.", ".5", "1.5", "2", "-0.5", "0.5x", ""}
++
++	for _, a := range valid {
++		Equal(t, validate.Var("rgba(0,31,255,"+a+")", "rgba") == nil, true)
++		Equal(t, validate.Var("hsla(360,100%,100%,"+a+")", "hsla") == nil, true)
++	}
++
++	for _, a := range invalid {
++		Equal(t, validate.Var("rgba(0,31,255,"+a+")", "rgba") == nil, false)
++		Equal(t, validate.Var("hsla(360,100%,100%,"+a+")", "hsla") == nil, false)
++	}
++
++	// Whitespace around the channels stays tolerated; that is not the defect.
++	Equal(t, validate.Var("rgba( 0,  31, 255, 0.5 )", "rgba") == nil, true)
++	Equal(t, validate.Var("hsla( 0, 0%, 0%, 0 )", "hsla") == nil, true)
++}
++
++// The email tag is the conjunction of emailRegex and mail.ParseAddress, both
++// pure, so evaluating either first gives the same answer. isEmail evaluates the
++// regex first because mail.ParseAddress consumes comments and phrases
++// quadratically; this test fails if a change makes the two checks disagree
++// rather than merely reorder them, and it is what makes that reordering safe.
++func TestEmailChecksAgreeInEitherOrder(t *testing.T) {
++	validate := New()
++
++	locals := []string{"a", "test.name", "a+tag", "a_b-c", `"quoted"`, "a..b", "", strings.Repeat("a", 300), "a b"}
++	domains := []string{"b.co", "example.com", "example.co.uk", "b", "", "b .co", "b-c.io"}
++	suffixes := []string{"", " (x)", " (" + strings.Repeat("a", 64) + ")", "\n", "\x00", " <a@b.co>", "."}
++
++	checked := 0
++	for _, local := range locals {
++		for _, domain := range domains {
++			for _, suffix := range suffixes {
++				addr := local + "@" + domain + suffix
++
++				parserFirst := false
++				if _, err := mail.ParseAddress(addr); err == nil {
++					parserFirst = emailRegex().MatchString(addr)
++				}
++				regexFirst := false
++				if emailRegex().MatchString(addr) {
++					_, err := mail.ParseAddress(addr)
++					regexFirst = err == nil
++				}
++				if parserFirst != regexFirst {
++					t.Fatalf("evaluation order changes the verdict for %q: parser-first=%v regex-first=%v", addr, parserFirst, regexFirst)
++				}
++				if tag := validate.Var(addr, "email") == nil; tag != regexFirst {
++					t.Fatalf("the email tag disagrees with its own two checks for %q: tag=%v checks=%v", addr, tag, regexFirst)
++				}
++				checked++
++			}
++		}
++	}
++	Equal(t, checked, len(locals)*len(domains)*len(suffixes))
++}
++
++// The reason for that ordering: mail.ParseAddress accepts a trailing comment and
++// consumes it quadratically, while emailRegex rejects the same value outright, so
++// a value the regex rejects must not reach the parser. The bound is loose by
++// orders of magnitude - this rejection took seconds with the checks in the other
++// order and takes microseconds in this one.
++func TestEmailDoesNotParseWhatTheRegexRejects(t *testing.T) {
++	validate := New()
++	hostile := "a@b.co (" + strings.Repeat("a", 200000) + ")"
++
++	if emailRegex().MatchString(hostile) {
++		t.Fatal("fixture no longer separates the two checks: the regex now accepts the comment-shaped value")
++	}
++
++	start := time.Now()
++	errs := validate.Var(hostile, "email")
++	elapsed := time.Since(start)
++
++	NotEqual(t, errs, nil)
++	AssertError(t, errs, "", "", "", "", "email")
++	if elapsed > time.Second {
++		t.Fatalf("rejecting a %d-byte value took %s, so the parser ran before the regex", len(hostile), elapsed)
++	}
++}
++
++// The html pattern is unanchored, so it matches the "<int Value>" that
++// reflect.Value.String() renders for a non-string kind: an int field was accepted
++// while the ordinary string "abc" is rejected. The tag checks the kind now.
++func TestHTMLRejectsNonStringKinds(t *testing.T) {
++	validate := New()
++
++	type nonStrings struct {
++		Int    int               `validate:"html"`
++		Uint   uint              `validate:"html"`
++		Bool   bool              `validate:"html"`
++		Float  float64           `validate:"html"`
++		Map    map[string]string `validate:"html"`
++		Struct struct{ A int }   `validate:"html"`
++	}
++
++	errs := validate.Struct(nonStrings{
++		Int: 1, Uint: 1, Bool: true, Float: 1.5,
++		Map:    map[string]string{"a": "b"},
++		Struct: struct{ A int }{1},
++	})
++	NotEqual(t, errs, nil)
++	Equal(t, len(errs.(ValidationErrors)), 6)
++
++	// String verdicts are untouched, including the placeholder-shaped string,
++	// which is ordinary HTML as far as this tag is concerned.
++	type markup struct {
++		S string `validate:"html"`
++	}
++	for _, s := range []string{"<p>", "</p>", "<br/>", "<a href='x'>", "<int Value>"} {
++		Equal(t, validate.Struct(markup{S: s}) == nil, true)
++	}
++	for _, s := range []string{"abc", "", "a < b", "<1>"} {
++		NotEqual(t, validate.Struct(markup{S: s}), nil)
++	}
++}
++
++// Every sibling in the address family rejects a non-string field kind, but each
++// does it by accident: reflect.Value.String() renders "<int Value>" and their
++// parsers reject that. unix_addr asks only for a non-empty string with no NUL,
++// which the rendering satisfies, so it checks the kind itself.
++func TestUnixAddrRejectsNonStringKinds(t *testing.T) {
++	validate := New()
++
++	type nonStrings struct {
++		Int   int               `validate:"unix_addr"`
++		Bool  bool              `validate:"unix_addr"`
++		Float float64           `validate:"unix_addr"`
++		Slice []string          `validate:"unix_addr"`
++		Map   map[string]string `validate:"unix_addr"`
++	}
++
++	errs := validate.Struct(nonStrings{
++		Int:   1,
++		Bool:  true,
++		Float: 1.5,
++		Slice: []string{"a"},
++		Map:   map[string]string{"a": "b"},
++	})
++	NotEqual(t, errs, nil)
++	Equal(t, len(errs.(ValidationErrors)), 5)
++
++	// A string field carrying the same tag keeps the verdicts it had.
++	type path struct {
++		Path string `validate:"unix_addr"`
++	}
++	Equal(t, validate.Struct(path{Path: "/tmp/v.sock"}) == nil, true)
++	Equal(t, validate.Struct(path{Path: "@abstract"}) == nil, true)
++	NotEqual(t, validate.Struct(path{Path: ""}), nil)
++	NotEqual(t, validate.Struct(path{Path: "/tmp/has\x00nul.sock"}), nil)
++}
++
++// isIP4Addr and isIP6Addr parse only the host part - both strip everything after
++// the last colon - so the port used to reach net's resolver unexamined, and net's
++// Windows path panics on a NUL byte there. No network address contains a NUL, so
++// the shape gate rejects it.
++//
++// This pins the verdict, not the mechanism. On a platform whose resolver merely
++// errors on a NUL these tags rejected these values before the gate existed, so
++// the test passes with or without it there; what the gate changed is that the
++// value no longer reaches the resolver, which is only observable by instrumenting
++// that call.
++func TestAddressTagsRejectNulBytes(t *testing.T) {
++	validate := New()
++
++	tags := []string{
++		"tcp4_addr", "tcp6_addr", "tcp_addr",
++		"udp4_addr", "udp6_addr", "udp_addr",
++		"ip4_addr", "ip6_addr", "ip_addr",
++	}
++	hostile := []string{
++		"127.0.0.1:80\x00",
++		"127.0.0.1:\x00",
++		"127.0.0.1:8\x000",
++		"127.0.0.1:\x0080",
++		"[::1]:80\x00",
++		"[::1]:\x00",
++		"127.0.0.1\x00",
++		"::1\x00",
++		"\x00",
++	}
++
++	for _, tag := range tags {
++		for _, val := range hostile {
++			if errs := validate.Var(val, tag); errs == nil {
++				t.Fatalf("%s accepted %q, which carries a NUL byte", tag, val)
++			}
++		}
++	}
++
++	// The gate must reject no more than that: the same addresses without the NUL
++	// keep the verdicts they had.
++	Equal(t, validate.Var("127.0.0.1:80", "tcp4_addr") == nil, true)
++	Equal(t, validate.Var("127.0.0.1:80", "udp4_addr") == nil, true)
++	Equal(t, validate.Var("[::1]:80", "tcp6_addr") == nil, true)
++	Equal(t, validate.Var("[::1]:80", "udp6_addr") == nil, true)
++	Equal(t, validate.Var("127.0.0.1", "ip4_addr") == nil, true)
++	Equal(t, validate.Var("::1", "ip6_addr") == nil, true)
++}

@@ -1,0 +1,993 @@
+diff --git a/.gitignore b/.gitignore
+index eb5a316c..2a343721 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1 +1,2 @@
+ target
++.claude/jeffy-loop.local.md
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 750dd0e7..2f210af9 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
+ <!-- next-header -->
+ ## [Unreleased] - ReleaseDate
+ 
++### Fixes
++
++- `Arg::allow_negative_numbers` now accepts scientific notation with a signed exponent, like `-1e-5` and `-1E+3`
++- `ValueRange::new` now panics in debug builds on the empty ranges `0..0` and `..0`, as it already documented and already did for `5..5`
++- `Command::get_arg_conflicts_with` now reports a conflict from both sides, matching the parser, so a generated zsh completion no longer offers a flag combination the command refuses
++- Help text containing a tab, carriage return or other control character is measured correctly again; previously everything after the first such character counted as zero width, so the help overflowed `Command::term_width`
++- `clap_complete`: `Shell::Fish::try_generate` now returns a write failure instead of panicking when the command has subcommands, matching the other four shells
++- The usage line now wraps to `Command::term_width` like the rest of the help does, with its continuations aligned under the first line; a usage set with `Command::override_usage` across several lines keeps its own alignment
++- `Arg::hide_short_help` and `Arg::hide_long_help` are no longer overridden by `Arg::next_line_help` or `Command::next_line_help`; an argument setting both was previously shown on the route its hide flag named
++- A typo that differs only in case, like `--FLAG` for `--flag`, now draws a suggestion; the similarity score is 0 for such a pair, so nothing was offered at all. Flags, subcommands and values all use the one scorer, and the case-insensitive pass runs only when the case-sensitive one found nothing, so an input that already drew a suggestion draws the same one
++- `ArgGroup::is_multiple` takes `&self` rather than `&mut self`, like every other `ArgGroup` accessor, so asking a read-only question no longer needs a mutable binding
++- `BoolishValueParser` reports a rejected value as `ErrorKind::InvalidValue` and names every literal it accepts, matching `BoolValueParser`; it previously reported `ErrorKind::ValueValidation` with the message "value was not a boolean", which named none of them
++
+ ## [4.6.6] - 2026-08-06
+ 
+ ### Features
+diff --git a/clap_builder/src/builder/arg_group.rs b/clap_builder/src/builder/arg_group.rs
+index 0f207a99..a4048337 100644
+--- a/clap_builder/src/builder/arg_group.rs
++++ b/clap_builder/src/builder/arg_group.rs
+@@ -254,13 +254,13 @@ impl ArgGroup {
+     /// ```rust
+     /// # use clap_builder as clap;
+     /// # use clap::{ArgGroup};
+-    /// let mut group = ArgGroup::new("myprog")
++    /// let group = ArgGroup::new("myprog")
+     ///     .args(["f", "c"])
+     ///     .multiple(true);
+     ///
+     /// assert!(group.is_multiple());
+     /// ```
+-    pub fn is_multiple(&mut self) -> bool {
++    pub fn is_multiple(&self) -> bool {
+         self.multiple
+     }
+ 
+@@ -596,10 +596,10 @@ mod test {
+     fn arg_group_expose_is_multiple_helper() {
+         let args: Vec<Id> = vec!["a1".into(), "a4".into()];
+ 
+-        let mut grp_multiple = ArgGroup::new("test_multiple").args(&args).multiple(true);
++        let grp_multiple = ArgGroup::new("test_multiple").args(&args).multiple(true);
+         assert!(grp_multiple.is_multiple());
+ 
+-        let mut grp_not_multiple = ArgGroup::new("test_multiple").args(&args).multiple(false);
++        let grp_not_multiple = ArgGroup::new("test_multiple").args(&args).multiple(false);
+         assert!(!grp_not_multiple.is_multiple());
+     }
+ 
+diff --git a/clap_builder/src/builder/command.rs b/clap_builder/src/builder/command.rs
+index 12183406..8a3e0cfb 100644
+--- a/clap_builder/src/builder/command.rs
++++ b/clap_builder/src/builder/command.rs
+@@ -2253,7 +2253,10 @@ impl Command {
+     /// Valid tags are:
+     ///
+     ///   * `{name}`                - Display name for the (sub-)command.
+-    ///   * `{bin}`                 - Binary name.(deprecated)
++    ///   * `{bin}`                 - Command name, ignoring [`Command::display_name`]. A bin
++    ///     name reaches this only when it contains a space, the `git mv` subcommand path,
++    ///     which is written `git-mv`; unlike the usage line this does not otherwise follow
++    ///     [`Command::bin_name`].(deprecated, use `{name}`)
+     ///   * `{version}`             - Version number.
+     ///   * `{author}`              - Author information.
+     ///   * `{author-with-newline}` - Author followed by `\n`.
+@@ -4029,8 +4032,17 @@ impl Command {
+ 
+     /// Get a list of all arguments the given argument conflicts with.
+     ///
+-    /// If the provided argument is declared as global, the conflicts will be determined
+-    /// based on the propagation rules of global arguments.
++    /// [`Arg::conflicts_with`] is enforced in both directions, so this reports
++    /// both the conflicts the given argument declares and the ones other
++    /// arguments of this `Command` declare against it, or against a group it
++    /// belongs to. An argument named by both sides is reported once.
++    ///
++    /// If the provided argument is declared as global, only the conflicts it
++    /// declares are reported, determined based on the propagation rules of
++    /// global arguments. The reverse direction is left out there because a
++    /// global argument is reachable from subcommands that the argument naming it
++    /// is not, so whether the conflict applies depends on which command is being
++    /// asked about rather than on this one alone.
+     ///
+     /// ### Panics
+     ///
+@@ -4039,26 +4051,45 @@ impl Command {
+     pub fn get_arg_conflicts_with(&self, arg: &Arg) -> Vec<&Arg> // FIXME: This could probably have been an iterator
+     {
+         if arg.is_global_set() {
+-            self.get_global_arg_conflicts_with(arg)
+-        } else {
+-            let mut result = Vec::new();
+-            for id in arg.conflicts.iter() {
+-                if let Some(arg) = self.find(id) {
+-                    result.push(arg);
+-                } else if let Some(group) = self.find_group(id) {
+-                    result.extend(
+-                        self.unroll_args_in_group(&group.id)
+-                            .iter()
+-                            .map(|id| self.find(id).expect(INTERNAL_ERROR_MSG)),
+-                    );
+-                } else {
+-                    panic!(
+-                        "Command::get_arg_conflicts_with: The passed arg conflicts with an arg unknown to the cmd"
+-                    );
+-                }
++            return self.get_global_arg_conflicts_with(arg);
++        }
++
++        let mut result = Vec::new();
++        for id in arg.conflicts.iter() {
++            if let Some(arg) = self.find(id) {
++                result.push(arg);
++            } else if let Some(group) = self.find_group(id) {
++                result.extend(
++                    self.unroll_args_in_group(&group.id)
++                        .iter()
++                        .map(|id| self.find(id).expect(INTERNAL_ERROR_MSG)),
++                );
++            } else {
++                panic!(
++                    "Command::get_arg_conflicts_with: The passed arg conflicts with an arg unknown to the cmd"
++                );
++            }
++        }
++
++        // The parser treats a conflict as mutual, so an argument that names this
++        // one conflicts with it whether or not this one said so.
++        let groups: Vec<Id> = self.groups_for_arg(arg.get_id()).collect();
++        for other in self.get_arguments() {
++            if other.get_id() == arg.get_id()
++                || result.iter().any(|a| a.get_id() == other.get_id())
++            {
++                continue;
++            }
++            if other
++                .conflicts
++                .iter()
++                .any(|id| id == arg.get_id() || groups.contains(id))
++            {
++                result.push(other);
+             }
+-            result
+         }
++
++        result
+     }
+ 
+     /// Get a unique list of all arguments of all commands and continuous subcommands the given argument conflicts with.
+diff --git a/clap_builder/src/builder/range.rs b/clap_builder/src/builder/range.rs
+index 9218c236..8587c86e 100644
+--- a/clap_builder/src/builder/range.rs
++++ b/clap_builder/src/builder/range.rs
+@@ -61,6 +61,24 @@ impl ValueRange {
+     /// # use clap::builder::ValueRange;
+     /// let range = ValueRange::new(5..5);  // Panics! (empty)
+     /// ```
++    /// ```should_panic
++    /// # use clap_builder as clap;
++    /// # use clap::builder::ValueRange;
++    /// let range = ValueRange::new(0..0);  // Panics! (empty)
++    /// ```
++    /// ```should_panic
++    /// # use clap_builder as clap;
++    /// # use clap::builder::ValueRange;
++    /// let range = ValueRange::new(..0);  // Panics! (empty)
++    /// ```
++    ///
++    /// To accept no values, say so with a fixed range rather than an empty one:
++    /// ```rust
++    /// # use clap_builder as clap;
++    /// # use clap::builder::ValueRange;
++    /// let range = ValueRange::new(0);
++    /// assert!(!range.takes_values());
++    /// ```
+     pub fn new(range: impl Into<Self>) -> Self {
+         range.into()
+     }
+@@ -145,6 +163,14 @@ impl From<usize> for ValueRange {
+ 
+ impl From<std::ops::Range<usize>> for ValueRange {
+     fn from(range: std::ops::Range<usize>) -> Self {
++        // Checked before the `saturating_sub` below, which would otherwise map
++        // an `end` of 0 back onto 0 and let the empty `0..0` through.
++        debug_assert!(
++            range.start < range.end,
++            "`{}..{}` accepts no values",
++            range.start,
++            range.end
++        );
+         let start_inclusive = range.start;
+         let end_inclusive = range.end.saturating_sub(1);
+         Self::raw(start_inclusive, end_inclusive)
+@@ -167,6 +193,8 @@ impl From<std::ops::RangeFrom<usize>> for ValueRange {
+ 
+ impl From<std::ops::RangeTo<usize>> for ValueRange {
+     fn from(range: std::ops::RangeTo<usize>) -> Self {
++        // `..0` is empty for the same reason `0..0` is; see the `Range` impl.
++        debug_assert!(0 < range.end, "`..{}` accepts no values", range.end);
+         let start_inclusive = 0;
+         let end_inclusive = range.end.saturating_sub(1);
+         Self::raw(start_inclusive, end_inclusive)
+diff --git a/clap_builder/src/builder/value_parser.rs b/clap_builder/src/builder/value_parser.rs
+index 65257275..ff88718b 100644
+--- a/clap_builder/src/builder/value_parser.rs
++++ b/clap_builder/src/builder/value_parser.rs
+@@ -1907,11 +1907,21 @@ impl TypedValueParser for BoolishValueParser {
+             )
+         }));
+         let value = ok!(crate::util::str_to_bool(value).ok_or_else(|| {
+-            let arg = arg
+-                .map(|a| a.to_string())
+-                .unwrap_or_else(|| "...".to_owned());
+-            crate::Error::value_validation(arg, value.to_owned(), "value was not a boolean".into())
+-                .with_cmd(cmd)
++            // Intentionally showing hidden as we hide all but `true` and
++            // `false`, and a rejection is the one place the rest are worth
++            // naming. Matches `BoolValueParser`, whose siblinghood is the
++            // point: the same shape of mistake gets the same shape of error.
++            let possible_vals = Self::possible_values()
++                .map(|v| v.get_name().to_owned())
++                .collect::<Vec<_>>();
++
++            crate::Error::invalid_value(
++                cmd,
++                value.to_owned(),
++                &possible_vals,
++                arg.map(ToString::to_string)
++                    .unwrap_or_else(|| "...".to_owned()),
++            )
+         }));
+         Ok(value)
+     }
+diff --git a/clap_builder/src/output/help_template.rs b/clap_builder/src/output/help_template.rs
+index e3f555e2..69487f87 100644
+--- a/clap_builder/src/output/help_template.rs
++++ b/clap_builder/src/output/help_template.rs
+@@ -208,9 +208,23 @@ impl<'cmd, 'writer> HelpTemplate<'cmd, 'writer> {
+                         );
+                     }
+                     "usage" => {
+-                        self.writer.push_styled(
+-                            &self.usage.create_usage_no_title(&[]).unwrap_or_default(),
+-                        );
++                        let mut usage =
++                            self.usage.create_usage_no_title(&[]).unwrap_or_default();
++                        // Wrap like `about`, `before-help` and `after-help` do,
++                        // but against the space left on the current line: the
++                        // usage variable follows `usage-heading` in the default
++                        // template, and a template may put anything before it.
++                        let indent = self.current_column();
++                        // A usage that already spans lines came from
++                        // `Command::override_usage` and carries the author's own
++                        // alignment, so only a usage this wrap itself broke gets
++                        // its continuations lined up under the first one.
++                        let was_one_line = !usage.as_styled_str().contains('\n');
++                        usage.wrap(self.term_w.saturating_sub(indent));
++                        if was_one_line {
++                            usage.indent("", &" ".repeat(indent));
++                        }
++                        self.writer.push_styled(&usage);
+                     }
+                     "all-args" => {
+                         self.write_all_args();
+@@ -330,6 +344,17 @@ impl HelpTemplate<'_, '_> {
+         }
+     }
+ 
++    /// How far along the current line the writer already is, so a block written
++    /// next can be wrapped against the space that is actually left.
++    fn current_column(&self) -> usize {
++        let written = self.writer.as_styled_str();
++        let line = match written.rfind('\n') {
++            Some(at) => &written[at + 1..],
++            None => written,
++        };
++        display_width(line)
++    }
++
+     fn write_before_help(&mut self) {
+         debug!("HelpTemplate::write_before_help");
+         let before_help = if self.use_long {
+@@ -473,13 +498,14 @@ impl HelpTemplate<'_, '_> {
+         let mut longest = 2;
+         let mut ord_v = BTreeMap::new();
+ 
+-        // Determine the longest
+-        for &arg in args.iter().filter(|arg| {
+-            // If it's NextLineHelp we don't care to compute how long it is because it may be
+-            // NextLineHelp on purpose simply *because* it's so long and would throw off all other
+-            // args alignment
+-            should_show_arg(self.use_long, arg)
+-        }) {
++        // Determine the longest. The filter is load-bearing rather than
++        // defensive: `{options}` and `{positionals}` hand this method the
++        // command's whole argument list, so this is where a hidden arg is
++        // dropped on that route.
++        for &arg in args
++            .iter()
++            .filter(|arg| should_show_arg(self.use_long, arg))
++        {
+             let width = display_width(&arg.to_string());
+             let actual_width = if arg.get_long().is_some() {
+                 width + SHORT_SIZE
+@@ -1142,9 +1168,10 @@ fn should_show_arg(use_long: bool, arg: &Arg) -> bool {
+     if arg.is_hide_set() {
+         return false;
+     }
+-    (!arg.is_hide_long_help_set() && use_long)
+-        || (!arg.is_hide_short_help_set() && !use_long)
+-        || arg.is_next_line_help_set()
++    // `next_line_help` is a layout choice, not a visibility one, so it is not
++    // consulted here: each of the three hide settings suppresses the arg on the
++    // route it names, whatever the layout.
++    (!arg.is_hide_long_help_set() && use_long) || (!arg.is_hide_short_help_set() && !use_long)
+ }
+ 
+ fn should_show_subcommand(subcommand: &Command) -> bool {
+diff --git a/clap_builder/src/output/textwrap/core.rs b/clap_builder/src/output/textwrap/core.rs
+index 2f6004c7..a5cbbe9f 100644
+--- a/clap_builder/src/output/textwrap/core.rs
++++ b/clap_builder/src/output/textwrap/core.rs
+@@ -55,11 +55,15 @@
+ pub(crate) fn display_width(text: &str) -> usize {
+     let mut width = 0;
+ 
++    // Only an escape opens a sequence to skip. Treating every ASCII control
++    // character as an opener made a lone tab, carriage return or newline swallow
++    // the rest of the text, since the sequence is only closed by an `m`.
++    const ESCAPE: char = '\u{1b}';
+     let mut control_sequence = false;
+     let control_terminate: char = 'm';
+ 
+     for ch in text.chars() {
+-        if ch.is_ascii_control() {
++        if ch == ESCAPE {
+             control_sequence = true;
+         } else if control_sequence && ch == control_terminate {
+             control_sequence = false;
+@@ -79,8 +83,10 @@ fn ch_width(ch: char) -> usize {
+ }
+ 
+ #[cfg(not(feature = "unicode"))]
+-fn ch_width(_: char) -> usize {
+-    1
++fn ch_width(ch: char) -> usize {
++    // `unicode_width` reports no width for a control character, so the two
++    // configurations agree here rather than diverging on text carrying one.
++    if ch.is_control() { 0 } else { 1 }
+ }
+ 
+ #[cfg(test)]
+@@ -155,4 +161,36 @@ mod tests {
+     fn display_width_emojis() {
+         assert_eq!(display_width("😂😭🥺🤣✨😍🙏🥰😊🔥"), 20);
+     }
++
++    #[test]
++    fn display_width_counts_text_after_a_control_character() {
++        // A control character other than an escape is not the start of an ANSI
++        // sequence, so it must not hide the text that follows it. Before this
++        // was fixed each of these returned the width of the text up to the
++        // control character alone.
++        assert_eq!(display_width("a\tb"), 2);
++        assert_eq!(display_width("a\rb"), 2);
++        assert_eq!(display_width("ab\ncd"), 4);
++        assert_eq!(display_width("a\u{7}b"), 2);
++        // An `m` later in the text used to end the swallowing and resume
++        // counting part way through, so a control character made the width
++        // depend on whether an `m` happened to appear after it.
++        assert_eq!(display_width("a\u{7}bcm de"), 7);
++
++        // A control character has no width of its own in either feature
++        // configuration.
++        assert_eq!(display_width("\t"), 0);
++        assert_eq!(display_width("\n"), 0);
++    }
++
++    #[test]
++    fn display_width_still_skips_ansi_sequences() {
++        // The behaviour the escape handling exists for, unchanged: the SGR
++        // sequences around the text contribute nothing.
++        assert_eq!(display_width("\u{1b}[1mab\u{1b}[0m"), 2);
++        assert_eq!(display_width("\u{1b}[31mred\u{1b}[0m and plain"), 13);
++        // An escape sequence that is never terminated hides the rest, which is
++        // what an unterminated sequence does on a terminal too.
++        assert_eq!(display_width("ab\u{1b}[1"), 2);
++    }
+ }
+diff --git a/clap_builder/src/parser/features/suggestions.rs b/clap_builder/src/parser/features/suggestions.rs
+index c513080b..622ade60 100644
+--- a/clap_builder/src/parser/features/suggestions.rs
++++ b/clap_builder/src/parser/features/suggestions.rs
+@@ -10,16 +10,42 @@ where
+     T: AsRef<str>,
+     I: IntoIterator<Item = T>,
+ {
++    let possible_values: Vec<String> = possible_values
++        .into_iter()
++        .map(|pv| pv.as_ref().to_owned())
++        .collect();
++
++    let candidates = scored(v, &possible_values, false);
++    if !candidates.is_empty() {
++        return candidates;
++    }
++    // A case-only difference shares no characters with its target, so `jaro`
++    // scores it 0 and the user is told nothing at all. Retrying without case is
++    // confined to that exact situation - nothing matched - so a command line
++    // that already draws a suggestion keeps the one it drew.
++    scored(v, &possible_values, true)
++}
++
++#[cfg(feature = "suggestions")]
++fn scored(v: &str, possible_values: &[String], ignore_case: bool) -> Vec<String> {
+     use std::cmp::Ordering;
+ 
++    let fold = |s: &str| {
++        if ignore_case {
++            s.to_lowercase()
++        } else {
++            s.to_owned()
++        }
++    };
++    let folded_v = fold(v);
+     let mut candidates: Vec<(f64, String)> = Vec::new();
+     for pv in possible_values {
+         // GH #4660: using `jaro` because `jaro_winkler` implementation in `strsim-rs` is wrong
+         // causing strings with common prefix >=10 to be considered perfectly similar
+-        let confidence = strsim::jaro(v, pv.as_ref());
++        let confidence = strsim::jaro(&folded_v, &fold(pv));
+ 
+         if confidence > 0.7 {
+-            let new_elem = (confidence, pv.as_ref().to_owned());
++            let new_elem = (confidence, pv.clone());
+             let pos = candidates
+                 .binary_search_by(|probe| {
+                     if probe.0 > confidence {
+diff --git a/clap_complete/CHANGELOG.md b/clap_complete/CHANGELOG.md
+index fc50105e..bcfac775 100644
+--- a/clap_complete/CHANGELOG.md
++++ b/clap_complete/CHANGELOG.md
+@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
+ <!-- next-header -->
+ ## [Unreleased] - ReleaseDate
+ 
++### Fixes
++
++- *(engine)* Don't suggest subcommands after the `--` escape, and treat a token that looks like one as a positional value
++
+ ## [4.6.9] - 2026-08-06
+ 
+ ### Fixes
+diff --git a/clap_complete/src/aot/shells/fish.rs b/clap_complete/src/aot/shells/fish.rs
+index 3a4dfe24..eb3a8c40 100644
+--- a/clap_complete/src/aot/shells/fish.rs
++++ b/clap_complete/src/aot/shells/fish.rs
+@@ -32,7 +32,7 @@ impl Generator for Fish {
+         // find out `status` is the real subcommand, and not `somedir`. However, when there are no subcommands,
+         // there is no need to use our custom stubs.
+         if cmd.has_subcommands() {
+-            gen_subcommand_helpers(&name, cmd, buf, needs_fn_name, using_fn_name);
++            gen_subcommand_helpers(&name, cmd, buf, needs_fn_name, using_fn_name)?;
+         } else {
+             needs_fn_name = "__fish_use_subcommand";
+             using_fn_name = "__fish_seen_subcommand_from";
+@@ -218,7 +218,7 @@ fn gen_subcommand_helpers(
+     buf: &mut dyn Write,
+     needs_fn_name: &str,
+     using_fn_name: &str,
+-) {
++) -> Result<(), Error> {
+     let mut optspecs = String::new();
+     let cmd_opts = cmd.get_arguments().filter(|a| !a.is_positional());
+     for option in cmd_opts {
+@@ -274,7 +274,7 @@ function {using_fn_name}
+ end
+ 
+ "
+-        ).expect("failed to write completion file");
++    )
+ }
+ 
+ fn value_completion(option: &Arg) -> String {
+diff --git a/clap_complete/src/engine/complete.rs b/clap_complete/src/engine/complete.rs
+index ad50bc34..37d109bb 100644
+--- a/clap_complete/src/engine/complete.rs
++++ b/clap_complete/src/engine/complete.rs
+@@ -59,11 +59,15 @@ pub fn complete(
+             );
+         }
+ 
+-        if let Ok(value) = arg.to_value() {
+-            if let Some(next_cmd) = current_cmd.find_subcommand(value) {
+-                current_cmd = next_cmd;
+-                pos_index = 1;
+-                continue;
++        // No subcommand is reachable past the `--` escape, so a token that
++        // merely looks like one is a positional value from here on.
++        if !is_escaped {
++            if let Ok(value) = arg.to_value() {
++                if let Some(next_cmd) = current_cmd.find_subcommand(value) {
++                    current_cmd = next_cmd;
++                    pos_index = 1;
++                    continue;
++                }
+             }
+         }
+ 
+@@ -154,8 +158,12 @@ fn complete_arg(
+ 
+     match state {
+         ParseState::ValueDone => {
+-            if let Ok(value) = arg.to_value() {
+-                completions.extend(complete_subcommand(value, cmd));
++            // Subcommands are unreachable past the escape, exactly as options
++            // are, so neither is offered there.
++            if !is_escaped {
++                if let Ok(value) = arg.to_value() {
++                    completions.extend(complete_subcommand(value, cmd));
++                }
+             }
+ 
+             if let Some(positional) = cmd
+diff --git a/clap_complete/tests/testsuite/engine.rs b/clap_complete/tests/testsuite/engine.rs
+index c611373b..86044641 100644
+--- a/clap_complete/tests/testsuite/engine.rs
++++ b/clap_complete/tests/testsuite/engine.rs
+@@ -283,6 +283,43 @@ goodbye-world
+     );
+ }
+ 
++#[test]
++fn no_subcommand_after_escape() {
++    let mut cmd = Command::new("exhaustive")
++        .arg(clap::Arg::new("pos").value_parser(["p1", "p2"]))
++        .subcommand(Command::new("hello-world"))
++        .subcommand(Command::new("hello-moon"));
++
++    // Past `--` no subcommand is reachable, so only positional values are
++    // offered; suggesting a subcommand name here produces a command line this
++    // same `Command` rejects.
++    assert_data_eq!(
++        complete!(cmd, "-- [TAB]"),
++        snapbox::str![[r#"
++p1
++p2
++"#]],
++    );
++}
++
++#[test]
++fn subcommand_name_after_escape_is_a_positional_value() {
++    let mut cmd = Command::new("exhaustive")
++        .arg(clap::Arg::new("p1").value_parser(["hello-world", "a2"]))
++        .arg(clap::Arg::new("p2").value_parser(["b1", "b2"]))
++        .subcommand(Command::new("hello-world").arg(clap::Arg::new("x").value_parser(["x1"])));
++
++    // `hello-world` past the escape fills the first positional, so completion
++    // continues with the second one rather than switching into the subcommand.
++    assert_data_eq!(
++        complete!(cmd, "-- hello-world [TAB]"),
++        snapbox::str![[r#"
++b1
++b2
++"#]],
++    );
++}
++
+ #[test]
+ fn suggest_multiple_positional_after_escape() {
+     let mut cmd =
+diff --git a/clap_complete/tests/testsuite/general.rs b/clap_complete/tests/testsuite/general.rs
+index fd52cb81..2e9e41c5 100644
+--- a/clap_complete/tests/testsuite/general.rs
++++ b/clap_complete/tests/testsuite/general.rs
+@@ -9,3 +9,56 @@ fn infer_value_hint_for_path_buf() {
+         .unwrap();
+     assert_eq!(input.get_value_hint(), clap::builder::ValueHint::AnyPath);
+ }
++
++/// A sink that refuses every write, standing in for the closed pipe a user
++/// creates with `myprog completions <shell> | head -1`.
++struct RefusesWrites;
++
++impl std::io::Write for RefusesWrites {
++    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
++        Err(std::io::Error::other("simulated broken pipe"))
++    }
++    fn flush(&mut self) -> std::io::Result<()> {
++        Ok(())
++    }
++}
++
++#[test]
++fn try_generate_reports_a_write_failure_for_every_shell() {
++    // `Generator::generate` is infallible and every shipped shell defines it as
++    // `try_generate(..).expect(..)`, so `try_generate` is the only route that can
++    // report a closed pipe. Driven with and without subcommands, because that is
++    // the condition that selects fish's subcommand-helper path.
++    use clap_complete::aot::{Generator as _, Shell};
++
++    let built = |with_subcommand: bool| {
++        let mut cmd = clap::Command::new("prog").arg(clap::Arg::new("o").long("o"));
++        if with_subcommand {
++            cmd = cmd.subcommand(clap::Command::new("build"));
++        }
++        cmd.set_bin_name("prog");
++        cmd.build();
++        cmd
++    };
++
++    for shell in [
++        Shell::Bash,
++        Shell::Elvish,
++        Shell::Fish,
++        Shell::PowerShell,
++        Shell::Zsh,
++    ] {
++        for with_subcommand in [false, true] {
++            let err = shell
++                .try_generate(&built(with_subcommand), &mut RefusesWrites)
++                .expect_err(&format!(
++                    "{shell:?} with_subcommand={with_subcommand} did not report the write failure"
++                ));
++            assert_eq!(
++                err.kind(),
++                std::io::ErrorKind::Other,
++                "{shell:?} with_subcommand={with_subcommand}"
++            );
++        }
++    }
++}
+diff --git a/clap_complete/tests/testsuite/zsh.rs b/clap_complete/tests/testsuite/zsh.rs
+index ad57f583..cf34f4a4 100644
+--- a/clap_complete/tests/testsuite/zsh.rs
++++ b/clap_complete/tests/testsuite/zsh.rs
+@@ -22,6 +22,31 @@ fn basic() {
+     );
+ }
+ 
++#[test]
++fn conflicts_are_excluded_in_both_directions() {
++    // `conflicts_with` is mutual at parse time, so the exclusion list zsh gets
++    // has to name it from both flags. With it on one side only, zsh offers
++    // `--b` after `--a` is refused but still offers `--a` after `--b`, and the
++    // command then fails with ErrorKind::ArgumentConflict.
++    let mut cmd = clap::Command::new("prog")
++        .arg(clap::Arg::new("a").long("a").conflicts_with("b"))
++        .arg(clap::Arg::new("b").long("b"));
++    let mut buf = Vec::new();
++    clap_complete::generate(clap_complete::shells::Zsh, &mut cmd, "prog", &mut buf);
++    let script = String::from_utf8(buf).unwrap();
++
++    let line = |flag: &str| {
++        script
++            .lines()
++            .map(str::trim)
++            .find(|l| l.contains(&format!("{flag}=[")))
++            .unwrap_or_else(|| panic!("no line for {flag} in:\n{script}"))
++            .to_owned()
++    };
++    assert_eq!(line("--a"), "'(--b)--a=[]: :_default' \\");
++    assert_eq!(line("--b"), "'(--a)--b=[]: :_default' \\");
++}
++
+ #[test]
+ fn feature_sample() {
+     let name = "my-app";
+diff --git a/clap_lex/CHANGELOG.md b/clap_lex/CHANGELOG.md
+index 61135878..75552bf0 100644
+--- a/clap_lex/CHANGELOG.md
++++ b/clap_lex/CHANGELOG.md
+@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
+ <!-- next-header -->
+ ## [Unreleased] - ReleaseDate
+ 
++### Fixes
++
++- `is_negative_number` now accepts a signed exponent, so `-1e-5` and `-1E+3` are numbers
++
+ ## [1.1.0] - 2026-03-12
+ 
+ ### Compatibility
+diff --git a/clap_lex/src/lib.rs b/clap_lex/src/lib.rs
+index 6ba028a6..230ff971 100644
+--- a/clap_lex/src/lib.rs
++++ b/clap_lex/src/lib.rs
+@@ -312,7 +312,7 @@ impl<'s> ParsedArg<'s> {
+     /// Does the argument look like a negative number?
+     ///
+     /// This won't parse the number in full but attempts to see if this looks
+-    /// like something along the lines of `-3`, `-0.3`, or `-33.03`
++    /// like something along the lines of `-3`, `-0.3`, `-33.03`, or `-1.3e-10`
+     pub fn is_negative_number(&self) -> bool {
+         self.to_value()
+             .ok()
+@@ -428,6 +428,9 @@ impl<'s> ShortFlags<'s> {
+ 
+     /// Does the short flag look like a number
+     ///
++    /// This covers integers and floats, including scientific notation with a
++    /// signed exponent such as `1.3e-10`.
++    ///
+     /// Ideally call this before doing any iterator
+     pub fn is_negative_number(&self) -> bool {
+         self.invalid_suffix.is_none() && is_number(self.utf8_prefix.as_str())
+@@ -489,36 +492,57 @@ fn split_nonutf8_once(b: &OsStr) -> (&str, Option<&OsStr>) {
+     }
+ }
+ 
++/// How far into an exponent (`e10`, `e-10`) `is_number` has read
++#[derive(Copy, Clone, PartialEq, Eq)]
++enum Exponent {
++    /// No `e`/`E` seen yet
++    None,
++    /// Saw `e`/`E` and nothing after it yet
++    Marker,
++    /// Saw `e`/`E` and its sign, but no digits yet
++    Sign,
++    /// Saw `e`/`E` and at least one digit
++    Digits,
++}
++
+ fn is_number(arg: &str) -> bool {
+     // Return true if this looks like an integer or a float where it's all
+     // digits plus an optional single dot after some digits.
+     //
+-    // For floats allow forms such as `1.`, `1.2`, `1.2e10`, etc.
++    // For floats allow forms such as `1.`, `1.2`, `1.2e10`, `1e-5`, `1E+3`, etc.
++    //
++    // Alphabetic spellings of floats (`inf`, `NaN`) are deliberately not
++    // numbers here, so that `-inf` stays available as a group of short flags.
+     let mut seen_dot = false;
+-    let mut position_of_e = None;
++    let mut exponent = Exponent::None;
+     for (i, c) in arg.as_bytes().iter().enumerate() {
+         match c {
+-            // Digits are always valid
+-            b'0'..=b'9' => {}
++            // Digits are always valid, and close out an exponent
++            b'0'..=b'9' => {
++                if exponent != Exponent::None {
++                    exponent = Exponent::Digits;
++                }
++            }
+ 
+             // Allow a `.`, but only one, only if it comes before an
+             // optional exponent, and only if it's not the first character.
+-            b'.' if !seen_dot && position_of_e.is_none() && i > 0 => seen_dot = true,
++            b'.' if !seen_dot && exponent == Exponent::None && i > 0 => seen_dot = true,
+ 
+             // Allow an exponent `e`/`E` but only at most one after the first
+             // character.
+-            b'e' | b'E' if position_of_e.is_none() && i > 0 => position_of_e = Some(i),
++            b'e' | b'E' if exponent == Exponent::None && i > 0 => exponent = Exponent::Marker,
++
++            // Allow the exponent to be signed, but only directly after the
++            // `e`/`E` and only once.
++            b'+' | b'-' if exponent == Exponent::Marker => exponent = Exponent::Sign,
+ 
+             _ => return false,
+         }
+     }
+ 
+-    // Disallow `-1e` which isn't a valid float since it doesn't actually have
+-    // an exponent.
+-    match position_of_e {
+-        Some(i) => i != arg.len() - 1,
+-        None => true,
+-    }
++    // Disallow `-1e`, `-1e-` and `-1e+`, none of which is a valid float since
++    // none actually has an exponent.
++    matches!(exponent, Exponent::None | Exponent::Digits)
+ }
+ 
+ #[doc = include_str!("../README.md")]
+diff --git a/clap_lex/tests/testsuite/parsed.rs b/clap_lex/tests/testsuite/parsed.rs
+index 6bc42ca2..07633137 100644
+--- a/clap_lex/tests/testsuite/parsed.rs
++++ b/clap_lex/tests/testsuite/parsed.rs
+@@ -120,7 +120,10 @@ fn to_short() {
+ 
+ #[test]
+ fn is_negative_number() {
+-    for number in ["-10.0", "-1", "-100", "-3.5", "-1e10", "-1.3e10", "-1E10"] {
++    for number in [
++        "-10.0", "-1", "-100", "-3.5", "-1e10", "-1.3e10", "-1E10", "-1e-5", "-1e+5", "-1E-5",
++        "-1E+5", "-1.3e-10", "-1.e-10",
++    ] {
+         let raw = clap_lex::RawArgs::new(["bin", number]);
+         let mut cursor = raw.cursor();
+         assert_eq!(raw.next_os(&mut cursor), Some(OsStr::new("bin")));
+@@ -143,7 +146,8 @@ fn is_positive_number() {
+ #[test]
+ fn is_not_number() {
+     for number in [
+-        "--10.0", "-..", "-2..", "-e", "-1e", "-1e10.2", "-.2", "-E", "-1E", "-1E10.2",
++        "--10.0", "-..", "-2..", "-e", "-1e", "-1e10.2", "-.2", "-E", "-1E", "-1E10.2", "-1e-",
++        "-1e+", "-1e-1.2", "-1e5e5", "-1-5", "-1+5", "-+5", "-inf", "-NaN",
+     ] {
+         let raw = clap_lex::RawArgs::new(["bin", number]);
+         let mut cursor = raw.cursor();
+diff --git a/examples/repl-derive.rs b/examples/repl-derive.rs
+index 8de9b33e..d7bf991c 100644
+--- a/examples/repl-derive.rs
++++ b/examples/repl-derive.rs
+@@ -5,6 +5,12 @@ use clap::{Parser, Subcommand};
+ fn main() -> Result<(), String> {
+     loop {
+         let line = readline()?;
++        if line.is_empty() {
++            // End of input. `read_line` reports zero bytes only at EOF - a bare
++            // Enter gives a newline - so there is nothing further to read and
++            // the loop has to stop rather than reprompt forever.
++            break;
++        }
+         let line = line.trim();
+         if line.is_empty() {
+             continue;
+diff --git a/examples/repl.rs b/examples/repl.rs
+index d0baaed8..9e0bdd1b 100644
+--- a/examples/repl.rs
++++ b/examples/repl.rs
+@@ -5,6 +5,12 @@ use clap::Command;
+ fn main() -> Result<(), String> {
+     loop {
+         let line = readline()?;
++        if line.is_empty() {
++            // End of input. `read_line` reports zero bytes only at EOF - a bare
++            // Enter gives a newline - so there is nothing further to read and
++            // the loop has to stop rather than reprompt forever.
++            break;
++        }
+         let line = line.trim();
+         if line.is_empty() {
+             continue;
+diff --git a/tests/builder/app_settings.rs b/tests/builder/app_settings.rs
+index 7e5d2264..9028a486 100644
+--- a/tests/builder/app_settings.rs
++++ b/tests/builder/app_settings.rs
+@@ -567,6 +567,32 @@ fn allow_negative_numbers_success() {
+     );
+ }
+ 
++#[test]
++fn allow_negative_numbers_scientific_notation() {
++    for num in ["-1e-5", "-1E+3", "-1e5", "-1.3e-10"] {
++        let res = Command::new("negnum")
++            .arg(Arg::new("panum").allow_negative_numbers(true))
++            .arg(
++                Arg::new("onum")
++                    .short('o')
++                    .action(ArgAction::Set)
++                    .allow_negative_numbers(true),
++            )
++            .arg(
++                Arg::new("lnum")
++                    .long("lnum")
++                    .action(ArgAction::Set)
++                    .allow_negative_numbers(true),
++            )
++            .try_get_matches_from(vec!["negnum", num, "-o", num, "--lnum", num]);
++        assert!(res.is_ok(), "`{num}`: {:?}", res.unwrap_err().kind());
++        let m = res.unwrap();
++        for id in ["panum", "onum", "lnum"] {
++            assert_eq!(m.get_one::<String>(id).map(|v| v.as_str()).unwrap(), num);
++        }
++    }
++}
++
+ #[test]
+ fn allow_negative_numbers_fail() {
+     let res = Command::new("negnum")
+diff --git a/tests/builder/conflicts.rs b/tests/builder/conflicts.rs
+index 5f90fc0b..00935892 100644
+--- a/tests/builder/conflicts.rs
++++ b/tests/builder/conflicts.rs
+@@ -1002,3 +1002,85 @@ fn group_conrflicts_with_subcommands() {
+     let err = res.err().unwrap();
+     assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+ }
++
++#[test]
++fn get_arg_conflicts_with_is_symmetric() {
++    // `conflicts_with` is enforced in both directions by the parser, so the
++    // reflection API has to report it in both directions too - a generator that
++    // reads it one way emits an exclusion list that lets through a combination
++    // the command then refuses.
++    let mut cmd = Command::new("prog")
++        .arg(arg!(--a <A>).conflicts_with("b"))
++        .arg(arg!(--b <B>));
++    cmd.build();
++
++    let ids = |id: &str| -> Vec<String> {
++        let arg = cmd.get_arguments().find(|a| a.get_id() == id).unwrap().clone();
++        cmd.get_arg_conflicts_with(&arg)
++            .iter()
++            .map(|a| a.get_id().to_string())
++            .collect()
++    };
++    assert_eq!(ids("a"), ["b"], "the declared direction");
++    assert_eq!(ids("b"), ["a"], "the undeclared direction");
++
++    // The parser refuses the pair in either order, which is the behaviour the
++    // two answers above have to match.
++    for argv in [
++        vec!["prog", "--a", "1", "--b", "2"],
++        vec!["prog", "--b", "2", "--a", "1"],
++    ] {
++        let err = Command::new("prog")
++            .arg(arg!(--a <A>).conflicts_with("b"))
++            .arg(arg!(--b <B>))
++            .try_get_matches_from(argv.clone())
++            .unwrap_err();
++        assert_eq!(err.kind(), ErrorKind::ArgumentConflict, "{argv:?}");
++    }
++
++    // An argument in the same command that declares no conflict is reported by
++    // neither, so the reverse scan does not simply return every other argument.
++    let mut cmd = Command::new("prog")
++        .arg(arg!(--a <A>).conflicts_with("b"))
++        .arg(arg!(--b <B>))
++        .arg(arg!(--c <C>));
++    cmd.build();
++    let c = cmd.get_arguments().find(|a| a.get_id() == "c").unwrap().clone();
++    assert!(cmd.get_arg_conflicts_with(&c).is_empty());
++
++    // Declaring the conflict from both sides must not report it twice.
++    let mut cmd = Command::new("prog")
++        .arg(arg!(--a <A>).conflicts_with("b"))
++        .arg(arg!(--b <B>).conflicts_with("a"));
++    cmd.build();
++    let a = cmd.get_arguments().find(|x| x.get_id() == "a").unwrap().clone();
++    let names: Vec<String> = cmd
++        .get_arg_conflicts_with(&a)
++        .iter()
++        .map(|x| x.get_id().to_string())
++        .collect();
++    assert_eq!(names, ["b"], "a mutual declaration is one conflict");
++}
++
++#[test]
++fn get_arg_conflicts_with_group_is_symmetric() {
++    // A conflict declared against a group unrolls to its members in the
++    // declared direction; each member has to name the declaring argument back.
++    let mut cmd = Command::new("prog")
++        .arg(arg!(--flag).conflicts_with("gr"))
++        .group(ArgGroup::new("gr").arg("some").arg("other"))
++        .arg(arg!(--some))
++        .arg(arg!(--other));
++    cmd.build();
++
++    let ids = |id: &str| -> Vec<String> {
++        let arg = cmd.get_arguments().find(|a| a.get_id() == id).unwrap().clone();
++        cmd.get_arg_conflicts_with(&arg)
++            .iter()
++            .map(|a| a.get_id().to_string())
++            .collect()
++    };
++    assert_eq!(ids("flag"), ["some", "other"]);
++    assert_eq!(ids("some"), ["flag"]);
++    assert_eq!(ids("other"), ["flag"]);
++}
+diff --git a/tests/builder/help.rs b/tests/builder/help.rs
+index a840b82c..cd901134 100644
+--- a/tests/builder/help.rs
++++ b/tests/builder/help.rs
+@@ -1205,7 +1205,8 @@ fn dont_wrap_urls() {
+     );
+ 
+     let expected = str![[r#"
+-Usage: Example update [OPTIONS]
++Usage: Example update
++       [OPTIONS]
+ 
+ Options:
+       --force-non-host

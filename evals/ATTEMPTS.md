@@ -24,10 +24,13 @@ loss rather than hiding it.
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
+| clap | 4 | 31 | converged | evaluator countersigned | 0 |
 | claude-agent-sdk-python (attempt 1) | 3 | 30 | **not converged** | n/a | 0 |
 | claude-agent-sdk-python (attempt 2) | 3 | 30 | converged | evaluator countersigned | 1 |
 | claude-code-action (attempt 1) | 3 | 30 | **not converged** | n/a | 0 |
 | claude-code-action (attempt 2) | 3 | 30 | converged | evaluator countersigned | 0 |
+| click | 5 | 42 | **not converged** | n/a | 0 |
+| cobra | 4 | 32 | converged | evaluator countersigned | 0 |
 | commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
 | diff-so-fancy | 3 | 30 | **not converged** | n/a | 2 |
@@ -58,6 +61,7 @@ loss rather than hiding it.
 | swift-algorithms | 3 | 24 | converged | evaluator countersigned | 1 |
 | ta | 6 | 64 | converged | evaluator **unavailable**, recorded | 0 |
 | thor | 2 | 20 | **not converged** | n/a | 0 |
+| validator | 4 | 31 | converged | evaluator countersigned | 1 |
 | yfinance | 1 | 9 | converged | evaluator countersigned | 0 |
 | PapaParse | audit only | - | audit, not a loop run | n/a | - |
 | **libuv** | at least 1 | at least 1 | **abandoned, no receipt** | n/a | - |
@@ -72,12 +76,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 28 brownfield convergences:
+The engine tightened over time. Of the 31 brownfield convergences:
 
-- **23** were countersigned by the adversarial evaluator, the current standard.
-  Sixteen of those met the empty-ledger rule; `cJSON`, `swift-algorithms`,
-  `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action` and
-  `claude-agent-sdk-python` met
+- **26** were countersigned by the adversarial evaluator, the current standard.
+  Seventeen of those met the empty-ledger rule, `cobra` being the most recent;
+  `cJSON`, `swift-algorithms`,
+  `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
+  `claude-agent-sdk-python`, `validator` and `clap` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -87,7 +92,7 @@ The engine tightened over time. Of the 28 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 28 as one number
+Every receipt names the standard its own run met. Pooling all 31 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -101,13 +106,14 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 28 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 31 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
-`magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action` and
-`claude-agent-sdk-python`, and each receipt names what it carried - three Lows
+`magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
+`claude-agent-sdk-python`, `validator` and `clap`, and each receipt names what it
+carried - three Lows
 for `cJSON`, three for `swift-algorithms`, five for `magic_enum`, two for
 `commander.js`, four for `claude-code-action`, three for
-`claude-agent-sdk-python`, and in
+`claude-agent-sdk-python`, two for `validator`, six for `clap`, and in
 `path-to-regexp`'s case no Low at all but one open Medium, blocked with its
 reason recorded.** That last one is the
 floor's edge and is worth stating plainly: `PTR-2` is a security finding, rated
@@ -404,6 +410,60 @@ audit elects to do them: run 2's iteration 6 took two rows and its iteration 8
 took two more. That is the argument for scheduling sweeps rather than for a
 bigger budget: a fourth run at the same sweep rate reaches the gate, and the
 budget was pre-registered at three before the target launched.
+
+## click, where every gate invocation rejected the run's own prose
+
+`pallets/click` is the CLI framework behind Flask and a large part of the Python
+tooling world, 17,627 stars, and the Python counterpart to `commander.js`, which
+converged in a single run. click did not converge in five. The budget was
+pre-registered at five runs of ten iterations before the first iteration, and
+all five were spent: **42 iterations, 23 findings closed (1 High, 14 Medium, 8
+Low), 23 of 23 surface inventory rows swept**, and shipped-code change of 20
+files at +1,178 / -75.
+
+**Five evaluator invocations across three runs. Every one a REJECT. Not one of
+them was a missed defect in click.** All four reason blocks carry the same
+label - `Medium, docs, documentation` - and every one is a claim in the run's own
+prose that the run's own checks contradict:
+
+1. `CHANGES.md` stated that click's help text passes through `inspect.cleandoc`
+   "so no help page rendered either shape". The gate rendered 312 real help
+   pages; 24 differ between the trees.
+2. A Settled class generalised from an 8-shape corpus to every help page - **in
+   the same iteration that added the governing lesson against exactly that** to
+   the run's own Lessons section.
+3. A Settled class cited "516 offending lines" and the battery reports **984**.
+   The invalidating commit is that run's own iteration 5, which widened the
+   battery's enumeration and touched both the battery and the line quoting its
+   number, updating neither.
+4. Terminal: `CHANGES.md` stated without qualification "No line of a rendered
+   help page ends in whitespace", false at HEAD across 30 lines of 140 real help
+   pages, **and contradicted by a line the same run had filed in its own
+   backlog**. `docs/changes.md` includes that file, so the false half was
+   published documentation.
+
+The run reached the shape convergence is supposed to reward - full surface
+swept, no High or Medium outstanding for long stretches - and spent its endgame
+being refused on the accuracy of its own write-up. The ledger closed at 1 High,
+2 Medium and 1 Low, because the final gate filed fresh work rather than the run
+exhausting its material.
+
+This is the third target to die on one recurring class, after `BurntSushi/toml`
+(seven gates on prose claims wider than their checks) and a pair of self-runs
+where one paragraph failed three consecutive invocations. It is filed as an
+engine item with two narrow mechanisms - bind a stated number to the battery
+that produces it and re-run it, and require an enumeration reference behind an
+absolute quantifier added to project documentation. Deliberately not proposed: a
+general truth-checker for English, which would be the same over-broad claim the
+finding is about.
+
+Two disclosures belong on this row. Two of the five rounds were killed by host
+failures rather than by a stopping rule - one WSL shutdown and one host crash -
+and both count as spent under the accounting this study applies, because the
+alternative quietly buys extra iterations. And the declared limits stand: pytest
+is pinned to 9.0.2 to match upstream's lockfile, and **31,000 stress tests are
+deselected by the project's own configuration**, so nothing here claims them
+green.
 
 ## thor, where the surface outran the budget
 
