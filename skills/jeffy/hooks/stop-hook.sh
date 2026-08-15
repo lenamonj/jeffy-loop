@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.10.0"
+JEFFY_VERSION="1.11.0"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -755,6 +755,17 @@ unswept_rows=""
 if [ -f "$root/PLAN.md" ] && grep -q '^## Surface inventory' "$root/PLAN.md"; then
   unswept_rows="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { n++ } END { printf "%d", n }' "$root/PLAN.md")"
 fi
+# P0-4 (1.11.0): the severity-aware blocking count, computed once beside the
+# raw counts and read by the closing-extension grant, the refill guard, and
+# the sweep-arithmetic note - one parse, three readers, because two severity
+# parses in one hook is how they drift. Same floor as the closing rule: a
+# task line whose severity is not a parseable Low blocks, so the count FAILS
+# CLOSED on an unparseable line exactly as the declaration does. Empty when
+# BACKLOG.md is absent, and every reader treats empty as cannot-evaluate.
+open_hm=""
+if [ -f "$root/BACKLOG.md" ]; then
+  open_hm="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \(Low[,)]/ { n++ } END { printf "%d", n }' "$root/BACKLOG.md")"
+fi
 
 # Extension honesty: the +2 window buys the convergence sequence - the gate,
 # fixes for tasks that gate filed, the declaration - never new work. A ledger
@@ -762,9 +773,29 @@ fi
 # honestly out of budget, with the filed tasks kept for the next run. The
 # exception is read from the journal: when the last primary entry for this
 # run is the EVALUATOR gate, its filings ride the one-transaction endgame.
+# P0-4 (1.11.0): the trigger is a genuine refill, not the raw counts. An
+# accurately scored open Low is legal at the declaration, so the Lows the
+# window was granted over are legal inside it - a window granted with
+# carried Lows died here one turn later as a false refill. What still ends
+# the window: any open High or Medium (a window is never granted with one,
+# so its presence is new work, measured by the same fail-closed parse the
+# grant and the closing rule use), or the Low count rising above the count
+# the grant recorded on the state file (extension_lows) - a Low filed inside
+# the window is discovered work the prompt routes to the run report, and a
+# ledger line for it is the refill this guard exists to end. A granted state
+# file with no extension_lows key (a run granted before 1.11.0) cannot
+# evaluate the delta and fails open to the High/Medium test alone.
+ext_lows_rec="$(fm extension_lows)"
+new_low_refill=""
+cur_lows=""
+if [ -n "$ext_lows_rec" ] && [ -n "$open_now" ] && [ -n "$open_hm" ]; then
+  case "$ext_lows_rec" in *[!0-9]*) ;; *)
+    cur_lows=$((open_now + open_next + open_later - open_hm))
+    [ "$cur_lows" -gt "$ext_lows_rec" ] && new_low_refill=1
+  ;; esac
+fi
 if [ "$(fm extension_granted)" = "1" ] && [ "$iter" -ge $((max - 1)) ] \
-  && [ -n "$open_now" ] \
-  && { [ "$open_now" != "0" ] || [ "$open_next" != "0" ] || [ "$open_later" != "0" ]; }; then
+  && { { [ -n "$open_hm" ] && [ "$open_hm" != "0" ]; } || [ -n "$new_low_refill" ]; }; then
   last_type=""
   if [ -f "$root/JOURNAL.md" ]; then
     last_type="$(awk -v tok="| $runid8 |" '
@@ -777,7 +808,11 @@ if [ "$(fm extension_granted)" = "1" ] && [ "$iter" -ge $((max - 1)) ] \
     ' "$root/JOURNAL.md")"
   fi
   if [ "$last_type" != "EVALUATOR" ]; then
-    echo "jeffy stop hook: the ledger refilled inside the closing extension (open tasks Now $open_now Next $open_next Later $open_later; last entry $last_type); the extension buys the convergence sequence, not new work. Ending the run out of budget; the filed tasks stay on the ledger for the next run." >&2
+    refill_kind="work above Low (blocking open $open_hm)"
+    if [ -z "$open_hm" ] || [ "$open_hm" = "0" ]; then
+      refill_kind="new Low tasks (open Lows $cur_lows against $ext_lows_rec recorded at the grant)"
+    fi
+    echo "jeffy stop hook: the ledger refilled inside the closing extension with $refill_kind (open tasks Now $open_now Next $open_next Later $open_later; last entry $last_type); the extension buys the convergence sequence, not new work - the Lows the grant recorded ride, new filings do not. Ending the run out of budget; the filed tasks stay on the ledger for the next run." >&2
     rm -f "$state"
     exit 0
   fi
@@ -785,14 +820,19 @@ fi
 
 # Budget spent: end the run and let the session stop. A convergence claim
 # whose checks failed gets a stderr note instead of a silent swallow.
-# One exception, taken once: a run whose ledger is empty and whose inventory
-# is swept has nothing left but its convergence sequence, and that sequence
-# costs two to three iterations nobody budgeted - six of fourteen runs across
-# two projects died there with the work done. The grant is +2, recorded on the
-# state file, and it applies just as much when a check rejected the promise at
-# the last iteration: that rejection is repairable, and today it goes to
-# stderr where nobody reads it. Conditions the hook cannot evaluate (no
-# ledger, no inventory section) are not conditions it can grant on.
+# One exception, taken once: a run with nothing left but its convergence
+# sequence, and that sequence costs two to three iterations nobody budgeted -
+# six of fourteen runs across two projects died there with the work done.
+# P0-4 (1.11.0): "nothing left" is the severity floor, not an empty ledger.
+# Under P0-2 the canonical endgame shape is a swept map, zero open High or
+# Medium, and carried Lows named on the record - the exact shape the raw-count
+# test could never grant to. The ledger test here is now the same fail-closed
+# severity test the declaration uses, read from the shared open_hm count. The
+# grant is +2, recorded on the state file, and it applies just as much when a
+# check rejected the promise at the last iteration: that rejection is
+# repairable, and today it goes to stderr where nobody reads it. Conditions
+# the hook cannot evaluate (no ledger, no inventory section) are not
+# conditions it can grant on.
 # Two shapes are not the boundary this grant was written for and take the
 # plain exhaustion path instead. An iteration already past max is a
 # hand-lowered budget, and extending it re-feeds arithmetic that runs
@@ -803,6 +843,7 @@ fi
 # with nothing accumulating to stop it. The guard tests the same ^---$ the
 # rewriter counts, because a grant the rewriter cannot stamp is not a grant.
 extension=""
+ext_lows_grant=""
 corrective=""
 if [ "$iter" -ge "$max" ]; then
   fm_close="$(grep -c '^---$' "$state" 2>/dev/null || true)"
@@ -816,9 +857,14 @@ if [ "$iter" -ge "$max" ]; then
   if [ "$iter" -eq "$max" ] && [ "$fm_close" -ge 2 ] \
     && [ "$(fm extension_granted)" != "1" ] \
     && [ "$ev_rejects" -lt 3 ] && { [ -z "$ev_art_ord" ] || [ "$ev_art_ord" -lt 4 ]; } \
-    && [ "$open_now" = "0" ] && [ "$open_next" = "0" ] && [ "$open_later" = "0" ] \
+    && [ "$open_hm" = "0" ] \
     && [ "$unswept_rows" = "0" ]; then
     extension=1
+    # The grant records the ledger's Low count on the state file, so the
+    # refill guard above can tell the Lows the window was granted over from
+    # a Low filed inside it. open_hm is "0" here, so the raw totals are the
+    # Low count exactly.
+    ext_lows_grant=$((open_now + open_next + open_later))
   elif [ -n "$violation" ] && [ "$fm_close" -ge 2 ] \
     && [ "$(fm corrective_granted)" != "1" ]; then
     # A rejected convergence at budget exhaustion used to go to stderr and
@@ -1110,11 +1156,12 @@ tmp="$state.tmp"
 # archive_migrated rides along with the strict archive baseline it certifies:
 # the baseline this rewrite stores is strict, so the naive escape above has
 # done its one job and must never be taken again.
-if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" '
-  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (ex && !sex) print "extension_granted: 1"; if (co && !sco) print "corrective_granted: 1" } print; next }
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" '
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
   fmc == 1 && ex && /^max_iterations: / { print "max_iterations: " mx; next }
   fmc == 1 && ex && /^extension_granted: / { print "extension_granted: 1"; sex = 1; next }
+  fmc == 1 && ex && el != "" && /^extension_lows: / { print "extension_lows: " el; sel = 1; next }
   fmc == 1 && co && /^corrective_granted: / { print "corrective_granted: 1"; sco = 1; next }
   fmc == 1 && /^last_head: / { print "last_head: " lh; slh = 1; next }
   fmc == 1 && /^last_backlog: / { print "last_backlog: " lb; slb = 1; next }
@@ -1165,11 +1212,18 @@ if [ -n "$unswept_rows" ]; then
 fi
 run_state="$run_state; jeffy v$JEFFY_VERSION"
 reason="$reason $run_state."
-# An empty ledger over a swept surface is not a finished run: the closing
-# audit, the evaluator gate and the declaration are still to come, and runs
-# that did not know that spent their last iterations discovering it.
-if [ "$open_now" = "0" ] && [ "$open_next" = "0" ] && [ "$open_later" = "0" ] && [ "$unswept_rows" = "0" ]; then
+# Zero blocking findings over a swept surface is not a finished run: the
+# closing audit, the evaluator gate and the declaration are still to come,
+# and runs that did not know that spent their last iterations discovering
+# it. P0-4 (1.11.0): the test is the shared severity count, not the raw
+# totals - the canonical endgame carries its accurately scored Lows, and a
+# note keyed to an empty ledger never reached exactly the runs that needed
+# its arithmetic most.
+if [ "$open_hm" = "0" ] && [ "$unswept_rows" = "0" ]; then
   reason="$reason Only the convergence sequence remains; it typically needs 2 to 3 iterations (closing audit, evaluator gate, declaration); plan the remaining $((max - next)) accordingly."
+  if [ "$open_now" != "0" ] || [ "$open_next" != "0" ] || [ "$open_later" != "0" ]; then
+    reason="$reason Open Lows are carried to the declaration, named in the declaring entry and the receipt; they are not the remaining work."
+  fi
 fi
 # P1-39 (1.10.0): when nothing on the ledger outranks the map - no open High,
 # no open Medium, no unparseable severity, which fails closed exactly as the
@@ -1179,9 +1233,11 @@ fi
 # already in the run state, but a number nobody is told to act on is not a
 # schedule. Findings above Low keep the note silent, because a known High or
 # Medium legitimately outranks mapping in the queue.
-if [ -n "$unswept_rows" ] && [ "$unswept_rows" != "0" ] && [ -f "$root/BACKLOG.md" ]; then
-  hm_open="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \(Low[,)]/ { n++ } END { printf "%d", n }' "$root/BACKLOG.md")"
-  if [ "$hm_open" = "0" ]; then
+if [ -n "$unswept_rows" ] && [ "$unswept_rows" != "0" ]; then
+  # The count is the shared open_hm parse from the run-state block (P0-4
+  # folded the second copy of the severity awk into it; empty means no
+  # BACKLOG.md, which keeps the note silent exactly as before).
+  if [ "$open_hm" = "0" ]; then
     reason="$reason Sweep arithmetic: $unswept_rows rows are unswept with $((max - next + 1)) iterations left including this one; unswept rows outrank open Lows in the queue, so sweeping is the top item now."
   fi
 fi

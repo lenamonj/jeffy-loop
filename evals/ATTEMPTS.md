@@ -24,7 +24,8 @@ loss rather than hiding it.
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
-| claude-agent-sdk-python | 3 | 30 | **not converged** | n/a | 0 |
+| claude-agent-sdk-python (attempt 1) | 3 | 30 | **not converged** | n/a | 0 |
+| claude-agent-sdk-python (attempt 2) | 3 | 30 | converged | evaluator countersigned | 1 |
 | claude-code-action (attempt 1) | 3 | 30 | **not converged** | n/a | 0 |
 | claude-code-action (attempt 2) | 3 | 30 | converged | evaluator countersigned | 0 |
 | commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
@@ -71,11 +72,12 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 27 brownfield convergences:
+The engine tightened over time. Of the 28 brownfield convergences:
 
-- **22** were countersigned by the adversarial evaluator, the current standard.
+- **23** were countersigned by the adversarial evaluator, the current standard.
   Sixteen of those met the empty-ledger rule; `cJSON`, `swift-algorithms`,
-  `magic_enum`, `commander.js`, `path-to-regexp` and `claude-code-action` met
+  `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action` and
+  `claude-agent-sdk-python` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -85,7 +87,7 @@ The engine tightened over time. Of the 27 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 27 as one number
+Every receipt names the standard its own run met. Pooling all 28 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -99,10 +101,13 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 27 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 28 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
-`magic_enum`, `commander.js`, `path-to-regexp` and `claude-code-action`, and
-each receipt names what it carried - three Lows, three, five, two, four, and in
+`magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action` and
+`claude-agent-sdk-python`, and each receipt names what it carried - three Lows
+for `cJSON`, three for `swift-algorithms`, five for `magic_enum`, two for
+`commander.js`, four for `claude-code-action`, three for
+`claude-agent-sdk-python`, and in
 `path-to-regexp`'s case no Low at all but one open Medium, blocked with its
 reason recorded.** That last one is the
 floor's edge and is worth stating plainly: `PTR-2` is a security finding, rated
@@ -281,7 +286,10 @@ record says so in the journal rather than leaving the score standing. Four
 gate invocations, four reproductions the loop confirmed itself before accepting,
 zero arguments with the verdict.
 
-## claude-agent-sdk-python, the same wall from the other side
+## claude-agent-sdk-python attempt 1, the same wall from the other side
+
+**Attempt 2 converged, and its receipt is [here](claude-agent-sdk-python/REPORT.md).**
+This section is attempt 1's record and is left standing as written.
 
 `anthropics/claude-agent-sdk-python` is the SDK for building agents on Claude
 Code, at 7,881 stars, run from tag `v0.2.138`. Three runs, 30 iterations,
@@ -315,6 +323,26 @@ can see, and the map fills only when an audit elects to fill it. A target's row
 count, not its difficulty, decides whether three runs can open the declaration
 path at all. That is an engine property, and it is the item the next release is
 built around.
+
+**Attempt 2, on engine v1.10.0, converged - and left this attempt's High
+standing.** Same base commit, same verify command, same pre-registered three-run
+budget, one variable changed. The map went 20 of 31, 31 of 31, 31 of 31 across
+nine scheduled sweep iterations against zero here, the gate was invoked twice
+against zero here, and the declaration landed at `f2e8974` on the last budgeted
+iteration of the last budgeted run with three Lows carried.
+
+Two things about that comparison are stated on the receipt rather than left
+flattering. The denominators differ - attempt 2's opening audit re-enumerated
+the same code as 31 rows against this attempt's 44, none unreachable against
+three here - so coverage compares as a fraction, 43% against 100%, and never as
+a row count. And T8, the High in this attempt's list, **is still live in the tree
+attempt 2 declared converged**: this attempt's own committed battery, run
+unmodified against that tree, exits 1 with seven named failures including
+`create_sdk_mcp_server published an empty schema for ExtOuter`. Attempt 2 swept
+the row that owns that code and edited the very function four lines from the
+branch that returns the empty schema. Two independent runs over one codebase
+produced disjoint high-severity findings, which is the second and sharper
+instance of the limit `claude-code-action` first showed.
 
 ## claude-code-action attempt 1, an empty ledger that could not declare
 
@@ -366,8 +394,10 @@ this one makes it with a ledger that **did** empty. Nothing was left to fix, the
 suite was green, and the run was still refused the gate, because sweeping the map
 and fixing findings compete for iterations and only one of them is scheduled.
 Five targets have now ended a run with zero evaluator invocations - `mruby`,
-`eemeli/yaml`, `thor`, `claude-agent-sdk-python` and this one - and the engine
-item that addresses it is the defining change of the next release.
+`eemeli/yaml`, `thor`, `claude-agent-sdk-python` attempt 1 and this one - and the
+engine item that addresses it is the defining change of the next release. Both
+Anthropic targets were then re-run on that release and both converged, each with
+its own attempt-2 row above.
 
 The three runs did make the map move, 4 to 14 to 17, and the sweeps batch when an
 audit elects to do them: run 2's iteration 6 took two rows and its iteration 8
