@@ -25,7 +25,8 @@ loss rather than hiding it.
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
 | claude-agent-sdk-python | 3 | 30 | **not converged** | n/a | 0 |
-| claude-code-action | 3 | 30 | **not converged** | n/a | 0 |
+| claude-code-action (attempt 1) | 3 | 30 | **not converged** | n/a | 0 |
+| claude-code-action (attempt 2) | 3 | 30 | converged | evaluator countersigned | 0 |
 | commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
 | diff-so-fancy | 3 | 30 | **not converged** | n/a | 2 |
@@ -70,12 +71,12 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 26 brownfield convergences:
+The engine tightened over time. Of the 27 brownfield convergences:
 
-- **21** were countersigned by the adversarial evaluator, the current standard.
+- **22** were countersigned by the adversarial evaluator, the current standard.
   Sixteen of those met the empty-ledger rule; `cJSON`, `swift-algorithms`,
-  `magic_enum`, `commander.js` and `path-to-regexp` met the v1.9.0 severity
-  floor described below, `cJSON` being the first convergence in the study that
+  `magic_enum`, `commander.js`, `path-to-regexp` and `claude-code-action` met
+  the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
   standing instruction against sub-agents, and the receipt says so rather than
@@ -84,7 +85,7 @@ The engine tightened over time. Of the 26 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 25 as one number
+Every receipt names the standard its own run met. Pooling all 27 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -98,11 +99,12 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 26 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 27 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
-`magic_enum`, `commander.js` and `path-to-regexp`, and each receipt names what it
-carried - three Lows, three, five, two, and in `path-to-regexp`'s case no Low at
-all but one open Medium, blocked with its reason recorded.** That last one is the
+`magic_enum`, `commander.js`, `path-to-regexp` and `claude-code-action`, and
+each receipt names what it carried - three Lows, three, five, two, four, and in
+`path-to-regexp`'s case no Low at all but one open Medium, blocked with its
+reason recorded.** That last one is the
 floor's edge and is worth stating plainly: `PTR-2` is a security finding, rated
 unsafe by the project's own ReDoS checker on three of 48 generated regexps, and
 every formulation that clears the verdict drops a documented parse. Closing it is
@@ -136,7 +138,7 @@ Convergence here is per-run, and a blocked run is relaunched from written
 state with a fresh evaluator budget. Under that protocol, persistence raises
 the chance of eventually converging - dotenv took eight runs, dayjs eight,
 gitignore five with three terminal rejections along the way. The run counts
-above are published precisely so that "26 converged" is read with the cost
+above are published precisely so that "27 converged" is read with the cost
 attached rather than as a success rate.
 
 Targets from here on carry a **pre-registered run budget** committed before
@@ -314,7 +316,7 @@ count, not its difficulty, decides whether three runs can open the declaration
 path at all. That is an engine property, and it is the item the next release is
 built around.
 
-## claude-code-action, an empty ledger that could not declare
+## claude-code-action attempt 1, an empty ledger that could not declare
 
 `anthropics/claude-code-action` is the GitHub Action that runs Claude against
 issues and pull requests, at 8,618 stars, run from `main` at `e63208c` because
@@ -323,19 +325,24 @@ filed and 20 closed - 3 High, 7 Medium, 11 Low** - a shipped change of 37 files,
 +1,401/-737, and **no convergence**.
 
 **All three Highs are security findings, and all three are in the path between an
-untrusted contributor and the model:**
+untrusted contributor and the model.** Described here by class only:
 
-- `sanitizeContent` did not remove the Unicode Tags block (U+E0000-U+E007F) or
-  ten other invisible format characters, so issue, PR, comment and review text
-  from anyone could carry **arbitrary hidden ASCII into the model prompt**.
-- Fork-controlled PR identifiers reached the prompt **without passing through
-  `sanitizeContent` at all** - `headRefName` and `baseRefName` in `formatContext`,
-  file paths in `formatChangedFiles` and `formatChangedFilesWithSHA`, and the
-  inline-comment path.
-- `scripts/git-push.sh` rejected only leading-dash flags, so a `+`-prefixed
-  refspec passed `git check-ref-format --branch` and the wrapper ran
-  `git push origin +main` - **a force push, which the wrapper's own header says
-  it exists to prevent**.
+- a gap in the sanitizer that untrusted text passes through on its way to the
+  model prompt,
+- one untrusted field reaching the prompt without passing through that sanitizer
+  at all, while adjacent fields do,
+- a wrapper script accepting an input its own header states it exists to refuse.
+
+**Redaction, 2026-08-14, disclosed rather than performed quietly.** This section
+originally named the exact mechanism of each of the three, and that text was
+public in this repository from 2026-08-14 until this commit. One of the three
+has since been reported to the vendor through their published security channel;
+the other two have not been reported, so their mechanics are withheld here as
+well. The original text remains in this repository's git history and is not
+being rewritten. Nothing about the findings is being retracted, softened or
+rescored - only the reproduction detail is withheld, and this note exists so the
+change is visible rather than silent. The counts, severities and every claim
+about the run are unchanged.
 
 **Why it did not converge is the whole point of this row, and it is not the
 findings.** The ledger closed empty except for one Low. The suite was green. What
