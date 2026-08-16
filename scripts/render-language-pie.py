@@ -60,7 +60,7 @@ with sync_playwright() as p:
         page.goto(f"{src}?theme={theme}&data={payload}")
         page.wait_for_timeout(300)
         out = root / "media" / f"language-pie-{theme}.png"
-        page.screenshot(path=str(out))
+        page.screenshot(path=str(out), full_page=True)
         print(f"wrote {out}")
         page.close()
     browser.close()
