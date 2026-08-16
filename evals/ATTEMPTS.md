@@ -40,6 +40,7 @@ loss rather than hiding it.
 | go-yaml | 3 | 29 | converged | evaluator countersigned | 0 |
 | goldmark | 5 | 47 | **not converged** | n/a | 0 |
 | gson | 1 | 2 | converged | evaluator countersigned | 0 |
+| Humanizer | 4 | 32 | **not converged** | n/a | 0 |
 | image-rs (attempt 1) | 2 | 10 | **not converged** | n/a | 2 |
 | image-rs (attempt 2) | 3 | 30 | **not converged** | n/a | 0 |
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
@@ -56,6 +57,7 @@ loss rather than hiding it.
 | rrule | 4 | 33 | converged | evaluator countersigned | 0 |
 | RuboCop | 1 | 7 | converged | evaluator countersigned | 0 |
 | rust-url | 3 | 30 | converged | evaluator countersigned | 0 |
+| shopspring/decimal | 4 | 33 | **not converged** | n/a | 4 |
 | sqlparse | 5 | 47 | converged | evaluator countersigned | 2 |
 | Spectre.Console | 1 | 8 | converged | evaluator countersigned | 0 |
 | speedtest-cli | 1 | 5 | converged | pre-evaluator | 0 |
@@ -64,6 +66,7 @@ loss rather than hiding it.
 | thor | 2 | 20 | **not converged** | n/a | 0 |
 | validator | 4 | 31 | converged | evaluator countersigned | 1 |
 | yfinance | 1 | 9 | converged | evaluator countersigned | 0 |
+| zod | 4 | 39 | converged | evaluator countersigned | 0 |
 | PapaParse | audit only | - | audit, not a loop run | n/a | - |
 | **libuv** | at least 1 | at least 1 | **abandoned, no receipt** | n/a | - |
 
@@ -77,13 +80,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 32 brownfield convergences:
+The engine tightened over time. Of the 33 brownfield convergences:
 
-- **27** were countersigned by the adversarial evaluator, the current standard.
+- **28** were countersigned by the adversarial evaluator, the current standard.
   Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-  `claude-agent-sdk-python`, `validator` and `clap` met
+  `claude-agent-sdk-python`, `validator`, `clap` and `zod` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -93,7 +96,7 @@ The engine tightened over time. Of the 32 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 32 as one number
+Every receipt names the standard its own run met. Pooling all 33 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -107,14 +110,14 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 32 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 33 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
 `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-`claude-agent-sdk-python`, `validator` and `clap`, and each receipt names what it
+`claude-agent-sdk-python`, `validator`, `clap` and `zod`, and each receipt names what it
 carried - three Lows
 for `cJSON`, three for `swift-algorithms`, five for `magic_enum`, two for
 `commander.js`, four for `claude-code-action`, three for
-`claude-agent-sdk-python`, two for `validator`, six for `clap`, and in
+`claude-agent-sdk-python`, two for `validator`, six for `clap`, six for `zod`, and in
 `path-to-regexp`'s case no Low at all but one open Medium, blocked with its
 reason recorded.** That last one is the
 floor's edge and is worth stating plainly: `PTR-2` is a security finding, rated
@@ -465,6 +468,58 @@ alternative quietly buys extra iterations. And the declared limits stand: pytest
 is pinned to 9.0.2 to match upstream's lockfile, and **31,000 stress tests are
 deselected by the project's own configuration**, so nothing here claims them
 green.
+
+## shopspring/decimal, fully swept by iteration 11 and still not converged
+
+`shopspring/decimal` is the arbitrary-precision decimal library under a large
+share of Go's money-handling code, and at 4 source files the smallest surface
+in its cohort. It swept all 12 of its inventory rows inside run 1 and kept
+them swept for three more runs - and every one of its four runs ended
+blocked. The evaluator was invoked once, in run 1, and REJECTed; it was never
+due again.
+
+What blocked it was not coverage but decisions and cost. `D1` is a High the
+run blocked on the owner: rescale-based operations can materialize enormous
+coefficients from an attacker-supplied exponent, and every fix changes
+documented public behaviour. The gate's own artifact records that blocking it
+is legitimate. `L1` is a Medium performance bound the fix could not meet.
+The last run's final audit filed `O2` - three of `NullDecimal`'s four decode
+paths leave `Valid` true after a rejected payload, which is the one state the
+type exists to distinguish - too late in the budget to fix honestly, so the
+run wrapped up and said so. 15 findings closed across the four runs,
+including four Highs of the wrong-numbers kind: `ExpHullAbrham`'s
+small-argument shortcut returned `10^exp` instead of 1, `Shift` overflowed
+its exponent as a plain int32, `PowInt32` panicked on zero to a negative
+power, and Sin/Cos/Tan returned values outside their own range for large
+arguments.
+
+The cohort lesson is in the pairing: the same wave's largest surface (`zod`,
+196 files) converged and its smallest did not. A fully swept board with an
+empty ledger is not convergence when what remains needs an owner rather than
+an iteration.
+
+## Humanizer, four runs against a 32-row surface with one row swept
+
+`Humanizer` is the .NET string-humanization library, and its run record is
+the most extreme coverage case in the corpus: **four runs of a pre-registered
+4x10 budget, 32 iterations, one of 32 inventory rows swept, and the evaluator
+never once due.** The single swept row - number-to-words - produced 19 closed
+findings, 14 of them High: ordinalizers branching on the raw signed number,
+Maltese silently dropping the sign on every exact multiple of 10^9, Thai
+dropping the whole number at the long boundary, twenty cultures throwing
+above their implemented scale. The run ended with a High and four Mediums
+still open on that same row, all real, all in shipped code.
+
+One disclosure the row's numbers do not show: run 2 was **stopped by
+operator decision after 2 iterations** to preserve a weekly session
+allowance, not by any stopping rule, and it counts as one of the four
+budgeted runs because an externally ended round is spent budget.
+
+Humanizer is the strongest single datapoint for the coverage problem the
+2026-08-15 cohort was designed to measure: a surface dense enough in real
+findings absorbs the entire budget one row deep, the map never clears, and
+the gate that certifies convergence is never reached. The engine backlog
+carries this as its coverage-guarantee item; this row is why.
 
 ## thor, where the surface outran the budget
 
