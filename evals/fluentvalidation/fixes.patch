@@ -1,0 +1,443 @@
+diff --git a/.gitignore b/.gitignore
+index 4c9cb873..db7e4d05 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,28 +1,30 @@
+-build/
+-*.suo
+-*.user
+-bin
+-Bin
+-obj
+-_ReSharper*
+-*.csproj.user
+-*.resharper.user
+-*.suo
+-*.cache
+-TestResult.xml
+-*.orig
+-.hg/
+-.hgignore
+-packages/
+-*.sln.ide/
+-artifacts/
+-TestResults/
+-.vs/
+-*.lock.json
+-*.ncrunch*
+-.idea/
+-.build/
+-docs/_site/
+-docs/Gemfile.lock
+-docs/_build/
+-src/FluentValidation.Tests.Benchmarks/BenchmarkDotNet.Artifacts/
++build/
++*.suo
++*.user
++bin
++Bin
++obj
++_ReSharper*
++*.csproj.user
++*.resharper.user
++*.suo
++*.cache
++TestResult.xml
++*.orig
++.hg/
++.hgignore
++packages/
++*.sln.ide/
++artifacts/
++TestResults/
++.vs/
++*.lock.json
++*.ncrunch*
++.idea/
++.build/
++docs/_site/
++docs/Gemfile.lock
++docs/_build/
++src/FluentValidation.Tests.Benchmarks/BenchmarkDotNet.Artifacts/
++BenchmarkDotNet.Artifacts/
++.claude/jeffy-loop.local.md
+diff --git a/src/FluentValidation.Tests.Benchmarks/FluentValidation.Tests.Benchmarks.csproj b/src/FluentValidation.Tests.Benchmarks/FluentValidation.Tests.Benchmarks.csproj
+index e56ad720..246b51e4 100644
+--- a/src/FluentValidation.Tests.Benchmarks/FluentValidation.Tests.Benchmarks.csproj
++++ b/src/FluentValidation.Tests.Benchmarks/FluentValidation.Tests.Benchmarks.csproj
+@@ -7,8 +7,8 @@
+   </PropertyGroup>
+ 
+   <ItemGroup>
+-    <PackageReference Include="BenchmarkDotNet" Version="0.12.1" />
+-    <PackageReference Include="Bogus" Version="30.0.2" />
++    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
++    <PackageReference Include="Bogus" Version="35.6.5" />
+   </ItemGroup>
+ 
+   <ItemGroup>
+diff --git a/src/FluentValidation.Tests/CascadingFailuresTester.cs b/src/FluentValidation.Tests/CascadingFailuresTester.cs
+index de3ebf90..c0d5db59 100644
+--- a/src/FluentValidation.Tests/CascadingFailuresTester.cs
++++ b/src/FluentValidation.Tests/CascadingFailuresTester.cs
+@@ -449,7 +449,7 @@ public async Task Cascade_mode_can_be_set_after_validator_instantiated_async_leg
+ 	}
+ 
+ 	[Fact]
+-	public async void Cascade_set_to_stop_in_child_validator_with_RuleForEach_in_parent() {
++	public async Task Cascade_set_to_stop_in_child_validator_with_RuleForEach_in_parent() {
+ 		// See https://github.com/FluentValidation/FluentValidation/issues/2207
+ 
+ 		var childValidator = new InlineValidator<Order>();
+diff --git a/src/FluentValidation.Tests/ComplexValidationTester.cs b/src/FluentValidation.Tests/ComplexValidationTester.cs
+index 81b57313..3d2f78c4 100644
+--- a/src/FluentValidation.Tests/ComplexValidationTester.cs
++++ b/src/FluentValidation.Tests/ComplexValidationTester.cs
+@@ -180,13 +180,13 @@ public void Validates_child_validator_synchronously() {
+ 	}
+ 
+ 	[Fact]
+-	public void Validates_child_validator_asynchronously() {
++	public async Task Validates_child_validator_asynchronously() {
+ 		var validator = new TracksAsyncCallValidator<Person>();
+ 		var addressValidator = new TracksAsyncCallValidator<Address>();
+ 		addressValidator.RuleFor(x => x.Line1).NotNull();
+ 		validator.RuleFor(x => x.Address).SetValidator(addressValidator);
+ 
+-		validator.ValidateAsync(new Person() {Address = new Address()}).GetAwaiter().GetResult();
++		await validator.ValidateAsync(new Person() {Address = new Address()});
+ 		addressValidator.WasCalledAsync.ShouldEqual(true);
+ 	}
+ 
+diff --git a/src/FluentValidation.Tests/CreditCardValidatorTests.cs b/src/FluentValidation.Tests/CreditCardValidatorTests.cs
+index 84a2a96b..255313ef 100644
+--- a/src/FluentValidation.Tests/CreditCardValidatorTests.cs
++++ b/src/FluentValidation.Tests/CreditCardValidatorTests.cs
+@@ -24,6 +24,17 @@ public void IsValidTests() {
+ 		validator.Validate(new Person { CreditCard = "0000000000000001" }).IsValid.ShouldBeFalse(); // Bad checksum
+ 	}
+ 
++	[Fact]
++	public void Values_with_no_digits_are_not_valid() {
++		// Stripping the separators leaves nothing to checksum, so there is no card number here.
++		validator.Validate(new Person { CreditCard = "" }).IsValid.ShouldBeFalse();
++		validator.Validate(new Person { CreditCard = " " }).IsValid.ShouldBeFalse();
++		validator.Validate(new Person { CreditCard = "   " }).IsValid.ShouldBeFalse();
++		validator.Validate(new Person { CreditCard = "-" }).IsValid.ShouldBeFalse();
++		validator.Validate(new Person { CreditCard = "----" }).IsValid.ShouldBeFalse();
++		validator.Validate(new Person { CreditCard = " - - " }).IsValid.ShouldBeFalse();
++	}
++
+ 	[Fact]
+ 	public void When_validation_fails_the_default_error_should_be_set() {
+ 		string creditcard = "foo";
+diff --git a/src/FluentValidation.Tests/CustomValidatorTester.cs b/src/FluentValidation.Tests/CustomValidatorTester.cs
+index 4cac566c..8a344ca3 100644
+--- a/src/FluentValidation.Tests/CustomValidatorTester.cs
++++ b/src/FluentValidation.Tests/CustomValidatorTester.cs
+@@ -155,7 +155,7 @@ public void Throws_when_async_rule_invoked_synchronously() {
+ 	}
+ 
+ 	[Fact]
+-	public async void Runs_sync_rule_asynchronously_when_validator_invoked_asynchronously() {
++	public async Task Runs_sync_rule_asynchronously_when_validator_invoked_asynchronously() {
+ 		validator.RuleFor(x => x.Forename).Custom((x, context) => context.AddFailure("foo"));
+ 		var result = await validator.ValidateAsync(new Person());
+ 		result.Errors.Count.ShouldEqual(1);
+diff --git a/src/FluentValidation.Tests/DefaultValidatorExtensionTester.cs b/src/FluentValidation.Tests/DefaultValidatorExtensionTester.cs
+index c0870fe4..b05c7a68 100644
+--- a/src/FluentValidation.Tests/DefaultValidatorExtensionTester.cs
++++ b/src/FluentValidation.Tests/DefaultValidatorExtensionTester.cs
+@@ -139,15 +139,15 @@ public void MustAsync_should_create_AsyncPredicateValidator_with_context() {
+ 	}
+ 
+ 	[Fact]
+-	public void MustAsync_should_create_AsyncPredicateValidator_with_PropertyValidatorContext() {
++	public async Task MustAsync_should_create_AsyncPredicateValidator_with_PropertyValidatorContext() {
+ 		var hasPropertyValidatorContext = false;
+ 		this.validator.RuleFor(x => x.Surname).MustAsync(async (x, val, ctx, cancel) => {
+ 			hasPropertyValidatorContext = ctx != null;
+ 			return true;
+ 		});
+-		this.validator.ValidateAsync(new Person {
++		await this.validator.ValidateAsync(new Person {
+ 			Surname = "Surname"
+-		}).Wait();
++		});
+ 		this.AssertValidator<AsyncPredicateValidator<Person,string>>();
+ 		hasPropertyValidatorContext.ShouldBeTrue();
+ 	}
+diff --git a/src/FluentValidation.Tests/EmailValidatorTests.cs b/src/FluentValidation.Tests/EmailValidatorTests.cs
+index 53a1e947..a526c8a9 100644
+--- a/src/FluentValidation.Tests/EmailValidatorTests.cs
++++ b/src/FluentValidation.Tests/EmailValidatorTests.cs
+@@ -83,7 +83,7 @@ public void Valid_email_addresses_aspnetcore_compatible(string email) {
+ 	}
+ 
+ 	[Theory]
+-	[InlineData(0)]
++	[InlineData("0")]
+ 	[InlineData("")]
+ 	[InlineData(" \r \t \n" )]
+ 	[InlineData("@someDomain.com")]
+diff --git a/src/FluentValidation.Tests/ExclusiveBetweenValidatorTests.cs b/src/FluentValidation.Tests/ExclusiveBetweenValidatorTests.cs
+index a4ebfa46..a0a44adc 100644
+--- a/src/FluentValidation.Tests/ExclusiveBetweenValidatorTests.cs
++++ b/src/FluentValidation.Tests/ExclusiveBetweenValidatorTests.cs
+@@ -73,6 +73,14 @@ public void When_the_to_is_smaller_than_the_from_then_the_validator_should_throw
+ 		Assert.Throws<ArgumentOutOfRangeException>(() => new TestValidator{v => v.RuleFor(x => x.Id).ExclusiveBetween(10, 1)});
+ 	}
+ 
++	[Fact]
++	public void When_the_to_is_smaller_than_the_from_then_the_validator_should_throw_for_a_comparison_returning_a_difference() {
++		// Money.CompareTo and SubtractingIntComparer.Compare both return a difference,
++		// which IComparable and IComparer permit, so the guard has to test the sign.
++		Assert.Throws<ArgumentOutOfRangeException>(() => RangeValidatorFactory.CreateExclusiveBetween<Person, Money>(new Money(10), new Money(5)));
++		Assert.Throws<ArgumentOutOfRangeException>(() => new TestValidator{v => v.RuleFor(x => x.Id).ExclusiveBetween(10, 1, new SubtractingIntComparer())});
++	}
++
+ 	[Fact]
+ 	public void When_the_validator_fails_the_error_message_should_be_set() {
+ 		var validator = new TestValidator { v => v.RuleFor(x => x.Id).ExclusiveBetween(1, 10) };
+diff --git a/src/FluentValidation.Tests/FluentValidation.Tests.csproj b/src/FluentValidation.Tests/FluentValidation.Tests.csproj
+index 43f9f1e8..239dd509 100644
+--- a/src/FluentValidation.Tests/FluentValidation.Tests.csproj
++++ b/src/FluentValidation.Tests/FluentValidation.Tests.csproj
+@@ -11,12 +11,11 @@
+   </ItemGroup>
+   <ItemGroup>
+     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.0.1" />
+-    <PackageReference Include="Microsoft.TestPlatform.TestHost" Version="16.0.1" />
++    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
++    <PackageReference Include="Microsoft.TestPlatform.TestHost" Version="18.9.0" />
+     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+-    <PackageReference Include="System.ComponentModel.Annotations" Version="4.4.1" />
+-    <PackageReference Include="xunit.runner.visualstudio" Version="2.2.0" />
+-    <PackageReference Include="xunit" Version="2.2.0" />
++    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" />
++    <PackageReference Include="xunit" Version="2.9.3" />
+   </ItemGroup>
+   <ItemGroup>
+     <ProjectReference Include="..\FluentValidation.DependencyInjectionExtensions\FluentValidation.DependencyInjectionExtensions.csproj" />
+diff --git a/src/FluentValidation.Tests/InclusiveBetweenValidatorTests.cs b/src/FluentValidation.Tests/InclusiveBetweenValidatorTests.cs
+index 8341b185..dd87027a 100644
+--- a/src/FluentValidation.Tests/InclusiveBetweenValidatorTests.cs
++++ b/src/FluentValidation.Tests/InclusiveBetweenValidatorTests.cs
+@@ -68,6 +68,21 @@ public void When_the_to_is_smaller_than_the_from_then_the_validator_should_throw
+ 		Assert.Throws<ArgumentOutOfRangeException>(() => new TestValidator(v => v.RuleFor(x => x.Id).InclusiveBetween(10, 1)));
+ 	}
+ 
++	[Fact]
++	public void When_the_to_is_smaller_than_the_from_then_the_validator_should_throw_for_a_comparison_returning_a_difference() {
++		// Money.CompareTo and SubtractingIntComparer.Compare both return a difference,
++		// which IComparable and IComparer permit, so the guard has to test the sign.
++		Assert.Throws<ArgumentOutOfRangeException>(() => RangeValidatorFactory.CreateInclusiveBetween<Person, Money>(new Money(10), new Money(5)));
++		Assert.Throws<ArgumentOutOfRangeException>(() => new TestValidator(v => v.RuleFor(x => x.Id).InclusiveBetween(10, 1, new SubtractingIntComparer())));
++	}
++
++	[Fact]
++	public void Equal_bounds_are_allowed_for_a_comparison_returning_a_difference() {
++		var validator = RangeValidatorFactory.CreateInclusiveBetween<Person, Money>(new Money(5), new Money(5));
++		validator.From.ShouldEqual(new Money(5));
++		validator.To.ShouldEqual(new Money(5));
++	}
++
+ 	[Fact]
+ 	public void When_the_validator_fails_the_error_message_should_be_set() {
+ 		var validator = new TestValidator(v => v.RuleFor(x => x.Id).InclusiveBetween(1, 10));
+diff --git a/src/FluentValidation.Tests/LanguageManagerTests.cs b/src/FluentValidation.Tests/LanguageManagerTests.cs
+index 069a8a9b..d47f6e1f 100644
+--- a/src/FluentValidation.Tests/LanguageManagerTests.cs
++++ b/src/FluentValidation.Tests/LanguageManagerTests.cs
+@@ -117,6 +117,16 @@ public void Falls_back_to_english_when_culture_not_registered() {
+ 		}
+ 	}
+ 
++	[Fact]
++	public void Falls_back_to_english_when_neutral_culture_not_registered() {
++		// A neutral culture has no parent to walk to, so it reaches the English
++		// fallback by a different path than its specific variants do.
++		foreach (var cultureName in new[] { "sw", "zu", "haw", "sw-KE", "zu-ZA" }) {
++			var msg = _languages.GetString("NotNullValidator", new CultureInfo(cultureName));
++			msg.ShouldEqual("'{PropertyName}' must not be empty.");
++		}
++	}
++
+ 	[Fact]
+ 	public void Falls_back_to_english_when_translation_missing() {
+ 		var l = new LanguageManager();
+diff --git a/src/FluentValidation.Tests/RuleBuilderTests.cs b/src/FluentValidation.Tests/RuleBuilderTests.cs
+index 66c938b0..7fd5acaa 100644
+--- a/src/FluentValidation.Tests/RuleBuilderTests.cs
++++ b/src/FluentValidation.Tests/RuleBuilderTests.cs
+@@ -53,7 +53,7 @@ public void Adding_a_validator_should_store_validator() {
+ 	[Fact]
+ 	public void Should_set_custom_property_name() {
+ 		builder.SetValidator(new TestPropertyValidator<Person, string>()).WithName("Foo");
+-		Assert.Equal(_rule.GetDisplayName(null), "Foo");
++		Assert.Equal("Foo", _rule.GetDisplayName(null));
+ 	}
+ 
+ 	[Fact]
+diff --git a/src/FluentValidation.Tests/RuleDependencyTests.cs b/src/FluentValidation.Tests/RuleDependencyTests.cs
+index 20fe3653..ee88eb94 100644
+--- a/src/FluentValidation.Tests/RuleDependencyTests.cs
++++ b/src/FluentValidation.Tests/RuleDependencyTests.cs
+@@ -111,8 +111,8 @@ public async Task TestAsyncWithDependentRules_SyncEntry() {
+ 			});
+ 
+ 		var result = await validator.ValidateAsync(new Person());
+-		Assert.Equal(1, result.Errors.Count);
+-		Assert.True(result.Errors.Any(x => x.PropertyName == "Forename"));
++		Assert.Single(result.Errors);
++		Assert.Contains(result.Errors, x => x.PropertyName == "Forename");
+ 
+ 		result = await validator.ValidateAsync(new Person() { Forename = "Foo" });
+ 		Assert.Equal(2, result.Errors.Count);
+@@ -131,8 +131,8 @@ public async Task TestAsyncWithDependentRules_AsyncEntry() {
+ 			});
+ 
+ 		var result = await validator.ValidateAsync(new Person());
+-		Assert.Equal(1, result.Errors.Count);
+-		Assert.True(result.Errors.Any(x => x.PropertyName == ""));
++		Assert.Single(result.Errors);
++		Assert.Contains(result.Errors, x => x.PropertyName == "");
+ 
+ 		result = await validator.ValidateAsync(new Person() { Forename = "Foo" });
+ 		Assert.Equal(2, result.Errors.Count);
+diff --git a/src/FluentValidation.Tests/SubtractingComparisons.cs b/src/FluentValidation.Tests/SubtractingComparisons.cs
+new file mode 100644
+index 00000000..64243733
+--- /dev/null
++++ b/src/FluentValidation.Tests/SubtractingComparisons.cs
+@@ -0,0 +1,45 @@
++#region License
++// Copyright (c) .NET Foundation and contributors.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++//
++// The latest version of this file can be found at https://github.com/FluentValidation/FluentValidation
++#endregion
++
++namespace FluentValidation.Tests;
++
++using System;
++using System.Collections.Generic;
++
++/// <summary>
++/// Comparison helpers that return a difference rather than -1, 0 or 1. Both IComparable
++/// and IComparer only fix the sign of the result, so these are in contract, and they are
++/// what distinguishes a guard written against the sign from one written against the value.
++/// </summary>
++class SubtractingIntComparer : IComparer<int> {
++	public int Compare(int x, int y) => x - y;
++}
++
++readonly struct Money : IComparable<Money>, IComparable {
++	public int Amount { get; }
++
++	public Money(int amount) => Amount = amount;
++
++	public int CompareTo(Money other) => Amount - other.Amount;
++
++	public int CompareTo(object obj) => obj is Money other
++		? CompareTo(other)
++		: throw new ArgumentException("Can't compare", nameof(obj));
++
++	public override string ToString() => Amount.ToString();
++}
+diff --git a/src/FluentValidation.Tests/ValidateAndThrowTester.cs b/src/FluentValidation.Tests/ValidateAndThrowTester.cs
+index f820d029..e6b66c59 100644
+--- a/src/FluentValidation.Tests/ValidateAndThrowTester.cs
++++ b/src/FluentValidation.Tests/ValidateAndThrowTester.cs
+@@ -130,7 +130,7 @@ public void ToString_provides_error_details() {
+ 
+ 		var ex = Assert.Throws<ValidationException>(() => validator.ValidateAndThrow(new Person()));
+ 		string expected = "FluentValidation.ValidationException: Validation failed: " + Environment.NewLine + " -- Surname: 'Surname' must not be empty. Severity: Error" + Environment.NewLine + " -- Forename: 'Forename' must not be empty.";
+-		Assert.True(ex.ToString().StartsWith(expected));
++		Assert.StartsWith(expected, ex.ToString());
+ 	}
+ 
+ 	[Fact]
+diff --git a/src/FluentValidation/Resources/LanguageManager.cs b/src/FluentValidation/Resources/LanguageManager.cs
+index 3c5966fe..71a86fff 100644
+--- a/src/FluentValidation/Resources/LanguageManager.cs
++++ b/src/FluentValidation/Resources/LanguageManager.cs
+@@ -131,6 +131,11 @@ public virtual string GetString(string key, CultureInfo culture = null) {
+ 		if (Enabled) {
+ 			culture = culture ?? Culture ?? CultureInfo.CurrentUICulture;
+ 
++			// Tracked across the walk below rather than inferred from the culture afterwards:
++			// a neutral culture never enters the loop, so a test on its shape cannot tell
++			// "English was already consulted" from "the walk had nowhere to go".
++			bool triedEnglish = culture.Name == EnglishLanguage.Culture;
++
+ 			string currentCultureKey = culture.Name + ":" + key;
+ 			value = _languages.GetOrAdd(currentCultureKey, k => GetTranslation(culture.Name, key));
+ 
+@@ -138,15 +143,14 @@ public virtual string GetString(string key, CultureInfo culture = null) {
+ 			var currentCulture = culture;
+ 			while (value == null && currentCulture.Parent != CultureInfo.InvariantCulture) {
+ 				currentCulture = currentCulture.Parent;
++				triedEnglish |= currentCulture.Name == EnglishLanguage.Culture;
+ 				string parentCultureKey = currentCulture.Name + ":" + key;
+ 				value = _languages.GetOrAdd(parentCultureKey, k => GetTranslation(currentCulture.Name, key));
+ 			}
+ 
+-			if (value == null && culture.Name != EnglishLanguage.Culture) {
+-				// If it couldn't be found, try the fallback English (if we haven't tried it already).
+-				if (!culture.IsNeutralCulture && culture.Parent.Name != EnglishLanguage.Culture) {
+-					value = _languages.GetOrAdd(EnglishLanguage.Culture + ":" + key, k => EnglishLanguage.GetTranslation(key));
+-				}
++			// If it couldn't be found, try the fallback English (if we haven't tried it already).
++			if (value == null && !triedEnglish) {
++				value = _languages.GetOrAdd(EnglishLanguage.Culture + ":" + key, k => EnglishLanguage.GetTranslation(key));
+ 			}
+ 		}
+ 		else {
+diff --git a/src/FluentValidation/Validators/CreditCardValidator.cs b/src/FluentValidation/Validators/CreditCardValidator.cs
+index ffaa2411..1e83ebf0 100644
+--- a/src/FluentValidation/Validators/CreditCardValidator.cs
++++ b/src/FluentValidation/Validators/CreditCardValidator.cs
+@@ -39,6 +39,13 @@ public override bool IsValid(ValidationContext<T> context, string value) {
+ 
+ 		value = value.Replace("-", "").Replace(" ", "");
+ 
++		// A value that is nothing but separators carries no digits, so there is no
++		// checksum to verify. Without this the loop below never runs, the checksum
++		// stays at 0, and the `% 10 == 0` test at the end reports it as valid.
++		if (value.Length == 0) {
++			return false;
++		}
++
+ 		int checksum = 0;
+ 		bool evenDigit = false;
+ 		// http://www.beachnet.com/~hstiles/cardtype.html
+diff --git a/src/FluentValidation/Validators/RangeValidator.cs b/src/FluentValidation/Validators/RangeValidator.cs
+index eafe7175..9f6fbcbe 100644
+--- a/src/FluentValidation/Validators/RangeValidator.cs
++++ b/src/FluentValidation/Validators/RangeValidator.cs
+@@ -34,7 +34,11 @@ public RangeValidator(TProperty from, TProperty to, IComparer<TProperty> compare
+ 
+ 		_explicitComparer = comparer;
+ 
+-		if (comparer.Compare(to, from) == -1) {
++		// Test the sign, not the value: IComparer only promises a negative result for
++		// "less than", so a comparer that returns a difference - which IComparable
++		// permits, and which subtracting implementations return - slips past `== -1`
++		// and leaves an inverted range in place that rejects every value.
++		if (comparer.Compare(to, from) < 0) {
+ 			throw new ArgumentOutOfRangeException(nameof(to), "To should be larger than from.");
+ 		}
+ 	}

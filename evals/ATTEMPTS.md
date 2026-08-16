@@ -36,6 +36,7 @@ loss rather than hiding it.
 | diff-so-fancy | 3 | 30 | **not converged** | n/a | 2 |
 | eemeli/yaml | 5 | 50 | **not converged** | n/a | 0 |
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
+| FluentValidation | 1 | 8 | converged | evaluator countersigned | 0 |
 | go-yaml | 3 | 29 | converged | evaluator countersigned | 0 |
 | goldmark | 5 | 47 | **not converged** | n/a | 0 |
 | gson | 1 | 2 | converged | evaluator countersigned | 0 |
@@ -76,10 +77,10 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 31 brownfield convergences:
+The engine tightened over time. Of the 32 brownfield convergences:
 
-- **26** were countersigned by the adversarial evaluator, the current standard.
-  Seventeen of those met the empty-ledger rule, `cobra` being the most recent;
+- **27** were countersigned by the adversarial evaluator, the current standard.
+  Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
   `claude-agent-sdk-python`, `validator` and `clap` met
@@ -92,7 +93,7 @@ The engine tightened over time. Of the 31 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 31 as one number
+Every receipt names the standard its own run met. Pooling all 32 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -106,7 +107,7 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 31 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 32 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
 `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
 `claude-agent-sdk-python`, `validator` and `clap`, and each receipt names what it
