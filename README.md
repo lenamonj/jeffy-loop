@@ -118,9 +118,6 @@ Deleted the clone since installing? Clone it again and run the installer from th
 /jeffy 12 accessibility and performance    # 12 iterations with a focus directive
 ```
 
-> [!NOTE]
-> Enhance mode (`/jeffy [N] enhance <topic>`, shipped in v1.6.0) was removed in v1.11.0: it was a second product surface no published receipt ever used, and the defect loop is the product. The launcher refuses the keyword, and it refuses a standard launch over an Enhance-mode `PLAN.md` left behind by an earlier version - archive those state files (commit and delete them, or keep them on a branch) and relaunch, or run v1.10.0, the last release that carries the mode.
-
 **Scoped mode.** By default `/jeffy` runs in Improvement mode: an open-ended audit-and-fix loop. To run it against a concrete target instead, edit `PLAN.md` - replace the Goal and Definition of done with the target, seed `BACKLOG.md` with the finite tasks, then run `/jeffy`. Everything else (envelope, verify gate, checkpoints, journal, report) behaves the same.
 
 **Cancel.** Run `/cancel-jeffy`. It reports which loop it found, deletes the loop state file, and leaves `PLAN.md`, `BACKLOG.md`, and `JOURNAL.md` untouched, so the next `/jeffy` picks up exactly where it left off. (Equivalent manual action: delete `.claude/jeffy-loop.local.md` at the project root.)
