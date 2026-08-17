@@ -1,0 +1,487 @@
+diff --git a/.gitignore b/.gitignore
+index 61b8c72a..d9168ef4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -62,3 +62,4 @@ cmake_install_test/
+ # generated Windows resource files
+ lib/*.rc
+ programs/*.rc
++.claude/jeffy-loop.local.md
+diff --git a/build/cmake/CMakeLists.txt b/build/cmake/CMakeLists.txt
+index 15418e65..ed508fc0 100644
+--- a/build/cmake/CMakeLists.txt
++++ b/build/cmake/CMakeLists.txt
+@@ -222,6 +222,23 @@ if(LZ4_BUILD_LEGACY_LZ4C)
+   set_target_properties(lz4c PROPERTIES COMPILE_DEFINITIONS "ENABLE_LZ4C_LEGACY_OPTIONS")
+ endif(LZ4_BUILD_LEGACY_LZ4C)
+ 
++# Multithreaded compression (-T) for the CLI, matching programs/Makefile.
++# Only programs/ uses LZ4IO_MULTITHREAD; the library itself is single-threaded.
++# lz4conf.h already enables it on Windows, so this detects the pthread platforms.
++if(LZ4_PROGRAMS_BUILT)
++  set(THREADS_PREFER_PTHREAD_FLAG ON)
++  find_package(Threads)
++  if(Threads_FOUND)
++    message(STATUS "==> built with multithreading support")
++    foreach(cli_target IN LISTS LZ4_PROGRAMS_BUILT)
++      target_compile_definitions(${cli_target} PRIVATE LZ4IO_MULTITHREAD=1)
++      target_link_libraries(${cli_target} PRIVATE Threads::Threads)
++    endforeach()
++  else()
++    message(STATUS "==> no multithread support: built for single-thread mode only")
++  endif()
++endif()
++
+ #-----------------------------------------------------------------------------
+ # COMPILER FLAGS - Configure warning flags and compiler-specific options
+ #-----------------------------------------------------------------------------
+diff --git a/doc/lz4_manual.html b/doc/lz4_manual.html
+index 10a595a9..cdc417a6 100644
+--- a/doc/lz4_manual.html
++++ b/doc/lz4_manual.html
+@@ -385,7 +385,7 @@ int                 LZ4_freeStreamDecode (LZ4_streamDecode_t* LZ4_stream);
+ </p></pre><BR>
+ 
+ <pre><b>int LZ4_decoderRingBufferSize(int maxBlockSize);
+-#define LZ4_DECODER_RING_BUFFER_SIZE(maxBlockSize) (65536 + 14 + (maxBlockSize))  </b>/* for static allocation; maxBlockSize presumed valid */<b>
++#define LZ4_DECODER_RING_BUFFER_SIZE(maxBlockSize) (65536 + 14 + (maxBlockSize))  </b>/* for static allocation; maxBlockSize presumed valid : >= 16 and <= LZ4_MAX_INPUT_SIZE. Outside that range, use LZ4_decoderRingBufferSize(), which clamps and reports errors */<b>
+ </b><p>  Note : in a ring buffer scenario (optional),
+   blocks are presumed decompressed next to each other
+   up to the moment there is not enough remaining space for next block (remainingSize < maxBlockSize),
+@@ -393,8 +393,11 @@ int                 LZ4_freeStreamDecode (LZ4_streamDecode_t* LZ4_stream);
+   When setting such a ring buffer for streaming decompression,
+   provides the minimum size of this ring buffer
+   to be compatible with any source respecting maxBlockSize condition.
++  Note : a maxBlockSize < 16 is accepted, and answered as if 16 had been requested,
++         since 16 is the smallest block size this ring buffer scenario supports.
+  @return : minimum ring buffer size,
+-           or 0 if there is an error (invalid maxBlockSize).
++           or 0 if there is an error (invalid maxBlockSize :
++           negative, or larger than LZ4_MAX_INPUT_SIZE).
+  
+ </p></pre><BR>
+ 
+diff --git a/doc/lz4frame_manual.html b/doc/lz4frame_manual.html
+index e00e49aa..f9ff1371 100644
+--- a/doc/lz4frame_manual.html
++++ b/doc/lz4frame_manual.html
+@@ -333,40 +333,52 @@ LZ4F_decompress(LZ4F_dctx* dctx,
+                 void* dstBuffer, size_t* dstSizePtr,
+           const void* srcBuffer, size_t* srcSizePtr,
+           const LZ4F_decompressOptions_t* dOptPtr);
+-</b><p>  Call this function repetitively to regenerate data compressed in `srcBuffer`.
+-
+-  The function requires a valid dctx state.
+-  It will read up to *srcSizePtr bytes from srcBuffer,
+-  and decompress data into dstBuffer, of capacity *dstSizePtr.
+-
+-  The nb of bytes consumed from srcBuffer will be written into *srcSizePtr (necessarily <= original value).
+-  The nb of bytes decompressed into dstBuffer will be written into *dstSizePtr (necessarily <= original value).
+-
+-  The function does not necessarily read all input bytes, so always check value in *srcSizePtr.
+-  Unconsumed source data must be presented again in subsequent invocations.
+-
+- `dstBuffer` can freely change between each consecutive function invocation.
+- `dstBuffer` content will be overwritten.
+-
+-  Note: if `LZ4F_getFrameInfo()` is called before `LZ4F_decompress()`, srcBuffer must be updated to reflect
+-  the number of bytes consumed after reading the frame header. Failure to update srcBuffer before calling
+-  `LZ4F_decompress()` will cause decompression failure or, even worse, successful but incorrect decompression.
+-  See the `LZ4F_getFrameInfo()` docs for details.
+-
+- @return : an hint of how many `srcSize` bytes LZ4F_decompress() expects for next call.
+-  Schematically, it's the size of the current (or remaining) compressed block + header of next block.
+-  Respecting the hint provides some small speed benefit, because it skips intermediate buffers.
+-  This is just a hint though, it's always possible to provide any srcSize.
+-
+-  When a frame is fully decoded, @return will be 0 (no more data expected).
+-  When provided with more bytes than necessary to decode a frame,
+-  LZ4F_decompress() will stop reading exactly at end of current frame, and @return 0.
+-
+-  If decompression failed, @return is an error code, which can be tested using LZ4F_isError().
+-  After a decompression error, the `dctx` context is not resumable.
+-  Use LZ4F_resetDecompressionContext() to return to clean state.
+-
+-  After a frame is fully decoded, dctx can be used again to decompress another frame.
++</b><p>  Incrementally decompresses an LZ4 frame into user-provided buffers.
++
++  Call repeatedly until the return value is 0 (frame fully decoded) or an error is reported.
++  On each call, the function consumes up to *srcSizePtr bytes from srcBuffer
++  and produces up to *dstSizePtr bytes into dstBuffer,
++  updating both size pointers with the actual number of bytes consumed and produced.
++  There is no separate flush step.
++
++  Typical loop :
++  - provide whatever input is available, and an available output buffer,
++  - read how much input was consumed and how much output was produced,
++  - use the returned value as a hint for how many source bytes are ideal next time.
++
++ @dctx must be a valid decompression context created by LZ4F_createDecompressionContext().
++ @dstBuffer receives the decompressed bytes, and may change between calls.
++  Its content is overwritten, so it does not need to be stable across calls.
++ @dstSizePtr is both input and output : on input, the capacity of dstBuffer in bytes;
++  on output, the number of bytes written (necessarily <= the input value).
++ @srcBuffer contains (more) compressed data,
++  and may point to the middle of a larger buffer.
++ @srcSizePtr is both input and output : on input, the number of available bytes in srcBuffer;
++  on output, the number of bytes consumed (necessarily <= the input value).
++  The function may not consume all provided input on each call, so always check *srcSizePtr,
++  and present any unconsumed source bytes again on the next call.
++ @dOptPtr is optional : one can provide NULL, in which case all options are set to default.
++ @return : a hint about how many srcSize bytes LZ4F_decompress() expects for next call.
++           A value > 0 also means the current frame is not complete yet :
++           the decompressor expects more input,
++           or may require additional output space to make progress.
++           Any amount of input can always be provided; the value is only a performance hint.
++           A value of 0 means the current frame is fully decoded;
++           if *srcSizePtr is less than the provided value,
++           the unconsumed tail is the start of another frame (if any).
++           Any other value is an error code, which can be tested using LZ4F_isError().
++           After an error, dctx is not resumable :
++           LZ4F_resetDecompressionContext() must be called before reusing it.
++  note 1 : on return, *srcSizePtr and *dstSizePtr hold the bytes actually consumed and produced,
++           and dstBuffer content in [0, *dstSizePtr) is valid decompressed data.
++  note 2 : after finishing a frame (return == 0), it's possible to immediately start feeding
++           the next frame into the same dctx
++           (optionally, one can use LZ4F_resetDecompressionContext()).
++  Warning : if LZ4F_getFrameInfo() was invoked beforehand, srcBuffer must be advanced
++           and *srcSizePtr decreased by the nb of bytes it consumed (the frame header).
++           Failing to do so can cause decompression failure or, worse, silent corruption.
++  Related : LZ4F_getFrameInfo(), LZ4F_isError(), LZ4F_resetDecompressionContext(),
++           LZ4F_createDecompressionContext(), LZ4F_freeDecompressionContext().
+  
+ </p></pre><BR>
+ 
+diff --git a/lib/lz4.c b/lib/lz4.c
+index 493a27e4..7484b9dd 100644
+--- a/lib/lz4.c
++++ b/lib/lz4.c
+@@ -2628,8 +2628,11 @@ int LZ4_setStreamDecode (LZ4_streamDecode_t* LZ4_streamDecode, const char* dicti
+  *  blocks are presumed decompressed next to each other.
+  *  When not enough space remains for next block (remainingSize < maxBlockSize),
+  *  decoding resumes from beginning of ring buffer.
++ *  Note : a maxBlockSize < 16 is accepted, and answered as if 16 had been requested,
++ *         since 16 is the smallest block size this ring buffer scenario supports.
+  * @return : minimum ring buffer size,
+- *           or 0 if there is an error (invalid maxBlockSize).
++ *           or 0 if there is an error (invalid maxBlockSize :
++ *           negative, or larger than LZ4_MAX_INPUT_SIZE).
+  */
+ int LZ4_decoderRingBufferSize(int maxBlockSize)
+ {
+diff --git a/lib/lz4.h b/lib/lz4.h
+index 5b147b29..9f4a9ce4 100644
+--- a/lib/lz4.h
++++ b/lib/lz4.h
+@@ -486,11 +486,14 @@ LZ4LIB_API int LZ4_setStreamDecode (LZ4_streamDecode_t* LZ4_streamDecode, const
+  *  When setting such a ring buffer for streaming decompression,
+  *  provides the minimum size of this ring buffer
+  *  to be compatible with any source respecting maxBlockSize condition.
++ *  Note : a maxBlockSize < 16 is accepted, and answered as if 16 had been requested,
++ *         since 16 is the smallest block size this ring buffer scenario supports.
+  * @return : minimum ring buffer size,
+- *           or 0 if there is an error (invalid maxBlockSize).
++ *           or 0 if there is an error (invalid maxBlockSize :
++ *           negative, or larger than LZ4_MAX_INPUT_SIZE).
+  */
+ LZ4LIB_API int LZ4_decoderRingBufferSize(int maxBlockSize);
+-#define LZ4_DECODER_RING_BUFFER_SIZE(maxBlockSize) (65536 + 14 + (maxBlockSize))  /* for static allocation; maxBlockSize presumed valid */
++#define LZ4_DECODER_RING_BUFFER_SIZE(maxBlockSize) (65536 + 14 + (maxBlockSize))  /* for static allocation; maxBlockSize presumed valid : >= 16 and <= LZ4_MAX_INPUT_SIZE. Outside that range, use LZ4_decoderRingBufferSize(), which clamps and reports errors */
+ 
+ /*! LZ4_decompress_safe_continue() :
+  *  This decoding function allows decompression of consecutive blocks in "streaming" mode.
+diff --git a/lib/lz4frame.h b/lib/lz4frame.h
+index aee20428..1215154f 100644
+--- a/lib/lz4frame.h
++++ b/lib/lz4frame.h
+@@ -466,52 +466,53 @@ LZ4F_getFrameInfo(LZ4F_dctx* dctx,
+                   LZ4F_frameInfo_t* frameInfoPtr,
+             const void* srcBuffer, size_t* srcSizePtr);
+ 
+-/**
+- * @brief Incrementally decompresses an LZ4 frame into user-provided buffers.
+- *
+- * Call repeatedly until the return value is 0 (frame fully decoded) or an error is reported.
+- * On each call, the function consumes up to *srcSizePtr bytes from @p srcBuffer and
+- * produces up to *dstSizePtr bytes into @p dstBuffer. It updates both size pointers with
+- * the actual number of bytes consumed/produced. There is no separate flush step.
+- *
+- * Typical loop:
+- *  - Provide whatever input you have and an available output buffer.
+- *  - Read how much input was consumed and how much output was produced.
+- *  - Use the returned value as a hint for how many source bytes are ideal next time.
+- *
+- * @param[in]      dctx        A valid decompression context created by LZ4F_createDecompressionContext().
+- * @param[out]     dstBuffer   Destination buffer for decompressed bytes. May change between calls.
+- * @param[in,out]  dstSizePtr  In: capacity of @p dstBuffer in bytes. Out: number of bytes written (<= input value).
+- * @param[in]      srcBuffer   Source buffer containing (more) compressed data. May point to the middle of a larger buffer.
+- * @param[in,out]  srcSizePtr  In: number of available bytes in @p srcBuffer. Out: number of bytes consumed (<= input value).
+- * @param[in]      optionsPtr  Optional decompression options; pass NULL for defaults.
+- *
+- * @return See @retval cases.
+- * @retval >0  Hint (in bytes) for how many source bytes are ideal to provide on the next call.
+- *             This also indicates the current frame is not yet complete: the decompressor
+- *             expects more input, or may require additional output space to make progress. 
+- *             User can always pass any amount of input; this value is only a performance hint.
+- * @retval 0   The current frame is fully decoded. If *srcSizePtr is less than the provided value, 
+- *             the unconsumed tail is the start of another frame (if any).
+- * @retval error  An error code; test with LZ4F_isError(ret). After an error, dctx is not
+- *                resumable: call LZ4F_resetDecompressionContext() before reusing it.
+- *
+- * @pre  @p dctx is a valid state created by LZ4F_createDecompressionContext().
+- * @post *srcSizePtr and *dstSizePtr are updated with the actual bytes consumed/produced.
+- *       @p dstBuffer contents in [0, *dstSizePtr) are valid decompressed data.
++/*! LZ4F_decompress() :
++ *  Incrementally decompresses an LZ4 frame into user-provided buffers.
+  *
+- * @note  The function may not consume all provided input on each call. Always check *srcSizePtr.
+- *        Present any unconsumed source bytes again on the next call.
+- * @note  @p dstBuffer content is overwritten; it does not need to be stable across calls.
+- * @note  After finishing a frame (return==0), you may immediately start feeding the next frame
+- *        into the same @p dctx (optionally, one can use LZ4F_resetDecompressionContext()).
++ *  Call repeatedly until the return value is 0 (frame fully decoded) or an error is reported.
++ *  On each call, the function consumes up to *srcSizePtr bytes from srcBuffer
++ *  and produces up to *dstSizePtr bytes into dstBuffer,
++ *  updating both size pointers with the actual number of bytes consumed and produced.
++ *  There is no separate flush step.
+  *
+- * @warning If you called LZ4F_getFrameInfo() beforehand, you must advance @p srcBuffer and
+- *          decrease *srcSizePtr by the number of bytes it consumed (the frame header). Failing
+- *          to do so can cause decompression failure or, worse, silent corruption.
++ *  Typical loop :
++ *  - provide whatever input is available, and an available output buffer,
++ *  - read how much input was consumed and how much output was produced,
++ *  - use the returned value as a hint for how many source bytes are ideal next time.
+  *
+- * @see LZ4F_getFrameInfo(), LZ4F_isError(), LZ4F_resetDecompressionContext(),
+- *      LZ4F_createDecompressionContext(), LZ4F_freeDecompressionContext()
++ * @dctx must be a valid decompression context created by LZ4F_createDecompressionContext().
++ * @dstBuffer receives the decompressed bytes, and may change between calls.
++ *  Its content is overwritten, so it does not need to be stable across calls.
++ * @dstSizePtr is both input and output : on input, the capacity of dstBuffer in bytes;
++ *  on output, the number of bytes written (necessarily <= the input value).
++ * @srcBuffer contains (more) compressed data,
++ *  and may point to the middle of a larger buffer.
++ * @srcSizePtr is both input and output : on input, the number of available bytes in srcBuffer;
++ *  on output, the number of bytes consumed (necessarily <= the input value).
++ *  The function may not consume all provided input on each call, so always check *srcSizePtr,
++ *  and present any unconsumed source bytes again on the next call.
++ * @dOptPtr is optional : one can provide NULL, in which case all options are set to default.
++ * @return : a hint about how many srcSize bytes LZ4F_decompress() expects for next call.
++ *           A value > 0 also means the current frame is not complete yet :
++ *           the decompressor expects more input,
++ *           or may require additional output space to make progress.
++ *           Any amount of input can always be provided; the value is only a performance hint.
++ *           A value of 0 means the current frame is fully decoded;
++ *           if *srcSizePtr is less than the provided value,
++ *           the unconsumed tail is the start of another frame (if any).
++ *           Any other value is an error code, which can be tested using LZ4F_isError().
++ *           After an error, dctx is not resumable :
++ *           LZ4F_resetDecompressionContext() must be called before reusing it.
++ *  note 1 : on return, *srcSizePtr and *dstSizePtr hold the bytes actually consumed and produced,
++ *           and dstBuffer content in [0, *dstSizePtr) is valid decompressed data.
++ *  note 2 : after finishing a frame (return == 0), it's possible to immediately start feeding
++ *           the next frame into the same dctx
++ *           (optionally, one can use LZ4F_resetDecompressionContext()).
++ *  Warning : if LZ4F_getFrameInfo() was invoked beforehand, srcBuffer must be advanced
++ *           and *srcSizePtr decreased by the nb of bytes it consumed (the frame header).
++ *           Failing to do so can cause decompression failure or, worse, silent corruption.
++ *  Related : LZ4F_getFrameInfo(), LZ4F_isError(), LZ4F_resetDecompressionContext(),
++ *           LZ4F_createDecompressionContext(), LZ4F_freeDecompressionContext().
+  */
+ LZ4FLIB_API size_t
+ LZ4F_decompress(LZ4F_dctx* dctx,
+diff --git a/programs/lz4io.c b/programs/lz4io.c
+index 50de40b7..4aa20aa8 100644
+--- a/programs/lz4io.c
++++ b/programs/lz4io.c
+@@ -2325,22 +2325,34 @@ static int skipStream(FILE* f, unsigned offset)
+     return 0;
+ }
+ 
+-/** Safely handle cases when (unsigned)offset > LONG_MAX */
++/** Advance fp by offset bytes, failing when the input holds fewer than that.
++ *  Safely handles cases when (unsigned)offset > LONG_MAX.
++ *
++ *  This is the single boundary at which a length declared by the container is
++ *  checked against the bytes actually present. fseek() alone cannot do it:
++ *  seeking past end of file succeeds on a regular file, so a frame declaring
++ *  more bytes than it holds would be stepped over in silence, carrying any
++ *  following frame away with it. So all but the last byte is seeked over and
++ *  the last one is read: reaching it is what proves the region is there.
++ *  Returns 0 on success, non-zero when the region is short or unreadable. */
+ static int fseek_u32(FILE *fp, unsigned offset, int where)
+ {
+     const unsigned stepMax = 1U << 30;
+-    int errorNb = 0;
++    unsigned remaining;
+ 
+     if (where != SEEK_CUR) return -1;  /* Only allows SEEK_CUR */
+-    while (offset > 0) {
+-        unsigned s = offset;
++    if (offset == 0) return 0;
++
++    remaining = offset - 1;
++    while (remaining > 0) {
++        unsigned s = remaining;
+         if (s > stepMax) s = stepMax;
+-        errorNb = UTIL_fseek(fp, (long)s, SEEK_CUR);
+-        if (errorNb==0) { offset -= s; continue; }
+-        errorNb = skipStream(fp, offset);
+-        offset = 0;
++        if (UTIL_fseek(fp, (long)s, SEEK_CUR) == 0) { remaining -= s; continue; }
++        /* not seekable (pipe scenario): read and forget instead */
++        if (skipStream(fp, remaining) != 0) return 1;
++        remaining = 0;
+     }
+-    return errorNb;
++    return (fgetc(fp) == EOF) ? 1 : 0;
+ }
+ 
+ 
+@@ -2597,7 +2609,10 @@ static const char * LZ4IO_frameTypeNames[] = {"LZ4Frame", "LegacyFrame", "Skippa
+ /* Read block headers and skip block data
+    Return total blocks size for this frame including block headers,
+    block checksums and content checksums.
+-   returns 0 in case it can't successfully skip block data.
++   returns 0 in case it can't successfully skip block data,
++   which includes a frame that ends before its EndMark.
++   A complete frame always contains at least an EndMark, so a successful
++   return is always >= LZ4F_BLOCK_HEADER_SIZE and 0 is unambiguous.
+    Assumes SEEK_CUR after frame header.
+  */
+ static unsigned long long
+@@ -2608,28 +2623,30 @@ LZ4IO_skipBlocksData(FILE* finput,
+     unsigned char blockInfo[LZ4F_BLOCK_HEADER_SIZE];
+     unsigned long long totalBlocksSize = 0;
+     for (;;) {
+-        if (!fread(blockInfo, 1, LZ4F_BLOCK_HEADER_SIZE, finput)) {
+-            if (feof(finput)) return totalBlocksSize;
++        /* A short read means the input ran out before an EndMark was found,
++         * so the frame is truncated. A partial read must not be accepted
++         * either: the bytes fread() did not write would be read anyway. */
++        if (fread(blockInfo, 1, LZ4F_BLOCK_HEADER_SIZE, finput) != LZ4F_BLOCK_HEADER_SIZE)
+             return 0;
+-        }
+         totalBlocksSize += LZ4F_BLOCK_HEADER_SIZE;
+         {   const unsigned long nextCBlockSize = LZ4IO_readLE32(&blockInfo) & 0x7FFFFFFFU;
+             const unsigned long nextBlock = nextCBlockSize + (blockChecksumFlag * LZ4F_BLOCK_CHECKSUM_SIZE);
+             if (nextCBlockSize == 0) {
+-                /* Reached EndMark */
++                /* Reached EndMark. Read the content checksum rather than seek
++                 * over it: seeking past end of file succeeds on a regular file,
++                 * so a truncated checksum would go unnoticed. */
+                 if (contentChecksumFlag) {
+-                    /* Skip content checksum */
+-                    if (UTIL_fseek(finput, LZ4F_CONTENT_CHECKSUM_SIZE, SEEK_CUR) != 0) {
++                    unsigned char contentChecksum[LZ4F_CONTENT_CHECKSUM_SIZE];
++                    if (fread(contentChecksum, 1, LZ4F_CONTENT_CHECKSUM_SIZE, finput) != LZ4F_CONTENT_CHECKSUM_SIZE)
+                         return 0;
+-                    }
+                     totalBlocksSize += LZ4F_CONTENT_CHECKSUM_SIZE;
+                 }
+                 break;
+             }
+             totalBlocksSize += nextBlock;
+-            /* skip to the next block */
++            /* skip to the next block, failing if the block runs past end of input */
+             assert(nextBlock < LONG_MAX);
+-            if (UTIL_fseek(finput, (long)nextBlock, SEEK_CUR) != 0) return 0;
++            if (fseek_u32(finput, (unsigned)nextBlock, SEEK_CUR) != 0) return 0;
+     }   }
+     return totalBlocksSize;
+ }
+@@ -2671,9 +2688,8 @@ static unsigned long long LZ4IO_skipLegacyBlocksData(FILE* finput)
+                 return legacyFrameUndecodable;
+             }
+             totalBlocksSize += LZ4IO_LEGACY_BLOCK_HEADER_SIZE + nextCBlockSize;
+-            /* skip to the next block
+-             * note : this won't fail if nextCBlockSize is too large, skipping past the end of finput */
+-            if (UTIL_fseek(finput, nextCBlockSize, SEEK_CUR) != 0) {
++            /* skip to the next block, failing if the block runs past end of input */
++            if (fseek_u32(finput, nextCBlockSize, SEEK_CUR) != 0) {
+                 return legacyFrameUndecodable;
+     }   }   }
+     return totalBlocksSize;
+@@ -2734,7 +2750,8 @@ LZ4IO_getCompressedFileInfo(LZ4IO_cFileInfo_t* cfinfo, const char* input_filenam
+             if (nbReadBytes == 0) { break; } /* EOF */
+             result = LZ4IO_format_not_known;  /* default result (error) */
+             if (nbReadBytes != MAGICNUMBER_SIZE) {
+-                END_PROCESS(40, "Unrecognized header : Magic Number unreadable");
++                DISPLAYLEVEL(1, "Magic Number unreadable \n");
++                break;
+         }   }
+         magicNumber = LZ4IO_readLE32(buffer);   /* Little Endian format */
+         if (LZ4IO_isSkippableMagicNumber(magicNumber))
+@@ -2744,15 +2761,23 @@ LZ4IO_getCompressedFileInfo(LZ4IO_cFileInfo_t* cfinfo, const char* input_filenam
+         case LZ4IO_MAGICNUMBER:
+             if (cfinfo->frameSummary.frameType != lz4Frame) cfinfo->eqFrameTypes = 0;
+             /* Get frame info */
+-            {   const size_t readBytes = fread(buffer + MAGICNUMBER_SIZE, 1, LZ4F_HEADER_SIZE_MIN - MAGICNUMBER_SIZE, finput);
+-                if (!readBytes || ferror(finput)) END_PROCESS(71, "Error reading %s", input_filename);
++            {   const size_t toRead = LZ4F_HEADER_SIZE_MIN - MAGICNUMBER_SIZE;
++                const size_t readBytes = fread(buffer + MAGICNUMBER_SIZE, 1, toRead, finput);
++                if (readBytes != toRead || ferror(finput)) {
++                    DISPLAYLEVEL(1, "%s: truncated frame header \n", input_filename);
++                    break;
++                }
+             }
+             {   size_t hSize = LZ4F_headerSize(&buffer, LZ4F_HEADER_SIZE_MIN);
+                 if (LZ4F_isError(hSize)) break;
+                 if (hSize > (LZ4F_HEADER_SIZE_MIN + MAGICNUMBER_SIZE)) {
+                     /* We've already read LZ4F_HEADER_SIZE_MIN so read any extra until hSize*/
+-                    const size_t readBytes = fread(buffer + LZ4F_HEADER_SIZE_MIN, 1, hSize - LZ4F_HEADER_SIZE_MIN, finput);
+-                    if (!readBytes || ferror(finput)) END_PROCESS(72, "Error reading %s", input_filename);
++                    const size_t toRead = hSize - LZ4F_HEADER_SIZE_MIN;
++                    const size_t readBytes = fread(buffer + LZ4F_HEADER_SIZE_MIN, 1, toRead, finput);
++                    if (readBytes != toRead || ferror(finput)) {
++                        DISPLAYLEVEL(1, "%s: truncated frame header \n", input_filename);
++                        break;
++                    }
+                 }
+                 /* Create decompression context */
+                 {   LZ4F_dctx* dctx;
+@@ -2818,13 +2843,17 @@ LZ4IO_getCompressedFileInfo(LZ4IO_cFileInfo_t* cfinfo, const char* input_filenam
+             cfinfo->eqBlockTypes = 0;
+             cfinfo->allContentSize = 0;
+             {   size_t const nbReadBytes = fread(buffer, 1, 4, finput);
+-                if (nbReadBytes != 4)
+-                    END_PROCESS(42, "Stream error : skippable size unreadable");
++                if (nbReadBytes != 4) {
++                    DISPLAYLEVEL(1, "%s: skippable size unreadable \n", input_filename);
++                    break;
++                }
+             }
+             {   unsigned const size = LZ4IO_readLE32(buffer);
+                 int const errorNb = fseek_u32(finput, size, SEEK_CUR);
+-                if (errorNb != 0)
+-                    END_PROCESS(43, "Stream error : cannot skip skippable area");
++                if (errorNb != 0) {
++                    DISPLAYLEVEL(1, "%s: cannot skip skippable area \n", input_filename);
++                    break;
++                }
+                 if (displayNow) DISPLAYOUT("    %6llu %14s %5s %8s %20u %20s %9s\n",
+                              cfinfo->frameCount + 1,
+                              "SkippableFrame",
+@@ -2866,7 +2895,8 @@ int LZ4IO_displayCompressedFilesInfo(const char** inFileNames, size_t ifnIdx)
+         cfinfo.fileName = LZ4IO_baseName(inFileNames[idx]);
+         if (LZ4IO_isStdin(inFileNames[idx]) ? !UTIL_isRegFD(0) : !UTIL_isRegFile(inFileNames[idx])) {
+             DISPLAYLEVEL(1, "lz4: %s is not a regular file \n", inFileNames[idx]);
+-            return 1;
++            result = 1;
++            continue;
+         }
+         if (g_displayLevel >= 3) {
+             /* verbose mode */
+@@ -2878,7 +2908,10 @@ int LZ4IO_displayCompressedFilesInfo(const char** inFileNames, size_t ifnIdx)
+             if (op_result != LZ4IO_LZ4F_OK) {
+                 assert(op_result == LZ4IO_format_not_known);
+                 DISPLAYLEVEL(1, "lz4: %s: File format not recognized \n", inFileNames[idx]);
+-                return 1;
++                /* report this file and carry on: --list implies -m, so one bad
++                 * file must not hide every file listed after it */
++                result = 1;
++                continue;
+         }   }
+         if (g_displayLevel >= 3) {
+             DISPLAYOUT("\n");

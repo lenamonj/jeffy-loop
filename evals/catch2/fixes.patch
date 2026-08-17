@@ -1,0 +1,2820 @@
+diff --git a/.gitignore b/.gitignore
+index dbf9f40a..2de1ee0e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -38,3 +38,5 @@ docs/doxygen
+ *.cache
+ compile_commands.json
+ **/*.unapproved.txt
++.claude/jeffy-loop.local.md
++/build/
+diff --git a/docs/benchmarks.md b/docs/benchmarks.md
+index 9edbb93c..bc60e332 100644
+--- a/docs/benchmarks.md
++++ b/docs/benchmarks.md
+@@ -118,8 +118,10 @@ Fibonacci 35                                            100       145169   87.10
+ The simplest use case shown above, takes no arguments and just runs the user code that needs to be measured.
+ However, if using the `BENCHMARK_ADVANCED` macro and adding a `Catch::Benchmark::Chronometer` argument after
+ the macro, some advanced features are available. The contents of the simple benchmarks are invoked once per run,
+-while the blocks of the advanced benchmarks are invoked exactly twice:
+-once during the estimation phase, and another time during the execution phase.
++while the blocks of the advanced benchmarks are invoked once per sample during the measurement
++phase, plus one or more times during the estimation phase - how many depends on how quickly the
++trial run reaches a measurable duration. With the default 100 samples that is at least 101
++invocations, so set-up written into the block runs once per sample rather than once per benchmark.
+ 
+ ```c++
+ BENCHMARK("simple"){ return long_computation(); };
+@@ -205,8 +207,11 @@ create an object in that storage. So if you want to measure the time it takes
+ for a certain constructor to run, you can just measure the time it takes to run
+ this function.
+ 
+-When the lifetime of a `Catch::Benchmark::storage_for<T>` object ends, if an actual object was
+-constructed there it will be automatically destroyed, so nothing leaks.
++When the lifetime of a `Catch::Benchmark::storage_for<T>` object ends, the `T` destructor is run
++on its storage, so nothing leaks. That happens unconditionally rather than only when an object
++was constructed, so every `storage_for<T>` must have had `construct` called on it exactly once
++before its lifetime ends. Sizing the vector with `meter.runs()` and constructing into every
++element inside `measure`, as above, is what guarantees that.
+ 
+ If you want to measure a destructor, though, we need to use
+ `Catch::Benchmark::destructable_object<T>`. These objects are similar to
+diff --git a/docs/command-line.md b/docs/command-line.md
+index 7df8ecf6..e2961f51 100644
+--- a/docs/command-line.md
++++ b/docs/command-line.md
+@@ -150,6 +150,13 @@ You can also match test names with special characters by escaping them
+ with a backslash (`"\"`), e.g. a test named `"Do A, then B"` is matched
+ by `"Do A\, then B"` test spec. Backslash also escapes itself.
+ 
++The usage line above takes more than one test spec, and several test specs
++given as separate command line arguments are combined the same way
++concatenation inside one argument is: a test has to match **all** of them.
++So `./tests "Test 1" "Test 2"` selects nothing, because no test is named
++both "Test 1" and "Test 2", while `./tests "Test 1,Test 2"` selects both.
++To select several tests by name, comma-join them inside a single argument.
++
+ 
+ ### Examples
+ 
+diff --git a/docs/test-cases-and-sections.md b/docs/test-cases-and-sections.md
+index e32ffa2a..a5c0a98a 100644
+--- a/docs/test-cases-and-sections.md
++++ b/docs/test-cases-and-sections.md
+@@ -99,6 +99,10 @@ In addition to Catch's take on the classic style of test cases, Catch supports a
+ 
+ This macro maps onto ```TEST_CASE``` and works in the same way, except that the test case name will be prefixed by "Scenario: "
+ 
++* **SCENARIO_METHOD(** _className_, _scenario name_ \[, _tags_ \] **)**
++
++This macro maps onto [```TEST_CASE_METHOD```](test-fixtures.md#non-templated-test-fixtures) in the same way that ```SCENARIO``` maps onto ```TEST_CASE```: the scenario runs as a member of a class derived from _className_, so it can reach that fixture's protected members, and the test case name is likewise prefixed by "Scenario: ".
++
+ * **GIVEN(** _something_ **)**
+ * **WHEN(** _something_ **)**
+ * **THEN(** _something_ **)**
+diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
+index 74b65995..3af1ac1b 100644
+--- a/examples/CMakeLists.txt
++++ b/examples/CMakeLists.txt
+@@ -56,3 +56,54 @@ endforeach()
+ 
+ list(APPEND CATCH_TEST_TARGETS ${ALL_EXAMPLE_TARGETS})
+ set(CATCH_TEST_TARGETS ${CATCH_TEST_TARGETS} PARENT_SCOPE)
++
++# Run every example and pin the summary it prints.
++#
++# Building the examples only proves they still compile against the current API.
++# It cannot see an example whose behaviour drifts from what its own comments and
++# the documentation say it does, and several of these are deliberate failure
++# demonstrations whose whole point is the numbers in that summary.
++#
++# PASS_REGULAR_EXPRESSION is used rather than exit codes because it pins the
++# output rather than just its sign: CMake ignores the exit status when that
++# property is set, which is what lets the deliberately failing examples be
++# checked as precisely as the passing ones.
++set(EXAMPLE_EXPECTATIONS
++  "010-TestCase|test cases: 2 \\| 1 passed \\| 1 failed"
++  "020-MultiFile|test cases: 3 \\| 2 passed \\| 1 failed"
++  "030-Asn-Require-Check|test cases: 6 \\| 1 passed \\| 5 failed"
++  "100-Fix-Section|All tests passed \\(16 assertions in 1 test case\\)"
++  "110-Fix-ClassFixture|All tests passed \\(2 assertions in 2 test cases\\)"
++  "111-Fix-PersistentFixture|All tests passed \\(3 assertions in 1 test case\\)"
++  "120-Bdd-ScenarioGivenWhenThen|All tests passed \\(16 assertions in 1 test case\\)"
++  "210-Evt-EventListeners|test cases: 2 \\| 1 passed \\| 1 failed"
++  "231-Cfg_OutputStreams|All tests passed \\(1 assertion in 1 test case\\)"
++  "232-Cfg-CustomMain|No tests ran"
++  "300-Gen-OwnGenerator|All tests passed \\(400 assertions in 1 test case\\)"
++  "301-Gen-MapTypeConversion|All tests passed \\(4 assertions in 1 test case\\)"
++  "302-Gen-Table|All tests passed \\(4 assertions in 1 test case\\)"
++  "310-Gen-VariablesInGenerators|All tests passed \\(150 assertions in 1 test case\\)"
++  "311-Gen-CustomCapture|All tests passed \\(150 assertions in 1 test case\\)"
++)
++
++foreach(expectation ${EXAMPLE_EXPECTATIONS})
++  string(REPLACE "|" ";" parts "${expectation}")
++  list(GET parts 0 example_name)
++  list(GET parts 1 expected_output)
++  add_test(NAME Examples::${example_name} COMMAND $<TARGET_FILE:${example_name}>)
++  set_tests_properties(Examples::${example_name}
++    PROPERTIES
++      PASS_REGULAR_EXPRESSION "${expected_output}"
++  )
++endforeach()
++
++# 232 binds a custom command line option. A documented option that changes
++# nothing would still let the case above pass, so it is exercised at a value
++# that must change the output.
++add_test(NAME Examples::232-Cfg-CustomMain::CustomOption
++  COMMAND $<TARGET_FILE:232-Cfg-CustomMain> --height 42
++)
++set_tests_properties(Examples::232-Cfg-CustomMain::CustomOption
++  PROPERTIES
++    PASS_REGULAR_EXPRESSION "height: 42"
++)
+diff --git a/src/catch2/benchmark/detail/catch_stats.cpp b/src/catch2/benchmark/detail/catch_stats.cpp
+index 2a5a2e03..ed21c050 100644
+--- a/src/catch2/benchmark/detail/catch_stats.cpp
++++ b/src/catch2/benchmark/detail/catch_stats.cpp
+@@ -18,6 +18,7 @@
+ #include <cassert>
+ #include <cmath>
+ #include <cstddef>
++#include <limits>
+ #include <numeric>
+ #include <random>
+ 
+@@ -92,6 +93,20 @@ namespace Catch {
+                 }
+ 
+                 static double erf_inv( double x ) {
++                    // erfinv is +-infinity at the ends of its domain, and the
++                    // approximation below cannot produce that: it evaluates
++                    // -log((1-x)*(1+x)), which is already infinite there, and
++                    // the polynomial it feeds returns an infinity of the
++                    // opposite sign. Answering the two boundary points
++                    // directly is what keeps the function monotone across its
++                    // whole domain.
++                    if ( x >= 1.0 ) {
++                        return std::numeric_limits<double>::infinity();
++                    }
++                    if ( x <= -1.0 ) {
++                        return -std::numeric_limits<double>::infinity();
++                    }
++
+                     // Code accompanying the article "Approximating the erfinv
+                     // function" in GPU Computing Gems, Volume 2
+                     double w, p;
+@@ -314,15 +329,31 @@ namespace Catch {
+                     sum_cubes += cube;
+                 }
+ 
+-                double accel = sum_cubes / ( 6 * std::pow( sum_squares, 1.5 ) );
++                // Degenerate case with a constant jackknife: every leave-one-out
++                // estimate is the same, so the skewness this corrects for is
++                // zero and BCa reduces to plain bias correction. Computing it
++                // as written would be 0/0.
++                double accel = Catch::Detail::directCompare( sum_squares, 0. )
++                                   ? 0.
++                                   : sum_cubes /
++                                         ( 6 * std::pow( sum_squares, 1.5 ) );
+                 long n = static_cast<long>( resample.size() );
++                // Degenerate case with no resamples: there is no bootstrap
++                // distribution to take quantiles from.
++                if ( n == 0 ) {
++                    return { point, point, point, confidence_level };
++                }
+                 double prob_n = static_cast<double>(
+                     std::count_if( resample.begin(),
+                                    resample.end(),
+                                    [point]( double x ) { return x < point; } )) /
+                     static_cast<double>( n );
+-                // degenerate case with uniform samples
+-                if ( Catch::Detail::directCompare( prob_n, 0. ) ) {
++                // degenerate case with uniform samples - the resamples all lie
++                // on one side of the point estimate, so the bias correction is
++                // infinite and the distribution says nothing about the other
++                // side
++                if ( Catch::Detail::directCompare( prob_n, 0. ) ||
++                     Catch::Detail::directCompare( prob_n, 1. ) ) {
+                     return { point, point, point, confidence_level };
+                 }
+ 
+@@ -334,15 +365,30 @@ namespace Catch {
+                                         static_cast<double>( n ) );
+                 };
+                 auto a = [bias, accel]( double b ) {
++                    // A confidence level of 1 makes b infinite, and the
++                    // acceleration adjustment is then an infinity over an
++                    // infinity. The interval that holds all of the bootstrap
++                    // distribution is the whole of it, so the adjustment is
++                    // dropped and the sign carried through, which sends the
++                    // indices to the two ends of the resample.
++                    if ( !std::isfinite( b ) ) { return b; }
+                     return bias + b / ( 1. - accel * b );
+                 };
+                 double b1 = bias + z1;
+                 double b2 = bias - z1;
+                 double a1 = a( b1 );
+                 double a2 = a( b2 );
+-                auto lo = static_cast<size_t>( (std::max)( cumn( a1 ), 0l ) );
+-                auto hi =
+-                    static_cast<size_t>( (std::min)( cumn( a2 ), n - 1 ) );
++                // Both indices are clamped on both sides. cumn can land outside
++                // [0, n-1] from either end - normal_cdf rounding to 1 at the
++                // top, and lround of a non-finite argument returning LONG_MIN
++                // at the bottom - and either one subscripts the resample out of
++                // bounds.
++                auto clamped = [n]( long index ) {
++                    return static_cast<size_t>(
++                        (std::max)( 0l, (std::min)( index, n - 1 ) ) );
++                };
++                auto lo = clamped( cumn( a1 ) );
++                auto hi = clamped( cumn( a2 ) );
+ 
+                 return { point, resample[lo], resample[hi], confidence_level };
+             }
+diff --git a/src/catch2/internal/catch_commandline.cpp b/src/catch2/internal/catch_commandline.cpp
+index 4ce42397..6d28c18e 100644
+--- a/src/catch2/internal/catch_commandline.cpp
++++ b/src/catch2/internal/catch_commandline.cpp
+@@ -205,6 +205,24 @@ namespace Catch {
+             config.benchmarkSamples = *parsedSamples;
+             return ParserResult::ok( ParseResultType::Matched );
+         };
++        auto const setBenchmarkConfidenceInterval =
++            [&]( std::string const& confidenceInterval ) {
++                double parsedInterval = 0;
++                auto conversion = Clara::Detail::convertInto(
++                    confidenceInterval, parsedInterval );
++                if ( !conversion ) { return conversion; }
++                // The bootstrap derives a normal quantile from this, whose
++                // domain is [0, 1]. Outside it the analysis either asserts or
++                // reports an inverted interval, so it is rejected here, at the
++                // one place the value enters.
++                if ( parsedInterval < 0. || parsedInterval > 1. ) {
++                    return ParserResult::runtimeError(
++                        "Benchmark confidence interval must be between 0 and "
++                        "1, '" + confidenceInterval + "' is not" );
++                }
++                config.benchmarkConfidenceInterval = parsedInterval;
++                return ParserResult::ok( ParseResultType::Matched );
++            };
+ 
+         auto const setShardIndex = [&](std::string const& shardIndex) {
+             auto parsedIndex = parseUInt( shardIndex );
+@@ -346,7 +364,7 @@ namespace Catch {
+             | Opt( config.benchmarkResamples, "resamples" )
+                 ["--benchmark-resamples"]
+                 ( "number of resamples for the bootstrap (default: 100000)" )
+-            | Opt( config.benchmarkConfidenceInterval, "confidence interval" )
++            | Opt( setBenchmarkConfidenceInterval, "confidence interval" )
+                 ["--benchmark-confidence-interval"]
+                 ( "confidence interval for the bootstrap (between 0 and 1, default: 0.95)" )
+             | Opt( config.benchmarkNoAnalysis )
+diff --git a/src/catch2/internal/catch_jsonwriter.cpp b/src/catch2/internal/catch_jsonwriter.cpp
+index 190a978c..08bbcfc6 100644
+--- a/src/catch2/internal/catch_jsonwriter.cpp
++++ b/src/catch2/internal/catch_jsonwriter.cpp
+@@ -8,9 +8,10 @@
+ #include <catch2/internal/catch_enforce.hpp>
+ #include <catch2/internal/catch_jsonwriter.hpp>
+ #include <catch2/internal/catch_polyfills.hpp>
+-#include <catch2/internal/catch_unreachable.hpp>
++#include <catch2/internal/catch_string_manip.hpp>
+ 
+ #include <cmath>
++#include <iomanip>
+ #include <locale>
+ 
+ namespace Catch {
+@@ -21,11 +22,12 @@ namespace Catch {
+             constexpr EscapeLUT() {
+                 escape[static_cast<unsigned char>( '"' )] = true;
+                 escape[static_cast<unsigned char>( '\\' )] = true;
+-                escape[static_cast<unsigned char>( '\b' )] = true;
+-                escape[static_cast<unsigned char>( '\f' )] = true;
+-                escape[static_cast<unsigned char>( '\n' )] = true;
+-                escape[static_cast<unsigned char>( '\r' )] = true;
+-                escape[static_cast<unsigned char>( '\t' )] = true;
++                // RFC 8259 section 7 requires every code point in
++                // U+0000..U+001F to be escaped, not just the seven that have
++                // a two-character form. The rest are written as \u00XX.
++                for ( unsigned char c = 0; c < 0x20; ++c ) {
++                    escape[c] = true;
++                }
+             }
+         };
+         static constexpr EscapeLUT escapeLUT{};
+@@ -34,6 +36,37 @@ namespace Catch {
+             return escapeLUT.escape[static_cast<unsigned char>( c )];
+         }
+ 
++        // \u00XX spellings for the control characters without a shorter form.
++        // Static storage, so the StringRefs handed out below stay valid.
++        struct ControlEscapeLUT {
++            char escapes[0x20][7] = {};
++            constexpr ControlEscapeLUT() {
++                const char hexDigits[] = "0123456789abcdef";
++                for ( unsigned i = 0; i < 0x20; ++i ) {
++                    escapes[i][0] = '\\';
++                    escapes[i][1] = 'u';
++                    escapes[i][2] = '0';
++                    escapes[i][3] = '0';
++                    escapes[i][4] = hexDigits[( i >> 4 ) & 0xF];
++                    escapes[i][5] = hexDigits[i & 0xF];
++                    escapes[i][6] = '\0';
++                }
++            }
++        };
++        static constexpr ControlEscapeLUT controlEscapeLUT{};
++
++        // Renders a byte that cannot be part of a valid UTF-8 encoding. The
++        // spelling matches XmlEncode's `\xFF`, so both reporters show the
++        // same bytes the same way; the leading backslash is doubled because
++        // this goes inside a JSON string.
++        static void hexEscapeInvalidByte( std::ostream& os, unsigned char c ) {
++            std::ios_base::fmtflags f( os.flags() );
++            os << "\\\\x"_sr << std::uppercase << std::hex
++               << std::setfill( '0' ) << std::setw( 2 )
++               << static_cast<int>( c );
++            os.flags( f );
++        }
++
+         static Catch::StringRef makeEscapeStringRef( char c ) {
+             if ( c == '"' ) {
+                 return "\\\""_sr;
+@@ -50,7 +83,10 @@ namespace Catch {
+             } else if ( c == '\t' ) {
+                 return "\\t"_sr;
+             }
+-            Catch::Detail::Unreachable();
++            // Everything else the LUT flags is a C0 control with no
++            // two-character form.
++            return Catch::StringRef(
++                controlEscapeLUT.escapes[static_cast<unsigned char>( c )], 6 );
+         }
+     } // namespace
+ 
+@@ -193,14 +229,36 @@ namespace Catch {
+         } else {
+             m_os << '"';
+             size_t current_start = 0;
+-            for ( size_t i = 0; i < value.size(); ++i ) {
++            size_t i = 0;
++            while ( i < value.size() ) {
++                const unsigned char c = static_cast<unsigned char>( value[i] );
+                 if ( needsEscape( value[i] ) ) {
+                     if ( current_start < i ) {
+                         m_os
+                             << value.substr( current_start, i - current_start );
+                     }
+                     m_os << makeEscapeStringRef( value[i] );
+-                    current_start = i + 1;
++                    ++i;
++                    current_start = i;
++                } else if ( c < 0x80 ) {
++                    // Plain ASCII, nothing to do.
++                    ++i;
++                } else {
++                    // JSON text has to be valid UTF-8, so a byte that is not
++                    // part of a valid encoding cannot be passed through.
++                    const size_t encBytes =
++                        Detail::validUtf8SequenceLength( value, i );
++                    if ( encBytes == 0 ) {
++                        if ( current_start < i ) {
++                            m_os << value.substr( current_start,
++                                                  i - current_start );
++                        }
++                        hexEscapeInvalidByte( m_os, c );
++                        ++i;
++                        current_start = i;
++                    } else {
++                        i += encBytes;
++                    }
+                 }
+             }
+             if ( current_start < value.size() ) {
+diff --git a/src/catch2/internal/catch_string_manip.cpp b/src/catch2/internal/catch_string_manip.cpp
+index 68983787..5d6e256e 100644
+--- a/src/catch2/internal/catch_string_manip.cpp
++++ b/src/catch2/internal/catch_string_manip.cpp
+@@ -5,17 +5,47 @@
+ //        https://www.boost.org/LICENSE_1_0.txt)
+ 
+ // SPDX-License-Identifier: BSL-1.0
++#include <catch2/internal/catch_enforce.hpp>
+ #include <catch2/internal/catch_move_and_forward.hpp>
+ #include <catch2/internal/catch_string_manip.hpp>
+ #include <catch2/internal/catch_stringref.hpp>
+ 
+ #include <ostream>
++#include <cstdint>
+ #include <cstring>
+ #include <cctype>
+ #include <vector>
+ 
+ namespace Catch {
+ 
++    namespace {
++        size_t trailingBytes(unsigned char c) {
++            if ((c & 0xE0) == 0xC0) {
++                return 2;
++            }
++            if ((c & 0xF0) == 0xE0) {
++                return 3;
++            }
++            if ((c & 0xF8) == 0xF0) {
++                return 4;
++            }
++            CATCH_INTERNAL_ERROR("Invalid multibyte utf-8 start byte encountered");
++        }
++
++        uint32_t headerValue(unsigned char c) {
++            if ((c & 0xE0) == 0xC0) {
++                return c & 0x1F;
++            }
++            if ((c & 0xF0) == 0xE0) {
++                return c & 0x0F;
++            }
++            if ((c & 0xF8) == 0xF0) {
++                return c & 0x07;
++            }
++            CATCH_INTERNAL_ERROR("Invalid multibyte utf-8 start byte encountered");
++        }
++    } // namespace
++
+     bool startsWith( std::string const& s, std::string const& prefix ) {
+         return s.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), s.begin());
+     }
+@@ -96,7 +126,10 @@ namespace Catch {
+         std::size_t start = 0;
+         for(std::size_t pos = 0; pos < str.size(); ++pos ) {
+             if( str[pos] == delimiter ) {
+-                if( pos - start > 1 )
++                // Keep every non-empty field. The trailing-field branch below
++                // already keeps one-character fields, so requiring more than
++                // one character here made the two branches disagree.
++                if( pos > start )
+                     subStrings.push_back( str.substr( start, pos-start ) );
+                 start = pos+1;
+             }
+@@ -106,6 +139,47 @@ namespace Catch {
+         return subStrings;
+     }
+ 
++    namespace Detail {
++        std::size_t validUtf8SequenceLength( StringRef str, std::size_t idx ) {
++            const unsigned char c = static_cast<unsigned char>( str[idx] );
++            if ( c < 0x80 ) { return 1; }
++
++            // Not a valid lead byte: 10XX XXXX is a continuation byte, and
++            // 1111 1XXX is outside the encoding entirely.
++            if ( c < 0xC0 || c >= 0xF8 ) { return 0; }
++
++            const std::size_t encBytes = trailingBytes( c );
++            // Enough bytes left to avoid reading out of bounds?
++            if ( idx + encBytes > str.size() ) { return 0; }
++
++            // The lead byte is well formed, so check the data: every
++            // following byte must carry the 10XX XXXX pattern, and the
++            // value they spell out must be sane.
++            bool valid = true;
++            uint32_t value = headerValue( c );
++            for ( std::size_t n = 1; n < encBytes; ++n ) {
++                const unsigned char nc =
++                    static_cast<unsigned char>( str[idx + n] );
++                valid &= ( ( nc & 0xC0 ) == 0x80 );
++                value = ( value << 6 ) | ( nc & 0x3F );
++            }
++
++            if (
++                // Wrong bit pattern of following bytes
++                ( !valid ) ||
++                // Overlong encodings
++                ( value < 0x80 ) ||
++                ( 0x80 <= value && value < 0x800 && encBytes > 2 ) ||
++                ( 0x800 < value && value < 0x10000 && encBytes > 3 ) ||
++                // Encoded value out of range
++                ( value >= 0x110000 ) ) {
++                return 0;
++            }
++
++            return encBytes;
++        }
++    } // namespace Detail
++
+     std::ostream& operator << ( std::ostream& os, pluralise const& pluraliser ) {
+         os << pluraliser.m_count << ' ' << pluraliser.m_label;
+         if( pluraliser.m_count != 1 )
+diff --git a/src/catch2/internal/catch_string_manip.hpp b/src/catch2/internal/catch_string_manip.hpp
+index 4251f83d..46332554 100644
+--- a/src/catch2/internal/catch_string_manip.hpp
++++ b/src/catch2/internal/catch_string_manip.hpp
+@@ -35,6 +35,22 @@ namespace Catch {
+     std::vector<StringRef> splitStringRef( StringRef str CATCH_ATTR_LIFETIMEBOUND, char delimiter );
+     bool replaceInPlace( std::string& str, std::string const& replaceThis, std::string const& withThis );
+ 
++    namespace Detail {
++        /**
++         * Length in bytes of the UTF-8 sequence starting at `str[idx]`
++         *
++         * Returns 0 when the bytes at `idx` are not a valid UTF-8 encoding,
++         * which covers invalid lead bytes, sequences truncated by the end of
++         * the string, bad continuation bytes, overlong encodings, and values
++         * past the end of the Unicode range. Only the encoding format is
++         * checked, so surrogate halves are reported as valid; both writers
++         * that use this have always accepted them.
++         *
++         * \pre `idx < str.size()`
++         */
++        std::size_t validUtf8SequenceLength( StringRef str, std::size_t idx );
++    } // namespace Detail
++
+     /**
+      * Helper for streaming a "count [maybe-plural-of-label]" human-friendly string
+      *
+diff --git a/src/catch2/internal/catch_tag_alias_registry.cpp b/src/catch2/internal/catch_tag_alias_registry.cpp
+index e87e4050..71824ecf 100644
+--- a/src/catch2/internal/catch_tag_alias_registry.cpp
++++ b/src/catch2/internal/catch_tag_alias_registry.cpp
+@@ -26,11 +26,14 @@ namespace Catch {
+     std::string TagAliasRegistry::expandAliases( std::string const& unexpandedTestSpec ) const {
+         std::string expandedTestSpec = unexpandedTestSpec;
+         for( auto const& registryKvp : m_registry ) {
+-            std::size_t pos = expandedTestSpec.find( registryKvp.first );
+-            if( pos != std::string::npos ) {
+-                expandedTestSpec =  expandedTestSpec.substr( 0, pos ) +
+-                                    registryKvp.second.tag +
+-                                    expandedTestSpec.substr( pos + registryKvp.first.size() );
++            std::string const& alias = registryKvp.first;
++            std::string const& tag = registryKvp.second.tag;
++            std::size_t pos = expandedTestSpec.find( alias );
++            while( pos != std::string::npos ) {
++                expandedTestSpec.replace( pos, alias.size(), tag );
++                // Resume past the text just inserted, so an alias whose
++                // expansion contains the alias itself cannot loop forever.
++                pos = expandedTestSpec.find( alias, pos + tag.size() );
+             }
+         }
+         return expandedTestSpec;
+diff --git a/src/catch2/internal/catch_xmlwriter.cpp b/src/catch2/internal/catch_xmlwriter.cpp
+index 67126be1..4ea7b230 100644
+--- a/src/catch2/internal/catch_xmlwriter.cpp
++++ b/src/catch2/internal/catch_xmlwriter.cpp
+@@ -11,7 +11,8 @@
+ #include <catch2/internal/catch_enforce.hpp>
+ #include <catch2/internal/catch_xmlwriter.hpp>
+ 
+-#include <cstdint>
++#include <catch2/internal/catch_string_manip.hpp>
++
+ #include <iomanip>
+ #include <type_traits>
+ 
+@@ -19,32 +20,6 @@ namespace Catch {
+ 
+ namespace {
+ 
+-    size_t trailingBytes(unsigned char c) {
+-        if ((c & 0xE0) == 0xC0) {
+-            return 2;
+-        }
+-        if ((c & 0xF0) == 0xE0) {
+-            return 3;
+-        }
+-        if ((c & 0xF8) == 0xF0) {
+-            return 4;
+-        }
+-        CATCH_INTERNAL_ERROR("Invalid multibyte utf-8 start byte encountered");
+-    }
+-
+-    uint32_t headerValue(unsigned char c) {
+-        if ((c & 0xE0) == 0xC0) {
+-            return c & 0x1F;
+-        }
+-        if ((c & 0xF0) == 0xE0) {
+-            return c & 0x0F;
+-        }
+-        if ((c & 0xF8) == 0xF0) {
+-            return c & 0x07;
+-        }
+-        CATCH_INTERNAL_ERROR("Invalid multibyte utf-8 start byte encountered");
+-    }
+-
+     void hexEscapeChar(std::ostream& os, unsigned char c) {
+         std::ios_base::fmtflags f(os.flags());
+         os << "\\x"_sr
+@@ -88,7 +63,10 @@ namespace {
+ 
+             case '>':
+                 // See: http://www.w3.org/TR/xml/#syntax
+-                if ( idx > 2 && m_str[idx - 1] == ']' && m_str[idx - 2] == ']' ) {
++                // idx >= 2 is what makes the two lookbacks safe, so it is
++                // also the smallest offset at which "]]>" can occur - a
++                // string that opens with the terminator sits exactly there.
++                if ( idx >= 2 && m_str[idx - 1] == ']' && m_str[idx - 2] == ']' ) {
+                     write_to( idx );
+                     os << "&gt;"_sr;
+                 }
+@@ -118,54 +96,19 @@ namespace {
+                     break;
+                 }
+ 
+-                // UTF-8 territory
+-                // Check if the encoding is valid and if it is not, hex escape
+-                // bytes. Important: We do not check the exact decoded values for
+-                // validity, only the encoding format First check that this bytes is
+-                // a valid lead byte: This means that it is not encoded as 1111 1XXX
+-                // Or as 10XX XXXX
+-                if ( c < 0xC0 || c >= 0xF8 ) {
+-                    write_to( idx );
+-                    hexEscapeChar( os, c );
+-                    break;
+-                }
+-
+-                auto encBytes = trailingBytes( c );
+-                // Are there enough bytes left to avoid accessing out-of-bounds
+-                // memory?
+-                if ( idx + encBytes - 1 >= m_str.size() ) {
+-                    write_to( idx );
+-                    hexEscapeChar( os, c );
+-                    break;
+-                }
+-                // The header is valid, check data
+-                // The next encBytes bytes must together be a valid utf-8
+-                // This means: bitpattern 10XX XXXX and the extracted value is sane
+-                // (ish)
+-                bool valid = true;
+-                uint32_t value = headerValue( c );
+-                for ( std::size_t n = 1; n < encBytes; ++n ) {
+-                    unsigned char nc = static_cast<unsigned char>( m_str[idx + n] );
+-                    valid &= ( ( nc & 0xC0 ) == 0x80 );
+-                    value = ( value << 6 ) | ( nc & 0x3F );
++                // UTF-8 territory. Bytes that are not part of a valid
++                // encoding are hex escaped one at a time; a valid sequence is
++                // written through and skipped over.
++                {
++                    const std::size_t encBytes =
++                        Detail::validUtf8SequenceLength( m_str, idx );
++                    if ( encBytes == 0 ) {
++                        write_to( idx );
++                        hexEscapeChar( os, c );
++                        break;
++                    }
++                    idx += encBytes - 1;
+                 }
+-
+-                if (
+-                    // Wrong bit pattern of following bytes
+-                    ( !valid ) ||
+-                    // Overlong encodings
+-                    ( value < 0x80 ) ||
+-                    ( 0x80 <= value && value < 0x800 && encBytes > 2 ) ||
+-                    ( 0x800 < value && value < 0x10000 && encBytes > 3 ) ||
+-                    // Encoded value out of range
+-                    ( value >= 0x110000 ) ) {
+-                    write_to( idx );
+-                    hexEscapeChar( os, c );
+-                    break;
+-                }
+-
+-                // If we got here, this is in fact a valid(ish) utf-8 sequence
+-                idx += encBytes - 1;
+                 break;
+             }
+         }
+diff --git a/tests/SelfTest/Baselines/automake.sw.approved.txt b/tests/SelfTest/Baselines/automake.sw.approved.txt
+index a25bc52a..8c4d5fb8 100644
+--- a/tests/SelfTest/Baselines/automake.sw.approved.txt
++++ b/tests/SelfTest/Baselines/automake.sw.approved.txt
+@@ -135,6 +135,7 @@ Nor would this
+ :test-result: FAIL Contains string matcher
+ :test-result: PASS Copy and then generate a range
+ :test-result: PASS Cout stream properly declares it writes to stdout
++:test-result: PASS Creating an EnumInfo for single character enum values
+ :test-result: FAIL Custom exceptions can be translated when testing for nothrow
+ :test-result: FAIL Custom exceptions can be translated when testing for throwing as something else
+ :test-result: FAIL Custom std-exceptions can be custom translated
+@@ -301,6 +302,7 @@ Message from section two
+ :test-result: PASS Test case with identical tags keeps just one
+ :test-result: PASS Test case with one argument
+ :test-result: PASS Test enum bit values
++:test-result: PASS Test specs given as separate arguments are ANDed
+ :test-result: PASS Test with special, characters "in name
+ :test-result: PASS Testing checked-if
+ :test-result: XFAIL Testing checked-if 2
+diff --git a/tests/SelfTest/Baselines/automake.sw.multi.approved.txt b/tests/SelfTest/Baselines/automake.sw.multi.approved.txt
+index 3f846b7b..66262cf4 100644
+--- a/tests/SelfTest/Baselines/automake.sw.multi.approved.txt
++++ b/tests/SelfTest/Baselines/automake.sw.multi.approved.txt
+@@ -133,6 +133,7 @@
+ :test-result: FAIL Contains string matcher
+ :test-result: PASS Copy and then generate a range
+ :test-result: PASS Cout stream properly declares it writes to stdout
++:test-result: PASS Creating an EnumInfo for single character enum values
+ :test-result: FAIL Custom exceptions can be translated when testing for nothrow
+ :test-result: FAIL Custom exceptions can be translated when testing for throwing as something else
+ :test-result: FAIL Custom std-exceptions can be custom translated
+@@ -294,6 +295,7 @@
+ :test-result: PASS Test case with identical tags keeps just one
+ :test-result: PASS Test case with one argument
+ :test-result: PASS Test enum bit values
++:test-result: PASS Test specs given as separate arguments are ANDed
+ :test-result: PASS Test with special, characters "in name
+ :test-result: PASS Testing checked-if
+ :test-result: XFAIL Testing checked-if 2
+diff --git a/tests/SelfTest/Baselines/compact.sw.approved.txt b/tests/SelfTest/Baselines/compact.sw.approved.txt
+index 7989d276..55576b63 100644
+--- a/tests/SelfTest/Baselines/compact.sw.approved.txt
++++ b/tests/SelfTest/Baselines/compact.sw.approved.txt
+@@ -569,6 +569,12 @@ Generators.tests.cpp:<line number>: passed: elem % 2 == 1 for: 1 == 1
+ Generators.tests.cpp:<line number>: passed: call_count == 1 for: 1 == 1
+ Generators.tests.cpp:<line number>: passed: make_data().size() == test_count for: 6 == 6
+ Stream.tests.cpp:<line number>: passed: Catch::makeStream( "-" )->isConsole() for: true
++EnumToString.tests.cpp:<line number>: passed: enumInfo.lookup(0) == "U" for: U == "U"
++EnumToString.tests.cpp:<line number>: passed: enumInfo.lookup(1) == "V" for: V == "V"
++EnumToString.tests.cpp:<line number>: passed: enumInfo.lookup(2) == "W" for: W == "W"
++EnumToString.tests.cpp:<line number>: passed: enumInfo.lookup(3) == "{** unexpected enum value **}" for: {** unexpected enum value **}
++==
++"{** unexpected enum value **}"
+ Exception.tests.cpp:<line number>: failed: unexpected exception with message: 'custom exception - not std'; expression was: throwCustom()
+ Exception.tests.cpp:<line number>: failed: unexpected exception with message: 'custom exception - not std'; expression was: throwCustom(), std::exception
+ Exception.tests.cpp:<line number>: failed: unexpected exception with message: 'custom std exception'
+@@ -1248,6 +1254,13 @@ Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\n\"" for: ""\n"" ==
+ Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\r\"" for: ""\r"" == ""\r""
+ Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\t\"" for: ""\t"" == ""\t""
+ Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\\\/\\t\\r\\n\"" for: ""\\/\t\r\n"" == ""\\/\t\r\n""
++Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007" "\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f" "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017" "\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"" for: ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f""
++==
++""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f""
++Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\u001b[31mred\\u001b[0m\"" for: ""\u001b[31mred\u001b[0m""
++==
++""\u001b[31mred\u001b[0m""
++Json.tests.cpp:<line number>: passed: sstream.str() == "\"\x7f\"" for: """" == """"
+ Json.tests.cpp:<line number>: passed: sstream.str() == "NaN" for: "NaN" == "NaN"
+ Json.tests.cpp:<line number>: passed: sstream.str() == "Infinity" for: "Infinity" == "Infinity"
+ Json.tests.cpp:<line number>: passed: sstream.str() == "-Infinity" for: "-Infinity" == "-Infinity"
+@@ -2176,6 +2189,12 @@ Tag.tests.cpp:<line number>: passed: testCase.tags.size() == 1 for: 1 == 1
+ Tag.tests.cpp:<line number>: passed: testCase.tags[0] == Tag( "tag1" ) for: {?} == {?}
+ VariadicMacros.tests.cpp:<line number>: passed: with 1 message: 'no assertions'
+ Tricky.tests.cpp:<line number>: passed: 0x<hex digits> == bit30and31 for: 3221225472 (0x<hex digits>) == 3221225472
++TestSpec.tests.cpp:<line number>: passed: !(separateArguments.matches( *fakeTestCase( "Test 1" ) )) for: !false
++TestSpec.tests.cpp:<line number>: passed: !(separateArguments.matches( *fakeTestCase( "Test 2" ) )) for: !false
++TestSpec.tests.cpp:<line number>: passed: commaJoined.matches( *fakeTestCase( "Test 1" ) ) for: true
++TestSpec.tests.cpp:<line number>: passed: commaJoined.matches( *fakeTestCase( "Test 2" ) ) for: true
++TestSpec.tests.cpp:<line number>: passed: single.matches( *fakeTestCase( "Test 1" ) ) for: true
++TestSpec.tests.cpp:<line number>: passed: !(single.matches( *fakeTestCase( "Test 2" ) )) for: !false
+ CmdLine.tests.cpp:<line number>: passed:
+ Misc.tests.cpp:<line number>: passed: true
+ Misc.tests.cpp:<line number>: passed:
+@@ -2560,6 +2579,12 @@ Xml.tests.cpp:<line number>: passed: encode( "smith > jones" ) == "smith > jones
+ Xml.tests.cpp:<line number>: passed: encode( "smith ]]> jones" ) == "smith ]]&gt; jones" for: "smith ]]&gt; jones"
+ ==
+ "smith ]]&gt; jones"
++Xml.tests.cpp:<line number>: passed: encode( "]]>" ) == "]]&gt;" for: "]]&gt;" == "]]&gt;"
++Xml.tests.cpp:<line number>: passed: encode( "]]> jones" ) == "]]&gt; jones" for: "]]&gt; jones" == "]]&gt; jones"
++Xml.tests.cpp:<line number>: passed: encode( "a]]>" ) == "a]]&gt;" for: "a]]&gt;" == "a]]&gt;"
++Xml.tests.cpp:<line number>: passed: encode( "]]>a]]>" ) == "]]&gt;a]]&gt;" for: "]]&gt;a]]&gt;" == "]]&gt;a]]&gt;"
++Xml.tests.cpp:<line number>: passed: encode( "]>" ) == "]>" for: "]>" == "]>"
++Xml.tests.cpp:<line number>: passed: encode( ">" ) == ">" for: ">" == ">"
+ Xml.tests.cpp:<line number>: passed: encode( stringWithQuotes ) == stringWithQuotes for: "don't "quote" me on that"
+ ==
+ "don't "quote" me on that"
+@@ -2785,6 +2810,9 @@ EnumToString.tests.cpp:<line number>: passed: parseEnums( "EnumName::Value1" ),
+ EnumToString.tests.cpp:<line number>: passed: parseEnums( "ClassName::EnumName::Value1, ClassName::EnumName::Value2" ), Equals( std::vector<Catch::StringRef>{"Value1", "Value2"} ) for: { Value1, Value2 } Equals: { Value1, Value2 }
+ EnumToString.tests.cpp:<line number>: passed: parseEnums( "ClassName::EnumName::Value1, ClassName::EnumName::Value2, ClassName::EnumName::Value3" ), Equals( std::vector<Catch::StringRef>{"Value1", "Value2", "Value3"} ) for: { Value1, Value2, Value3 } Equals: { Value1, Value2, Value3 }
+ EnumToString.tests.cpp:<line number>: passed: parseEnums( "ClassName::EnumName::Value1,ClassName::EnumName::Value2 , ClassName::EnumName::Value3" ), Equals( std::vector<Catch::StringRef>{"Value1", "Value2", "Value3"} ) for: { Value1, Value2, Value3 } Equals: { Value1, Value2, Value3 }
++EnumToString.tests.cpp:<line number>: passed: parseEnums( "U, V, W" ), Equals( std::vector<Catch::StringRef>{"U", "V", "W"} ) for: { U, V, W } Equals: { U, V, W }
++EnumToString.tests.cpp:<line number>: passed: parseEnums( "Axis::X, Axis::Y, Axis::Z" ), Equals( std::vector<Catch::StringRef>{"X", "Y", "Z"} ) for: { X, Y, Z } Equals: { X, Y, Z }
++EnumToString.tests.cpp:<line number>: passed: parseEnums( "A,B" ), Equals( std::vector<Catch::StringRef>{"A", "B"} ) for: { A, B } Equals: { A, B }
+ Tricky.tests.cpp:<line number>: passed: p == 0 for: 0 == 0
+ Message.tests.cpp:<line number>: passed: true with 1 message: 'this MAY be seen IF info is printed for passing assertions'
+ Message.tests.cpp:<line number>: failed: false with 2 messages: 'this SHOULD be seen' and 'this SHOULD also be seen'
+@@ -2856,6 +2884,13 @@ Skip.tests.cpp:<line number>: skipped: 'skipping because answer = 43'
+ StringManip.tests.cpp:<line number>: passed: splitStringRef("", ','), Equals(std::vector<StringRef>()) for: {  } Equals: {  }
+ StringManip.tests.cpp:<line number>: passed: splitStringRef("abc", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
+ StringManip.tests.cpp:<line number>: passed: splitStringRef("abc,def", ','), Equals(std::vector<StringRef>{"abc", "def"}) for: { abc, def } Equals: { abc, def }
++StringManip.tests.cpp:<line number>: passed: splitStringRef("a,b,c", ','), Equals(std::vector<StringRef>{"a", "b", "c"}) for: { a, b, c } Equals: { a, b, c }
++StringManip.tests.cpp:<line number>: passed: splitStringRef("a,bb,c", ','), Equals(std::vector<StringRef>{"a", "bb", "c"}) for: { a, bb, c } Equals: { a, bb, c }
++StringManip.tests.cpp:<line number>: passed: splitStringRef("ab,c", ','), Equals(std::vector<StringRef>{"ab", "c"}) for: { ab, c } Equals: { ab, c }
++StringManip.tests.cpp:<line number>: passed: splitStringRef(",abc", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
++StringManip.tests.cpp:<line number>: passed: splitStringRef("abc,", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
++StringManip.tests.cpp:<line number>: passed: splitStringRef("abc,,def", ','), Equals(std::vector<StringRef>{"abc", "def"}) for: { abc, def } Equals: { abc, def }
++StringManip.tests.cpp:<line number>: passed: splitStringRef(",", ','), Equals(std::vector<StringRef>()) for: {  } Equals: {  }
+ Message.tests.cpp:<line number>: failed: false with 4 messages: 'Count 1 to 3...' and '1' and '2' and '3'
+ Message.tests.cpp:<line number>: failed: false with 4 messages: 'Count 4 to 6...' and '4' and '5' and '6'
+ StringManip.tests.cpp:<line number>: passed: !(startsWith("", 'c')) for: !false
+@@ -3020,7 +3055,7 @@ InternalBenchmark.tests.cpp:<line number>: passed: med == 18. for: 18.0 == 18.0
+ InternalBenchmark.tests.cpp:<line number>: passed: q3 == 23. for: 23.0 == 23.0
+ Misc.tests.cpp:<line number>: passed:
+ Misc.tests.cpp:<line number>: passed:
+-test cases:  454 |  334 passed |  96 failed | 6 skipped | 18 failed as expected
+-assertions: 2423 | 2222 passed | 158 failed | 43 failed as expected
++test cases:  456 |  336 passed |  96 failed | 6 skipped | 18 failed as expected
++assertions: 2452 | 2251 passed | 158 failed | 43 failed as expected
+ 
+ 
+diff --git a/tests/SelfTest/Baselines/compact.sw.multi.approved.txt b/tests/SelfTest/Baselines/compact.sw.multi.approved.txt
+index ffe7a2f6..bc7370d8 100644
+--- a/tests/SelfTest/Baselines/compact.sw.multi.approved.txt
++++ b/tests/SelfTest/Baselines/compact.sw.multi.approved.txt
+@@ -567,6 +567,12 @@ Generators.tests.cpp:<line number>: passed: elem % 2 == 1 for: 1 == 1
+ Generators.tests.cpp:<line number>: passed: call_count == 1 for: 1 == 1
+ Generators.tests.cpp:<line number>: passed: make_data().size() == test_count for: 6 == 6
+ Stream.tests.cpp:<line number>: passed: Catch::makeStream( "-" )->isConsole() for: true
++EnumToString.tests.cpp:<line number>: passed: enumInfo.lookup(0) == "U" for: U == "U"
++EnumToString.tests.cpp:<line number>: passed: enumInfo.lookup(1) == "V" for: V == "V"
++EnumToString.tests.cpp:<line number>: passed: enumInfo.lookup(2) == "W" for: W == "W"
++EnumToString.tests.cpp:<line number>: passed: enumInfo.lookup(3) == "{** unexpected enum value **}" for: {** unexpected enum value **}
++==
++"{** unexpected enum value **}"
+ Exception.tests.cpp:<line number>: failed: unexpected exception with message: 'custom exception - not std'; expression was: throwCustom()
+ Exception.tests.cpp:<line number>: failed: unexpected exception with message: 'custom exception - not std'; expression was: throwCustom(), std::exception
+ Exception.tests.cpp:<line number>: failed: unexpected exception with message: 'custom std exception'
+@@ -1246,6 +1252,13 @@ Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\n\"" for: ""\n"" ==
+ Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\r\"" for: ""\r"" == ""\r""
+ Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\t\"" for: ""\t"" == ""\t""
+ Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\\\/\\t\\r\\n\"" for: ""\\/\t\r\n"" == ""\\/\t\r\n""
++Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007" "\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f" "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017" "\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"" for: ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f""
++==
++""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f""
++Json.tests.cpp:<line number>: passed: sstream.str() == "\"\\u001b[31mred\\u001b[0m\"" for: ""\u001b[31mred\u001b[0m""
++==
++""\u001b[31mred\u001b[0m""
++Json.tests.cpp:<line number>: passed: sstream.str() == "\"\x7f\"" for: """" == """"
+ Json.tests.cpp:<line number>: passed: sstream.str() == "NaN" for: "NaN" == "NaN"
+ Json.tests.cpp:<line number>: passed: sstream.str() == "Infinity" for: "Infinity" == "Infinity"
+ Json.tests.cpp:<line number>: passed: sstream.str() == "-Infinity" for: "-Infinity" == "-Infinity"
+@@ -2169,6 +2182,12 @@ Tag.tests.cpp:<line number>: passed: testCase.tags.size() == 1 for: 1 == 1
+ Tag.tests.cpp:<line number>: passed: testCase.tags[0] == Tag( "tag1" ) for: {?} == {?}
+ VariadicMacros.tests.cpp:<line number>: passed: with 1 message: 'no assertions'
+ Tricky.tests.cpp:<line number>: passed: 0x<hex digits> == bit30and31 for: 3221225472 (0x<hex digits>) == 3221225472
++TestSpec.tests.cpp:<line number>: passed: !(separateArguments.matches( *fakeTestCase( "Test 1" ) )) for: !false
++TestSpec.tests.cpp:<line number>: passed: !(separateArguments.matches( *fakeTestCase( "Test 2" ) )) for: !false
++TestSpec.tests.cpp:<line number>: passed: commaJoined.matches( *fakeTestCase( "Test 1" ) ) for: true
++TestSpec.tests.cpp:<line number>: passed: commaJoined.matches( *fakeTestCase( "Test 2" ) ) for: true
++TestSpec.tests.cpp:<line number>: passed: single.matches( *fakeTestCase( "Test 1" ) ) for: true
++TestSpec.tests.cpp:<line number>: passed: !(single.matches( *fakeTestCase( "Test 2" ) )) for: !false
+ CmdLine.tests.cpp:<line number>: passed:
+ Misc.tests.cpp:<line number>: passed: true
+ Misc.tests.cpp:<line number>: passed:
+@@ -2553,6 +2572,12 @@ Xml.tests.cpp:<line number>: passed: encode( "smith > jones" ) == "smith > jones
+ Xml.tests.cpp:<line number>: passed: encode( "smith ]]> jones" ) == "smith ]]&gt; jones" for: "smith ]]&gt; jones"
+ ==
+ "smith ]]&gt; jones"
++Xml.tests.cpp:<line number>: passed: encode( "]]>" ) == "]]&gt;" for: "]]&gt;" == "]]&gt;"
++Xml.tests.cpp:<line number>: passed: encode( "]]> jones" ) == "]]&gt; jones" for: "]]&gt; jones" == "]]&gt; jones"
++Xml.tests.cpp:<line number>: passed: encode( "a]]>" ) == "a]]&gt;" for: "a]]&gt;" == "a]]&gt;"
++Xml.tests.cpp:<line number>: passed: encode( "]]>a]]>" ) == "]]&gt;a]]&gt;" for: "]]&gt;a]]&gt;" == "]]&gt;a]]&gt;"
++Xml.tests.cpp:<line number>: passed: encode( "]>" ) == "]>" for: "]>" == "]>"
++Xml.tests.cpp:<line number>: passed: encode( ">" ) == ">" for: ">" == ">"
+ Xml.tests.cpp:<line number>: passed: encode( stringWithQuotes ) == stringWithQuotes for: "don't "quote" me on that"
+ ==
+ "don't "quote" me on that"
+@@ -2774,6 +2799,9 @@ EnumToString.tests.cpp:<line number>: passed: parseEnums( "EnumName::Value1" ),
+ EnumToString.tests.cpp:<line number>: passed: parseEnums( "ClassName::EnumName::Value1, ClassName::EnumName::Value2" ), Equals( std::vector<Catch::StringRef>{"Value1", "Value2"} ) for: { Value1, Value2 } Equals: { Value1, Value2 }
+ EnumToString.tests.cpp:<line number>: passed: parseEnums( "ClassName::EnumName::Value1, ClassName::EnumName::Value2, ClassName::EnumName::Value3" ), Equals( std::vector<Catch::StringRef>{"Value1", "Value2", "Value3"} ) for: { Value1, Value2, Value3 } Equals: { Value1, Value2, Value3 }
+ EnumToString.tests.cpp:<line number>: passed: parseEnums( "ClassName::EnumName::Value1,ClassName::EnumName::Value2 , ClassName::EnumName::Value3" ), Equals( std::vector<Catch::StringRef>{"Value1", "Value2", "Value3"} ) for: { Value1, Value2, Value3 } Equals: { Value1, Value2, Value3 }
++EnumToString.tests.cpp:<line number>: passed: parseEnums( "U, V, W" ), Equals( std::vector<Catch::StringRef>{"U", "V", "W"} ) for: { U, V, W } Equals: { U, V, W }
++EnumToString.tests.cpp:<line number>: passed: parseEnums( "Axis::X, Axis::Y, Axis::Z" ), Equals( std::vector<Catch::StringRef>{"X", "Y", "Z"} ) for: { X, Y, Z } Equals: { X, Y, Z }
++EnumToString.tests.cpp:<line number>: passed: parseEnums( "A,B" ), Equals( std::vector<Catch::StringRef>{"A", "B"} ) for: { A, B } Equals: { A, B }
+ Tricky.tests.cpp:<line number>: passed: p == 0 for: 0 == 0
+ Message.tests.cpp:<line number>: passed: true with 1 message: 'this MAY be seen IF info is printed for passing assertions'
+ Message.tests.cpp:<line number>: failed: false with 2 messages: 'this SHOULD be seen' and 'this SHOULD also be seen'
+@@ -2845,6 +2873,13 @@ Skip.tests.cpp:<line number>: skipped: 'skipping because answer = 43'
+ StringManip.tests.cpp:<line number>: passed: splitStringRef("", ','), Equals(std::vector<StringRef>()) for: {  } Equals: {  }
+ StringManip.tests.cpp:<line number>: passed: splitStringRef("abc", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
+ StringManip.tests.cpp:<line number>: passed: splitStringRef("abc,def", ','), Equals(std::vector<StringRef>{"abc", "def"}) for: { abc, def } Equals: { abc, def }
++StringManip.tests.cpp:<line number>: passed: splitStringRef("a,b,c", ','), Equals(std::vector<StringRef>{"a", "b", "c"}) for: { a, b, c } Equals: { a, b, c }
++StringManip.tests.cpp:<line number>: passed: splitStringRef("a,bb,c", ','), Equals(std::vector<StringRef>{"a", "bb", "c"}) for: { a, bb, c } Equals: { a, bb, c }
++StringManip.tests.cpp:<line number>: passed: splitStringRef("ab,c", ','), Equals(std::vector<StringRef>{"ab", "c"}) for: { ab, c } Equals: { ab, c }
++StringManip.tests.cpp:<line number>: passed: splitStringRef(",abc", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
++StringManip.tests.cpp:<line number>: passed: splitStringRef("abc,", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
++StringManip.tests.cpp:<line number>: passed: splitStringRef("abc,,def", ','), Equals(std::vector<StringRef>{"abc", "def"}) for: { abc, def } Equals: { abc, def }
++StringManip.tests.cpp:<line number>: passed: splitStringRef(",", ','), Equals(std::vector<StringRef>()) for: {  } Equals: {  }
+ Message.tests.cpp:<line number>: failed: false with 4 messages: 'Count 1 to 3...' and '1' and '2' and '3'
+ Message.tests.cpp:<line number>: failed: false with 4 messages: 'Count 4 to 6...' and '4' and '5' and '6'
+ StringManip.tests.cpp:<line number>: passed: !(startsWith("", 'c')) for: !false
+@@ -3009,7 +3044,7 @@ InternalBenchmark.tests.cpp:<line number>: passed: med == 18. for: 18.0 == 18.0
+ InternalBenchmark.tests.cpp:<line number>: passed: q3 == 23. for: 23.0 == 23.0
+ Misc.tests.cpp:<line number>: passed:
+ Misc.tests.cpp:<line number>: passed:
+-test cases:  454 |  334 passed |  96 failed | 6 skipped | 18 failed as expected
+-assertions: 2423 | 2222 passed | 158 failed | 43 failed as expected
++test cases:  456 |  336 passed |  96 failed | 6 skipped | 18 failed as expected
++assertions: 2452 | 2251 passed | 158 failed | 43 failed as expected
+ 
+ 
+diff --git a/tests/SelfTest/Baselines/console.std.approved.txt b/tests/SelfTest/Baselines/console.std.approved.txt
+index 344c5b03..80a2d15e 100644
+--- a/tests/SelfTest/Baselines/console.std.approved.txt
++++ b/tests/SelfTest/Baselines/console.std.approved.txt
+@@ -1743,6 +1743,6 @@ due to unexpected exception with message:
+   Why would you throw a std::string?
+ 
+ ===============================================================================
+-test cases:  454 |  352 passed |  76 failed | 7 skipped | 19 failed as expected
+-assertions: 2401 | 2222 passed | 136 failed | 43 failed as expected
++test cases:  456 |  354 passed |  76 failed | 7 skipped | 19 failed as expected
++assertions: 2430 | 2251 passed | 136 failed | 43 failed as expected
+ 
+diff --git a/tests/SelfTest/Baselines/console.sw.approved.txt b/tests/SelfTest/Baselines/console.sw.approved.txt
+index 0729823f..c4c14099 100644
+--- a/tests/SelfTest/Baselines/console.sw.approved.txt
++++ b/tests/SelfTest/Baselines/console.sw.approved.txt
+@@ -4174,6 +4174,34 @@ Stream.tests.cpp:<line number>: PASSED:
+ with expansion:
+   true
+ 
++-------------------------------------------------------------------------------
++Creating an EnumInfo for single character enum values
++-------------------------------------------------------------------------------
++EnumToString.tests.cpp:<line number>
++...............................................................................
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK( enumInfo.lookup(0) == "U" )
++with expansion:
++  U == "U"
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK( enumInfo.lookup(1) == "V" )
++with expansion:
++  V == "V"
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK( enumInfo.lookup(2) == "W" )
++with expansion:
++  W == "W"
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK( enumInfo.lookup(3) == "{** unexpected enum value **}" )
++with expansion:
++  {** unexpected enum value **}
++  ==
++  "{** unexpected enum value **}"
++
+ -------------------------------------------------------------------------------
+ Custom exceptions can be translated when testing for nothrow
+ -------------------------------------------------------------------------------
+@@ -8219,6 +8247,50 @@ Json.tests.cpp:<line number>: PASSED:
+ with expansion:
+   ""\\/\t\r\n"" == ""\\/\t\r\n""
+ 
++-------------------------------------------------------------------------------
++JsonWriter escapes characters in strings properly
++  every C0 control character is escaped
++-------------------------------------------------------------------------------
++Json.tests.cpp:<line number>
++...............................................................................
++
++Json.tests.cpp:<line number>: PASSED:
++  REQUIRE( sstream.str() == "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007" "\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f" "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017" "\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"" )
++with expansion:
++  ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\
++  u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\
++  u001b\u001c\u001d\u001e\u001f""
++  ==
++  ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\
++  u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\
++  u001b\u001c\u001d\u001e\u001f""
++
++-------------------------------------------------------------------------------
++JsonWriter escapes characters in strings properly
++  escape sequence embedded in surrounding text
++-------------------------------------------------------------------------------
++Json.tests.cpp:<line number>
++...............................................................................
++
++Json.tests.cpp:<line number>: PASSED:
++  REQUIRE( sstream.str() == "\"\\u001b[31mred\\u001b[0m\"" )
++with expansion:
++  ""\u001b[31mred\u001b[0m""
++  ==
++  ""\u001b[31mred\u001b[0m""
++
++-------------------------------------------------------------------------------
++JsonWriter escapes characters in strings properly
++  DEL is not a C0 control and is not escaped
++-------------------------------------------------------------------------------
++Json.tests.cpp:<line number>
++...............................................................................
++
++Json.tests.cpp:<line number>: PASSED:
++  REQUIRE( sstream.str() == "\"\x7f\"" )
++with expansion:
++  """" == """"
++
+ -------------------------------------------------------------------------------
+ JsonWriter serializes non-finite FP using Python spelling - double
+   NaN
+@@ -14229,6 +14301,42 @@ Tricky.tests.cpp:<line number>: PASSED:
+ with expansion:
+   3221225472 (0x<hex digits>) == 3221225472
+ 
++-------------------------------------------------------------------------------
++Test specs given as separate arguments are ANDed
++-------------------------------------------------------------------------------
++TestSpec.tests.cpp:<line number>
++...............................................................................
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK_FALSE( separateArguments.matches( *fakeTestCase( "Test 1" ) ) )
++with expansion:
++  !false
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK_FALSE( separateArguments.matches( *fakeTestCase( "Test 2" ) ) )
++with expansion:
++  !false
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK( commaJoined.matches( *fakeTestCase( "Test 1" ) ) )
++with expansion:
++  true
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK( commaJoined.matches( *fakeTestCase( "Test 2" ) ) )
++with expansion:
++  true
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK( single.matches( *fakeTestCase( "Test 1" ) ) )
++with expansion:
++  true
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK_FALSE( single.matches( *fakeTestCase( "Test 2" ) ) )
++with expansion:
++  !false
++
+ -------------------------------------------------------------------------------
+ Test with special, characters "in name
+ -------------------------------------------------------------------------------
+@@ -16968,6 +17076,36 @@ with expansion:
+   ==
+   "smith ]]&gt; jones"
+ 
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( "]]>" ) == "]]&gt;" )
++with expansion:
++  "]]&gt;" == "]]&gt;"
++
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( "]]> jones" ) == "]]&gt; jones" )
++with expansion:
++  "]]&gt; jones" == "]]&gt; jones"
++
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( "a]]>" ) == "a]]&gt;" )
++with expansion:
++  "a]]&gt;" == "a]]&gt;"
++
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( "]]>a]]>" ) == "]]&gt;a]]&gt;" )
++with expansion:
++  "]]&gt;a]]&gt;" == "]]&gt;a]]&gt;"
++
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( "]>" ) == "]>" )
++with expansion:
++  "]>" == "]>"
++
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( ">" ) == ">" )
++with expansion:
++  ">" == ">"
++
+ -------------------------------------------------------------------------------
+ XmlEncode
+   string with quotes
+@@ -18553,6 +18691,28 @@ EnumToString.tests.cpp:<line number>: PASSED:
+ with expansion:
+   { Value1, Value2, Value3 } Equals: { Value1, Value2, Value3 }
+ 
++-------------------------------------------------------------------------------
++parseEnums
++  Single character enum values
++-------------------------------------------------------------------------------
++EnumToString.tests.cpp:<line number>
++...............................................................................
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( parseEnums( "U, V, W" ), Equals( std::vector<Catch::StringRef>{"U", "V", "W"} ) )
++with expansion:
++  { U, V, W } Equals: { U, V, W }
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( parseEnums( "Axis::X, Axis::Y, Axis::Z" ), Equals( std::vector<Catch::StringRef>{"X", "Y", "Z"} ) )
++with expansion:
++  { X, Y, Z } Equals: { X, Y, Z }
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( parseEnums( "A,B" ), Equals( std::vector<Catch::StringRef>{"A", "B"} ) )
++with expansion:
++  { A, B } Equals: { A, B }
++
+ -------------------------------------------------------------------------------
+ pointer to class
+ -------------------------------------------------------------------------------
+@@ -19081,6 +19241,41 @@ StringManip.tests.cpp:<line number>: PASSED:
+ with expansion:
+   { abc, def } Equals: { abc, def }
+ 
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef("a,b,c", ','), Equals(std::vector<StringRef>{"a", "b", "c"}) )
++with expansion:
++  { a, b, c } Equals: { a, b, c }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef("a,bb,c", ','), Equals(std::vector<StringRef>{"a", "bb", "c"}) )
++with expansion:
++  { a, bb, c } Equals: { a, bb, c }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef("ab,c", ','), Equals(std::vector<StringRef>{"ab", "c"}) )
++with expansion:
++  { ab, c } Equals: { ab, c }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef(",abc", ','), Equals(std::vector<StringRef>{"abc"}) )
++with expansion:
++  { abc } Equals: { abc }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef("abc,", ','), Equals(std::vector<StringRef>{"abc"}) )
++with expansion:
++  { abc } Equals: { abc }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef("abc,,def", ','), Equals(std::vector<StringRef>{"abc", "def"}) )
++with expansion:
++  { abc, def } Equals: { abc, def }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef(",", ','), Equals(std::vector<StringRef>()) )
++with expansion:
++  {  } Equals: {  }
++
+ -------------------------------------------------------------------------------
+ stacks unscoped info in loops
+ -------------------------------------------------------------------------------
+@@ -20231,6 +20426,6 @@ Misc.tests.cpp:<line number>
+ Misc.tests.cpp:<line number>: PASSED:
+ 
+ ===============================================================================
+-test cases:  454 |  334 passed |  96 failed | 6 skipped | 18 failed as expected
+-assertions: 2423 | 2222 passed | 158 failed | 43 failed as expected
++test cases:  456 |  336 passed |  96 failed | 6 skipped | 18 failed as expected
++assertions: 2452 | 2251 passed | 158 failed | 43 failed as expected
+ 
+diff --git a/tests/SelfTest/Baselines/console.sw.multi.approved.txt b/tests/SelfTest/Baselines/console.sw.multi.approved.txt
+index 3db4bfc8..efa98740 100644
+--- a/tests/SelfTest/Baselines/console.sw.multi.approved.txt
++++ b/tests/SelfTest/Baselines/console.sw.multi.approved.txt
+@@ -4172,6 +4172,34 @@ Stream.tests.cpp:<line number>: PASSED:
+ with expansion:
+   true
+ 
++-------------------------------------------------------------------------------
++Creating an EnumInfo for single character enum values
++-------------------------------------------------------------------------------
++EnumToString.tests.cpp:<line number>
++...............................................................................
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK( enumInfo.lookup(0) == "U" )
++with expansion:
++  U == "U"
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK( enumInfo.lookup(1) == "V" )
++with expansion:
++  V == "V"
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK( enumInfo.lookup(2) == "W" )
++with expansion:
++  W == "W"
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK( enumInfo.lookup(3) == "{** unexpected enum value **}" )
++with expansion:
++  {** unexpected enum value **}
++  ==
++  "{** unexpected enum value **}"
++
+ -------------------------------------------------------------------------------
+ Custom exceptions can be translated when testing for nothrow
+ -------------------------------------------------------------------------------
+@@ -8217,6 +8245,50 @@ Json.tests.cpp:<line number>: PASSED:
+ with expansion:
+   ""\\/\t\r\n"" == ""\\/\t\r\n""
+ 
++-------------------------------------------------------------------------------
++JsonWriter escapes characters in strings properly
++  every C0 control character is escaped
++-------------------------------------------------------------------------------
++Json.tests.cpp:<line number>
++...............................................................................
++
++Json.tests.cpp:<line number>: PASSED:
++  REQUIRE( sstream.str() == "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007" "\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f" "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017" "\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"" )
++with expansion:
++  ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\
++  u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\
++  u001b\u001c\u001d\u001e\u001f""
++  ==
++  ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\
++  u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\
++  u001b\u001c\u001d\u001e\u001f""
++
++-------------------------------------------------------------------------------
++JsonWriter escapes characters in strings properly
++  escape sequence embedded in surrounding text
++-------------------------------------------------------------------------------
++Json.tests.cpp:<line number>
++...............................................................................
++
++Json.tests.cpp:<line number>: PASSED:
++  REQUIRE( sstream.str() == "\"\\u001b[31mred\\u001b[0m\"" )
++with expansion:
++  ""\u001b[31mred\u001b[0m""
++  ==
++  ""\u001b[31mred\u001b[0m""
++
++-------------------------------------------------------------------------------
++JsonWriter escapes characters in strings properly
++  DEL is not a C0 control and is not escaped
++-------------------------------------------------------------------------------
++Json.tests.cpp:<line number>
++...............................................................................
++
++Json.tests.cpp:<line number>: PASSED:
++  REQUIRE( sstream.str() == "\"\x7f\"" )
++with expansion:
++  """" == """"
++
+ -------------------------------------------------------------------------------
+ JsonWriter serializes non-finite FP using Python spelling - double
+   NaN
+@@ -14222,6 +14294,42 @@ Tricky.tests.cpp:<line number>: PASSED:
+ with expansion:
+   3221225472 (0x<hex digits>) == 3221225472
+ 
++-------------------------------------------------------------------------------
++Test specs given as separate arguments are ANDed
++-------------------------------------------------------------------------------
++TestSpec.tests.cpp:<line number>
++...............................................................................
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK_FALSE( separateArguments.matches( *fakeTestCase( "Test 1" ) ) )
++with expansion:
++  !false
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK_FALSE( separateArguments.matches( *fakeTestCase( "Test 2" ) ) )
++with expansion:
++  !false
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK( commaJoined.matches( *fakeTestCase( "Test 1" ) ) )
++with expansion:
++  true
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK( commaJoined.matches( *fakeTestCase( "Test 2" ) ) )
++with expansion:
++  true
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK( single.matches( *fakeTestCase( "Test 1" ) ) )
++with expansion:
++  true
++
++TestSpec.tests.cpp:<line number>: PASSED:
++  CHECK_FALSE( single.matches( *fakeTestCase( "Test 2" ) ) )
++with expansion:
++  !false
++
+ -------------------------------------------------------------------------------
+ Test with special, characters "in name
+ -------------------------------------------------------------------------------
+@@ -16961,6 +17069,36 @@ with expansion:
+   ==
+   "smith ]]&gt; jones"
+ 
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( "]]>" ) == "]]&gt;" )
++with expansion:
++  "]]&gt;" == "]]&gt;"
++
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( "]]> jones" ) == "]]&gt; jones" )
++with expansion:
++  "]]&gt; jones" == "]]&gt; jones"
++
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( "a]]>" ) == "a]]&gt;" )
++with expansion:
++  "a]]&gt;" == "a]]&gt;"
++
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( "]]>a]]>" ) == "]]&gt;a]]&gt;" )
++with expansion:
++  "]]&gt;a]]&gt;" == "]]&gt;a]]&gt;"
++
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( "]>" ) == "]>" )
++with expansion:
++  "]>" == "]>"
++
++Xml.tests.cpp:<line number>: PASSED:
++  REQUIRE( encode( ">" ) == ">" )
++with expansion:
++  ">" == ">"
++
+ -------------------------------------------------------------------------------
+ XmlEncode
+   string with quotes
+@@ -18542,6 +18680,28 @@ EnumToString.tests.cpp:<line number>: PASSED:
+ with expansion:
+   { Value1, Value2, Value3 } Equals: { Value1, Value2, Value3 }
+ 
++-------------------------------------------------------------------------------
++parseEnums
++  Single character enum values
++-------------------------------------------------------------------------------
++EnumToString.tests.cpp:<line number>
++...............................................................................
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( parseEnums( "U, V, W" ), Equals( std::vector<Catch::StringRef>{"U", "V", "W"} ) )
++with expansion:
++  { U, V, W } Equals: { U, V, W }
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( parseEnums( "Axis::X, Axis::Y, Axis::Z" ), Equals( std::vector<Catch::StringRef>{"X", "Y", "Z"} ) )
++with expansion:
++  { X, Y, Z } Equals: { X, Y, Z }
++
++EnumToString.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( parseEnums( "A,B" ), Equals( std::vector<Catch::StringRef>{"A", "B"} ) )
++with expansion:
++  { A, B } Equals: { A, B }
++
+ -------------------------------------------------------------------------------
+ pointer to class
+ -------------------------------------------------------------------------------
+@@ -19070,6 +19230,41 @@ StringManip.tests.cpp:<line number>: PASSED:
+ with expansion:
+   { abc, def } Equals: { abc, def }
+ 
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef("a,b,c", ','), Equals(std::vector<StringRef>{"a", "b", "c"}) )
++with expansion:
++  { a, b, c } Equals: { a, b, c }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef("a,bb,c", ','), Equals(std::vector<StringRef>{"a", "bb", "c"}) )
++with expansion:
++  { a, bb, c } Equals: { a, bb, c }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef("ab,c", ','), Equals(std::vector<StringRef>{"ab", "c"}) )
++with expansion:
++  { ab, c } Equals: { ab, c }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef(",abc", ','), Equals(std::vector<StringRef>{"abc"}) )
++with expansion:
++  { abc } Equals: { abc }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef("abc,", ','), Equals(std::vector<StringRef>{"abc"}) )
++with expansion:
++  { abc } Equals: { abc }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef("abc,,def", ','), Equals(std::vector<StringRef>{"abc", "def"}) )
++with expansion:
++  { abc, def } Equals: { abc, def }
++
++StringManip.tests.cpp:<line number>: PASSED:
++  CHECK_THAT( splitStringRef(",", ','), Equals(std::vector<StringRef>()) )
++with expansion:
++  {  } Equals: {  }
++
+ -------------------------------------------------------------------------------
+ stacks unscoped info in loops
+ -------------------------------------------------------------------------------
+@@ -20220,6 +20415,6 @@ Misc.tests.cpp:<line number>
+ Misc.tests.cpp:<line number>: PASSED:
+ 
+ ===============================================================================
+-test cases:  454 |  334 passed |  96 failed | 6 skipped | 18 failed as expected
+-assertions: 2423 | 2222 passed | 158 failed | 43 failed as expected
++test cases:  456 |  336 passed |  96 failed | 6 skipped | 18 failed as expected
++assertions: 2452 | 2251 passed | 158 failed | 43 failed as expected
+ 
+diff --git a/tests/SelfTest/Baselines/junit.sw.approved.txt b/tests/SelfTest/Baselines/junit.sw.approved.txt
+index f58412b6..0300335d 100644
+--- a/tests/SelfTest/Baselines/junit.sw.approved.txt
++++ b/tests/SelfTest/Baselines/junit.sw.approved.txt
+@@ -1,7 +1,7 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <testsuitesloose text artifact
+ >
+-  <testsuite name="<exe-name>" errors="17" failures="141" skipped="12" tests="2435" hostname="tbd" time="{duration}" timestamp="{iso8601-timestamp}">
++  <testsuite name="<exe-name>" errors="17" failures="141" skipped="12" tests="2464" hostname="tbd" time="{duration}" timestamp="{iso8601-timestamp}">
+     <properties>
+       <property name="random-seed" value="1"/>
+       <property name="filters" value="&quot;*&quot; ~[!nonportable] ~[!benchmark] ~[approvals]"/>
+@@ -455,6 +455,7 @@ at Matchers.tests.cpp:<line number>
+     <testcase classname="<exe-name>.global" name="Copy and then generate a range/From a temporary container" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Copy and then generate a range/Final validation" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Cout stream properly declares it writes to stdout" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="Creating an EnumInfo for single character enum values" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Custom exceptions can be translated when testing for nothrow" time="{duration}" status="run">
+       <error message="throwCustom()" type="REQUIRE_NOTHROW">
+ FAILED:
+@@ -774,6 +775,9 @@ at Condition.tests.cpp:<line number>
+     <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/carriage return in a string is escaped" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/tab in a string is escaped" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/combination of characters is escaped" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/every C0 control character is escaped" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/escape sequence embedded in surrounding text" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/DEL is not a C0 control and is not escaped" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="JsonWriter serializes non-finite FP using Python spelling - double" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="JsonWriter serializes non-finite FP using Python spelling - double/NaN" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="JsonWriter serializes non-finite FP using Python spelling - double/Pos nf" time="{duration}" status="run"/>
+@@ -1249,6 +1253,7 @@ at Misc.tests.cpp:<line number>
+     <testcase classname="<exe-name>.global" name="Test case with identical tags keeps just one" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Test case with one argument" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Test enum bit values" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="Test specs given as separate arguments are ANDed" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Test with special, characters &quot;in name" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Testing checked-if" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Testing checked-if 2" time="{duration}" status="run">
+@@ -1762,6 +1767,7 @@ at Message.tests.cpp:<line number>
+     <testcase classname="<exe-name>.global" name="parseEnums/No enums" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="parseEnums/One enum value" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="parseEnums/Multiple enum values" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="parseEnums/Single character enum values" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="pointer to class" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="print unscoped info if passing unscoped info is printed" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="prints unscoped info on failure" time="{duration}" status="run">
+diff --git a/tests/SelfTest/Baselines/junit.sw.multi.approved.txt b/tests/SelfTest/Baselines/junit.sw.multi.approved.txt
+index c80e5855..ffee74ce 100644
+--- a/tests/SelfTest/Baselines/junit.sw.multi.approved.txt
++++ b/tests/SelfTest/Baselines/junit.sw.multi.approved.txt
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <testsuites>
+-  <testsuite name="<exe-name>" errors="17" failures="141" skipped="12" tests="2435" hostname="tbd" time="{duration}" timestamp="{iso8601-timestamp}">
++  <testsuite name="<exe-name>" errors="17" failures="141" skipped="12" tests="2464" hostname="tbd" time="{duration}" timestamp="{iso8601-timestamp}">
+     <properties>
+       <property name="random-seed" value="1"/>
+       <property name="filters" value="&quot;*&quot; ~[!nonportable] ~[!benchmark] ~[approvals]"/>
+@@ -454,6 +454,7 @@ at Matchers.tests.cpp:<line number>
+     <testcase classname="<exe-name>.global" name="Copy and then generate a range/From a temporary container" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Copy and then generate a range/Final validation" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Cout stream properly declares it writes to stdout" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="Creating an EnumInfo for single character enum values" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Custom exceptions can be translated when testing for nothrow" time="{duration}" status="run">
+       <error message="throwCustom()" type="REQUIRE_NOTHROW">
+ FAILED:
+@@ -773,6 +774,9 @@ at Condition.tests.cpp:<line number>
+     <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/carriage return in a string is escaped" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/tab in a string is escaped" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/combination of characters is escaped" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/every C0 control character is escaped" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/escape sequence embedded in surrounding text" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="JsonWriter escapes characters in strings properly/DEL is not a C0 control and is not escaped" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="JsonWriter serializes non-finite FP using Python spelling - double" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="JsonWriter serializes non-finite FP using Python spelling - double/NaN" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="JsonWriter serializes non-finite FP using Python spelling - double/Pos nf" time="{duration}" status="run"/>
+@@ -1248,6 +1252,7 @@ at Misc.tests.cpp:<line number>
+     <testcase classname="<exe-name>.global" name="Test case with identical tags keeps just one" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Test case with one argument" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Test enum bit values" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="Test specs given as separate arguments are ANDed" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Test with special, characters &quot;in name" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Testing checked-if" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="Testing checked-if 2" time="{duration}" status="run">
+@@ -1761,6 +1766,7 @@ at Message.tests.cpp:<line number>
+     <testcase classname="<exe-name>.global" name="parseEnums/No enums" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="parseEnums/One enum value" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="parseEnums/Multiple enum values" time="{duration}" status="run"/>
++    <testcase classname="<exe-name>.global" name="parseEnums/Single character enum values" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="pointer to class" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="print unscoped info if passing unscoped info is printed" time="{duration}" status="run"/>
+     <testcase classname="<exe-name>.global" name="prints unscoped info on failure" time="{duration}" status="run">
+diff --git a/tests/SelfTest/Baselines/sonarqube.sw.approved.txt b/tests/SelfTest/Baselines/sonarqube.sw.approved.txt
+index 17c26f36..e6f233f6 100644
+--- a/tests/SelfTest/Baselines/sonarqube.sw.approved.txt
++++ b/tests/SelfTest/Baselines/sonarqube.sw.approved.txt
+@@ -262,6 +262,9 @@ at AssertionHandler.tests.cpp:<line number>
+     <testCase name="JsonWriter escapes characters in strings properly/carriage return in a string is escaped" duration="{duration}"/>
+     <testCase name="JsonWriter escapes characters in strings properly/tab in a string is escaped" duration="{duration}"/>
+     <testCase name="JsonWriter escapes characters in strings properly/combination of characters is escaped" duration="{duration}"/>
++    <testCase name="JsonWriter escapes characters in strings properly/every C0 control character is escaped" duration="{duration}"/>
++    <testCase name="JsonWriter escapes characters in strings properly/escape sequence embedded in surrounding text" duration="{duration}"/>
++    <testCase name="JsonWriter escapes characters in strings properly/DEL is not a C0 control and is not escaped" duration="{duration}"/>
+     <testCase name="JsonWriter serializes non-finite FP using Python spelling - double" duration="{duration}"/>
+     <testCase name="JsonWriter serializes non-finite FP using Python spelling - double/NaN" duration="{duration}"/>
+     <testCase name="JsonWriter serializes non-finite FP using Python spelling - double/Pos nf" duration="{duration}"/>
+@@ -425,6 +428,7 @@ at AssertionHandler.tests.cpp:<line number>
+     <testCase name="#1912 -- test spec parser handles escaping" duration="{duration}"/>
+     <testCase name="#1912 -- test spec parser handles escaping/Various parentheses" duration="{duration}"/>
+     <testCase name="#1912 -- test spec parser handles escaping/backslash in test name" duration="{duration}"/>
++    <testCase name="Test specs given as separate arguments are ANDed" duration="{duration}"/>
+   </file>
+   <file path="tests/<exe-name>/IntrospectiveTests/TestSpecParser.tests.cpp">
+     <testCase name="Parsed tags are matched case insensitive" duration="{duration}"/>
+@@ -1083,6 +1087,7 @@ at Decomposition.tests.cpp:<line number>
+     </testCase>
+   </file>
+   <file path="tests/<exe-name>/UsageTests/EnumToString.tests.cpp">
++    <testCase name="Creating an EnumInfo for single character enum values" duration="{duration}"/>
+     <testCase name="Directly creating an EnumInfo" duration="{duration}"/>
+     <testCase name="Enum backed by larger underlying type" duration="{duration}"/>
+     <testCase name="Enums can quickly have stringification enabled using CATCH_REGISTER_ENUM" duration="{duration}"/>
+@@ -1091,6 +1096,7 @@ at Decomposition.tests.cpp:<line number>
+     <testCase name="parseEnums/No enums" duration="{duration}"/>
+     <testCase name="parseEnums/One enum value" duration="{duration}"/>
+     <testCase name="parseEnums/Multiple enum values" duration="{duration}"/>
++    <testCase name="parseEnums/Single character enum values" duration="{duration}"/>
+     <testCase name="toString(enum class w/operator&lt;&lt;)" duration="{duration}"/>
+     <testCase name="toString(enum class)" duration="{duration}"/>
+     <testCase name="toString(enum w/operator&lt;&lt;)" duration="{duration}"/>
+diff --git a/tests/SelfTest/Baselines/sonarqube.sw.multi.approved.txt b/tests/SelfTest/Baselines/sonarqube.sw.multi.approved.txt
+index 4c113189..b477768a 100644
+--- a/tests/SelfTest/Baselines/sonarqube.sw.multi.approved.txt
++++ b/tests/SelfTest/Baselines/sonarqube.sw.multi.approved.txt
+@@ -261,6 +261,9 @@ at AssertionHandler.tests.cpp:<line number>
+     <testCase name="JsonWriter escapes characters in strings properly/carriage return in a string is escaped" duration="{duration}"/>
+     <testCase name="JsonWriter escapes characters in strings properly/tab in a string is escaped" duration="{duration}"/>
+     <testCase name="JsonWriter escapes characters in strings properly/combination of characters is escaped" duration="{duration}"/>
++    <testCase name="JsonWriter escapes characters in strings properly/every C0 control character is escaped" duration="{duration}"/>
++    <testCase name="JsonWriter escapes characters in strings properly/escape sequence embedded in surrounding text" duration="{duration}"/>
++    <testCase name="JsonWriter escapes characters in strings properly/DEL is not a C0 control and is not escaped" duration="{duration}"/>
+     <testCase name="JsonWriter serializes non-finite FP using Python spelling - double" duration="{duration}"/>
+     <testCase name="JsonWriter serializes non-finite FP using Python spelling - double/NaN" duration="{duration}"/>
+     <testCase name="JsonWriter serializes non-finite FP using Python spelling - double/Pos nf" duration="{duration}"/>
+@@ -424,6 +427,7 @@ at AssertionHandler.tests.cpp:<line number>
+     <testCase name="#1912 -- test spec parser handles escaping" duration="{duration}"/>
+     <testCase name="#1912 -- test spec parser handles escaping/Various parentheses" duration="{duration}"/>
+     <testCase name="#1912 -- test spec parser handles escaping/backslash in test name" duration="{duration}"/>
++    <testCase name="Test specs given as separate arguments are ANDed" duration="{duration}"/>
+   </file>
+   <file path="tests/<exe-name>/IntrospectiveTests/TestSpecParser.tests.cpp">
+     <testCase name="Parsed tags are matched case insensitive" duration="{duration}"/>
+@@ -1082,6 +1086,7 @@ at Decomposition.tests.cpp:<line number>
+     </testCase>
+   </file>
+   <file path="tests/<exe-name>/UsageTests/EnumToString.tests.cpp">
++    <testCase name="Creating an EnumInfo for single character enum values" duration="{duration}"/>
+     <testCase name="Directly creating an EnumInfo" duration="{duration}"/>
+     <testCase name="Enum backed by larger underlying type" duration="{duration}"/>
+     <testCase name="Enums can quickly have stringification enabled using CATCH_REGISTER_ENUM" duration="{duration}"/>
+@@ -1090,6 +1095,7 @@ at Decomposition.tests.cpp:<line number>
+     <testCase name="parseEnums/No enums" duration="{duration}"/>
+     <testCase name="parseEnums/One enum value" duration="{duration}"/>
+     <testCase name="parseEnums/Multiple enum values" duration="{duration}"/>
++    <testCase name="parseEnums/Single character enum values" duration="{duration}"/>
+     <testCase name="toString(enum class w/operator&lt;&lt;)" duration="{duration}"/>
+     <testCase name="toString(enum class)" duration="{duration}"/>
+     <testCase name="toString(enum w/operator&lt;&lt;)" duration="{duration}"/>
+diff --git a/tests/SelfTest/Baselines/tap.sw.approved.txt b/tests/SelfTest/Baselines/tap.sw.approved.txt
+index 4ac7f09f..e28daa43 100644
+--- a/tests/SelfTest/Baselines/tap.sw.approved.txt
++++ b/tests/SelfTest/Baselines/tap.sw.approved.txt
+@@ -1038,6 +1038,14 @@ ok {test-number} - call_count == 1 for: 1 == 1
+ ok {test-number} - make_data().size() == test_count for: 6 == 6
+ # Cout stream properly declares it writes to stdout
+ ok {test-number} - Catch::makeStream( "-" )->isConsole() for: true
++# Creating an EnumInfo for single character enum values
++ok {test-number} - enumInfo.lookup(0) == "U" for: U == "U"
++# Creating an EnumInfo for single character enum values
++ok {test-number} - enumInfo.lookup(1) == "V" for: V == "V"
++# Creating an EnumInfo for single character enum values
++ok {test-number} - enumInfo.lookup(2) == "W" for: W == "W"
++# Creating an EnumInfo for single character enum values
++ok {test-number} - enumInfo.lookup(3) == "{** unexpected enum value **}" for: {** unexpected enum value **} == "{** unexpected enum value **}"
+ # Custom exceptions can be translated when testing for nothrow
+ not ok {test-number} - unexpected exception with message: 'custom exception - not std'; expression was: throwCustom()
+ # Custom exceptions can be translated when testing for throwing as something else
+@@ -2054,6 +2062,12 @@ ok {test-number} - sstream.str() == "\"\\r\"" for: ""\r"" == ""\r""
+ ok {test-number} - sstream.str() == "\"\\t\"" for: ""\t"" == ""\t""
+ # JsonWriter escapes characters in strings properly
+ ok {test-number} - sstream.str() == "\"\\\\/\\t\\r\\n\"" for: ""\\/\t\r\n"" == ""\\/\t\r\n""
++# JsonWriter escapes characters in strings properly
++ok {test-number} - sstream.str() == "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007" "\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f" "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017" "\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"" for: ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f"" == ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f""
++# JsonWriter escapes characters in strings properly
++ok {test-number} - sstream.str() == "\"\\u001b[31mred\\u001b[0m\"" for: ""\u001b[31mred\u001b[0m"" == ""\u001b[31mred\u001b[0m""
++# JsonWriter escapes characters in strings properly
++ok {test-number} - sstream.str() == "\"\x7f\"" for: """" == """"
+ # JsonWriter serializes non-finite FP using Python spelling - double
+ ok {test-number} - sstream.str() == "NaN" for: "NaN" == "NaN"
+ # JsonWriter serializes non-finite FP using Python spelling - double
+@@ -3395,6 +3409,18 @@ ok {test-number} - testCase.tags[0] == Tag( "tag1" ) for: {?} == {?}
+ ok {test-number} - with 1 message: 'no assertions'
+ # Test enum bit values
+ ok {test-number} - 0x<hex digits> == bit30and31 for: 3221225472 (0x<hex digits>) == 3221225472
++# Test specs given as separate arguments are ANDed
++ok {test-number} - !(separateArguments.matches( *fakeTestCase( "Test 1" ) )) for: !false
++# Test specs given as separate arguments are ANDed
++ok {test-number} - !(separateArguments.matches( *fakeTestCase( "Test 2" ) )) for: !false
++# Test specs given as separate arguments are ANDed
++ok {test-number} - commaJoined.matches( *fakeTestCase( "Test 1" ) ) for: true
++# Test specs given as separate arguments are ANDed
++ok {test-number} - commaJoined.matches( *fakeTestCase( "Test 2" ) ) for: true
++# Test specs given as separate arguments are ANDed
++ok {test-number} - single.matches( *fakeTestCase( "Test 1" ) ) for: true
++# Test specs given as separate arguments are ANDed
++ok {test-number} - !(single.matches( *fakeTestCase( "Test 2" ) )) for: !false
+ # Test with special, characters "in name
+ ok {test-number} -
+ # Testing checked-if
+@@ -4074,6 +4100,18 @@ ok {test-number} - encode( "smith > jones" ) == "smith > jones" for: "smith > jo
+ # XmlEncode
+ ok {test-number} - encode( "smith ]]> jones" ) == "smith ]]&gt; jones" for: "smith ]]&gt; jones" == "smith ]]&gt; jones"
+ # XmlEncode
++ok {test-number} - encode( "]]>" ) == "]]&gt;" for: "]]&gt;" == "]]&gt;"
++# XmlEncode
++ok {test-number} - encode( "]]> jones" ) == "]]&gt; jones" for: "]]&gt; jones" == "]]&gt; jones"
++# XmlEncode
++ok {test-number} - encode( "a]]>" ) == "a]]&gt;" for: "a]]&gt;" == "a]]&gt;"
++# XmlEncode
++ok {test-number} - encode( "]]>a]]>" ) == "]]&gt;a]]&gt;" for: "]]&gt;a]]&gt;" == "]]&gt;a]]&gt;"
++# XmlEncode
++ok {test-number} - encode( "]>" ) == "]>" for: "]>" == "]>"
++# XmlEncode
++ok {test-number} - encode( ">" ) == ">" for: ">" == ">"
++# XmlEncode
+ ok {test-number} - encode( stringWithQuotes ) == stringWithQuotes for: "don't "quote" me on that" == "don't "quote" me on that"
+ # XmlEncode
+ ok {test-number} - encode( stringWithQuotes, Catch::XmlEncode::ForAttributes ) == "don't &quot;quote&quot; me on that" for: "don't &quot;quote&quot; me on that" == "don't &quot;quote&quot; me on that"
+@@ -4467,6 +4505,12 @@ ok {test-number} - parseEnums( "ClassName::EnumName::Value1, ClassName::EnumName
+ ok {test-number} - parseEnums( "ClassName::EnumName::Value1, ClassName::EnumName::Value2, ClassName::EnumName::Value3" ), Equals( std::vector<Catch::StringRef>{"Value1", "Value2", "Value3"} ) for: { Value1, Value2, Value3 } Equals: { Value1, Value2, Value3 }
+ # parseEnums
+ ok {test-number} - parseEnums( "ClassName::EnumName::Value1,ClassName::EnumName::Value2 , ClassName::EnumName::Value3" ), Equals( std::vector<Catch::StringRef>{"Value1", "Value2", "Value3"} ) for: { Value1, Value2, Value3 } Equals: { Value1, Value2, Value3 }
++# parseEnums
++ok {test-number} - parseEnums( "U, V, W" ), Equals( std::vector<Catch::StringRef>{"U", "V", "W"} ) for: { U, V, W } Equals: { U, V, W }
++# parseEnums
++ok {test-number} - parseEnums( "Axis::X, Axis::Y, Axis::Z" ), Equals( std::vector<Catch::StringRef>{"X", "Y", "Z"} ) for: { X, Y, Z } Equals: { X, Y, Z }
++# parseEnums
++ok {test-number} - parseEnums( "A,B" ), Equals( std::vector<Catch::StringRef>{"A", "B"} ) for: { A, B } Equals: { A, B }
+ # pointer to class
+ ok {test-number} - p == 0 for: 0 == 0
+ # print unscoped info if passing unscoped info is printed
+@@ -4609,6 +4653,20 @@ ok {test-number} - splitStringRef("", ','), Equals(std::vector<StringRef>()) for
+ ok {test-number} - splitStringRef("abc", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
+ # splitString
+ ok {test-number} - splitStringRef("abc,def", ','), Equals(std::vector<StringRef>{"abc", "def"}) for: { abc, def } Equals: { abc, def }
++# splitString
++ok {test-number} - splitStringRef("a,b,c", ','), Equals(std::vector<StringRef>{"a", "b", "c"}) for: { a, b, c } Equals: { a, b, c }
++# splitString
++ok {test-number} - splitStringRef("a,bb,c", ','), Equals(std::vector<StringRef>{"a", "bb", "c"}) for: { a, bb, c } Equals: { a, bb, c }
++# splitString
++ok {test-number} - splitStringRef("ab,c", ','), Equals(std::vector<StringRef>{"ab", "c"}) for: { ab, c } Equals: { ab, c }
++# splitString
++ok {test-number} - splitStringRef(",abc", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
++# splitString
++ok {test-number} - splitStringRef("abc,", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
++# splitString
++ok {test-number} - splitStringRef("abc,,def", ','), Equals(std::vector<StringRef>{"abc", "def"}) for: { abc, def } Equals: { abc, def }
++# splitString
++ok {test-number} - splitStringRef(",", ','), Equals(std::vector<StringRef>()) for: {  } Equals: {  }
+ # stacks unscoped info in loops
+ not ok {test-number} - false with 4 messages: 'Count 1 to 3...' and '1' and '2' and '3'
+ # stacks unscoped info in loops
+@@ -4865,5 +4923,5 @@ ok {test-number} - q3 == 23. for: 23.0 == 23.0
+ ok {test-number} -
+ # xmlentitycheck
+ ok {test-number} -
+-1..2435
++1..2464
+ 
+diff --git a/tests/SelfTest/Baselines/tap.sw.multi.approved.txt b/tests/SelfTest/Baselines/tap.sw.multi.approved.txt
+index 3f1d56aa..f6e80226 100644
+--- a/tests/SelfTest/Baselines/tap.sw.multi.approved.txt
++++ b/tests/SelfTest/Baselines/tap.sw.multi.approved.txt
+@@ -1036,6 +1036,14 @@ ok {test-number} - call_count == 1 for: 1 == 1
+ ok {test-number} - make_data().size() == test_count for: 6 == 6
+ # Cout stream properly declares it writes to stdout
+ ok {test-number} - Catch::makeStream( "-" )->isConsole() for: true
++# Creating an EnumInfo for single character enum values
++ok {test-number} - enumInfo.lookup(0) == "U" for: U == "U"
++# Creating an EnumInfo for single character enum values
++ok {test-number} - enumInfo.lookup(1) == "V" for: V == "V"
++# Creating an EnumInfo for single character enum values
++ok {test-number} - enumInfo.lookup(2) == "W" for: W == "W"
++# Creating an EnumInfo for single character enum values
++ok {test-number} - enumInfo.lookup(3) == "{** unexpected enum value **}" for: {** unexpected enum value **} == "{** unexpected enum value **}"
+ # Custom exceptions can be translated when testing for nothrow
+ not ok {test-number} - unexpected exception with message: 'custom exception - not std'; expression was: throwCustom()
+ # Custom exceptions can be translated when testing for throwing as something else
+@@ -2052,6 +2060,12 @@ ok {test-number} - sstream.str() == "\"\\r\"" for: ""\r"" == ""\r""
+ ok {test-number} - sstream.str() == "\"\\t\"" for: ""\t"" == ""\t""
+ # JsonWriter escapes characters in strings properly
+ ok {test-number} - sstream.str() == "\"\\\\/\\t\\r\\n\"" for: ""\\/\t\r\n"" == ""\\/\t\r\n""
++# JsonWriter escapes characters in strings properly
++ok {test-number} - sstream.str() == "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007" "\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f" "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017" "\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"" for: ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f"" == ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f""
++# JsonWriter escapes characters in strings properly
++ok {test-number} - sstream.str() == "\"\\u001b[31mred\\u001b[0m\"" for: ""\u001b[31mred\u001b[0m"" == ""\u001b[31mred\u001b[0m""
++# JsonWriter escapes characters in strings properly
++ok {test-number} - sstream.str() == "\"\x7f\"" for: """" == """"
+ # JsonWriter serializes non-finite FP using Python spelling - double
+ ok {test-number} - sstream.str() == "NaN" for: "NaN" == "NaN"
+ # JsonWriter serializes non-finite FP using Python spelling - double
+@@ -3388,6 +3402,18 @@ ok {test-number} - testCase.tags[0] == Tag( "tag1" ) for: {?} == {?}
+ ok {test-number} - with 1 message: 'no assertions'
+ # Test enum bit values
+ ok {test-number} - 0x<hex digits> == bit30and31 for: 3221225472 (0x<hex digits>) == 3221225472
++# Test specs given as separate arguments are ANDed
++ok {test-number} - !(separateArguments.matches( *fakeTestCase( "Test 1" ) )) for: !false
++# Test specs given as separate arguments are ANDed
++ok {test-number} - !(separateArguments.matches( *fakeTestCase( "Test 2" ) )) for: !false
++# Test specs given as separate arguments are ANDed
++ok {test-number} - commaJoined.matches( *fakeTestCase( "Test 1" ) ) for: true
++# Test specs given as separate arguments are ANDed
++ok {test-number} - commaJoined.matches( *fakeTestCase( "Test 2" ) ) for: true
++# Test specs given as separate arguments are ANDed
++ok {test-number} - single.matches( *fakeTestCase( "Test 1" ) ) for: true
++# Test specs given as separate arguments are ANDed
++ok {test-number} - !(single.matches( *fakeTestCase( "Test 2" ) )) for: !false
+ # Test with special, characters "in name
+ ok {test-number} -
+ # Testing checked-if
+@@ -4067,6 +4093,18 @@ ok {test-number} - encode( "smith > jones" ) == "smith > jones" for: "smith > jo
+ # XmlEncode
+ ok {test-number} - encode( "smith ]]> jones" ) == "smith ]]&gt; jones" for: "smith ]]&gt; jones" == "smith ]]&gt; jones"
+ # XmlEncode
++ok {test-number} - encode( "]]>" ) == "]]&gt;" for: "]]&gt;" == "]]&gt;"
++# XmlEncode
++ok {test-number} - encode( "]]> jones" ) == "]]&gt; jones" for: "]]&gt; jones" == "]]&gt; jones"
++# XmlEncode
++ok {test-number} - encode( "a]]>" ) == "a]]&gt;" for: "a]]&gt;" == "a]]&gt;"
++# XmlEncode
++ok {test-number} - encode( "]]>a]]>" ) == "]]&gt;a]]&gt;" for: "]]&gt;a]]&gt;" == "]]&gt;a]]&gt;"
++# XmlEncode
++ok {test-number} - encode( "]>" ) == "]>" for: "]>" == "]>"
++# XmlEncode
++ok {test-number} - encode( ">" ) == ">" for: ">" == ">"
++# XmlEncode
+ ok {test-number} - encode( stringWithQuotes ) == stringWithQuotes for: "don't "quote" me on that" == "don't "quote" me on that"
+ # XmlEncode
+ ok {test-number} - encode( stringWithQuotes, Catch::XmlEncode::ForAttributes ) == "don't &quot;quote&quot; me on that" for: "don't &quot;quote&quot; me on that" == "don't &quot;quote&quot; me on that"
+@@ -4456,6 +4494,12 @@ ok {test-number} - parseEnums( "ClassName::EnumName::Value1, ClassName::EnumName
+ ok {test-number} - parseEnums( "ClassName::EnumName::Value1, ClassName::EnumName::Value2, ClassName::EnumName::Value3" ), Equals( std::vector<Catch::StringRef>{"Value1", "Value2", "Value3"} ) for: { Value1, Value2, Value3 } Equals: { Value1, Value2, Value3 }
+ # parseEnums
+ ok {test-number} - parseEnums( "ClassName::EnumName::Value1,ClassName::EnumName::Value2 , ClassName::EnumName::Value3" ), Equals( std::vector<Catch::StringRef>{"Value1", "Value2", "Value3"} ) for: { Value1, Value2, Value3 } Equals: { Value1, Value2, Value3 }
++# parseEnums
++ok {test-number} - parseEnums( "U, V, W" ), Equals( std::vector<Catch::StringRef>{"U", "V", "W"} ) for: { U, V, W } Equals: { U, V, W }
++# parseEnums
++ok {test-number} - parseEnums( "Axis::X, Axis::Y, Axis::Z" ), Equals( std::vector<Catch::StringRef>{"X", "Y", "Z"} ) for: { X, Y, Z } Equals: { X, Y, Z }
++# parseEnums
++ok {test-number} - parseEnums( "A,B" ), Equals( std::vector<Catch::StringRef>{"A", "B"} ) for: { A, B } Equals: { A, B }
+ # pointer to class
+ ok {test-number} - p == 0 for: 0 == 0
+ # print unscoped info if passing unscoped info is printed
+@@ -4598,6 +4642,20 @@ ok {test-number} - splitStringRef("", ','), Equals(std::vector<StringRef>()) for
+ ok {test-number} - splitStringRef("abc", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
+ # splitString
+ ok {test-number} - splitStringRef("abc,def", ','), Equals(std::vector<StringRef>{"abc", "def"}) for: { abc, def } Equals: { abc, def }
++# splitString
++ok {test-number} - splitStringRef("a,b,c", ','), Equals(std::vector<StringRef>{"a", "b", "c"}) for: { a, b, c } Equals: { a, b, c }
++# splitString
++ok {test-number} - splitStringRef("a,bb,c", ','), Equals(std::vector<StringRef>{"a", "bb", "c"}) for: { a, bb, c } Equals: { a, bb, c }
++# splitString
++ok {test-number} - splitStringRef("ab,c", ','), Equals(std::vector<StringRef>{"ab", "c"}) for: { ab, c } Equals: { ab, c }
++# splitString
++ok {test-number} - splitStringRef(",abc", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
++# splitString
++ok {test-number} - splitStringRef("abc,", ','), Equals(std::vector<StringRef>{"abc"}) for: { abc } Equals: { abc }
++# splitString
++ok {test-number} - splitStringRef("abc,,def", ','), Equals(std::vector<StringRef>{"abc", "def"}) for: { abc, def } Equals: { abc, def }
++# splitString
++ok {test-number} - splitStringRef(",", ','), Equals(std::vector<StringRef>()) for: {  } Equals: {  }
+ # stacks unscoped info in loops
+ not ok {test-number} - false with 4 messages: 'Count 1 to 3...' and '1' and '2' and '3'
+ # stacks unscoped info in loops
+@@ -4854,5 +4912,5 @@ ok {test-number} - q3 == 23. for: 23.0 == 23.0
+ ok {test-number} -
+ # xmlentitycheck
+ ok {test-number} -
+-1..2435
++1..2464
+ 
+diff --git a/tests/SelfTest/Baselines/teamcity.sw.approved.txt b/tests/SelfTest/Baselines/teamcity.sw.approved.txt
+index 16fe73f9..dcda115a 100644
+--- a/tests/SelfTest/Baselines/teamcity.sw.approved.txt
++++ b/tests/SelfTest/Baselines/teamcity.sw.approved.txt
+@@ -313,6 +313,8 @@
+ ##teamcity[testFinished name='Copy and then generate a range' duration="{duration}"]
+ ##teamcity[testStarted name='Cout stream properly declares it writes to stdout']
+ ##teamcity[testFinished name='Cout stream properly declares it writes to stdout' duration="{duration}"]
++##teamcity[testStarted name='Creating an EnumInfo for single character enum values']
++##teamcity[testFinished name='Creating an EnumInfo for single character enum values' duration="{duration}"]
+ ##teamcity[testStarted name='Custom exceptions can be translated when testing for nothrow']
+ ##teamcity[testFailed name='Custom exceptions can be translated when testing for nothrow' message='Exception.tests.cpp:<line number>|n...............................................................................|n|nException.tests.cpp:<line number>|nunexpected exception with message:|n  "custom exception - not std"|n  REQUIRE_NOTHROW( throwCustom() )|nwith expansion:|n  throwCustom()|n']
+ ##teamcity[testFinished name='Custom exceptions can be translated when testing for nothrow' duration="{duration}"]
+@@ -725,6 +727,8 @@
+ ##teamcity[testFinished name='Test case with one argument' duration="{duration}"]
+ ##teamcity[testStarted name='Test enum bit values']
+ ##teamcity[testFinished name='Test enum bit values' duration="{duration}"]
++##teamcity[testStarted name='Test specs given as separate arguments are ANDed']
++##teamcity[testFinished name='Test specs given as separate arguments are ANDed' duration="{duration}"]
+ ##teamcity[testStarted name='Test with special, characters "in name']
+ ##teamcity[testFinished name='Test with special, characters "in name' duration="{duration}"]
+ ##teamcity[testStarted name='Testing checked-if']
+diff --git a/tests/SelfTest/Baselines/teamcity.sw.multi.approved.txt b/tests/SelfTest/Baselines/teamcity.sw.multi.approved.txt
+index acc777f2..6d88c5fe 100644
+--- a/tests/SelfTest/Baselines/teamcity.sw.multi.approved.txt
++++ b/tests/SelfTest/Baselines/teamcity.sw.multi.approved.txt
+@@ -313,6 +313,8 @@
+ ##teamcity[testFinished name='Copy and then generate a range' duration="{duration}"]
+ ##teamcity[testStarted name='Cout stream properly declares it writes to stdout']
+ ##teamcity[testFinished name='Cout stream properly declares it writes to stdout' duration="{duration}"]
++##teamcity[testStarted name='Creating an EnumInfo for single character enum values']
++##teamcity[testFinished name='Creating an EnumInfo for single character enum values' duration="{duration}"]
+ ##teamcity[testStarted name='Custom exceptions can be translated when testing for nothrow']
+ ##teamcity[testFailed name='Custom exceptions can be translated when testing for nothrow' message='Exception.tests.cpp:<line number>|n...............................................................................|n|nException.tests.cpp:<line number>|nunexpected exception with message:|n  "custom exception - not std"|n  REQUIRE_NOTHROW( throwCustom() )|nwith expansion:|n  throwCustom()|n']
+ ##teamcity[testFinished name='Custom exceptions can be translated when testing for nothrow' duration="{duration}"]
+@@ -725,6 +727,8 @@
+ ##teamcity[testFinished name='Test case with one argument' duration="{duration}"]
+ ##teamcity[testStarted name='Test enum bit values']
+ ##teamcity[testFinished name='Test enum bit values' duration="{duration}"]
++##teamcity[testStarted name='Test specs given as separate arguments are ANDed']
++##teamcity[testFinished name='Test specs given as separate arguments are ANDed' duration="{duration}"]
+ ##teamcity[testStarted name='Test with special, characters "in name']
+ ##teamcity[testFinished name='Test with special, characters "in name' duration="{duration}"]
+ ##teamcity[testStarted name='Testing checked-if']
+diff --git a/tests/SelfTest/Baselines/xml.sw.approved.txt b/tests/SelfTest/Baselines/xml.sw.approved.txt
+index a7f8d3ae..f8db9bfa 100644
+--- a/tests/SelfTest/Baselines/xml.sw.approved.txt
++++ b/tests/SelfTest/Baselines/xml.sw.approved.txt
+@@ -4665,6 +4665,43 @@ C
+     </Expression>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
++  <TestCase name="Creating an EnumInfo for single character enum values" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++      <Original>
++        enumInfo.lookup(0) == "U"
++      </Original>
++      <Expanded>
++        U == "U"
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++      <Original>
++        enumInfo.lookup(1) == "V"
++      </Original>
++      <Expanded>
++        V == "V"
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++      <Original>
++        enumInfo.lookup(2) == "W"
++      </Original>
++      <Expanded>
++        W == "W"
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++      <Original>
++        enumInfo.lookup(3) == "{** unexpected enum value **}"
++      </Original>
++      <Expanded>
++        {** unexpected enum value **}
++==
++"{** unexpected enum value **}"
++      </Expanded>
++    </Expression>
++    <OverallResult success="true" skips="0"/>
++  </TestCase>
+   <TestCase name="Custom exceptions can be translated when testing for nothrow" tags="[!throws][.][failing]" filename="tests/<exe-name>/UsageTests/Exception.tests.cpp" >
+     <Expression success="false" type="REQUIRE_NOTHROW" filename="tests/<exe-name>/UsageTests/Exception.tests.cpp" >
+       <Original>
+@@ -9892,6 +9929,43 @@ Approx( 3.14150000000000018 )
+       </Expression>
+       <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false"/>
+     </Section>
++    <Section name="every C0 control character is escaped" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++        <Original>
++          sstream.str() == "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007" "\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f" "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017" "\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\""
++        </Original>
++        <Expanded>
++          ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f""
++==
++""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f""
++        </Expanded>
++      </Expression>
++      <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false"/>
++    </Section>
++    <Section name="escape sequence embedded in surrounding text" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++        <Original>
++          sstream.str() == "\"\\u001b[31mred\\u001b[0m\""
++        </Original>
++        <Expanded>
++          ""\u001b[31mred\u001b[0m""
++==
++""\u001b[31mred\u001b[0m""
++        </Expanded>
++      </Expression>
++      <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false"/>
++    </Section>
++    <Section name="DEL is not a C0 control and is not escaped" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++        <Original>
++          sstream.str() == "\"\x7f\""
++        </Original>
++        <Expanded>
++          ""\x7F"" == ""\x7F""
++        </Expanded>
++      </Expression>
++      <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false"/>
++    </Section>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
+   <TestCase name="JsonWriter serializes non-finite FP using Python spelling - double" tags="[floating-point][JsonWriter]" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
+@@ -16507,6 +16581,57 @@ Message from section two
+     </Expression>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
++  <TestCase name="Test specs given as separate arguments are ANDed" tags="[command-line][test-spec]" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++    <Expression success="true" type="CHECK_FALSE" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        !(separateArguments.matches( *fakeTestCase( "Test 1" ) ))
++      </Original>
++      <Expanded>
++        !false
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_FALSE" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        !(separateArguments.matches( *fakeTestCase( "Test 2" ) ))
++      </Original>
++      <Expanded>
++        !false
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        commaJoined.matches( *fakeTestCase( "Test 1" ) )
++      </Original>
++      <Expanded>
++        true
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        commaJoined.matches( *fakeTestCase( "Test 2" ) )
++      </Original>
++      <Expanded>
++        true
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        single.matches( *fakeTestCase( "Test 1" ) )
++      </Original>
++      <Expanded>
++        true
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_FALSE" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        !(single.matches( *fakeTestCase( "Test 2" ) ))
++      </Original>
++      <Expanded>
++        !false
++      </Expanded>
++    </Expression>
++    <OverallResult success="true" skips="0"/>
++  </TestCase>
+   <TestCase name="Test with special, characters &quot;in name" tags="[cli][regression]" filename="tests/<exe-name>/IntrospectiveTests/CmdLine.tests.cpp" >
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
+@@ -19829,7 +19954,55 @@ Approx( 1.23999999999999999 )
+ "smith ]]&amp;gt; jones"
+         </Expanded>
+       </Expression>
+-      <OverallResults successes="2" failures="0" expectedFailures="0" skipped="false"/>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( "]]&gt;" ) == "]]&amp;gt;"
++        </Original>
++        <Expanded>
++          "]]&amp;gt;" == "]]&amp;gt;"
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( "]]&gt; jones" ) == "]]&amp;gt; jones"
++        </Original>
++        <Expanded>
++          "]]&amp;gt; jones" == "]]&amp;gt; jones"
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( "a]]&gt;" ) == "a]]&amp;gt;"
++        </Original>
++        <Expanded>
++          "a]]&amp;gt;" == "a]]&amp;gt;"
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( "]]&gt;a]]&gt;" ) == "]]&amp;gt;a]]&amp;gt;"
++        </Original>
++        <Expanded>
++          "]]&amp;gt;a]]&amp;gt;" == "]]&amp;gt;a]]&amp;gt;"
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( "]>" ) == "]>"
++        </Original>
++        <Expanded>
++          "]>" == "]>"
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( ">" ) == ">"
++        </Original>
++        <Expanded>
++          ">" == ">"
++        </Expanded>
++      </Expression>
++      <OverallResults successes="8" failures="0" expectedFailures="0" skipped="false"/>
+     </Section>
+     <Section name="string with quotes" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
+       <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
+@@ -21550,6 +21723,33 @@ Approx( -1.95996398454005449 )
+       </Expression>
+       <OverallResults successes="3" failures="0" expectedFailures="0" skipped="false"/>
+     </Section>
++    <Section name="Single character enum values" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++      <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++        <Original>
++          parseEnums( "U, V, W" ), Equals( std::vector&lt;Catch::StringRef>{"U", "V", "W"} )
++        </Original>
++        <Expanded>
++          { U, V, W } Equals: { U, V, W }
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++        <Original>
++          parseEnums( "Axis::X, Axis::Y, Axis::Z" ), Equals( std::vector&lt;Catch::StringRef>{"X", "Y", "Z"} )
++        </Original>
++        <Expanded>
++          { X, Y, Z } Equals: { X, Y, Z }
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++        <Original>
++          parseEnums( "A,B" ), Equals( std::vector&lt;Catch::StringRef>{"A", "B"} )
++        </Original>
++        <Expanded>
++          { A, B } Equals: { A, B }
++        </Expanded>
++      </Expression>
++      <OverallResults successes="3" failures="0" expectedFailures="0" skipped="false"/>
++    </Section>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
+   <TestCase name="pointer to class" tags="[Tricky]" filename="tests/<exe-name>/UsageTests/Tricky.tests.cpp" >
+@@ -22213,6 +22413,62 @@ Approx( -1.95996398454005449 )
+         { abc, def } Equals: { abc, def }
+       </Expanded>
+     </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef("a,b,c", ','), Equals(std::vector&lt;StringRef>{"a", "b", "c"})
++      </Original>
++      <Expanded>
++        { a, b, c } Equals: { a, b, c }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef("a,bb,c", ','), Equals(std::vector&lt;StringRef>{"a", "bb", "c"})
++      </Original>
++      <Expanded>
++        { a, bb, c } Equals: { a, bb, c }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef("ab,c", ','), Equals(std::vector&lt;StringRef>{"ab", "c"})
++      </Original>
++      <Expanded>
++        { ab, c } Equals: { ab, c }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef(",abc", ','), Equals(std::vector&lt;StringRef>{"abc"})
++      </Original>
++      <Expanded>
++        { abc } Equals: { abc }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef("abc,", ','), Equals(std::vector&lt;StringRef>{"abc"})
++      </Original>
++      <Expanded>
++        { abc } Equals: { abc }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef("abc,,def", ','), Equals(std::vector&lt;StringRef>{"abc", "def"})
++      </Original>
++      <Expanded>
++        { abc, def } Equals: { abc, def }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef(",", ','), Equals(std::vector&lt;StringRef>())
++      </Original>
++      <Expanded>
++        {  } Equals: {  }
++      </Expanded>
++    </Expression>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
+   <TestCase name="stacks unscoped info in loops" tags="[.][failing][info][unscoped]" filename="tests/<exe-name>/UsageTests/Message.tests.cpp" >
+@@ -23481,6 +23737,6 @@ Approx( -1.95996398454005449 )
+     </Section>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
+-  <OverallResults successes="2222" failures="158" expectedFailures="43" skips="12"/>
+-  <OverallResultsCases successes="334" failures="96" expectedFailures="18" skips="6"/>
++  <OverallResults successes="2251" failures="158" expectedFailures="43" skips="12"/>
++  <OverallResultsCases successes="336" failures="96" expectedFailures="18" skips="6"/>
+ </Catch2TestRun>
+diff --git a/tests/SelfTest/Baselines/xml.sw.multi.approved.txt b/tests/SelfTest/Baselines/xml.sw.multi.approved.txt
+index cbfe936b..3719e249 100644
+--- a/tests/SelfTest/Baselines/xml.sw.multi.approved.txt
++++ b/tests/SelfTest/Baselines/xml.sw.multi.approved.txt
+@@ -4665,6 +4665,43 @@ C
+     </Expression>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
++  <TestCase name="Creating an EnumInfo for single character enum values" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++      <Original>
++        enumInfo.lookup(0) == "U"
++      </Original>
++      <Expanded>
++        U == "U"
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++      <Original>
++        enumInfo.lookup(1) == "V"
++      </Original>
++      <Expanded>
++        V == "V"
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++      <Original>
++        enumInfo.lookup(2) == "W"
++      </Original>
++      <Expanded>
++        W == "W"
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++      <Original>
++        enumInfo.lookup(3) == "{** unexpected enum value **}"
++      </Original>
++      <Expanded>
++        {** unexpected enum value **}
++==
++"{** unexpected enum value **}"
++      </Expanded>
++    </Expression>
++    <OverallResult success="true" skips="0"/>
++  </TestCase>
+   <TestCase name="Custom exceptions can be translated when testing for nothrow" tags="[!throws][.][failing]" filename="tests/<exe-name>/UsageTests/Exception.tests.cpp" >
+     <Expression success="false" type="REQUIRE_NOTHROW" filename="tests/<exe-name>/UsageTests/Exception.tests.cpp" >
+       <Original>
+@@ -9892,6 +9929,43 @@ Approx( 3.14150000000000018 )
+       </Expression>
+       <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false"/>
+     </Section>
++    <Section name="every C0 control character is escaped" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++        <Original>
++          sstream.str() == "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007" "\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f" "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017" "\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\""
++        </Original>
++        <Expanded>
++          ""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f""
++==
++""\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f""
++        </Expanded>
++      </Expression>
++      <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false"/>
++    </Section>
++    <Section name="escape sequence embedded in surrounding text" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++        <Original>
++          sstream.str() == "\"\\u001b[31mred\\u001b[0m\""
++        </Original>
++        <Expanded>
++          ""\u001b[31mred\u001b[0m""
++==
++""\u001b[31mred\u001b[0m""
++        </Expanded>
++      </Expression>
++      <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false"/>
++    </Section>
++    <Section name="DEL is not a C0 control and is not escaped" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
++        <Original>
++          sstream.str() == "\"\x7f\""
++        </Original>
++        <Expanded>
++          ""\x7F"" == ""\x7F""
++        </Expanded>
++      </Expression>
++      <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false"/>
++    </Section>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
+   <TestCase name="JsonWriter serializes non-finite FP using Python spelling - double" tags="[floating-point][JsonWriter]" filename="tests/<exe-name>/IntrospectiveTests/Json.tests.cpp" >
+@@ -16507,6 +16581,57 @@ Message from section two
+     </Expression>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
++  <TestCase name="Test specs given as separate arguments are ANDed" tags="[command-line][test-spec]" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++    <Expression success="true" type="CHECK_FALSE" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        !(separateArguments.matches( *fakeTestCase( "Test 1" ) ))
++      </Original>
++      <Expanded>
++        !false
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_FALSE" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        !(separateArguments.matches( *fakeTestCase( "Test 2" ) ))
++      </Original>
++      <Expanded>
++        !false
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        commaJoined.matches( *fakeTestCase( "Test 1" ) )
++      </Original>
++      <Expanded>
++        true
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        commaJoined.matches( *fakeTestCase( "Test 2" ) )
++      </Original>
++      <Expanded>
++        true
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        single.matches( *fakeTestCase( "Test 1" ) )
++      </Original>
++      <Expanded>
++        true
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_FALSE" filename="tests/<exe-name>/IntrospectiveTests/TestSpec.tests.cpp" >
++      <Original>
++        !(single.matches( *fakeTestCase( "Test 2" ) ))
++      </Original>
++      <Expanded>
++        !false
++      </Expanded>
++    </Expression>
++    <OverallResult success="true" skips="0"/>
++  </TestCase>
+   <TestCase name="Test with special, characters &quot;in name" tags="[cli][regression]" filename="tests/<exe-name>/IntrospectiveTests/CmdLine.tests.cpp" >
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
+@@ -19829,7 +19954,55 @@ Approx( 1.23999999999999999 )
+ "smith ]]&amp;gt; jones"
+         </Expanded>
+       </Expression>
+-      <OverallResults successes="2" failures="0" expectedFailures="0" skipped="false"/>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( "]]&gt;" ) == "]]&amp;gt;"
++        </Original>
++        <Expanded>
++          "]]&amp;gt;" == "]]&amp;gt;"
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( "]]&gt; jones" ) == "]]&amp;gt; jones"
++        </Original>
++        <Expanded>
++          "]]&amp;gt; jones" == "]]&amp;gt; jones"
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( "a]]&gt;" ) == "a]]&amp;gt;"
++        </Original>
++        <Expanded>
++          "a]]&amp;gt;" == "a]]&amp;gt;"
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( "]]&gt;a]]&gt;" ) == "]]&amp;gt;a]]&amp;gt;"
++        </Original>
++        <Expanded>
++          "]]&amp;gt;a]]&amp;gt;" == "]]&amp;gt;a]]&amp;gt;"
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( "]>" ) == "]>"
++        </Original>
++        <Expanded>
++          "]>" == "]>"
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
++        <Original>
++          encode( ">" ) == ">"
++        </Original>
++        <Expanded>
++          ">" == ">"
++        </Expanded>
++      </Expression>
++      <OverallResults successes="8" failures="0" expectedFailures="0" skipped="false"/>
+     </Section>
+     <Section name="string with quotes" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
+       <Expression success="true" type="REQUIRE" filename="tests/<exe-name>/IntrospectiveTests/Xml.tests.cpp" >
+@@ -21549,6 +21722,33 @@ Approx( -1.95996398454005449 )
+       </Expression>
+       <OverallResults successes="3" failures="0" expectedFailures="0" skipped="false"/>
+     </Section>
++    <Section name="Single character enum values" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++      <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++        <Original>
++          parseEnums( "U, V, W" ), Equals( std::vector&lt;Catch::StringRef>{"U", "V", "W"} )
++        </Original>
++        <Expanded>
++          { U, V, W } Equals: { U, V, W }
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++        <Original>
++          parseEnums( "Axis::X, Axis::Y, Axis::Z" ), Equals( std::vector&lt;Catch::StringRef>{"X", "Y", "Z"} )
++        </Original>
++        <Expanded>
++          { X, Y, Z } Equals: { X, Y, Z }
++        </Expanded>
++      </Expression>
++      <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/UsageTests/EnumToString.tests.cpp" >
++        <Original>
++          parseEnums( "A,B" ), Equals( std::vector&lt;Catch::StringRef>{"A", "B"} )
++        </Original>
++        <Expanded>
++          { A, B } Equals: { A, B }
++        </Expanded>
++      </Expression>
++      <OverallResults successes="3" failures="0" expectedFailures="0" skipped="false"/>
++    </Section>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
+   <TestCase name="pointer to class" tags="[Tricky]" filename="tests/<exe-name>/UsageTests/Tricky.tests.cpp" >
+@@ -22212,6 +22412,62 @@ Approx( -1.95996398454005449 )
+         { abc, def } Equals: { abc, def }
+       </Expanded>
+     </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef("a,b,c", ','), Equals(std::vector&lt;StringRef>{"a", "b", "c"})
++      </Original>
++      <Expanded>
++        { a, b, c } Equals: { a, b, c }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef("a,bb,c", ','), Equals(std::vector&lt;StringRef>{"a", "bb", "c"})
++      </Original>
++      <Expanded>
++        { a, bb, c } Equals: { a, bb, c }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef("ab,c", ','), Equals(std::vector&lt;StringRef>{"ab", "c"})
++      </Original>
++      <Expanded>
++        { ab, c } Equals: { ab, c }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef(",abc", ','), Equals(std::vector&lt;StringRef>{"abc"})
++      </Original>
++      <Expanded>
++        { abc } Equals: { abc }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef("abc,", ','), Equals(std::vector&lt;StringRef>{"abc"})
++      </Original>
++      <Expanded>
++        { abc } Equals: { abc }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef("abc,,def", ','), Equals(std::vector&lt;StringRef>{"abc", "def"})
++      </Original>
++      <Expanded>
++        { abc, def } Equals: { abc, def }
++      </Expanded>
++    </Expression>
++    <Expression success="true" type="CHECK_THAT" filename="tests/<exe-name>/IntrospectiveTests/StringManip.tests.cpp" >
++      <Original>
++        splitStringRef(",", ','), Equals(std::vector&lt;StringRef>())
++      </Original>
++      <Expanded>
++        {  } Equals: {  }
++      </Expanded>
++    </Expression>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
+   <TestCase name="stacks unscoped info in loops" tags="[.][failing][info][unscoped]" filename="tests/<exe-name>/UsageTests/Message.tests.cpp" >
+@@ -23480,6 +23736,6 @@ Approx( -1.95996398454005449 )
+     </Section>
+     <OverallResult success="true" skips="0"/>
+   </TestCase>
+-  <OverallResults successes="2222" failures="158" expectedFailures="43" skips="12"/>
+-  <OverallResultsCases successes="334" failures="96" expectedFailures="18" skips="6"/>
++  <OverallResults successes="2251" failures="158" expectedFailures="43" skips="12"/>
++  <OverallResultsCases successes="336" failures="96" expectedFailures="18" skips="6"/>
+ </Catch2TestRun>
+diff --git a/tests/SelfTest/IntrospectiveTests/Json.tests.cpp b/tests/SelfTest/IntrospectiveTests/Json.tests.cpp
+index d026c76c..24210f62 100644
+--- a/tests/SelfTest/IntrospectiveTests/Json.tests.cpp
++++ b/tests/SelfTest/IntrospectiveTests/Json.tests.cpp
+@@ -174,6 +174,73 @@ TEST_CASE( "JsonWriter escapes characters in strings properly", "[JsonWriter]" )
+         Catch::JsonValueWriter{ sstream }.write( "\\/\t\r\n" );
+         REQUIRE( sstream.str() == "\"\\\\/\\t\\r\\n\"" );
+     }
++    SECTION( "every C0 control character is escaped" ) {
++        // RFC 8259 requires U+0000..U+001F to be escaped. The eight with a
++        // two-character form keep it; the rest become \u00XX.
++        std::string allControls;
++        for ( int c = 0x00; c <= 0x1F; ++c ) {
++            allControls += static_cast<char>( c );
++        }
++        Catch::JsonValueWriter{ sstream }.write(
++            Catch::StringRef( allControls.data(), allControls.size() ) );
++        REQUIRE( sstream.str() ==
++                 "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007"
++                 "\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f"
++                 "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017"
++                 "\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"" );
++    }
++    SECTION( "escape sequence embedded in surrounding text" ) {
++        // The realistic case: a test writes ANSI-coloured output and the
++        // JSON reporter has to carry it without breaking the document.
++        Catch::JsonValueWriter{ sstream }.write( "\x1b[31mred\x1b[0m" );
++        REQUIRE( sstream.str() == "\"\\u001b[31mred\\u001b[0m\"" );
++    }
++    SECTION( "DEL is not a C0 control and is not escaped" ) {
++        Catch::JsonValueWriter{ sstream }.write( "\x7f" );
++        REQUIRE( sstream.str() == "\"\x7f\"" );
++    }
++}
++
++TEST_CASE( "JsonWriter: UTF-8", "[JSON][JsonWriter][UTF-8][approvals]" ) {
++    // JSON text has to be valid UTF-8 (RFC 8259 section 8.1), so bytes that
++    // are not part of a valid encoding are hex escaped. The spelling matches
++    // XmlEncode's, so both reporters render the same bytes the same way -
++    // compare the cases here with "XmlEncode: UTF-8" in Xml.tests.cpp.
++    auto encode = []( std::string const& str ) {
++        std::stringstream sstream;
++        Catch::JsonValueWriter{ sstream }.write(
++            Catch::StringRef( str.data(), str.size() ) );
++        return sstream.str();
++    };
++
++    SECTION( "Valid utf-8 strings are passed through" ) {
++        CHECK( encode( "Here be 👾" ) == "\"Here be 👾\"" );
++        CHECK( encode( "šš" ) == "\"šš\"" );
++        CHECK( encode( "\xDF\xBF" ) == "\"\xDF\xBF\"" );                 // 0x7FF
++        CHECK( encode( "\xE0\xA0\x80" ) == "\"\xE0\xA0\x80\"" );         // 0x800
++        CHECK( encode( "\xEF\xBF\xBF" ) == "\"\xEF\xBF\xBF\"" );         // 0xFFFF
++        CHECK( encode( "\xF0\x90\x80\x80" ) == "\"\xF0\x90\x80\x80\"" ); // 0x10000
++        CHECK( encode( "\xF4\x8F\xBF\xBF" ) == "\"\xF4\x8F\xBF\xBF\"" ); // 0x10FFFF
++    }
++    SECTION( "Invalid start bytes are escaped" ) {
++        CHECK( encode( "\xFF" ) == "\"\\\\xFF\"" );
++        CHECK( encode( "\x80" ) == "\"\\\\x80\"" );
++        CHECK( encode( "Here \xFF be \xF0\x9F\x91\xBE" ) ==
++               "\"Here \\\\xFF be \xF0\x9F\x91\xBE\"" );
++    }
++    SECTION( "Truncated sequences are escaped" ) {
++        CHECK( encode( "\xE0\xA0" ) == "\"\\\\xE0\\\\xA0\"" );
++        CHECK( encode( "\xC5\xC5\xA0" ) == "\"\\\\xC5\xC5\xA0\"" );
++    }
++    SECTION( "Overlong encodings are escaped" ) {
++        CHECK( encode( "\xC0\x80" ) == "\"\\\\xC0\\\\x80\"" );
++        CHECK( encode( "\xC1\xBF" ) == "\"\\\\xC1\\\\xBF\"" );
++        CHECK( encode( "\xE0\x9F\xBF" ) == "\"\\\\xE0\\\\x9F\\\\xBF\"" );
++    }
++    SECTION( "Values out of the unicode range are escaped" ) {
++        CHECK( encode( "\xF4\x90\x80\x80" ) ==
++               "\"\\\\xF4\\\\x90\\\\x80\\\\x80\"" );
++    }
+ }
+ 
+ TEST_CASE( "JsonWriter serializes numbers independently of the global locale",
+diff --git a/tests/SelfTest/IntrospectiveTests/Sharding.tests.cpp b/tests/SelfTest/IntrospectiveTests/Sharding.tests.cpp
+index 8e6009dd..2037e6ae 100644
+--- a/tests/SelfTest/IntrospectiveTests/Sharding.tests.cpp
++++ b/tests/SelfTest/IntrospectiveTests/Sharding.tests.cpp
+@@ -12,6 +12,7 @@
+ #include <catch2/internal/catch_sharding.hpp>
+ 
+ #include <unordered_map>
++#include <algorithm>
+ #include <vector>
+ 
+ TEST_CASE("Sharding Function", "[approvals]") {
+@@ -43,3 +44,36 @@ TEST_CASE("Sharding Function", "[approvals]") {
+         CHECK(result[i] == testContainer[i + startIndex]);
+     }
+ }
++
++// The test above pins one container size against a hand-tabulated table of
++// expected shard sizes. The invariants below hold for every container size
++// and every shard count, including the sizes that table cannot reach: an
++// empty container, a single element, and more shards than there are elements.
++TEST_CASE("Sharding partitions any container without loss or overlap", "[approvals]") {
++    auto elementCount = GENERATE(range(0, 13));
++    std::vector<int> testContainer;
++    for (int i = 0; i < elementCount; ++i) {
++        testContainer.push_back(i);
++    }
++
++    auto shardCount = GENERATE_COPY(range(1, elementCount + 3));
++
++    std::vector<int> rebuilt;
++    std::size_t largest = 0;
++    std::size_t smallest = static_cast<std::size_t>(-1);
++    for (int shardIndex = 0; shardIndex < shardCount; ++shardIndex) {
++        std::vector<int> shard =
++            Catch::createShard(testContainer, static_cast<std::size_t>(shardCount),
++                               static_cast<std::size_t>(shardIndex));
++        largest = (std::max)(largest, shard.size());
++        smallest = (std::min)(smallest, shard.size());
++        rebuilt.insert(rebuilt.end(), shard.begin(), shard.end());
++    }
++
++    INFO("elementCount=" << elementCount << " shardCount=" << shardCount);
++    // Concatenating the shards in index order reproduces the input exactly,
++    // so nothing is dropped, duplicated or reordered.
++    REQUIRE(rebuilt == testContainer);
++    // No shard carries more than one extra element, so the work is balanced.
++    REQUIRE(largest - smallest <= 1);
++}
+diff --git a/tests/SelfTest/IntrospectiveTests/StringManip.tests.cpp b/tests/SelfTest/IntrospectiveTests/StringManip.tests.cpp
+index f30573cc..196d534d 100644
+--- a/tests/SelfTest/IntrospectiveTests/StringManip.tests.cpp
++++ b/tests/SelfTest/IntrospectiveTests/StringManip.tests.cpp
+@@ -83,6 +83,17 @@ TEST_CASE("splitString", "[string-manip]") {
+     CHECK_THAT(splitStringRef("", ','), Equals(std::vector<StringRef>()));
+     CHECK_THAT(splitStringRef("abc", ','), Equals(std::vector<StringRef>{"abc"}));
+     CHECK_THAT(splitStringRef("abc,def", ','), Equals(std::vector<StringRef>{"abc", "def"}));
++
++    // Fields of a single character are kept, like fields of any other width.
++    CHECK_THAT(splitStringRef("a,b,c", ','), Equals(std::vector<StringRef>{"a", "b", "c"}));
++    CHECK_THAT(splitStringRef("a,bb,c", ','), Equals(std::vector<StringRef>{"a", "bb", "c"}));
++    CHECK_THAT(splitStringRef("ab,c", ','), Equals(std::vector<StringRef>{"ab", "c"}));
++
++    // Empty fields, from leading, trailing or repeated delimiters, are dropped.
++    CHECK_THAT(splitStringRef(",abc", ','), Equals(std::vector<StringRef>{"abc"}));
++    CHECK_THAT(splitStringRef("abc,", ','), Equals(std::vector<StringRef>{"abc"}));
++    CHECK_THAT(splitStringRef("abc,,def", ','), Equals(std::vector<StringRef>{"abc", "def"}));
++    CHECK_THAT(splitStringRef(",", ','), Equals(std::vector<StringRef>()));
+ }
+ 
+ TEST_CASE("startsWith", "[string-manip]") {
+diff --git a/tests/SelfTest/IntrospectiveTests/TestSpec.tests.cpp b/tests/SelfTest/IntrospectiveTests/TestSpec.tests.cpp
+index 11a7a7a8..6e20c001 100644
+--- a/tests/SelfTest/IntrospectiveTests/TestSpec.tests.cpp
++++ b/tests/SelfTest/IntrospectiveTests/TestSpec.tests.cpp
+@@ -10,6 +10,7 @@
+ #include <catch2/catch_approx.hpp>
+ #include <catch2/catch_test_macros.hpp>
+ #include <catch2/matchers/catch_matchers_string.hpp>
++#include <catch2/internal/catch_tag_alias_registry.hpp>
+ #include <catch2/internal/catch_test_spec_parser.hpp>
+ #include <catch2/catch_user_config.hpp>
+ #include <catch2/catch_test_case_info.hpp>
+@@ -298,6 +299,36 @@ TEST_CASE( "Parse test names and tags", "[command-line][test-spec][approvals]" )
+     }
+ }
+ 
++TEST_CASE( "Test specs given as separate arguments are ANDed",
++           "[command-line][test-spec]" ) {
++    using Catch::parseTestSpec;
++    using Catch::TestSpec;
++
++    // Config builds the run's spec by feeding every <test-spec> argument to
++    // one parser, so separate arguments combine like concatenation rather
++    // than like the comma form. Two full names as separate arguments
++    // therefore select nothing, which is loud but surprising.
++    Catch::TagAliasRegistry registry;
++    Catch::TestSpecParser parser( registry );
++    parser.parse( "Test 1" );
++    parser.parse( "Test 2" );
++    TestSpec separateArguments = parser.testSpec();
++
++    CHECK_FALSE( separateArguments.matches( *fakeTestCase( "Test 1" ) ) );
++    CHECK_FALSE( separateArguments.matches( *fakeTestCase( "Test 2" ) ) );
++
++    // The comma form inside a single argument selects either of them.
++    TestSpec commaJoined = parseTestSpec( "Test 1,Test 2" );
++    CHECK( commaJoined.matches( *fakeTestCase( "Test 1" ) ) );
++    CHECK( commaJoined.matches( *fakeTestCase( "Test 2" ) ) );
++
++    // Each name on its own still matches its own test, so the two failures
++    // above are the combination and not a spec that matches nothing.
++    TestSpec single = parseTestSpec( "Test 1" );
++    CHECK( single.matches( *fakeTestCase( "Test 1" ) ) );
++    CHECK_FALSE( single.matches( *fakeTestCase( "Test 2" ) ) );
++}
++
+ TEST_CASE("#1905 -- test spec parser properly clears internal state between compound tests", "[command-line][test-spec]") {
+     using Catch::parseTestSpec;
+     using Catch::TestSpec;
+diff --git a/tests/SelfTest/IntrospectiveTests/Xml.tests.cpp b/tests/SelfTest/IntrospectiveTests/Xml.tests.cpp
+index a53bae35..aab09b6f 100644
+--- a/tests/SelfTest/IntrospectiveTests/Xml.tests.cpp
++++ b/tests/SelfTest/IntrospectiveTests/Xml.tests.cpp
+@@ -39,6 +39,15 @@ TEST_CASE( "XmlEncode", "[XML]" ) {
+     SECTION( "string with greater-than" ) {
+         REQUIRE( encode( "smith > jones" ) == "smith > jones" );
+         REQUIRE( encode( "smith ]]> jones" ) == "smith ]]&gt; jones" );
++        // The terminator is escaped wherever it sits, including at the very
++        // start of the text, which is the smallest offset it can occupy.
++        REQUIRE( encode( "]]>" ) == "]]&gt;" );
++        REQUIRE( encode( "]]> jones" ) == "]]&gt; jones" );
++        REQUIRE( encode( "a]]>" ) == "a]]&gt;" );
++        REQUIRE( encode( "]]>a]]>" ) == "]]&gt;a]]&gt;" );
++        // A greater-than not closing a ]] run stays unescaped.
++        REQUIRE( encode( "]>" ) == "]>" );
++        REQUIRE( encode( ">" ) == ">" );
+     }
+     SECTION( "string with quotes" ) {
+         std::string stringWithQuotes = "don't \"quote\" me on that";
+diff --git a/tests/SelfTest/UsageTests/EnumToString.tests.cpp b/tests/SelfTest/UsageTests/EnumToString.tests.cpp
+index bacd5608..243fe1aa 100644
+--- a/tests/SelfTest/UsageTests/EnumToString.tests.cpp
++++ b/tests/SelfTest/UsageTests/EnumToString.tests.cpp
+@@ -51,6 +51,15 @@ TEST_CASE( "parseEnums", "[Strings][enums]" ) {
+         CHECK_THAT( parseEnums( "ClassName::EnumName::Value1,ClassName::EnumName::Value2 , ClassName::EnumName::Value3" ),
+                     Equals( std::vector<Catch::StringRef>{"Value1", "Value2", "Value3"} ) );
+     }
++
++    SECTION( "Single character enum values" ) {
++        CHECK_THAT( parseEnums( "U, V, W" ),
++                    Equals( std::vector<Catch::StringRef>{"U", "V", "W"} ) );
++        CHECK_THAT( parseEnums( "Axis::X, Axis::Y, Axis::Z" ),
++                    Equals( std::vector<Catch::StringRef>{"X", "Y", "Z"} ) );
++        CHECK_THAT( parseEnums( "A,B" ),
++                    Equals( std::vector<Catch::StringRef>{"A", "B"} ) );
++    }
+ }
+ 
+ TEST_CASE( "Directly creating an EnumInfo" ) {
+@@ -62,6 +71,16 @@ TEST_CASE( "Directly creating an EnumInfo" ) {
+     CHECK( enumInfo.lookup(3) == "{** unexpected enum value **}" );
+ }
+ 
++TEST_CASE( "Creating an EnumInfo for single character enum values" ) {
++    using namespace Catch::Detail;
++    auto enumInfo = makeEnumInfo( "Coord", "U, V, W", {0, 1, 2} );
++
++    CHECK( enumInfo.lookup(0) == "U" );
++    CHECK( enumInfo.lookup(1) == "V" );
++    CHECK( enumInfo.lookup(2) == "W" );
++    CHECK( enumInfo.lookup(3) == "{** unexpected enum value **}" );
++}
++
+ namespace {
+ // Enum without user-provided stream operator
+ enum Enum1 { Enum1Value0, Enum1Value1 };
+diff --git a/tests/SelfTest/UsageTests/MatchersConstexpr.tests.cpp b/tests/SelfTest/UsageTests/MatchersConstexpr.tests.cpp
+index ad0eb1ee..b171a055 100644
+--- a/tests/SelfTest/UsageTests/MatchersConstexpr.tests.cpp
++++ b/tests/SelfTest/UsageTests/MatchersConstexpr.tests.cpp
+@@ -52,17 +52,17 @@ namespace {
+     constexpr std::array<bool, 3> compute_bools( int type ) {
+         switch ( type ) {
+         case 0:
+-            return { true, true, true };
++            return { { true, true, true } };
+         case 1:
+-            return { false, true, false };
++            return { { false, true, false } };
+         case 2:
+-            return { false, false, false };
++            return { { false, false, false } };
+         case 3:
+-            return { true, false, false };
++            return { { true, false, false } };
+         case 4:
+-            return { true, true, false };
++            return { { true, true, false } };
+         default:
+-            return { false, false, false };
++            return { { false, false, false } };
+         }
+     }
+ 
+diff --git a/tools/scripts/extractFeaturesFromReleaseNotes.py b/tools/scripts/extractFeaturesFromReleaseNotes.py
+index d8be0437..9a1d2fd9 100644
+--- a/tools/scripts/extractFeaturesFromReleaseNotes.py
++++ b/tools/scripts/extractFeaturesFromReleaseNotes.py
+@@ -21,8 +21,11 @@
+ #   to add the 'Introduced in Catch ...' snippets to the relevant pages.
+ #
+ 
++import os
+ import re
+ 
++from scriptCommon import catchPath
++
+ 
+ def create_introduced_in_text(version, bug_number = None):
+     """Generate text to paste in to documentation file"""
+@@ -53,10 +56,15 @@ def link_to_changes_in_release(release, releases):
+ 
+ def write_recent_release_notes_with_introduced_text():
+     current_version = None
+-    release_toc_regex = r'\[(\d.\d.\d)\]\(#\d+\)<br>'
++    # Version components are multi-digit: every release from 3.10.0 onward has a
++    # two-digit minor, and a single-digit pattern silently matches none of them.
++    release_toc_regex = r'\[(\d+\.\d+\.\d+)\]\(#\d+\)<br>'
+     issue_number_regex = r'#[0-9]+'
+     releases = []
+-    with open('../docs/release-notes.md') as release_notes:
++    # Located from the script's own path rather than the working directory, so
++    # the script runs from anywhere.
++    release_notes_path = os.path.join(catchPath, 'docs', 'release-notes.md')
++    with open(release_notes_path, encoding='utf-8') as release_notes:
+         for line in release_notes:
+             line = line[:-1]
+             print(line)
+diff --git a/tools/scripts/fixWhitespace.py b/tools/scripts/fixWhitespace.py
+index 5840e790..e48c0487 100755
+--- a/tools/scripts/fixWhitespace.py
++++ b/tools/scripts/fixWhitespace.py
+@@ -15,7 +15,7 @@ def fixAllFilesInDir( dir ):
+                 if fixFile( path ):
+                     changedFiles += 1
+         else:
+-            fixAllFilesInDir( path )
++            changedFiles += fixAllFilesInDir( path )
+     return changedFiles
+ 
+ def fixFile( path ):
+@@ -30,8 +30,6 @@ def fixFile( path ):
+         lines.append( trimmed )
+     f.close()
+     if changed > 0:
+-        global changedFiles
+-        changedFiles = changedFiles + 1
+         print( path + ":" )
+         print( " - fixed " + str(changed) + " line(s)" )
+         altPath = path + ".backup"

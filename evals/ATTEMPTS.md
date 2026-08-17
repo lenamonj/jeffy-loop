@@ -22,6 +22,7 @@ loss rather than hiding it.
 |---|---:|---:|---|---|---:|
 | bat | 1 | 10 | converged | evaluator countersigned | 0 |
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
+| Catch2 | 4 | 35 | converged | evaluator countersigned | 1 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
 | clap | 4 | 31 | converged | evaluator countersigned | 0 |
@@ -45,6 +46,7 @@ loss rather than hiding it.
 | image-rs (attempt 1) | 2 | 10 | **not converged** | n/a | 2 |
 | image-rs (attempt 2) | 3 | 30 | **not converged** | n/a | 0 |
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
+| lz4 | 2 | 15 | converged | evaluator countersigned | 0 |
 | magic_enum | 2 | 19 | converged | evaluator countersigned | 0 |
 | mruby (attempt 1) | 5 | 50 | **not converged** | n/a | 0 |
 | mruby (attempt 2) | 5 | 63 | **not converged** | n/a | 1 |
