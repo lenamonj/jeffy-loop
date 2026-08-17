@@ -49,6 +49,7 @@ loss rather than hiding it.
 | mruby (attempt 1) | 5 | 50 | **not converged** | n/a | 0 |
 | mruby (attempt 2) | 5 | 63 | **not converged** | n/a | 1 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
+| node-semver | 4 | 30 | **not converged** | n/a | 0 |
 | path-to-regexp | 3 | 27 | converged | evaluator countersigned | 1 |
 | PHP-Parser | 3 | 29 | converged | evaluator countersigned | 0 |
 | PyPortfolioOpt | 6 | 58 | converged | evaluator countersigned | 1 |
@@ -59,11 +60,13 @@ loss rather than hiding it.
 | RuboCop | 1 | 7 | converged | evaluator countersigned | 0 |
 | rust-url | 3 | 30 | converged | evaluator countersigned | 0 |
 | shopspring/decimal | 4 | 33 | **not converged** | n/a | 4 |
+| spdlog | 4 | 40 | **not converged** | n/a | 1 |
 | sqlparse | 5 | 47 | converged | evaluator countersigned | 2 |
 | Spectre.Console | 1 | 8 | converged | evaluator countersigned | 0 |
 | speedtest-cli | 1 | 5 | converged | pre-evaluator | 0 |
 | swift-algorithms | 3 | 24 | converged | evaluator countersigned | 1 |
 | ta | 6 | 64 | converged | evaluator **unavailable**, recorded | 0 |
+| testify | 4 | 40 | **not converged** | n/a | 2 |
 | thor | 2 | 20 | **not converged** | n/a | 0 |
 | validator | 4 | 31 | converged | evaluator countersigned | 1 |
 | yfinance | 1 | 9 | converged | evaluator countersigned | 0 |
@@ -521,6 +524,72 @@ Humanizer is the strongest single datapoint for the coverage problem the
 findings absorbs the entire budget one row deep, the map never clears, and
 the gate that certifies convergence is never reached. The engine backlog
 carries this as its coverage-guarantee item; this row is why.
+
+## Wave 2's three non-convergences: every surface swept, and the gate refused anyway
+
+`spdlog`, `node-semver` and `testify` share one shape that is new to the
+corpus, and it is the inverse of Humanizer's: **all three swept their entire
+surface inventories, closed dozens of findings, and failed only at the
+evaluator gate.** Across the wave's four targets the gate returned 13 REJECTs
+against a single PASS, go-cmp's. Coverage was never the problem; the problem
+was that the gate kept being right.
+
+### spdlog: six invocations, six REJECTs
+
+4 runs, 40 iterations against a pre-registered 4x10. 21 findings closed - 8
+High, 10 Medium, 3 Low - in the logging library under a large share of C++
+services, with 24 of 24 rows swept from run 2 onward. **Six evaluator
+invocations across the four runs and every one REJECTed**, each filing
+evidence the run then closed. Three findings remain open at budget
+exhaustion, the last two (`P26`, `P27`) filed by the final gate: a function
+whose three exits include two that return an unprotected pointer while every
+check the run wrote entered only the third, and a configuration
+(`SPDLOG_NO_TLS`) the suite has never built. The run's own closing learning
+names the class: a lifetime contract has to be checked at every exit, not at
+the one the tests happen to take.
+
+### node-semver: an empty ledger, a swept board, and no verdict left to earn
+
+4 runs, 30 iterations. 19 findings closed - 9 High, 6 Medium, 4 Low - in the
+semver implementation under npm itself, including a 2,634,480-call
+differential against the pristine upstream copy in its own `node_modules`
+that the tree won on every disagreement by invariant. (The final run restarts
+its finding ids at `H1`, so an id-distinct count reads 16; the 19 is per run
+and id, which is what the journal actually closed.) It ends **not converged
+with all 21 rows swept and a completely empty ledger**: the final run's gate
+spent all three invocations and filed six fresh Highs against a tree two
+clean runs had left ready to declare - one from each of the first two
+invocations, four more from the terminal REJECT - the run closed every one
+of them under salvage, and the rules correctly refuse a declaration resting
+on a verdict the run can no longer obtain. Convergence waits one fresh run
+away.
+
+Two operator disclosures ride this row. **Run 3 is a single iteration** that
+ended blocked on an owner decision: npm's `template-oss-check` - part of
+`npm test` - forbids the committed evaluator artifact, because the template
+manifest allowlists every tracked path. The owner approved the run's own
+tested resolution, and it was applied as **two operator commits on the run
+branch (`148d04c` and a state-file commit), disclosed here and in the
+journal rather than blended into loop work.** The campaign driver's
+no-progress guard also fired correctly between rounds, stopping the campaign
+rather than burning the final round on the same blocked question.
+
+### testify: the gate found a High the run had scored clean, twice over
+
+4 runs, 40 iterations. 27 findings closed - 6 High, 11 Medium, 10 Low - in
+the assertion library under most of Go's test suites, 26 of 26 rows swept.
+The final gate's terminal REJECT is the wave's sharpest single result:
+`copyExportedFields` mishandles a nil interface one level inside a caller's
+value, and it fails both ways the rubric scores High -
+`assert.EqualExportedValues(t, []error{nil}, []error{nil})` **panics and
+aborts the test binary**, and the map path **returns true for maps whose
+keys differ**, because `SetMapIndex` with the zero Value deletes the key and
+both copies come out empty. The run's own audit had scored that surface
+clean, and its settled class for exactly this defect family was titled more
+broadly than the check behind it - both filed (`T30`, `T31`) as the next
+run's first work, and both open at budget exhaustion. A loop whose weakness
+is evidence quality was pointed at a library whose job is evidence, and the
+library's evaluator won the last word.
 
 ## thor, where the surface outran the budget
 
