@@ -1,0 +1,127 @@
+diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
+index 712196a..37225d7 100644
+--- a/.github/workflows/test.yml
++++ b/.github/workflows/test.yml
+@@ -6,16 +6,18 @@ jobs:
+   test:
+     strategy:
+       matrix:
+-        go-version: [1.21.x]
++        go-version: [1.21.x, 1.26.x]
+         os: [ubuntu-latest, macos-latest]
+     runs-on: ${{ matrix.os }}
+     steps:
++    # Checkout must precede setup-go: setup-go caches on go.mod and fails when
++    # the workspace is still empty.
++    - name: Checkout code
++      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+     - name: Install Go
+-      uses: actions/setup-go@bfdd3570ce990073878bf10f6b2d79082de49492 # v2.2.0
++      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+       with:
+         go-version: ${{ matrix.go-version }}
+-    - name: Checkout code
+-      uses: actions/checkout@ee0669bd1cc54295c223e0bb666b733df41de1c5 # v2.7.0
+     - name: Test
+       run: go test -v -race ./...
+     - name: Format
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..6fae25c
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1 @@
++.claude/jeffy-loop.local.md
+diff --git a/cmp/compare.go b/cmp/compare.go
+index 0f5b8a4..6102f12 100644
+--- a/cmp/compare.go
++++ b/cmp/compare.go
+@@ -49,8 +49,9 @@ import (
+ //   - Let S be the set of all [Ignore], [Transformer], and [Comparer] options that
+ //     remain after applying all path filters, value filters, and type filters.
+ //     If at least one [Ignore] exists in S, then the comparison is ignored.
+-//     If the number of [Transformer] and [Comparer] options in S is non-zero,
+-//     then Equal panics because it is ambiguous which option to use.
++//     If the number of [Transformer] and [Comparer] options in S is
++//     greater than one, then Equal panics because it is ambiguous
++//     which option to use.
+ //     If S contains a single [Transformer], then use that to transform
+ //     the current values and recursively call Equal on the output values.
+ //     If S contains a single [Comparer], then use that to compare the current values.
+diff --git a/cmp/report_reflect.go b/cmp/report_reflect.go
+index e39f422..7a5d08d 100644
+--- a/cmp/report_reflect.go
++++ b/cmp/report_reflect.go
+@@ -180,6 +180,11 @@ func (opts formatOptions) FormatValue(v reflect.Value, parentKind reflect.Kind,
+ 	case reflect.String:
+ 		return opts.formatString("", v.String())
+ 	case reflect.UnsafePointer, reflect.Chan, reflect.Func:
++		if v.IsNil() {
++			// Report nil as such rather than as the zero address, matching
++			// how every other nilable kind here prints.
++			return textNil
++		}
+ 		return textLine(formatPointer(value.PointerOf(v), true))
+ 	case reflect.Struct:
+ 		var list textList
+diff --git a/cmp/report_slices.go b/cmp/report_slices.go
+index 23e444f..472485a 100644
+--- a/cmp/report_slices.go
++++ b/cmp/report_slices.go
+@@ -552,6 +552,10 @@ func coalesceInterveningIdentical(groups []diffStats, windowSize int) []diffStat
+ //	]
+ func cleanupSurroundingIdentical(groups []diffStats, eq func(i, j int) bool) []diffStats {
+ 	var ix, iy int // indexes into sequence x and y
++	// Spans that belong outside the current list of groups. They cannot be
++	// inserted while ranging over groups, since that would shift the indexes
++	// this loop is using, so they are applied once the loop finishes.
++	var numPrependIdentical, numAppendIdentical int
+ 	for i, ds := range groups {
+ 		// Handle equal group.
+ 		if ds.NumDiff() == 0 {
+@@ -567,7 +571,10 @@ func cleanupSurroundingIdentical(groups []diffStats, eq func(i, j int) bool) []d
+ 		for j := 0; j < nx && j < ny && eq(ix+j, iy+j); j++ {
+ 			numLeadingIdentical++
+ 		}
+-		for j := 0; j < nx && j < ny && eq(ix+nx-1-j, iy+ny-1-j); j++ {
++		// The trailing scan must stop where the leading scan stopped, or a
++		// group that is equal the whole way across is counted from both ends
++		// and the two spans together exceed the group's own size.
++		for j := 0; j < nx-numLeadingIdentical && j < ny-numLeadingIdentical && eq(ix+nx-1-j, iy+ny-1-j); j++ {
+ 			numTrailingIdentical++
+ 		}
+ 		if numIdentical := numLeadingIdentical + numTrailingIdentical; numIdentical > 0 {
+@@ -579,9 +586,7 @@ func cleanupSurroundingIdentical(groups []diffStats, eq func(i, j int) bool) []d
+ 				} else {
+ 					// No preceding group exists, so prepend a new group,
+ 					// but do so after we finish iterating over all groups.
+-					defer func() {
+-						groups = append([]diffStats{{Name: groups[0].Name, NumIdentical: numLeadingIdentical}}, groups...)
+-					}()
++					numPrependIdentical = numLeadingIdentical
+ 				}
+ 				// Increment indexes since the preceding group would have handled this.
+ 				ix += numLeadingIdentical
+@@ -595,9 +600,7 @@ func cleanupSurroundingIdentical(groups []diffStats, eq func(i, j int) bool) []d
+ 				} else {
+ 					// No succeeding group exists, so append a new group,
+ 					// but do so after we finish iterating over all groups.
+-					defer func() {
+-						groups = append(groups, diffStats{Name: groups[len(groups)-1].Name, NumIdentical: numTrailingIdentical})
+-					}()
++					numAppendIdentical = numTrailingIdentical
+ 				}
+ 				// Do not increment indexes since the succeeding group will handle this.
+ 			}
+@@ -610,5 +613,11 @@ func cleanupSurroundingIdentical(groups []diffStats, eq func(i, j int) bool) []d
+ 		ix += nx
+ 		iy += ny
+ 	}
++	if numPrependIdentical > 0 {
++		groups = append([]diffStats{{Name: groups[0].Name, NumIdentical: numPrependIdentical}}, groups...)
++	}
++	if numAppendIdentical > 0 {
++		groups = append(groups, diffStats{Name: groups[len(groups)-1].Name, NumIdentical: numAppendIdentical})
++	}
+ 	return groups
+ }
