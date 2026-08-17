@@ -48,6 +48,7 @@ loss rather than hiding it.
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
 | lz4 | 2 | 15 | converged | evaluator countersigned | 0 |
 | magic_enum | 2 | 19 | converged | evaluator countersigned | 0 |
+| moshi | 3 | 30 | **not converged** | n/a | 0 |
 | mruby (attempt 1) | 5 | 50 | **not converged** | n/a | 0 |
 | mruby (attempt 2) | 5 | 63 | **not converged** | n/a | 1 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
@@ -73,6 +74,7 @@ loss rather than hiding it.
 | validator | 4 | 31 | converged | evaluator countersigned | 1 |
 | yfinance | 1 | 9 | converged | evaluator countersigned | 0 |
 | zod | 4 | 39 | converged | evaluator countersigned | 0 |
+| zstd | 4 | 33 | **not converged** | n/a | 0 |
 | PapaParse | audit only | - | audit, not a loop run | n/a | - |
 | **libuv** | at least 1 | at least 1 | **abandoned, no receipt** | n/a | - |
 
@@ -592,6 +594,57 @@ broadly than the check behind it - both filed (`T30`, `T31`) as the next
 run's first work, and both open at budget exhaustion. A loop whose weakness
 is evidence quality was pointed at a library whose job is evidence, and the
 library's evaluator won the last word.
+
+## Wave 3's two non-convergences: one map that never closed, one gate that refused twice
+
+`moshi` and `zstd` are the two rows wave 3 did not convert (its other two,
+`lz4` and `Catch2`, converged and sit in the README receipts table). One is
+the map-incomplete shape, one is the swept-board-gate-refused shape, and the
+wave carried an operator event both rows disclose: **the provider's session
+usage cap killed the wave mid-run**, the campaigns stopped themselves on
+their own guards, and the remaining rounds relaunched about ninety minutes
+later under the same pre-registered budget, counted per the rule written
+down before the outcome - a started round is a spent round.
+
+### moshi: the fourth target where the gate was never due
+
+3 runs, 30 iterations in the journal, against a pre-registered 4x10 - the
+fourth launched round was killed by the usage cap at iteration 1 with zero
+commits and zero journal entries, and is counted spent per the
+pre-committed rule rather than replayed. **17 findings closed - 5 High, 12
+Medium - in the Kotlin JSON library**, the study's thirteenth language,
+including `JsonValueReader` integral reads that returned silently out of
+range, a date-only RFC 3339 branch parsing on the wrong offset, and record
+canonical-constructor exceptions swallowed whole. It ends **not converged
+with an empty ledger, 27 of 32 rows swept, and zero evaluator invocations
+across 30 iterations** - after `mruby`, `eemeli/yaml` and `thor`, the
+fourth target whose surface outran its budget before the declaration path
+ever opened, and the second where the ledger was empty when the budget
+died. The coverage-guarantee item on the engine backlog is this row's
+mechanism, restated in Kotlin.
+
+### zstd: 43 of 43 swept, and both invocations refused
+
+4 runs, 33 iterations - run 2 was the round the usage cap killed
+mid-iteration 4, three iterations journaled. **16 findings closed - 2 High,
+12 Medium, 2 Low - in the compression library, under the study's strongest
+anti-cheat oracle** (`decompress(compress(x)) == x`, bit for bit, with the
+sibling `lz4` receipt converged under the same class). The Highs are real:
+a meson build that failed to link at `-Ddebug_level>=2` because the build
+file omitted `debug.c`, and `ZSTD_d_refMultipleDDicts` decoding single-pass
+frames **against the wrong dictionary, silently, with a success return**.
+It ends **not converged with all 43 rows swept and 8 Lows carried**: the
+final run's gate was invoked twice and REJECTed twice, and neither reason
+was the Lows. The first filed a Medium against the run's own fix - a meson
+option description its edit had narrowed instead of corrected, still false
+for `minsize` builds. The terminal second filed a Declined entry whose
+stated reason was false: the run declined a testing gap as impractical when
+the check runs in minutes on this host. That is BurntSushi/toml's class -
+**a prose claim wider than the evidence behind it, this time in the run's
+own state files** - and the gate reproduced both before filing. As with
+node-semver, every mechanical closing condition except the verdict was
+satisfied, and the rules refuse a declaration resting on a verdict the run
+can no longer obtain.
 
 ## thor, where the surface outran the budget
 
