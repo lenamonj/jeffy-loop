@@ -30,7 +30,7 @@ __pycache__/
 /jeffy-avatar*.png
 /jeffy.jpg
 
-# Fable session dev logs - class patterns so future logs are covered by default
+# Session dev logs - class patterns so future logs are covered by default
 # (both casings spelled out: gitignore matching is case-sensitive on Linux)
 /FABLE*.md
 /FABLE*.MD
@@ -40,7 +40,7 @@ __pycache__/
 # Versioned release-planning docs (plan4.7.md, plan4.8.md, ...) - maintainer
 # working notes, not product. Digit-anchored so a future product doc called
 # plan-something.md is not silently ignored, and both casings spelled out for
-# the same reason as the Fable patterns above. Without this a self-run's
+# the same reason as the dev-log patterns above. Without this a self-run's
 # `git add -A` checkpoint sweeps them into the public history.
 /plan[0-9]*.md
 /plan[0-9]*.MD
