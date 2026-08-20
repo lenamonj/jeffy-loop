@@ -316,6 +316,29 @@ if [ -n "$promise" ]; then
           echo "jeffy stop hook: PLAN.md has no Surface inventory section; skipping the inventory check." >&2
         fi
       fi
+      # P1-46: a Declined entry's stated reason is a claim the declaration
+      # rests on, and it was the one state-file claim the closing sequence
+      # read but never re-verified - zstd lost its terminal gate verdict to
+      # a Declined premise the evaluator disproved in minutes. Every entry
+      # under ## Declined must carry the command or measurement that
+      # establishes its premise, written as Derivation: <command>; the one
+      # exemption is the priced reason "cost: exceeds one iteration", which
+      # is policy rather than premise and has nothing to re-run. Fails
+      # closed: an underivable premise blocks exactly as an unparseable
+      # severity does, and the remedy is cheap - record the derivation, or
+      # move the entry back to the ledger.
+      if [ -z "$violation" ] && [ -f "$root/BACKLOG.md" ] \
+        && grep -q '^## Declined' "$root/BACKLOG.md"; then
+        underived="$(awk '
+          { sub(/\r$/, "") }
+          /^## Declined$/ { take = 1; next }
+          /^## / { take = 0 }
+          take && /^- / && !/Derivation:/ && !/cost: exceeds one iteration/ { print substr($0, 1, 120); exit }
+        ' "$root/BACKLOG.md")"
+        if [ -n "$underived" ]; then
+          violation="a Declined entry carries no recorded derivation, first: $underived; record the command or measurement that establishes its premise as Derivation: <command> (the priced reason cost: exceeds one iteration needs none), re-run it, then re-declare convergence"
+        fi
+      fi
       # Oracle declaration: the exit status of the project's own gate is the
       # only correctness signal this hook can read, and go-yaml showed how
       # little that can be worth. That run's Verify command exited 0 for 29

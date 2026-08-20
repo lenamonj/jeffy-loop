@@ -1843,6 +1843,46 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook mishandled a pre-inventory PLAN.md at the converged stop"
     fi
 
+    # P1-46: a Declined entry's premise is a claim the declaration rests on,
+    # and it was the one state-file claim the closing sequence never
+    # re-verified - zstd's terminal REJECT was a Declined premise the gate
+    # disproved in minutes. An entry with no recorded Derivation blocks the
+    # declaration with the entry named; a recorded derivation passes, and so
+    # does the priced policy reason, which has nothing to re-run.
+    hb_write_state sess-1 1 3
+    printf '# Plan\n\n## Surface inventory\n\n- [x] core: swept at abc1234 - all entry points probed\n\n## Verify command\nCommand: none\n' > "$hb_proj/PLAN.md"
+    {
+      printf '# Backlog\n\n## Now\n\n## Next\n\n## Later\n\n## Declined\n\n'
+      printf -- '- D1: testing that path is impractical on this host.\n'
+      printf '\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Declined entry carries no recorded derivation' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'D1: testing that path is impractical' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook refuses a declaration over a Declined entry with no recorded derivation (the zstd shape)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let a declaration rest on a Declined premise nothing ever re-ran"
+    fi
+
+    hb_write_state sess-1 1 3
+    {
+      printf '# Backlog\n\n## Now\n\n## Next\n\n## Later\n\n## Declined\n\n'
+      printf -- '- D1: that path needs a live origin remote this host does not have. Derivation: git remote -v | grep -c origin\n'
+      printf -- '- D2: fix plus regression test does not fit an iteration. cost: exceeds one iteration\n'
+      printf '\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook accepts a declaration whose Declined entries carry a Derivation or the priced policy reason"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused Declined entries that carry exactly what the rule asks for"
+    fi
+    hb_write_backlog ''
+
     # --- P1-10: the Verify command declares what it grades ----------------
     # An exit status is the only thing this hook can read from a project's
     # own gate, and go-yaml showed how little that can mean. That run's
