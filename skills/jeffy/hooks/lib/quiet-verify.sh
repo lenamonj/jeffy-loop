@@ -135,6 +135,15 @@ qv_main() {
       echo "verify: not configured" >&2
       exit 0
       ;;
+    *'<'*'>'*)
+      # A fresh project still carrying the template's own placeholder. Running
+      # it produces a bash syntax error reported as a failed suite, which
+      # reads exactly like the project being broken - the one thing this
+      # wrapper must never say when it is not true. The launch lint refuses a
+      # placeholder at launch; this refuses it at the gate, and names it.
+      echo "verify: Command is still the template placeholder ($qv_cmd); the first audit fills it with the project's real gate, or with none and a one-line reason" >&2
+      exit 2
+      ;;
   esac
 
   # Oracle class, enforced here exactly as the converged stop enforces it and

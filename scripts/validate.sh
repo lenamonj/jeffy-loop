@@ -396,6 +396,17 @@ else
     qv_bad=1; echo "  pre-1.8.0 PLAN.md refused, which is stricter than the converged stop"
   fi
 
+  # A fresh project still carrying the template placeholder: executing it
+  # yields a shell syntax error, which this wrapper would otherwise report as
+  # a failed suite - reading exactly like the project being broken, the one
+  # thing it must never say when it is not true.
+  qv_case 'Command: <first audit fills this in>' 'Oracle class: deterministic'
+  if bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  template placeholder was executed as a command"
+  elif ! grep -q 'template placeholder' "$qv_tmp/err"; then
+    qv_bad=1; echo "  placeholder refusal did not name itself: [$(cat "$qv_tmp/err")]"
+  fi
+
   qv_case 'Command: none' 'Oracle class: deterministic'
   if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err" ||
     ! grep -q 'not configured' "$qv_tmp/err"; then
