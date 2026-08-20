@@ -990,6 +990,44 @@ if [ -n "$(fm run_started_at)" ] && [ -z "$run_started" ]; then
   echo "jeffy stop hook: run_started_at is not an epoch integer; skipping the wall-clock ceiling." >&2
 fi
 
+# P2-26: context pressure, measured rather than counted. The engine re-feeds
+# one session, so context accumulates within a run - the corpus prices that
+# (python-dotenv's later runs re-filed findings earlier runs had already swept
+# and scored clean). The campaign practice answers it by running each round as
+# a fresh session, but that is tooling, and a user typing /jeffy 10 by hand
+# gets one session with nothing saying so.
+#
+# The signal is the transcript's own growth, not an iteration count: an
+# ordinal is a proxy for accumulation, while the transcript is the thing
+# itself, and a ratio against this run's own first measurement calibrates to
+# the project instead of to a number invented here. Advisory only - the
+# closing rule governs, and a pre-registered budget is never cut short by it.
+# The threshold is off unless set, exactly as the time ceilings are.
+ctx_path="$(printf '%s' "$input" | jq -r '.transcript_path // empty')"
+ctx_bytes=0
+if [ -n "$ctx_path" ] && [ -f "$ctx_path" ]; then
+  ctx_bytes="$(wc -c < "$ctx_path" 2>/dev/null | tr -d '[:space:]')"
+  case "$ctx_bytes" in '' | *[!0-9]*) ctx_bytes=0 ;; esac
+fi
+ctx_base="$(fm context_base_bytes)"
+case "$ctx_base" in '' | *[!0-9]* | 0) ctx_base="" ;; esac
+new_ctx_base="$ctx_base"
+# The baseline is this run's first measurement, taken once and carried.
+if [ -z "$new_ctx_base" ] && [ "$ctx_bytes" -gt 0 ]; then
+  new_ctx_base="$ctx_bytes"
+fi
+ctx_growth=""
+if [ -n "$ctx_base" ] && [ "$ctx_base" -gt 0 ] && [ "$ctx_bytes" -gt 0 ]; then
+  # One decimal place, in integer arithmetic: 10x the ratio, printed as x.y
+  ctx_growth=$(( ctx_bytes * 10 / ctx_base ))
+fi
+ctx_max="$(fm max_context_growth)"
+case "$ctx_max" in '' | *[!0-9]*) ctx_max=0 ;; esac
+ctx_note=""
+if [ "$ctx_max" -gt 0 ] && [ -n "$ctx_growth" ] && [ "$ctx_growth" -ge $((ctx_max * 10)) ]; then
+  ctx_note="this session's transcript is $((ctx_growth / 10)).$((ctx_growth % 10))x its size at the first iteration of this run, past the ${ctx_max}x mark recorded on the state file; context accumulates within a run and a fresh session reads the state files rather than its own transcript, so prefer finishing the current task and closing the run over starting work that needs a long read - this is advice, and the closing rule still governs"
+fi
+
 overrun_flag="$(fm overrun)"
 case "$overrun_flag" in 1) overrun_flag=1 ;; *) overrun_flag=0 ;; esac
 new_overrun=0
@@ -1400,8 +1438,8 @@ tmp="$state.tmp"
 # archive_migrated rides along with the strict archive baseline it certifies:
 # the baseline this rewrite stores is strict, so the naive escape above has
 # done its one job and must never be taken again.
-if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory" -v rh="$new_rows_hist" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" -v it="$now_epoch" -v ov="$new_overrun" -v fp="$new_fp_hist" -v os="$new_osc" '
-  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!sli) print "last_inventory: " li; if (rh != "" && !srh) print "rows_history: " rh; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (it != "0" && !sit) print "iteration_started_at: " it; if (!sov) print "overrun: " ov; if (fp != "" && !sfp) print "fingerprints: " fp; if (!sos) print "oscillation: " os; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory" -v rh="$new_rows_hist" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" -v it="$now_epoch" -v ov="$new_overrun" -v fp="$new_fp_hist" -v os="$new_osc" -v cb="$new_ctx_base" '
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!sli) print "last_inventory: " li; if (rh != "" && !srh) print "rows_history: " rh; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (it != "0" && !sit) print "iteration_started_at: " it; if (!sov) print "overrun: " ov; if (fp != "" && !sfp) print "fingerprints: " fp; if (!sos) print "oscillation: " os; if (cb != "" && !scb) print "context_base_bytes: " cb; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
   fmc == 1 && /^last_inventory: / { print "last_inventory: " li; sli = 1; next }
   fmc == 1 && rh != "" && /^rows_history: / { print "rows_history: " rh; srh = 1; next }
@@ -1419,6 +1457,7 @@ if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory
   fmc == 1 && /^overrun: / { print "overrun: " ov; sov = 1; next }
   fmc == 1 && fp != "" && /^fingerprints: / { print "fingerprints: " fp; sfp = 1; next }
   fmc == 1 && /^oscillation: / { print "oscillation: " os; sos = 1; next }
+  fmc == 1 && cb != "" && /^context_base_bytes: / { print "context_base_bytes: " cb; scb = 1; next }
   { print }
 ' "$state" > "$tmp"; then
   mv "$tmp" "$state"
@@ -1456,6 +1495,9 @@ fi
 if [ -n "$attempt_note" ]; then
   reason="$reason ATTEMPT LIMIT: $attempt_note."
 fi
+if [ -n "$ctx_note" ]; then
+  reason="$reason CONTEXT PRESSURE: $ctx_note."
+fi
 if [ -n "$extension" ]; then
   reason="$reason CLOSING EXTENSION: one-time +2 iterations granted because only the convergence sequence remains. No further extension will be granted."
 fi
@@ -1474,6 +1516,9 @@ fi
 # stated whenever it can be measured, ceiling or no ceiling: awareness is
 # free, and a run that can see the clock can choose to wrap up before one is
 # ever imposed.
+if [ -n "$ctx_growth" ]; then
+  run_state="$run_state; context $((ctx_growth / 10)).$((ctx_growth % 10))x"
+fi
 if [ -n "$wall_elapsed" ]; then
   if [ "$wall_max" -gt 0 ]; then
     run_state="$run_state; wall $((wall_elapsed / 60))m/$((wall_max / 60))m"

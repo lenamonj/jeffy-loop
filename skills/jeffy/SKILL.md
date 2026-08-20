@@ -75,6 +75,7 @@ run_started_at: $(date +%s)
 iteration_started_at: $(date +%s)
 max_wall_clock_seconds: <seconds from --max-time, else 0>
 max_iteration_seconds: <seconds from --max-iter-time, else 0>
+max_context_growth: <multiple from --max-context, else 0>
 base_head: $(git -C "$PR" rev-parse HEAD 2>/dev/null || echo none)
 <verify_timeout_seconds line when derived above, else omit this line entirely>
 ---
@@ -83,6 +84,19 @@ the run ends. Cancel with /cancel-jeffy, or delete this file to end the loop.
 EOF
 grep -n "session_id\|iteration:" "$PR/.claude/jeffy-loop.local.md"
 ```
+
+**Context pressure.** The engine re-feeds one session, so context accumulates
+within a run, and the corpus prices that: later runs of long targets re-filed
+findings earlier runs had already swept and scored clean. The hook measures it
+from the transcript the harness names on its stdin - the thing itself, rather
+than an iteration ordinal standing in for it - as a multiple of this run's own
+first measurement, which calibrates to the project instead of to a constant
+invented here. `--max-context <N>` sets `max_context_growth`; past N times the
+opening size, the re-feed carries a CONTEXT PRESSURE note recommending the run
+finish its current task and close, so the next one reads the state files with a
+clean window. **It is advice and never a stop**: the closing rule governs, and
+a pre-registered budget is never cut short by it. Off unless set, and the
+measured growth is reported in the run state either way.
 
 **Time ceilings.** A turn budget counts turns, and a turn is unbounded in
 time, so the state file carries two optional ceilings the Stop hook enforces

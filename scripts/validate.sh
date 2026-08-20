@@ -5334,6 +5334,70 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook ended a run early over an unparseable ledger line, which the severity floor treats as blocking"
     fi
 
+    # P2-26: context pressure, measured from the transcript rather than
+    # counted in iterations. The engine re-feeds one session, so context
+    # accumulates within a run; an iteration ordinal is a proxy for that,
+    # while the transcript is the thing itself. Advisory only, and the
+    # threshold is off unless the state file sets one - the same refusal to
+    # publish an unmeasured constant that leaves the time ceilings off.
+    hb_ctx="$hb_tmp/transcript.jsonl"
+    : > "$hb_ctx"
+    for hb_i in $(seq 1 200); do printf '{"n":%s,"pad":"aaaaaaaaaaaaaaaaaaaa"}\n' "$hb_i" >> "$hb_ctx"; done
+    hb_ctx_now="$(wc -c < "$hb_ctx" | tr -d '[:space:]')"
+
+    hb_write_state sess-1 3 10
+    hb_state_addkey "context_base_bytes: $((hb_ctx_now / 4))"
+    hb_state_addkey 'max_context_growth: 3'
+    hb_out="$(hb_run sess-1 'worked the task' "$hb_ctx")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONTEXT PRESSURE' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'the closing rule still governs'; then
+      pass "stop hook advises on measured context growth past a declared threshold, without ending the run"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook said nothing about a transcript that quadrupled inside one run"
+    fi
+
+    # Advisory means advisory: the run continues and the counter advances.
+    hb_write_state sess-1 3 10
+    hb_state_addkey "context_base_bytes: $((hb_ctx_now / 4))"
+    hb_state_addkey 'max_context_growth: 3'
+    hb_out="$(hb_run sess-1 'worked the task' "$hb_ctx")"
+    if [ -f "$hb_state" ] && grep -q '^iteration: 4$' "$hb_state"; then
+      pass "the context-pressure note never ends a run or forfeits a declared budget"
+    else
+      printf '%s\n' "$hb_out"
+      fault "the context-pressure note stopped a run it is only allowed to advise"
+    fi
+
+    # No threshold means no note, and the growth is still reported so the
+    # operator sees the number without one being imposed.
+    hb_write_state sess-1 3 10
+    hb_state_addkey "context_base_bytes: $((hb_ctx_now / 4))"
+    hb_out="$(hb_run sess-1 'worked the task' "$hb_ctx")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONTEXT PRESSURE' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qE 'context [0-9]+\.[0-9]x'; then
+      pass "with no threshold set, context growth is reported and never nagged about"
+    else
+      printf '%s\n' "$hb_out"
+      fault "context growth was either enforced without a threshold or dropped from the run state"
+    fi
+
+    # An unreachable transcript is an infrastructure gap, not evidence.
+    hb_write_state sess-1 3 10
+    hb_state_addkey "context_base_bytes: $((hb_ctx_now / 4))"
+    hb_state_addkey 'max_context_growth: 3'
+    hb_out="$(hb_run sess-1 'worked the task' "$hb_tmp/no-such-transcript.jsonl")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ -f "$hb_state" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONTEXT PRESSURE'; then
+      pass "an unreadable transcript path leaves the context signal silent rather than guessing"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook invented a context figure from a transcript it could not read"
+    fi
+
     # P1-49: the time ceilings. A turn budget counts turns and a turn is
     # unbounded in time, so these bound the run in hours. Both default to off,
     # which is itself checked: a run with no keys must behave exactly as it
