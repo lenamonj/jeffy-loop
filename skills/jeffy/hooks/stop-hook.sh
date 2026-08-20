@@ -19,6 +19,21 @@ fi
 state="$root/.claude/jeffy-loop.local.md"
 [ -f "$state" ] || exit 0
 
+# The verify bound and the runner are shared with lib/quiet-verify.sh, which
+# the loop invokes per iteration, so the engine holds exactly one timeout
+# ladder rather than two that can drift apart. Resolved from this script's
+# own location: the installer copies hooks/ whole, and $0 is where it landed.
+# Absence is recorded, not fatal here - the converged stop turns it into a
+# refusal, which is where failing closed belongs. (P1-50)
+qv_lib="${BASH_SOURCE[0]%/*}/lib/quiet-verify.sh"
+if [ -f "$qv_lib" ]; then
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=lib/quiet-verify.sh
+  . "$qv_lib"
+else
+  qv_lib=""
+fi
+
 # jq is a declared prerequisite; without it the hook cannot parse its stdin,
 # so fail open (allow the stop) and say why, rather than trap the session.
 if ! command -v jq >/dev/null 2>&1; then
@@ -660,76 +675,20 @@ if [ -n "$promise" ]; then
               esac
               if [ -n "$vc_lint" ]; then
                 violation="the Verify command ($verify_cmd) ends in $vc_lint, so its exit status is the truncator's, not the suite's; drop the trailing stage, then re-declare convergence"
+              elif [ -z "$qv_lib" ]; then
+                # The bound and the runner live in lib/quiet-verify.sh so the
+                # engine holds exactly one timeout ladder. Without it there is
+                # no way to re-run the gate, and a convergence this hook could
+                # not verify is precisely what it exists to refuse: fail
+                # closed and name the missing file. (P1-50)
+                violation="the verify helper skills/jeffy/hooks/lib/quiet-verify.sh is missing, so the Verify command cannot be re-run; reinstall jeffy (the installer copies the whole hooks folder), then re-declare convergence"
               else
                 vt="$(fm verify_timeout_seconds)"
-                case "$vt" in '' | *[!0-9]*)
-                  # No state key: derive the bound from the measured duration
-                  # PLAN.md records as "Verify duration: <N>s", with 3x
-                  # headroom for a loaded host, floored at the old default so
-                  # a stale or tiny measurement can never make this gate
-                  # twitchier than it was. The engine's own repository met
-                  # this refusal at its first declaration: a 404s suite under
-                  # a 240s default. (P1-31)
-                  vd="$(sed -n 's/^Verify duration:[ \t]*\([0-9][0-9]*\)s.*/\1/p' "$root/PLAN.md" 2>/dev/null | head -n 1)"
-                  case "$vd" in
-                    '' | *[!0-9]*) vt=240 ;;
-                    *) vt=$((vd * 3)); [ "$vt" -lt 240 ] && vt=240 ;;
-                  esac
-                ;; esac
-                # The gate has to run everywhere it is claimed to run. A stock
-                # macOS ships no GNU timeout, and skipping the run there left
-                # the loudest promise in the README - the hook re-runs your
-                # verify command - quietly false on a whole platform. Resolve
-                # timeout, then gtimeout (Homebrew coreutils), then fall back
-                # to a shell watchdog so the run always happens under a bound.
-                vto=""
-                if command -v timeout >/dev/null 2>&1; then
-                  vto=timeout
-                elif command -v gtimeout >/dev/null 2>&1; then
-                  vto=gtimeout
-                fi
-                if [ -n "$vto" ]; then
-                  ( cd "$root" && "$vto" "$vt" bash -c "$verify_cmd" ) >/dev/null 2>&1
-                  vrc=$?
-                else
-                  # Watchdog: run the gate in the background and arm a killer
-                  # that leaves a sentinel behind before it fires. The sentinel
-                  # is what tells a timeout apart from a suite that took a
-                  # SIGTERM of its own, which a bare exit status cannot.
-                  vsent="${TMPDIR:-/tmp}/jeffy-verify-timeout-$$"
-                  rm -f "$vsent"
-                  ( cd "$root" && bash -c "$verify_cmd" ) >/dev/null 2>&1 &
-                  vpid=$!
-                  # Both background jobs must hold no inherited descriptor.
-                  # The caller reads this hook through a pipe, and a pipe is
-                  # closed by its last writer, not by the hook exiting: a
-                  # watchdog still sleeping out its budget would keep that
-                  # pipe open and hang the reader long after the gate had
-                  # finished. Detach stdout and stderr on both.
-                  # Poll in one-second steps rather than sleeping the whole
-                  # budget: the watchdog then exits as soon as the gate does,
-                  # instead of outliving the hook as an orphan holding a
-                  # four-minute sleep.
-                  ( vwaited=0
-                    while [ "$vwaited" -lt "$vt" ]; do
-                      sleep 1
-                      kill -0 "$vpid" 2>/dev/null || exit 0
-                      vwaited=$((vwaited + 1))
-                    done
-                    : > "$vsent"
-                    kill -TERM "$vpid" 2>/dev/null
-                    sleep 5
-                    kill -KILL "$vpid" 2>/dev/null ) >/dev/null 2>&1 &
-                  vwpid=$!
-                  wait "$vpid" 2>/dev/null
-                  vrc=$?
-                  kill "$vwpid" 2>/dev/null
-                  wait "$vwpid" 2>/dev/null
-                  if [ -f "$vsent" ]; then
-                    vrc=124
-                  fi
-                  rm -f "$vsent"
-                fi
+                vt="$(jeffy_verify_bound "$root/PLAN.md" "$vt")"
+                vlog="$(mktemp "${TMPDIR:-/tmp}/jeffy-hook-verify-XXXXXX")"
+                jeffy_verify_run "$root" "$verify_cmd" "$vt" "$vlog"
+                vrc=$?
+                rm -f "$vlog"
                 if [ "$vrc" -eq 124 ]; then
                   violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; if the suite legitimately runs long, record its measured time as a labeled line reading Verify duration: <N>s in PLAN.md under Verify command (or set verify_timeout_seconds in the loop state file frontmatter), then get it green and re-declare convergence"
                 elif [ "$vrc" -ne 0 ]; then

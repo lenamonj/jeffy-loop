@@ -137,7 +137,7 @@ fi
 #    That has shipped a shellcheck-only breakage twice. CHANGELOG.md marks the
 #    maintainer tree, the same predicate the pairing and count checks use.
 if command -v shellcheck >/dev/null 2>&1; then
-  if shellcheck install.sh scripts/validate.sh skills/jeffy/hooks/stop-hook.sh; then
+  if shellcheck -x install.sh scripts/validate.sh skills/jeffy/hooks/stop-hook.sh skills/jeffy/hooks/lib/quiet-verify.sh; then
     pass "shell scripts lint clean (shellcheck)"
   else
     fault "shellcheck reported issues (see output above)"
@@ -250,6 +250,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Stall check:" \
   "the harness-written .claude/jeffy-loop.local.md and .claude/settings.local.json, and no BACKLOG.md item changed state" \
   "no Surface inventory row changed state" \
+  "QUIET-VERIFY-ONLY" \
   "added, removed, edited, or moved between sections" \
   "for at most three consecutive iterations" \
   "Checkpoint:" \
@@ -329,6 +330,98 @@ check_markers skills/jeffy/SKILL.md \
   "the Stop hook uses it to tell a genuine convergence ratchet"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
+fi
+
+# H2. quiet-verify: the loop's verify gate is bounded, and the bound is shared.
+#     A green suite prints its whole passing output into the window every
+#     iteration - the engine's own validator is 226 lines of OK - in a session
+#     where context already accumulates. The wrapper makes success silent and
+#     failure bounded. Two things this checks beyond the contract itself: that
+#     silence did not delete the verify count journals and receipts quote (the
+#     summary passthrough), and that the hook and the wrapper resolve the
+#     timeout through ONE function, because a second copy of that ladder would
+#     drift from the bound the converged stop enforces. (P1-50)
+qv_sh=skills/jeffy/hooks/lib/quiet-verify.sh
+if [ ! -f "$qv_sh" ]; then
+  fault "the verify wrapper $qv_sh is missing; the iteration prompt sends every verify through it"
+elif ! bash -n "$qv_sh" 2>/dev/null; then
+  fault "the verify wrapper does not parse"
+else
+  qv_tmp="$(mktemp -d)"
+  qv_plan="$qv_tmp/PLAN.md"
+  qv_bad=0
+  qv_case() { printf '%s\n' "$@" > "$qv_plan"; }
+
+  qv_case 'Command: true' 'Oracle class: deterministic'
+  qv_out="$(bash "$qv_sh" "$qv_plan" "$qv_tmp" 2>"$qv_tmp/err")"
+  qv_rc=$?
+  if [ -n "$qv_out" ] || [ "$qv_rc" -ne 0 ] || ! grep -q '^verify: green (' "$qv_tmp/err"; then
+    qv_bad=1; echo "  green: stdout=[$qv_out] rc=$qv_rc err=[$(cat "$qv_tmp/err")]"
+  fi
+
+  qv_case 'Command: bash -c "seq 1 5000; exit 1"' 'Oracle class: deterministic'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >"$qv_tmp/out" 2>"$qv_tmp/err"
+  qv_rc=$?
+  qv_lines="$(wc -l < "$qv_tmp/err" | tr -d ' ')"
+  if [ "$qv_rc" -eq 0 ] || [ -s "$qv_tmp/out" ] || [ "$qv_lines" -gt 85 ]; then
+    qv_bad=1; echo "  red: rc=$qv_rc stdout_bytes=$(wc -c < "$qv_tmp/out") err_lines=$qv_lines"
+  fi
+
+  qv_case 'Command: bash -c "seq 1 5000; exit 1"' 'Oracle class: deterministic' 'Verify output budget: 10'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" 2>"$qv_tmp/err" >/dev/null
+  qv_lines="$(wc -l < "$qv_tmp/err" | tr -d ' ')"
+  if [ "$qv_lines" -gt 15 ]; then
+    qv_bad=1; echo "  budget ignored: err_lines=$qv_lines against a budget of 10"
+  fi
+
+  # The passthrough is not a nicety: without it the journal grammar loses a
+  # field the published corpus already uses.
+  qv_case 'Command: bash -c "echo 226 OK, 0 FAIL"' 'Oracle class: deterministic' 'Verify summary pattern: [0-9]+ OK'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" 2>"$qv_tmp/err" >/dev/null
+  if ! grep -q '226 OK' "$qv_tmp/err"; then
+    qv_bad=1; echo "  summary not surfaced on green: [$(cat "$qv_tmp/err")]"
+  fi
+
+  qv_case 'Command: true' 'Environment fingerprint: linux'
+  if bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  half-migrated PLAN.md accepted with no Oracle class"
+  elif ! grep -q 'oracle class not declared' "$qv_tmp/err"; then
+    qv_bad=1; echo "  oracle refusal did not name itself: [$(cat "$qv_tmp/err")]"
+  fi
+
+  # Never stricter than the converged stop: a PLAN.md carrying neither line
+  # predates the rule and still runs, with a note.
+  qv_case 'Command: true'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  pre-1.8.0 PLAN.md refused, which is stricter than the converged stop"
+  fi
+
+  qv_case 'Command: none' 'Oracle class: deterministic'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err" ||
+    ! grep -q 'not configured' "$qv_tmp/err"; then
+    qv_bad=1; echo "  Command: none no longer fails open"
+  fi
+
+  rm -rf "$qv_tmp"
+  if [ "$qv_bad" -eq 0 ]; then
+    pass "quiet-verify is silent on green, bounded on red, honours its budget, surfaces the summary, and refuses an undeclared oracle"
+  else
+    fault "quiet-verify does not meet its contract (see the lines above)"
+  fi
+fi
+
+# One ladder, two callers. The hook must resolve its converged-stop bound
+# through the lib rather than carrying a second copy: two bounds that can
+# drift is the defect this extraction exists to prevent, and it is the same
+# lesson P1-19 taught about two definitions of one signal.
+if grep -q 'jeffy_verify_bound' skills/jeffy/hooks/stop-hook.sh &&
+  grep -q 'jeffy_verify_run' skills/jeffy/hooks/stop-hook.sh &&
+  grep -q 'jeffy_verify_bound()' skills/jeffy/hooks/lib/quiet-verify.sh &&
+  grep -q 'jeffy_verify_run()' skills/jeffy/hooks/lib/quiet-verify.sh &&
+  ! grep -q 'elif command -v gtimeout' skills/jeffy/hooks/stop-hook.sh; then
+  pass "the verify bound and runner are defined once in the lib and called by the hook (no forked timeout ladder)"
+else
+  fault "stop-hook.sh does not share the verify bound with the wrapper; two timeout ladders will drift"
 fi
 
 # I. The product states its version, and it cannot drift from the release
@@ -664,7 +757,15 @@ fi
 #      of every such site and says of each one which check derives it or why
 #      none does; add to that list rather than assuming this pair is all of
 #      them.
+# The timeout ladder moved into the shared lib in 1.13.0 (P1-50) so the
+# hook and the loop-facing wrapper cannot drift. This check follows it:
+# it derives the chain from wherever the assignments really are.
 lm_hook="skills/jeffy/hooks/stop-hook.sh"
+# The timeout ladder moved into the shared lib in 1.13.0 (P1-50) so the hook
+# and the loop-facing wrapper cannot drift apart, while the truncator arm
+# above still lives in the hook. Two derivations, two sources: pointing one
+# variable at both is what blinded this pair during that extraction.
+lm_to_src="skills/jeffy/hooks/lib/quiet-verify.sh"
 
 # L. The refused pager/truncator set, from the case arm that sets vc_lint.
 #    The extractor accounts for every alternative in that arm rather than
@@ -745,10 +846,10 @@ fi
 #    its own pass message printed the set alphabetically and called it a chain.
 #    The dedupe is order-preserving for that reason, and every site in each
 #    document is compared rather than the first. (M1)
-lm_to="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_hook" | awk '!seen[$0]++' | tr '\n' ' ')"
-lm_to_cand="$(grep -c '^[ \t]*vto=' "$lm_hook")"
-lm_to_init="$(grep -c '^[ \t]*vto=""$' "$lm_hook")"
-lm_to_kept="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_hook" | wc -l | tr -d '[:space:]')"
+lm_to="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_to_src" | awk '!seen[$0]++' | tr '\n' ' ')"
+lm_to_cand="$(grep -c '^[ \t]*vto=' "$lm_to_src")"
+lm_to_init="$(grep -c '^[ \t]*vto=""$' "$lm_to_src")"
+lm_to_kept="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_to_src" | wc -l | tr -d '[:space:]')"
 lm_to_want=$((lm_to_cand - lm_to_init))
 lm_to_bad=""
 for lm_f in README.md SECURITY.md; do
@@ -952,7 +1053,12 @@ fi
 #    hook given a second `*) vt=$((vd * 5)) ;;` arm was reproduced passing this
 #    check green while its own message printed the clause broken across a
 #    newline. (M1)
-p_hook=skills/jeffy/hooks/stop-hook.sh
+# The bound is derived across two files since 1.13.0: the hook reads the
+# state key, the shared lib resolves the rest. Enumerating from one of
+# them alone is how this check went blind during that extraction, so it
+# reads the pair as one source.
+p_hook="$(mktemp)"
+cat skills/jeffy/hooks/stop-hook.sh skills/jeffy/hooks/lib/quiet-verify.sh > "$p_hook"
 # Newline-delimited rather than space-delimited, and enumerated NUL-safe below,
 # because a space-delimited list fails open on exactly the input this check
 # exists to catch: a tracked path carrying whitespace split into fragments, the
