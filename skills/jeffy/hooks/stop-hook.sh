@@ -766,6 +766,71 @@ open_hm=""
 if [ -f "$root/BACKLOG.md" ]; then
   open_hm="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \(Low[,)]/ { n++ } END { printf "%d", n }' "$root/BACKLOG.md")"
 fi
+# P0-5: the High-or-unparseable count, beside the High-or-Medium one. Under
+# coverage-first ordering only an open High outranks the map, so the sweep
+# note and the fail-fast stop below key on this count, not open_hm. The same
+# fail-closed floor: a task line whose severity is not a parseable Low or
+# Medium counts as High, which keeps the early stop away from a ledger the
+# hook cannot read. Empty when BACKLOG.md is absent, and every reader treats
+# empty as cannot-evaluate.
+open_high=""
+if [ -f "$root/BACKLOG.md" ]; then
+  open_high="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \((Low|Medium)[,)]/ { n++ } END { printf "%d", n }' "$root/BACKLOG.md")"
+fi
+
+# P0-5: the sweep history and its projection. rows_history on the state file
+# is the unswept count observed at each turn end, oldest first, capped at the
+# last 6 - enough for a rate, small enough to live in frontmatter. The rate
+# is rows swept over the window; the projection is when the map clears at
+# that rate. Both are said in the re-feed, because a count nobody is told to
+# act on is not a schedule, and a projection nobody computes is a hope.
+rows_hist="$(fm rows_history)"
+hist_k=0; hist_first=""; hist_last=""; hist_deltas=""
+proj_needed=""; new_rows_hist=""
+if [ -n "$unswept_rows" ]; then
+  case "$rows_hist" in
+    '' ) new_rows_hist="$unswept_rows" ;;
+    *[!0-9,]*) new_rows_hist="$unswept_rows" ;;
+    *) new_rows_hist="$rows_hist,$unswept_rows" ;;
+  esac
+  # keep the last 6 samples
+  new_rows_hist="$(printf '%s' "$new_rows_hist" | awk -F, '{ s = (NF > 6) ? NF - 5 : 1; out = ""; for (i = s; i <= NF; i++) out = out (out == "" ? "" : ",") $i; print out }')"
+  hist_k="$(printf '%s' "$new_rows_hist" | awk -F, '{ print NF }')"
+  hist_first="$(printf '%s' "$new_rows_hist" | awk -F, '{ print $1 }')"
+  hist_last="$(printf '%s' "$new_rows_hist" | awk -F, '{ print $NF }')"
+  if [ "$hist_k" -ge 2 ]; then
+    hist_deltas=$((hist_first - hist_last))
+    if [ "$hist_deltas" -gt 0 ] && [ "$unswept_rows" -gt 0 ]; then
+      # ceil(unswept * (k-1) / deltas)
+      proj_needed=$(( (unswept_rows * (hist_k - 1) + hist_deltas - 1) / hist_deltas ))
+    fi
+  fi
+fi
+
+# P0-5 fail-fast: when the observed rate says the map cannot clear inside
+# what remains of the budget, end the run now with the arithmetic instead of
+# spending the rest discovering it at exhaustion - the 100-iteration case.
+# Guards, each deliberate: at least 4 samples so two audit-shaped opening
+# iterations never trip it; an open High (or an unparseable line, same
+# fail-closed parse) suppresses it, because a High legitimately outranks the
+# map and its iterations are not sweep failures; a violation in flight keeps
+# the rejection re-feed, which carries its own message; and at iter >= max
+# the exhaustion path already reports. Three iterations are reserved for the
+# convergence sequence the cleared map still needs.
+if [ -n "$unswept_rows" ] && [ "$unswept_rows" != "0" ] \
+  && [ "$open_high" = "0" ] && [ -z "$violation" ] \
+  && [ "$hist_k" -ge 4 ] && [ "$iter" -lt "$max" ]; then
+  sweep_room=$((max - iter - 3))
+  if [ "$hist_deltas" -le 0 ]; then
+    echo "jeffy stop hook: the map is not clearing - $unswept_rows rows are unswept and 0 rows were swept over the last $((hist_k - 1)) iterations with nothing above Low on the ledger; ending the run early rather than spending the remaining $((max - iter)) iterations the same way (P0-5). The map and ledger carry to the next run." >&2
+    rm -f "$state"
+    exit 0
+  elif [ -n "$proj_needed" ] && [ "$proj_needed" -gt "$sweep_room" ]; then
+    echo "jeffy stop hook: the map cannot clear inside this budget - $unswept_rows rows are unswept, the observed rate is $hist_deltas rows over the last $((hist_k - 1)) iterations, so clearing needs about $proj_needed more sweep iterations against $sweep_room available after reserving 3 for the convergence sequence; ending the run early with the arithmetic rather than at exhaustion (P0-5). The map and ledger carry to the next run." >&2
+    rm -f "$state"
+    exit 0
+  fi
+fi
 
 # Extension honesty: the +2 window buys the convergence sequence - the gate,
 # fixes for tasks that gate filed, the declaration - never new work. A ledger
@@ -1030,8 +1095,25 @@ if [ -f "$root/BACKLOG.md" ]; then
     sec != "" && /^- \[[ b]\]/ { print sec "|" $0 }
   ' "$root/BACKLOG.md" | cksum | tr ' \t' '--')"
 fi
+# P0-5 (P1-47): the inventory signal. A sweep iteration by construction
+# touches only PLAN.md and .jeffy/, which was exactly the no-progress
+# signature, so runs paired sweeps with unrelated Lows purely to survive
+# this gate - scheduling by hand that the engine forced. A Surface inventory
+# row that changed state (flipped, added, removed, re-recorded) is progress,
+# read over the row lines alone so PLAN.md prose stays out of it, the same
+# shape as the ledger signal above.
+cur_inventory="none"
+if [ -f "$root/PLAN.md" ] && grep -q '^## Surface inventory' "$root/PLAN.md"; then
+  cur_inventory="$(awk '
+    { sub(/\r$/, "") }
+    /^## Surface inventory$/ { take = 1; next }
+    /^## / { take = 0 }
+    take && /^- \[[ xb]\]/ { print }
+  ' "$root/PLAN.md" | cksum | tr ' \t' '--')"
+fi
 last_head="$(fm last_head)"
 last_backlog="$(fm last_backlog)"
+last_inventory="$(fm last_inventory)"
 stall_flag="$(fm stall)"
 case "$stall_flag" in 1) stall_flag=1 ;; *) stall_flag=0 ;; esac
 # Consecutive ceremony iterations, counted so the exemption below is bounded.
@@ -1040,9 +1122,13 @@ case "$ceremony_n" in '' | *[!0-9]*) ceremony_n=0 ;; esac
 new_ceremony=0
 if [ "$cur_head" = "none" ] && [ "$cur_backlog" = "none" ]; then
   echo "jeffy stop hook: no git HEAD and no BACKLOG.md; skipping the stall check." >&2
-elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
+elif [ -n "$last_head" ] || [ -n "$last_backlog" ] || [ -n "$last_inventory" ]; then
   progress=0
   if [ "$cur_backlog" != "$last_backlog" ]; then
+    progress=1
+  elif [ -n "$last_inventory" ] && [ "$cur_inventory" != "$last_inventory" ]; then
+    # A missing baseline (first turn under this version) is not a signal;
+    # a recorded one that moved is a row flip and counts as progress.
     progress=1
   elif [ "$cur_head" != "none" ] && [ "$cur_head" != "$last_head" ]; then
     if [ -n "$last_head" ] && [ "$last_head" != "none" ] \
@@ -1134,7 +1220,7 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ]; then
       # stall gate concedes at most one turn and the record closes honestly.
       [ -n "$stall_exempt" ] && new_ceremony=$((ceremony_n + 1))
       new_stall=1
-      stall_note="iteration $iter made no progress (nothing changed since the previous turn end outside PLAN.md, BACKLOG.md, JOURNAL.md, JOURNAL-archive.md, .jeffy/ and the loop's own files under .claude/, and BACKLOG.md is byte-identical); a second consecutive flat iteration ends the run"
+      stall_note="iteration $iter made no progress (nothing changed since the previous turn end outside PLAN.md, BACKLOG.md, JOURNAL.md, JOURNAL-archive.md, .jeffy/ and the loop's own files under .claude/, no BACKLOG.md task line changed state, and no Surface inventory row changed state); a second consecutive flat iteration ends the run"
     fi
   fi
 fi
@@ -1156,9 +1242,11 @@ tmp="$state.tmp"
 # archive_migrated rides along with the strict archive baseline it certifies:
 # the baseline this rewrite stores is strict, so the naive escape above has
 # done its one job and must never be taken again.
-if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" '
-  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory" -v rh="$new_rows_hist" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" '
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!sli) print "last_inventory: " li; if (rh != "" && !srh) print "rows_history: " rh; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
+  fmc == 1 && /^last_inventory: / { print "last_inventory: " li; sli = 1; next }
+  fmc == 1 && rh != "" && /^rows_history: / { print "rows_history: " rh; srh = 1; next }
   fmc == 1 && ex && /^max_iterations: / { print "max_iterations: " mx; next }
   fmc == 1 && ex && /^extension_granted: / { print "extension_granted: 1"; sex = 1; next }
   fmc == 1 && ex && el != "" && /^extension_lows: / { print "extension_lows: " el; sel = 1; next }
@@ -1225,20 +1313,24 @@ if [ "$open_hm" = "0" ] && [ "$unswept_rows" = "0" ]; then
     reason="$reason Open Lows are carried to the declaration, named in the declaring entry and the receipt; they are not the remaining work."
   fi
 fi
-# P1-39 (1.10.0): when nothing on the ledger outranks the map - no open High,
-# no open Medium, no unparseable severity, which fails closed exactly as the
-# closing rule's parse does - and rows are still unswept, say the sweep
-# arithmetic out loud. Five targets ended runs with the gate never due because
-# every iteration went to the ledger while the map sat unfilled; the count was
-# already in the run state, but a number nobody is told to act on is not a
-# schedule. Findings above Low keep the note silent, because a known High or
-# Medium legitimately outranks mapping in the queue.
+# P0-5 (P1-39 before it): when nothing on the ledger outranks the map - no
+# open High, no unparseable severity, the same fail-closed parse the early
+# stop uses - and rows are still unswept, say the sweep arithmetic out loud,
+# with the projection when the history can support one. Six targets ended
+# runs with the gate never due because every iteration went to the ledger
+# while the map sat unfilled; under coverage-first ordering only an open
+# High keeps the note silent, because only a High outranks mapping now - a
+# Medium queues behind the coverage the declaration requires.
 if [ -n "$unswept_rows" ] && [ "$unswept_rows" != "0" ]; then
-  # The count is the shared open_hm parse from the run-state block (P0-4
-  # folded the second copy of the severity awk into it; empty means no
-  # BACKLOG.md, which keeps the note silent exactly as before).
-  if [ "$open_hm" = "0" ]; then
-    reason="$reason Sweep arithmetic: $unswept_rows rows are unswept with $((max - next + 1)) iterations left including this one; unswept rows outrank open Lows in the queue, so sweeping is the top item now."
+  if [ "$open_high" = "0" ]; then
+    reason="$reason Sweep arithmetic: $unswept_rows rows are unswept with $((max - next + 1)) iterations left including this one; the map outranks everything but an open High, so sweeping is the top item now."
+    if [ "$hist_k" -ge 2 ]; then
+      if [ "$hist_deltas" -gt 0 ] && [ -n "$proj_needed" ]; then
+        reason="$reason Observed rate: $hist_deltas rows swept over the last $((hist_k - 1)) iterations, projecting the map clearing around iteration $((next + proj_needed - 1)) of $max."
+      else
+        reason="$reason Observed rate: 0 rows swept over the last $((hist_k - 1)) iterations; at this rate the map never clears, and the run will be ended early once the shortfall is established."
+      fi
+    fi
   fi
 fi
 jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'

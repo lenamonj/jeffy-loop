@@ -170,7 +170,7 @@ check_markers() {
 }
 check_markers skills/jeffy/references/plan-default.md \
   "## Operating envelope" \
-  "then unswept or stale Surface inventory rows, then open Low" \
+  "then unswept or stale Surface inventory rows, then open Medium" \
   "never the mapping of unswept surface" \
   "in-envelope" \
   "Convergence ratchet:" \
@@ -239,7 +239,7 @@ check_markers skills/jeffy/references/journal-default.md \
   "or AUDIT or EVALUATOR or RATCHET"
 check_markers skills/jeffy/references/iteration-prompt.txt \
   "Salvage first:" \
-  "then unswept or stale Surface inventory rows, then open Low" \
+  "then unswept or stale Surface inventory rows, then open Medium" \
   "never the mapping of unswept surface" \
   "Ratchet next:" \
   "(repoints <old hash>, tree unchanged)" \
@@ -249,6 +249,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Backlog discipline:" \
   "Stall check:" \
   "the harness-written .claude/jeffy-loop.local.md and .claude/settings.local.json, and no BACKLOG.md item changed state" \
+  "no Surface inventory row changed state" \
   "added, removed, edited, or moved between sections" \
   "for at most three consecutive iterations" \
   "Checkpoint:" \
@@ -4892,12 +4893,17 @@ if command -v jq >/dev/null 2>&1; then
       skip "converged-hash reachability scenarios (git not on PATH)"
     fi
 
-    # P1-39 (1.10.0): the sweep-arithmetic note. When nothing on the ledger
-    # outranks the map - no open High, no open Medium, no unparseable
-    # severity - and rows are unswept, the re-feed says the arithmetic out
-    # loud; a known High or Medium keeps it silent, because those outrank
-    # sweeping in the queue. The absent case carries a control that the hook
-    # still counted the rows, so silence cannot be a crash wearing a pass.
+    # P0-5: the sweep-arithmetic note under coverage-first ordering. Only an
+    # open High (or an unparseable severity, same fail-closed parse) keeps
+    # the note silent, because only a High outranks the map now: a Medium
+    # queues behind coverage. The silent case carries a control that the
+    # hook still counted the rows, so silence cannot be a crash wearing a
+    # pass. A state-key injector rides beside the fixtures: projection and
+    # history scenarios need rows_history and stall ones last_inventory, and
+    # the frontmatter is where the hook reads both.
+    hb_state_addkey() { # $1 "key: value", inserted before the closing ---
+      awk -v kv="$1" 'BEGIN { c = 0 } /^---$/ { c++; if (c == 2) print kv } { print }' "$hb_state" > "$hb_state.k" && mv "$hb_state.k" "$hb_state"
+    }
     hb_write_state sess-1 3 10
     {
       printf '# Backlog\n\n## Now\n'
@@ -4911,13 +4917,15 @@ if command -v jq >/dev/null 2>&1; then
     hb_out="$(hb_run sess-1 'worked the task' '')"
     if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Sweep arithmetic: 2 rows are unswept' \
-      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'unswept rows outrank open Lows in the queue'; then
-      pass "stop hook says the sweep arithmetic when only Lows sit above unswept rows"
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'the map outranks everything but an open High' \
+      && grep -q '^rows_history: 2$' "$hb_state"; then
+      pass "stop hook says the sweep arithmetic on a Low-only ledger and seeds the sweep history"
     else
       printf '%s\n' "$hb_out"
-      fault "stop hook stayed silent about unswept rows on a Low-only ledger, which is how five targets ended runs with the gate never due"
+      fault "stop hook stayed silent about unswept rows on a Low-only ledger, which is how six targets ended runs with the gate never due"
     fi
 
+    # A Medium no longer silences the note - it queues behind the map.
     hb_write_state sess-1 3 10
     {
       printf '# Backlog\n\n## Now\n'
@@ -4930,12 +4938,192 @@ if command -v jq >/dev/null 2>&1; then
     } > "$hb_proj/PLAN.md"
     hb_out="$(hb_run sess-1 'worked the task' '')"
     if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Sweep arithmetic:' \
-      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'unswept rows 1'; then
-      pass "stop hook keeps the sweep note silent while a Medium outranks the map"
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Sweep arithmetic: 1 rows are unswept'; then
+      pass "stop hook says the sweep arithmetic past an open Medium, which queues behind the map"
     else
       printf '%s\n' "$hb_out"
-      fault "stop hook either nudged sweeping past an open Medium or lost the unswept count entirely"
+      fault "stop hook let an open Medium silence the sweep note, which is the pre-P0-5 ordering"
+    fi
+
+    # An open High is the one thing that still outranks the map.
+    hb_write_state sess-1 3 10
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T3 (High, runtime, correctness): crash. Acceptance: test.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Sweep arithmetic:' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'unswept rows 1'; then
+      pass "stop hook keeps the sweep note silent while an open High outranks the map"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook either nudged sweeping past an open High or lost the unswept count entirely"
+    fi
+
+    # P0-5: the projection. With a history on the state file the note names
+    # the observed rate and the projected clearing iteration, derived from
+    # the run's own samples rather than hoped.
+    hb_write_state sess-1 3 10
+    hb_state_addkey 'rows_history: 6,4'
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T1 (Low, docs, documentation): doc gap. Acceptance: grep.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      printf -- '- [ ] rowA: scope\n- [ ] rowB: scope\n'
+      printf -- '- [x] rowC: swept at abc123 - probed\n- [x] rowD: swept at abc123 - probed\n'
+    } > "$hb_proj/PLAN.md"
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Observed rate: 4 rows swept over the last 2 iterations' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'projecting the map clearing around iteration 4 of 10' \
+      && grep -q '^rows_history: 6,4,2$' "$hb_state"; then
+      pass "stop hook projects the map-clear iteration from the run's own sweep history"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook did not derive or say the sweep projection (rate and clearing iteration)"
+    fi
+
+    # P0-5 fail-fast, the rate shape: 9 rows at 1 row per iteration against
+    # 3 sweep iterations left after the closing reserve - the run is ended
+    # now, with the arithmetic, instead of at exhaustion. The state file is
+    # deleted, which is how the hook ends a run.
+    hb_write_state sess-1 4 10
+    hb_state_addkey 'rows_history: 12,11,10'
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T1 (Low, docs, documentation): doc gap. Acceptance: grep.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      for hb_i in 1 2 3 4 5 6 7 8 9; do printf -- '- [ ] row%s: scope\n' "$hb_i"; done
+    } > "$hb_proj/PLAN.md"
+    hb_err="$(hb_run sess-1 'worked the task' '' 2>&1 1>/dev/null)"
+    if [ ! -f "$hb_state" ] \
+      && printf '%s' "$hb_err" | grep -qF 'the map cannot clear inside this budget' \
+      && printf '%s' "$hb_err" | grep -qF 'needs about 9 more sweep iterations against 3 available'; then
+      pass "stop hook ends a run early when the observed rate says the map cannot clear (fail-fast, with arithmetic)"
+    else
+      printf '%s\n' "$hb_err"
+      fault "stop hook let a provably unclearable map spend its whole budget, which is the 100-iteration case P0-5 exists to end"
+    fi
+
+    # P0-5 fail-fast, the zero-rate shape: rows unswept, nothing above Low
+    # open, and no row swept across the whole window.
+    hb_write_state sess-1 4 10
+    hb_state_addkey 'rows_history: 9,9,9'
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      for hb_i in 1 2 3 4 5 6 7 8 9; do printf -- '- [ ] row%s: scope\n' "$hb_i"; done
+    } > "$hb_proj/PLAN.md"
+    hb_err="$(hb_run sess-1 'worked the task' '' 2>&1 1>/dev/null)"
+    if [ ! -f "$hb_state" ] \
+      && printf '%s' "$hb_err" | grep -qF 'the map is not clearing' \
+      && printf '%s' "$hb_err" | grep -qF '0 rows were swept over the last 3 iterations'; then
+      pass "stop hook ends a run early when no row has been swept across the whole observed window"
+    else
+      printf '%s\n' "$hb_err"
+      fault "stop hook kept re-feeding a run that swept nothing for the whole window with nothing above Low open"
+    fi
+
+    # The suppressions, each a control against overreach: an open High keeps
+    # the fail-fast away (its iterations are not sweep failures), and so does
+    # an unparseable severity line, by the same fail-closed parse.
+    hb_write_state sess-1 4 10
+    hb_state_addkey 'rows_history: 12,11,10'
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T3 (High, runtime, correctness): crash. Acceptance: test.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      for hb_i in 1 2 3 4 5 6 7 8 9; do printf -- '- [ ] row%s: scope\n' "$hb_i"; done
+    } > "$hb_proj/PLAN.md"
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ -f "$hb_state" ] \
+      && grep -q '^iteration: 5$' "$hb_state"; then
+      pass "stop hook keeps the fail-fast away while an open High legitimately outranks the map"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook ended a run early over a High it should have kept alive to fix"
+    fi
+
+    hb_write_state sess-1 4 10
+    hb_state_addkey 'rows_history: 12,11,10'
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T4: severity missing entirely. Acceptance: test.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ -f "$hb_state" ]; then
+      pass "stop hook fails closed on an unparseable severity: no early stop over a ledger it cannot read"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook ended a run early over an unparseable ledger line, which the severity floor treats as blocking"
+    fi
+
+    # P0-5 (P1-47): a Surface inventory row flip is progress to the stall
+    # gate. The armed run whose inventory moved keeps going with the strike
+    # cleared; the control with an identical inventory takes the second
+    # strike and ends, proving the new signal did not fail open.
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T1 (Low, docs, documentation): doc gap. Acceptance: grep.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_p05_bl="$(awk '
+      { sub(/\r$/, "") }
+      /^## Now$/ { sec = "Now"; next }
+      /^## Next$/ { sec = "Next"; next }
+      /^## Later$/ { sec = "Later"; next }
+      /^## / { sec = "" }
+      sec != "" && /^- \[[ b]\]/ { print sec "|" $0 }
+    ' "$hb_proj/BACKLOG.md" | cksum | tr ' \t' '--')"
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      printf -- '- [x] rowA: swept at abc123 - probed\n- [ ] rowB: scope\n'
+    } > "$hb_proj/PLAN.md"
+    hb_p05_inv="$(awk '
+      { sub(/\r$/, "") }
+      /^## Surface inventory$/ { take = 1; next }
+      /^## / { take = 0 }
+      take && /^- \[[ xb]\]/ { print }
+    ' "$hb_proj/PLAN.md" | cksum | tr ' \t' '--')"
+    hb_write_state sess-1 3 10
+    hb_state_addkey 'stall: 1'
+    hb_state_addkey "last_backlog: $hb_p05_bl"
+    hb_state_addkey 'last_inventory: stale-inventory-sig'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALL:' \
+      && grep -q '^stall: 0$' "$hb_state" \
+      && grep -q "^last_inventory: $hb_p05_inv\$" "$hb_state"; then
+      pass "stop hook reads a Surface inventory row flip as progress, so a sweep-only iteration is not a stall"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook still reads a sweep-only iteration as flat, which forced runs to pair sweeps with unrelated Lows"
+    fi
+
+    hb_write_state sess-1 3 10
+    hb_state_addkey 'stall: 1'
+    hb_state_addkey "last_backlog: $hb_p05_bl"
+    hb_state_addkey "last_inventory: $hb_p05_inv"
+    hb_err="$(hb_run sess-1 'worked the task' '' 2>&1 1>/dev/null)"
+    if [ ! -f "$hb_state" ] \
+      && printf '%s' "$hb_err" | grep -qF 'ending the run as stalled'; then
+      pass "stop hook still takes the second strike when neither the ledger nor the inventory moved"
+    else
+      printf '%s\n' "$hb_err"
+      fault "stop hook's inventory signal failed open and disarmed the stall gate entirely"
     fi
 
     rm -rf "$hb_tmp"
