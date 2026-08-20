@@ -455,6 +455,28 @@ else
   fi
 fi
 
+# K3. Blast-radius honesty. The loop runs unattended with permissions
+#     relaxed, so the sandbox is the only boundary left and the operator
+#     deserves one sentence about it - stated, never enforced. The detector
+#     must answer with exactly one of three words and must never error: a
+#     probe that dies at launch would take the run with it. (P2-22)
+k3_sh=skills/jeffy/hooks/lib/detect-sandbox.sh
+if [ ! -f "$k3_sh" ]; then
+  fault "the sandbox detector $k3_sh is missing; the launch banner cannot state the blast radius"
+else
+  k3_plain="$(bash "$k3_sh" 2>/dev/null)"
+  k3_declared="$(JEFFY_SANDBOXED=1 bash "$k3_sh" 2>/dev/null)"
+  k3_bad=""
+  case "$k3_plain" in yes|no|unknown) ;; *) k3_bad="plain run answered [$k3_plain]" ;; esac
+  [ "$k3_declared" = "yes" ] || k3_bad="$k3_bad; JEFFY_SANDBOXED=1 answered [$k3_declared]"
+  grep -q "^## Blast radius" SECURITY.md || k3_bad="$k3_bad; SECURITY.md carries no blast-radius section"
+  if [ -z "$k3_bad" ]; then
+    pass "the sandbox detector answers one of three words, honours an explicit declaration, and SECURITY.md states the blast radius"
+  else
+    fault "blast-radius honesty is broken:$k3_bad"
+  fi
+fi
+
 # I. The product states its version, and it cannot drift from the release
 #    record: the hook's JEFFY_VERSION must equal the newest release heading
 #    in CHANGELOG.md. Both are bumped in the same release commit.

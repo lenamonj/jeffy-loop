@@ -30,3 +30,40 @@ You will get an acknowledgment within 48 hours. Please include the OS, the Claud
 In scope: both installers, the Stop hook, the skill prompts under `skills/`, and `scripts/validate.sh`.
 
 Out of scope: Claude Code itself and model behavior - report those to Anthropic through https://www.anthropic.com/responsible-disclosure-policy.
+
+## Blast radius
+
+Jeffy runs unattended, usually over a repository you did not write, and an
+unattended agent is usually given relaxed permissions so it does not stop to
+ask. Once they are relaxed, the sandbox is the only boundary left, and what
+sits outside it is everything the shell can reach: credentials, SSH keys,
+browser cookies, access tokens, every other repository on the disk.
+
+This is not a hypothetical for this project. Its own receipts describe
+cloning strangers' repositories and running an autonomous loop across them,
+and the corpus is now 37 targets deep.
+
+The engine's answer is a statement rather than a restriction. At launch it
+runs `skills/jeffy/hooks/lib/detect-sandbox.sh`, records `sandboxed:
+yes|no|unknown` in the run state, and prints one line naming the blast radius
+when the answer is `no`. It does not block, prompt, or refuse. A loop that
+narrowed the operator's mandate would be making a decision that is not its
+to make; what it owes is that the decision is made knowingly.
+
+What actually reduces the radius, in the order they cost you something:
+
+- **Run the session inside a container** that mounts the target repository
+  and nothing else, and forwards only the credential the CLI needs. Jeffy is
+  a slash command inside a session, so the container wraps the session rather
+  than the other way round: start it first, then run `/jeffy` inside.
+  `--network none` is not viable for the session itself, because the model
+  API is reached over the network.
+- **Keep the allowlist narrow.** Allowlist the project's own test and file
+  tools; never allowlist push or force operations. The engine never pushes
+  and never creates branches, so nothing it does needs them.
+- **Give it its own checkout.** The loop commits every iteration and reverts
+  its own breakage against those commits; a scratch clone costs nothing and
+  bounds what a bad iteration can reach.
+
+`JEFFY_SANDBOXED=1` declares a boundary the probe cannot see - a VM, a jail,
+a locked-down user - and is taken at its word.

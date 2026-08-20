@@ -76,6 +76,7 @@ iteration_started_at: $(date +%s)
 max_wall_clock_seconds: <seconds from --max-time, else 0>
 max_iteration_seconds: <seconds from --max-iter-time, else 0>
 max_context_growth: <multiple from --max-context, else 0>
+sandboxed: <yes|no|unknown from hooks/lib/detect-sandbox.sh>
 base_head: $(git -C "$PR" rev-parse HEAD 2>/dev/null || echo none)
 <verify_timeout_seconds line when derived above, else omit this line entirely>
 ---
@@ -84,6 +85,16 @@ the run ends. Cancel with /cancel-jeffy, or delete this file to end the loop.
 EOF
 grep -n "session_id\|iteration:" "$PR/.claude/jeffy-loop.local.md"
 ```
+
+**Blast radius.** Run `bash <REF>/../hooks/lib/detect-sandbox.sh` at launch
+and record its answer as `sandboxed` in the state file. When it answers `no`,
+the launch banner carries one further line: *"Not sandboxed: this run has
+whatever access this shell has - credentials, SSH keys, tokens - and an
+unattended agent usually runs with permissions relaxed. See SECURITY.md."*
+On `yes` or `unknown`, say nothing. **It never blocks and never prompts.**
+The loop does not widen its own mandate, and it has no business narrowing the
+operator's either; what it owes them is one honest sentence about what is
+reachable, said once, before the run rather than after it.
 
 **Context pressure.** The engine re-feeds one session, so context accumulates
 within a run, and the corpus prices that: later runs of long targets re-filed
