@@ -1,0 +1,1492 @@
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+index 5a4c63a9..815a8517 100644
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -28,7 +28,7 @@ jobs:
+         run: ./gradlew build check --stacktrace -PkotlinTestMode=${{ matrix.kotlin-test-mode }}
+ 
+       - name: Publish (default branch only)
+-        if: github.repository == 'square/moshi' && github.ref == 'refs/heads/master' && matrix.kotlin-test-mode == 'reflect'
++        if: github.repository == 'square/moshi' && github.ref == 'refs/heads/master' && matrix.kotlin-test-mode == 'REFLECT'
+         run: ./gradlew publish
+         env:
+           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.SONATYPE_CENTRAL_USERNAME }}
+diff --git a/.gitignore b/.gitignore
+index d3fa6863..fedc3d35 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -28,3 +28,7 @@ obj
+ 
+ # Temporary until generating a docsite
+ docs/
++
++.claude/jeffy-loop.local.md
++.jeffy/probes/_lib/out/
++.jeffy/probes/_lib/codegen-cp.txt
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 9fa227f7..637b2dab 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,7 +2,69 @@
+ 
+ ## Unreleased
+ 
+-* None yet.
++* Fix: a Kotlin `value class` that is not visible from Moshi's own package can now be decoded by the
++  reflective adapter. Reading one raised `java.lang.IllegalAccessException`, which `fromJson` does not
++  declare, because the `box-impl` method it is constructed through was never made accessible the way
++  the constructor already was. Writing was unaffected, and `public` and `internal` value classes were
++  unaffected on both sides.
++* Fix: `Moshi.adapter(KType)`, and the reified `Moshi.adapter<T>()` built on it, now apply the type's
++  nullability marking for every type instead of only for those whose adapter is not already
++  null-safe. `moshi.adapter<String>()` accepted a `null` document and returned `null` into a
++  non-nullable Kotlin `String`; the same was true of enums, collections, maps, arrays and `Any`,
++  while `Int`, `Long`, `Double` and `Boolean` already behaved correctly. **This changes behaviour for
++  existing callers**: a non-nullable type argument now refuses a `null` document with
++  `JsonDataException`, which is what the method's documentation has always promised. Ask for the
++  nullable type - `moshi.adapter<String?>()` - to accept one.
++* Fix: an `IOException` raised by a `@ToJson` or `@FromJson` method now reaches the caller as a
++  `RuntimeException` carrying it as the cause, instead of as `java.lang.AssertionError`, from
++  `JsonAdapter.toJson(T)`, `toJsonValue(T)` and `fromJsonValue(Object)`. Those three cannot declare
++  `IOException` and each assumed the only possible source was its own Buffer or object graph, which
++  never fail; the adapter stack above them can, and the documented `@ToJson`/`@FromJson` signatures
++  say so. The entry points that do declare `IOException` - `fromJson(String)`, `fromJson(JsonReader)`
++  and `toJson(BufferedSink, T)` - are unchanged and still deliver it untouched.
++* Fix: an exception thrown by a Java `record`'s canonical constructor or by one of its component
++  accessors now reaches the caller unchanged instead of as `java.lang.AssertionError`. A record that
++  validates in a compact constructor is the ordinary way to reject bad input, and its
++  `IllegalArgumentException` was being rewritten into an `Error` no caller catches. The adapter
++  guarded its `MethodHandle` invocations with a `catch (InvocationTargetException)`, but a
++  `MethodHandle` propagates its target's throwable directly rather than wrapping it, so that branch
++  never ran. Reporting an absent primitive component as `JsonDataException` is unchanged.
++* Fix: the built-in `char`/`Character` adapter now throws `JsonDataException` for an empty JSON
++  string instead of `StringIndexOutOfBoundsException`.
++* Fix: `JsonAdapter.fromJsonValue()` now refuses a number it cannot represent exactly, matching what
++  `fromJson()` already did for the equivalent literal. Reading `1.5`, `1e19`, `NaN` or `Infinity` as
++  a `long`, or `1.5`, `3e9` or `Long.MAX_VALUE` as an `int`, previously returned a truncated,
++  saturated or wrapped value and now throws `JsonDataException`. A numeric string that cannot be
++  represented exactly no longer escapes as `java.lang.ArithmeticException` either.
++* Fix: `JsonAdapter.fromJsonValue()` now throws `JsonDataException` for a non-finite `Double` or
++  `Float`, such as `NaN` or an infinity, instead of `java.lang.AssertionError`. The reader behind
++  it raised `JsonEncodingException`, which is an `IOException`, and `fromJsonValue()` converts an
++  `IOException` into an `AssertionError`. Reading bytes is unchanged: a document whose text says
++  `NaN` is still a `JsonEncodingException`.
++* Fix: the Kotlin `subtypeOf<T>()` and `supertypeOf<T>()` helpers now work for a primitive-backed
++  type argument. `subtypeOf<Int>()` failed with `IllegalArgumentException: Unexpected primitive int.
++  Use the boxed type.` because the table that boxes primitives mapped each one to itself.
++* Fix: every read on a closed `JsonAdapter.fromJsonValue()` reader now throws
++  `IllegalStateException: JsonReader is closed`, matching the reader over JSON text. `hasNext()`
++  returned true, `skipValue()` returned normally having done nothing, and `nextInt()`, `nextLong()`
++  and `nextDouble()` threw a `JsonDataException` naming the reader's internal closed marker.
++* Fix: `EnumJsonAdapter` now reports the JSON path of the value it refused. It read the path after
++  consuming the value, so the message named the following array element - a bad value at `$[0]` was
++  reported `at path $[1]`. Object paths were already correct.
++* Fix: `Rfc3339DateJsonAdapter` now refuses a date that does not exist when the value carries no
++  time component. `"2015-02-30"`, `"2015-09-31"`, `"2015-13-26"` and `"2015-99-99"` were rolled
++  forward into a different date - `"2015-99-99"` decoded to 2023-06-07 - because that path used a
++  lenient calendar while the path for a full date-time did not. Values with a time component are
++  unaffected, and a date with no time is still interpreted in the host time zone as before.
++* Docs: `JsonDataException` now documents the nesting limit it is actually raised at. Its KDoc said
++  the exception may be triggered past 31 levels; readers and writers have accepted 255 levels since
++  the limit was raised from 32, so the documented bound was eight times tighter than the real one.
++  No behavior changed.
++* Docs: `JsonReader`'s `@throws` clauses now name the exceptions its readers actually raise.
++  `nextString()`, `nextBoolean()` and `nextNull()` throw `IllegalStateException` when the reader is
++  closed, not `JsonDataException`; `nextDouble()` reports a non-finite value as
++  `JsonEncodingException` when reading JSON text and as `JsonDataException` when reading an object
++  graph. No behavior changed.
+ 
+ 
+ ## [2.0.0-alpha.1] - 2026-01-28
+diff --git a/README.md b/README.md
+index d5877dea..f1a65ad5 100644
+--- a/README.md
++++ b/README.md
+@@ -1063,7 +1063,7 @@ The reflection adapter requires the following additional dependency:
+ <dependency>
+   <groupId>com.squareup.moshi</groupId>
+   <artifactId>moshi-kotlin</artifactId>
+-  <version>1.15.2</version>
++  <version>2.0.0-alpha.1</version>
+ </dependency>
+ ```
+ 
+@@ -1091,8 +1091,8 @@ data class BlackjackHand(
+ The codegen adapter requires that your Kotlin types and their properties be either `internal` or
+ `public` (this is Kotlin’s default visibility).
+ 
+-Kotlin codegen has no additional runtime dependency. You’ll need to enable kapt or KSP and then
+-add the following to your build to enable the annotation processor:
++Kotlin codegen has no additional runtime dependency. You’ll need to enable KSP and then
++add the following to your build to enable the symbol processor:
+ 
+ <details open>
+     <summary>KSP</summary>
+@@ -1129,7 +1129,7 @@ Download [the latest JAR][dl] or depend via Maven:
+ <dependency>
+   <groupId>com.squareup.moshi</groupId>
+   <artifactId>moshi</artifactId>
+-  <version>1.15.2</version>
++  <version>2.0.0-alpha.1</version>
+ </dependency>
+ ```
+ or Gradle:
+diff --git a/examples/src/main/java/com/squareup/moshi/recipes/IncludeNullsForOneType.java b/examples/src/main/java/com/squareup/moshi/recipes/IncludeNullsForOneType.java
+index d34999c4..afb81b53 100644
+--- a/examples/src/main/java/com/squareup/moshi/recipes/IncludeNullsForOneType.java
++++ b/examples/src/main/java/com/squareup/moshi/recipes/IncludeNullsForOneType.java
+@@ -49,7 +49,7 @@ public final class IncludeNullsForOneType {
+         // Once we've customized the JSON writer, we let the default JSON adapter do its job.
+         delegate.toJson(writer, tournament);
+       } finally {
+-        writer.setLenient(wasSerializeNulls);
++        writer.setSerializeNulls(wasSerializeNulls);
+       }
+     }
+   }
+diff --git a/moshi-adapters/japicmp/build.gradle.kts b/moshi-adapters/japicmp/build.gradle.kts
+index f0a7f405..d551b3da 100644
+--- a/moshi-adapters/japicmp/build.gradle.kts
++++ b/moshi-adapters/japicmp/build.gradle.kts
+@@ -11,7 +11,6 @@ val latest = configurations.create("latest")
+ dependencies {
+   baseline("com.squareup.moshi:moshi-adapters:1.15.2") {
+     isTransitive = false
+-    version { strictly("1.14.0") }
+   }
+   latest(project(":moshi-adapters"))
+ }
+diff --git a/moshi-adapters/src/main/java/com/squareup/moshi/adapters/EnumJsonAdapter.kt b/moshi-adapters/src/main/java/com/squareup/moshi/adapters/EnumJsonAdapter.kt
+index 5479ba95..73fdc253 100644
+--- a/moshi-adapters/src/main/java/com/squareup/moshi/adapters/EnumJsonAdapter.kt
++++ b/moshi-adapters/src/main/java/com/squareup/moshi/adapters/EnumJsonAdapter.kt
+@@ -65,10 +65,12 @@ internal constructor(
+     val index = reader.selectString(options)
+     if (index != -1) return constants[index]
+     if (!useFallbackValue) {
++      // Read the path before consuming the value: consuming it advances the path onto the next
++      // element, and the message has to name the value being refused. We can consume the string
++      // safely, we are terminating anyway.
++      val path = reader.path
+       val name = reader.nextString()
+-      throw JsonDataException(
+-        "Expected one of ${nameStrings.toList()} but was $name at path ${reader.path}"
+-      )
++      throw JsonDataException("Expected one of ${nameStrings.toList()} but was $name at path $path")
+     }
+     if (reader.peek() != STRING) {
+       throw JsonDataException("Expected a string but was ${reader.peek()} at path ${reader.path}")
+diff --git a/moshi-adapters/src/main/java/com/squareup/moshi/adapters/Iso8601Utils.kt b/moshi-adapters/src/main/java/com/squareup/moshi/adapters/Iso8601Utils.kt
+index 7ba3518a..18c5b1f8 100644
+--- a/moshi-adapters/src/main/java/com/squareup/moshi/adapters/Iso8601Utils.kt
++++ b/moshi-adapters/src/main/java/com/squareup/moshi/adapters/Iso8601Utils.kt
+@@ -125,8 +125,17 @@ internal fun String.parseIsoDate(): Date {
+     // if the value has no time component (and no time zone), we are done
+     val hasT = readChar(this, offset, 'T')
+     if (!hasT && this.length <= offset) {
+-      // Note that this uses the host machine's time zone. That's a bug.
+-      return GregorianCalendar(year, month - 1, day).time
++      // Note that this uses the host machine's time zone. That's a bug, kept deliberately: callers
++      // have relied on it for long enough that changing it is a compatibility decision. The
++      // calendar is still strict, so an impossible date is refused here exactly as it is on the
++      // path below rather than rolled forward into a different date.
++      val dateOnly: Calendar = GregorianCalendar()
++      dateOnly.isLenient = false
++      dateOnly.clear()
++      dateOnly[Calendar.YEAR] = year
++      dateOnly[Calendar.MONTH] = month - 1
++      dateOnly[Calendar.DAY_OF_MONTH] = day
++      return dateOnly.time
+     }
+     if (hasT) {
+       offset++
+diff --git a/moshi-adapters/src/test/java/com/squareup/moshi/adapters/EnumJsonAdapterTest.java b/moshi-adapters/src/test/java/com/squareup/moshi/adapters/EnumJsonAdapterTest.java
+index 84de3982..91a34f14 100644
+--- a/moshi-adapters/src/test/java/com/squareup/moshi/adapters/EnumJsonAdapterTest.java
++++ b/moshi-adapters/src/test/java/com/squareup/moshi/adapters/EnumJsonAdapterTest.java
+@@ -55,6 +55,30 @@ public final class EnumJsonAdapterTest {
+     assertThat(reader.peek()).isEqualTo(JsonReader.Token.END_DOCUMENT);
+   }
+ 
++  /**
++   * The path in the message has to name the value that was refused. A top-level value cannot catch
++   * a path read after the value was consumed, because the root path does not move when a value is
++   * consumed; an array index does. This mirrors {@code
++   * MoshiTest.invalidEnumHasCorrectPathInExceptionMessage}, which pins the same contract for
++   * Moshi's built-in enum adapter.
++   */
++  @Test
++  public void invalidEnumHasCorrectPathInExceptionMessage() throws Exception {
++    EnumJsonAdapter<Roshambo> adapter = EnumJsonAdapter.create(Roshambo.class);
++    JsonReader reader = JsonReader.of(new Buffer().writeUtf8("[\"SPOCK\"]"));
++    reader.beginArray();
++    try {
++      adapter.fromJson(reader);
++      fail();
++    } catch (JsonDataException expected) {
++      assertThat(expected)
++          .hasMessageThat()
++          .isEqualTo("Expected one of [ROCK, PAPER, scr] but was SPOCK at path $[0]");
++    }
++    reader.endArray();
++    assertThat(reader.peek()).isEqualTo(JsonReader.Token.END_DOCUMENT);
++  }
++
+   @Test
+   public void withFallbackValue() throws Exception {
+     EnumJsonAdapter<Roshambo> adapter =
+diff --git a/moshi-adapters/src/test/java/com/squareup/moshi/adapters/Rfc3339DateJsonAdapterTest.java b/moshi-adapters/src/test/java/com/squareup/moshi/adapters/Rfc3339DateJsonAdapterTest.java
+index 67138206..ba33da1f 100644
+--- a/moshi-adapters/src/test/java/com/squareup/moshi/adapters/Rfc3339DateJsonAdapterTest.java
++++ b/moshi-adapters/src/test/java/com/squareup/moshi/adapters/Rfc3339DateJsonAdapterTest.java
+@@ -104,6 +104,24 @@ public final class Rfc3339DateJsonAdapterTest {
+     }
+   }
+ 
++  /**
++   * A date with no time component takes a different path through the parser than one with a time,
++   * and both must refuse a date that does not exist rather than rolling it into the next month.
++   */
++  @Test
++  public void impossibleDatesAreRefusedWithAndWithoutATime() throws Exception {
++    for (String date : new String[] {"2015-13-26", "2015-09-31", "2015-02-30", "2015-99-99"}) {
++      for (String json : new String[] {date, date + "T00:00:00Z"}) {
++        try {
++          Date parsed = adapter.fromJson("\"" + json + "\"");
++          fail("expected " + json + " to be refused but got " + parsed);
++        } catch (JsonDataException expected) {
++          assertThat(expected).hasMessageThat().isEqualTo("Not an RFC 3339 date: " + json);
++        }
++      }
++    }
++  }
++
+   private Date newDate(
+       int year, int month, int day, int hour, int minute, int second, int millis, int offset) {
+     Calendar calendar = new GregorianCalendar(TimeZone.getTimeZone("GMT"));
+diff --git a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/Options.kt b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/Options.kt
+index 378a4d5e..91149dea 100644
+--- a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/Options.kt
++++ b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/Options.kt
+@@ -37,14 +37,6 @@ public object Options {
+    */
+   public const val OPTION_GENERATE_PROGUARD_RULES: String = "moshi.generateProguardRules"
+ 
+-  /**
+-   * This boolean processing option controls whether or not Moshi will directly instantiate
+-   * JsonQualifier annotations in Kotlin 1.6+. Note that this is enabled by default in Kotlin 1.6
+-   * but can be disabled to restore the legacy behavior of storing annotations on generated adapter
+-   * fields and looking them up reflectively.
+-   */
+-  public const val OPTION_INSTANTIATE_ANNOTATIONS: String = "moshi.instantiateAnnotations"
+-
+   public val POSSIBLE_GENERATED_NAMES: Map<String, ClassName> =
+     arrayOf(
+         ClassName("javax.annotation.processing", "Generated"),
+diff --git a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/ProguardRules.kt b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/ProguardRules.kt
+index 2585c3f5..463eec42 100644
+--- a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/ProguardRules.kt
++++ b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/ProguardRules.kt
+@@ -21,7 +21,6 @@ import com.squareup.kotlinpoet.ClassName
+  * Represents a proguard configuration for a given spec. This covers three main areas:
+  * - Keeping the target class name to Moshi's reflective lookup of the adapter.
+  * - Keeping the generated adapter class name + public constructor for reflective lookup.
+- * - Keeping any used JsonQualifier annotations and the properties they are attached to.
+  * - If the target class has default parameter values, also keeping the associated synthetic
+  *   constructor as well as the DefaultConstructorMarker type Kotlin adds to it.
+  *
+@@ -50,8 +49,7 @@ public data class ProguardConfig(
+     // -keepnames class {the target class}
+     // -if class {the target class}
+     // -keep class {the generated adapter} {
+-    //    <init>(...);
+-    //    private final {adapter fields}
++    //    public <init>(...);
+     // }
+     //
+     val targetName = targetClass.reflectionName()
+@@ -93,10 +91,3 @@ public data class ProguardConfig(
+     }
+   }
+ }
+-
+-/**
+- * Represents a qualified property with its [name] in the adapter fields and list of [qualifiers]
+- * associated with it.
+- */
+-@InternalMoshiCodegenApi
+-public data class QualifierAdapterProperty(val name: String, val qualifiers: Set<ClassName>)
+diff --git a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/kotlintypes.kt b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/kotlintypes.kt
+index 505c225e..3b469e39 100644
+--- a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/kotlintypes.kt
++++ b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/api/kotlintypes.kt
+@@ -163,11 +163,16 @@ internal fun TypeName.asTypeBlock(): CodeBlock {
+   }
+ }
+ 
++// Named rather than derived from the enum's ordinals: the guard used to read
++// `require(ordinal <= ordinal)`, comparing the receiver with itself so it rejected nothing, and the
++// range it meant only works while the four visibilities stay first in KModifier's declaration
++// order.
++private val VISIBILITY_MODIFIERS =
++  setOf(KModifier.PUBLIC, KModifier.PROTECTED, KModifier.PRIVATE, KModifier.INTERNAL)
++
+ internal fun KModifier.checkIsVisibility() {
+-  require(ordinal <= ordinal) {
+-    "Visibility must be one of ${(0..ordinal).joinToString {
+-      KModifier.values()[it].name
+-    }}. Is $name"
++  require(this in VISIBILITY_MODIFIERS) {
++    "Visibility must be one of ${VISIBILITY_MODIFIERS.joinToString { it.name }}. Is $name"
+   }
+ }
+ 
+diff --git a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/JsonClassSymbolProcessorProvider.kt b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/JsonClassSymbolProcessorProvider.kt
+index f9843009..b946afbe 100644
+--- a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/JsonClassSymbolProcessorProvider.kt
++++ b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/JsonClassSymbolProcessorProvider.kt
+@@ -91,8 +91,11 @@ private class JsonClassSymbolProcessor(environment: SymbolProcessorEnvironment)
+ 
+       try {
+         val originatingFile = type.containingFile!!
+-        val adapterGenerator =
+-          adapterGenerator(logger, resolver, type, isInline) ?: return emptyList()
++        // Continue rather than return: this type could not be modelled and the reason has already
++        // been logged, but the round holds every other annotated type in the compilation and
++        // abandoning it would report one error at a time and silently generate nothing for the
++        // rest.
++        val adapterGenerator = adapterGenerator(logger, resolver, type, isInline) ?: continue
+         val preparedAdapter =
+           adapterGenerator.prepare(generateProguardRules) { spec ->
+             spec
+@@ -104,9 +107,10 @@ private class JsonClassSymbolProcessor(environment: SymbolProcessorEnvironment)
+         preparedAdapter.spec.writeTo(codeGenerator, aggregating = false)
+         preparedAdapter.proguardConfig?.writeTo(codeGenerator, originatingFile)
+       } catch (e: Exception) {
+-        logger.error(
+-          "Error preparing ${type.simpleName.asString()}: ${e.stackTrace.joinToString("\n")}"
+-        )
++        // stackTraceToString() rather than stackTrace: the latter is the frame array alone, so the
++        // exception's type and message - the only part naming the cause - never reached the
++        // developer.
++        logger.error("Error preparing ${type.simpleName.asString()}: ${e.stackTraceToString()}")
+       }
+     }
+     return emptyList()
+diff --git a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/KspUtil.kt b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/KspUtil.kt
+index 4c994e6b..9cab9266 100644
+--- a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/KspUtil.kt
++++ b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/KspUtil.kt
+@@ -29,6 +29,7 @@ import com.google.devtools.ksp.symbol.Origin.KOTLIN_LIB
+ import com.squareup.kotlinpoet.AnnotationSpec
+ import com.squareup.kotlinpoet.CodeBlock
+ import com.squareup.kotlinpoet.ksp.toClassName
++import java.lang.annotation.RetentionPolicy
+ 
+ internal fun KSClassDeclaration.asType() = asType(emptyList())
+ 
+@@ -40,6 +41,25 @@ internal inline fun <reified T : Annotation> KSAnnotated.findAnnotationWithType(
+   return getAnnotationsByType(T::class).firstOrNull()
+ }
+ 
++/**
++ * Whether this annotation class survives into the runtime, which a `@JsonQualifier` must: Moshi
++ * matches qualifiers reflectively when it looks an adapter up, so one the compiler drops is a
++ * lookup that fails at runtime with no adapter found for the qualified type.
++ *
++ * Kotlin and Java spell retention with two different annotations and default it two different
++ * ways - Kotlin to RUNTIME, Java to CLASS - so an annotation class declaring neither is judged by
++ * the language it was declared in.
++ */
++internal fun KSClassDeclaration.isRetainedAtRuntime(): Boolean {
++  findAnnotationWithType<Retention>()?.let {
++    return it.value == AnnotationRetention.RUNTIME
++  }
++  findAnnotationWithType<java.lang.annotation.Retention>()?.let {
++    return it.value == RetentionPolicy.RUNTIME
++  }
++  return isKotlinClass()
++}
++
+ internal fun KSType.unwrapTypeAlias(): KSType {
+   return if (this.declaration is KSTypeAlias) {
+     (this.declaration as KSTypeAlias).type.resolve()
+diff --git a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/MoshiApiUtil.kt b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/MoshiApiUtil.kt
+index 70925c8b..a0c6feda 100644
+--- a/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/MoshiApiUtil.kt
++++ b/moshi-kotlin-codegen/src/main/java/com/squareup/moshi/kotlin/codegen/ksp/MoshiApiUtil.kt
+@@ -69,10 +69,11 @@ internal fun TargetProperty.generator(
+     val qualifierRawType = jsonQualifier.typeName.rawType()
+     // Check Java types since that covers both Java and Kotlin annotations.
+     resolver.getClassDeclarationByName(qualifierRawType.canonicalName)?.let { annotationElement ->
+-      annotationElement.findAnnotationWithType<Retention>()?.let {
+-        if (it.value != AnnotationRetention.RUNTIME) {
+-          logger.error("JsonQualifier @${qualifierRawType.simpleName} must have RUNTIME retention")
+-        }
++      if (!annotationElement.isRetainedAtRuntime()) {
++        logger.error(
++          "JsonQualifier @${qualifierRawType.simpleName} must have RUNTIME retention",
++          annotationElement,
++        )
+       }
+     }
+   }
+diff --git a/moshi-kotlin-tests/codegen-only/src/test/kotlin/com/squareup/moshi/kotlin/codegen/MixingReflectAndCodeGen.kt b/moshi-kotlin-tests/codegen-only/src/test/kotlin/com/squareup/moshi/kotlin/codegen/MixingReflectAndCodeGen.kt
+index 946ef465..f29958f9 100644
+--- a/moshi-kotlin-tests/codegen-only/src/test/kotlin/com/squareup/moshi/kotlin/codegen/MixingReflectAndCodeGen.kt
++++ b/moshi-kotlin-tests/codegen-only/src/test/kotlin/com/squareup/moshi/kotlin/codegen/MixingReflectAndCodeGen.kt
+@@ -28,12 +28,17 @@ class MixingReflectAndCodeGen {
+     val generatedAdapter = moshi.adapter<UsesGeneratedAdapter>()
+     val reflectionAdapter = moshi.adapter<UsesReflectionAdapter>()
+ 
++    // Both are looked up with a non-nullable reified type, so both are wrapped in nonNull(): that
++    // is
++    // the KType's nullability marking being applied, which is what adapter<T>() documents.
+     assertThat(generatedAdapter.toString())
+-      .isEqualTo("GeneratedJsonAdapter(MixingReflectAndCodeGen.UsesGeneratedAdapter).nullSafe()")
++      .isEqualTo(
++        "GeneratedJsonAdapter(MixingReflectAndCodeGen.UsesGeneratedAdapter).nullSafe().nonNull()"
++      )
+     assertThat(reflectionAdapter.toString())
+       .isEqualTo(
+         "KotlinJsonAdapter(com.squareup.moshi.kotlin.codegen.MixingReflectAndCodeGen" +
+-          ".UsesReflectionAdapter).nullSafe()"
++          ".UsesReflectionAdapter).nullSafe().nonNull()"
+       )
+   }
+ 
+diff --git a/moshi-kotlin-tests/src/test/kotlin/com/squareup/moshi/kotlin/DualKotlinTest.kt b/moshi-kotlin-tests/src/test/kotlin/com/squareup/moshi/kotlin/DualKotlinTest.kt
+index eae4a4f9..44e85ed9 100644
+--- a/moshi-kotlin-tests/src/test/kotlin/com/squareup/moshi/kotlin/DualKotlinTest.kt
++++ b/moshi-kotlin-tests/src/test/kotlin/com/squareup/moshi/kotlin/DualKotlinTest.kt
+@@ -40,6 +40,25 @@ class DualKotlinTest {
+       .addLast(KotlinJsonAdapterFactory())
+       .build()
+ 
++  /**
++   * A value class is constructed reflectively through its box-impl method, which has to be made
++   * accessible the same way the constructor is: the value class need not be visible from Moshi's
++   * own package. Driven at both spellings a value class can be read through, inlined and nested as
++   * another class's property, and on both sides, because only reading was ever broken.
++   */
++  @Test
++  fun privateValueClassIsConstructedReflectively() {
++    val inlined = moshi.adapter<PrivateInlinedValue>()
++    assertThat(inlined.toJson(PrivateInlinedValue(9))).isEqualTo("9")
++    assertThat(inlined.fromJson("9")).isEqualTo(PrivateInlinedValue(9))
++
++    val nested = moshi.adapter<HasPrivateValue>()
++    assertThat(nested.toJson(HasPrivateValue(PrivateNestedValue(5))))
++      .isEqualTo("{\"id\":{\"v\":5}}")
++    assertThat(nested.fromJson("{\"id\":{\"v\":5}}"))
++      .isEqualTo(HasPrivateValue(PrivateNestedValue(5)))
++  }
++
+   @Test
+   fun requiredValueAbsent() {
+     val jsonAdapter = moshi.adapter<RequiredValueAbsent>()
+@@ -856,3 +875,13 @@ typealias C = NullableA
+ typealias D = C
+ 
+ typealias E = D
++
++// Private on purpose: constructing one reflectively goes through box-impl, which lives on a class
++// Moshi's own package cannot see.
++@JvmInline
++@JsonClass(generateAdapter = false, inline = true)
++private value class PrivateInlinedValue(val v: Int)
++
++@JvmInline @JsonClass(generateAdapter = false) private value class PrivateNestedValue(val v: Int)
++
++@JsonClass(generateAdapter = false) private data class HasPrivateValue(val id: PrivateNestedValue)
+diff --git a/moshi-kotlin/src/main/java/com/squareup/moshi/kotlin/reflect/KmExecutable.kt b/moshi-kotlin/src/main/java/com/squareup/moshi/kotlin/reflect/KmExecutable.kt
+index cacf2b97..4d698836 100644
+--- a/moshi-kotlin/src/main/java/com/squareup/moshi/kotlin/reflect/KmExecutable.kt
++++ b/moshi-kotlin/src/main/java/com/squareup/moshi/kotlin/reflect/KmExecutable.kt
+@@ -121,6 +121,9 @@ internal sealed class KmExecutable<T : Any> {
+         val boxImpl =
+           constructorsBySignature.entries.first { it.key.startsWith("box-impl") }.value
+             as Invokable.InvokableMethod
++        // Made accessible for the same reason actualConstructor is: this method is invoked from
++        // here, and the value class it belongs to need not be visible from this package.
++        boxImpl.setAccessible()
+         KmExecutableFunction(
+           (actualConstructor as Invokable.InvokableMethod).method,
+           parameters,
+diff --git a/moshi/japicmp/build.gradle.kts b/moshi/japicmp/build.gradle.kts
+index e565ba6f..a46890c4 100644
+--- a/moshi/japicmp/build.gradle.kts
++++ b/moshi/japicmp/build.gradle.kts
+@@ -11,7 +11,6 @@ val latest = configurations.create("latest")
+ dependencies {
+   baseline("com.squareup.moshi:moshi:1.15.2") {
+     isTransitive = false
+-    version { strictly("1.14.0") }
+   }
+   latest(project(":moshi"))
+ }
+diff --git a/moshi/records-tests/src/test/java/com/squareup/moshi/records/RecordsTest.java b/moshi/records-tests/src/test/java/com/squareup/moshi/records/RecordsTest.java
+index 00f613f0..593c3fe9 100644
+--- a/moshi/records-tests/src/test/java/com/squareup/moshi/records/RecordsTest.java
++++ b/moshi/records-tests/src/test/java/com/squareup/moshi/records/RecordsTest.java
+@@ -291,4 +291,54 @@ public final class RecordsTest {
+   }
+ 
+   public record AbsentValues(String s, int i) {}
++
++  /**
++   * A MethodHandle hands back its target's throwable directly instead of wrapping it in an
++   * InvocationTargetException the way core reflection does, so the two MethodHandle invocations
++   * this adapter makes - the canonical constructor on read and a component accessor on write - are
++   * the whole set of sites where a record's own exception reaches Moshi. Provoke a failure at each
++   * rather than trusting a reading of the source, and check that the one throwable the read site is
++   * meant to translate, the unboxing failure of an absent primitive, still becomes a
++   * JsonDataException.
++   */
++  @Test
++  public void recordThrowablesArriveUnwrapped() throws IOException {
++    var validating = moshi.adapter(ValidatingRecord.class);
++    try {
++      validating.fromJson("{\"a\":-5}");
++      fail();
++    } catch (IllegalArgumentException expected) {
++      assertThat(expected).hasMessageThat().isEqualTo("a must be non-negative: -5");
++    }
++
++    try {
++      validating.fromJson("{}");
++      fail();
++    } catch (JsonDataException expected) {
++      assertThat(expected).hasMessageThat().isEqualTo("Required value 'a' missing at $");
++    }
++
++    var throwingAccessor = moshi.adapter(ThrowingAccessorRecord.class);
++    try {
++      throwingAccessor.toJson(new Buffer(), new ThrowingAccessorRecord(1));
++      fail();
++    } catch (IllegalStateException expected) {
++      assertThat(expected).hasMessageThat().isEqualTo("accessor boom!");
++    }
++  }
++
++  public record ValidatingRecord(int a) {
++    public ValidatingRecord {
++      if (a < 0) {
++        throw new IllegalArgumentException("a must be non-negative: " + a);
++      }
++    }
++  }
++
++  public record ThrowingAccessorRecord(int a) {
++    @Override
++    public int a() {
++      throw new IllegalStateException("accessor boom!");
++    }
++  }
+ }
+diff --git a/moshi/src/main/java/com/squareup/moshi/-JsonValueReader.kt b/moshi/src/main/java/com/squareup/moshi/-JsonValueReader.kt
+index f84957d5..70fa34e7 100644
+--- a/moshi/src/main/java/com/squareup/moshi/-JsonValueReader.kt
++++ b/moshi/src/main/java/com/squareup/moshi/-JsonValueReader.kt
+@@ -102,6 +102,7 @@ internal class `-JsonValueReader` : JsonReader {
+   }
+ 
+   override fun hasNext(): Boolean {
++    checkNotClosed()
+     if (stackSize == 0) return false
+     val peeked = stack[stackSize - 1]
+     return peeked !is Iterator<*> || peeked.hasNext()
+@@ -230,7 +231,7 @@ internal class `-JsonValueReader` : JsonReader {
+         }
+       }
+     if (!lenient && (result.isNaN() || result.isInfinite())) {
+-      throw JsonEncodingException("JSON forbids NaN and infinities: $result at path $path")
++      throw nonFiniteNumber(result)
+     }
+     remove()
+     return result
+@@ -239,18 +240,14 @@ internal class `-JsonValueReader` : JsonReader {
+   override fun nextLong(): Long {
+     val result: Long =
+       when (val peeked = require<Any>(Token.NUMBER)) {
+-        is Number -> peeked.toLong()
++        // These are exactly representable as a long, so no rounding check is needed.
++        is Long,
++        is Int,
++        is Short,
++        is Byte -> (peeked as Number).toLong()
+ 
+-        is String ->
+-          try {
+-            peeked.toLong()
+-          } catch (_: NumberFormatException) {
+-            try {
+-              BigDecimal(peeked).longValueExact()
+-            } catch (_: NumberFormatException) {
+-              throw typeMismatch(peeked, Token.NUMBER)
+-            }
+-          }
++        is Number,
++        is String -> peeked.exactly { longValueExact() }
+ 
+         else -> throw typeMismatch(peeked, Token.NUMBER)
+       }
+@@ -258,21 +255,52 @@ internal class `-JsonValueReader` : JsonReader {
+     return result
+   }
+ 
++  /**
++   * Converts this peeked number or numeric string to an integral value, refusing anything that
++   * cannot be represented without loss. [-JsonUtf8Reader] applies the same rule to the equivalent
++   * literal, and the two readers must accept and refuse the same documents: a boxed 1.5 read as a
++   * long is the same document as the literal 1.5 read as a long, and silently returning 1 for one
++   * of them and throwing for the other hands the caller a wrong number.
++   */
++  private inline fun <T> Any.exactly(convert: BigDecimal.() -> T): T {
++    if (this is Double && (isNaN() || isInfinite())) {
++      throw nonFiniteNumber(this)
++    }
++    if (this is Float && (isNaN() || isInfinite())) {
++      throw nonFiniteNumber(toDouble())
++    }
++    return try {
++      BigDecimal(toString()).convert()
++    } catch (_: NumberFormatException) {
++      throw typeMismatch(this, Token.NUMBER)
++    } catch (_: ArithmeticException) {
++      throw typeMismatch(this, Token.NUMBER)
++    }
++  }
++
++  /**
++   * NaN and infinities have no JSON literal, so a strict read refuses one whatever type it was
++   * asked for. This reports [JsonDataException] rather than [JsonEncodingException] because the
++   * latter is an [okio.IOException], and [JsonAdapter.fromJsonValue] converts an IOException into
++   * an AssertionError on the assumption that reading an object graph cannot do I/O - so an encoding
++   * exception raised here would reach the caller as an Error rather than as a Moshi exception.
++   * [-JsonUtf8Reader] raises an encoding exception for the same literal and is right to: a document
++   * containing NaN is malformed JSON, while an object graph holding [Double.NaN] has no encoding to
++   * be wrong about.
++   */
++  private fun nonFiniteNumber(value: Double): Throwable =
++    JsonDataException("JSON forbids NaN and infinities: $value at path $path")
++
+   override fun nextInt(): Int {
+     val result =
+       when (val peeked = require<Any>(Token.NUMBER)) {
+-        is Number -> peeked.toInt()
++        // These are exactly representable as an int, so no rounding check is needed.
++        is Int,
++        is Short,
++        is Byte -> (peeked as Number).toInt()
+ 
+-        is String ->
+-          try {
+-            peeked.toInt()
+-          } catch (_: NumberFormatException) {
+-            try {
+-              BigDecimal(peeked).intValueExact()
+-            } catch (_: NumberFormatException) {
+-              throw typeMismatch(peeked, Token.NUMBER)
+-            }
+-          }
++        is Number,
++        is String -> peeked.exactly { intValueExact() }
+ 
+         else -> throw typeMismatch(peeked, Token.NUMBER)
+       }
+@@ -281,6 +309,7 @@ internal class `-JsonValueReader` : JsonReader {
+   }
+ 
+   override fun skipValue() {
++    checkNotClosed()
+     if (failOnUnknown) {
+       throw JsonDataException("Cannot skip unexpected ${peek()} at $path")
+     }
+@@ -352,6 +381,7 @@ internal class `-JsonValueReader` : JsonReader {
+    * or if the type isn't what was expected.
+    */
+   private fun <T> require(type: Class<T>, expected: Token): T? {
++    checkNotClosed()
+     val peeked = if (stackSize != 0) stack[stackSize - 1] else null
+     if (type.isInstance(peeked)) {
+       return type.cast(peeked)
+@@ -373,6 +403,17 @@ internal class `-JsonValueReader` : JsonReader {
+     return body()
+   }
+ 
++  /**
++   * Throws if this reader has been closed. [require] consults this before matching the peeked
++   * value, because the sentinel [close] pushes is an [Any] and would otherwise satisfy a request
++   * for [Any] - so a numeric read on a closed reader reported a type mismatch against an internal
++   * object instead of saying the reader was closed. [hasNext] and [skipValue] never reach [require]
++   * at all, so they consult it directly.
++   */
++  private fun checkNotClosed() {
++    check(stackSize == 0 || stack[stackSize - 1] !== JSON_READER_CLOSED) { "JsonReader is closed" }
++  }
++
+   /**
+    * Removes a value and prepares for the next. If we're iterating a map or list this advances the
+    * iterator.
+diff --git a/moshi/src/main/java/com/squareup/moshi/-MoshiKotlinExtensions.kt b/moshi/src/main/java/com/squareup/moshi/-MoshiKotlinExtensions.kt
+index 1e64c786..54399eca 100644
+--- a/moshi/src/main/java/com/squareup/moshi/-MoshiKotlinExtensions.kt
++++ b/moshi/src/main/java/com/squareup/moshi/-MoshiKotlinExtensions.kt
+@@ -17,9 +17,6 @@
+ 
+ package com.squareup.moshi
+ 
+-import com.squareup.moshi.internal.NonNullJsonAdapter
+-import com.squareup.moshi.internal.NullSafeJsonAdapter
+-import com.squareup.moshi.internal.javaType
+ import kotlin.reflect.KType
+ import kotlin.reflect.typeOf
+ 
+@@ -39,16 +36,4 @@ public inline fun <reified T> Moshi.Builder.addAdapter(adapter: JsonAdapter<T>):
+  *   [ktype] itself is handled, nested types (such as in generics) are not resolved.
+  */
+ @Deprecated("Use the Moshi instance version instead", level = DeprecationLevel.HIDDEN)
+-public fun <T> Moshi.adapter(ktype: KType): JsonAdapter<T> {
+-  val adapter = adapter<T>(ktype.javaType)
+-  val finalizedAdapter =
+-    if (adapter is NullSafeJsonAdapter<*> || adapter is NonNullJsonAdapter) {
+-      adapter
+-    } else if (ktype.isMarkedNullable) {
+-      adapter.nullSafe()
+-    } else {
+-      adapter.nonNull()
+-    }
+-  @Suppress("UNCHECKED_CAST")
+-  return finalizedAdapter as JsonAdapter<T>
+-}
++public fun <T> Moshi.adapter(ktype: KType): JsonAdapter<T> = adapter(ktype, emptySet(), null)
+diff --git a/moshi/src/main/java/com/squareup/moshi/JsonAdapter.kt b/moshi/src/main/java/com/squareup/moshi/JsonAdapter.kt
+index f1bdb900..e079fe84 100644
+--- a/moshi/src/main/java/com/squareup/moshi/JsonAdapter.kt
++++ b/moshi/src/main/java/com/squareup/moshi/JsonAdapter.kt
+@@ -79,14 +79,20 @@ public abstract class JsonAdapter<T> {
+     toJson(writer, value)
+   }
+ 
+-  /** Encodes the given [value] into a String and returns it. */
++  /**
++   * Encodes the given [value] into a String and returns it.
++   *
++   * The Buffer this writes to never fails, so an [IOException] here came from an adapter in the
++   * stack doing I/O of its own. This method cannot declare one, so it wraps it in a
++   * [RuntimeException] whose cause is the original.
++   */
+   @CheckReturnValue
+   public fun toJson(value: T): String {
+     val buffer = Buffer()
+     try {
+       toJson(buffer, value)
+     } catch (e: IOException) {
+-      throw AssertionError(e) // No I/O writing to a Buffer.
++      e.rethrowUndeclared() // No I/O writing to a Buffer, so this came from an adapter.
+     }
+     return buffer.readUtf8()
+   }
+@@ -99,6 +105,10 @@ public abstract class JsonAdapter<T> {
+    * type. Values encoded using `value(Number)` are modeled as a [Long] for boxed integer types
+    * ([Byte], [Short], [Integer], and [Long]), as a [Double] for boxed floating point types ([Float]
+    * and [Double]), and as a [java.math.BigDecimal] for all other types.
++   *
++   * The object graph this builds never fails, so an [IOException] here came from an adapter in the
++   * stack doing I/O of its own. This method cannot declare one, so it wraps it in a
++   * [RuntimeException] whose cause is the original.
+    */
+   @CheckReturnValue
+   public fun toJsonValue(value: T): Any? {
+@@ -107,13 +117,17 @@ public abstract class JsonAdapter<T> {
+       toJson(writer, value)
+       writer.root()
+     } catch (e: IOException) {
+-      throw AssertionError(e) // No I/O writing to an object.
++      e.rethrowUndeclared() // No I/O writing to an object, so this came from an adapter.
+     }
+   }
+ 
+   /**
+    * Decodes a Java value object from [value], which must be comprised of maps, lists, strings,
+    * numbers, booleans and nulls.
++   *
++   * The object graph this reads never fails, so an [IOException] here came from an adapter in the
++   * stack doing I/O of its own. This method cannot declare one, so it wraps it in a
++   * [RuntimeException] whose cause is the original.
+    */
+   @CheckReturnValue
+   public fun fromJsonValue(value: Any?): T {
+@@ -121,7 +135,7 @@ public abstract class JsonAdapter<T> {
+     return try {
+       fromJson(reader)
+     } catch (e: IOException) {
+-      throw AssertionError(e) // No I/O reading from an object.
++      e.rethrowUndeclared() // No I/O reading from an object, so this came from an adapter.
+     }
+   }
+ 
+@@ -307,3 +321,18 @@ public abstract class JsonAdapter<T> {
+     public fun create(type: Type, annotations: Set<Annotation>, moshi: Moshi): JsonAdapter<*>?
+   }
+ }
++
++/**
++ * Rethrows an [IOException] that reached one of [JsonAdapter]'s three entry points that cannot
++ * declare one - [JsonAdapter.toJson] to a String, [JsonAdapter.toJsonValue] and
++ * [JsonAdapter.fromJsonValue].
++ *
++ * The Buffer and object graph those use never fail, so the exception came from an adapter in the
++ * stack: a `@ToJson` or `@FromJson` method is documented to declare `throws <any>`, and Moshi
++ * delivers such an exception unchanged through every entry point that declares [IOException]. These
++ * three cannot, so it is wrapped rather than rewritten as an [AssertionError], which callers do not
++ * catch and thread pools treat as fatal. This is the same policy the rest of the library applies to
++ * a checked exception escaping where it cannot be declared.
++ */
++private fun IOException.rethrowUndeclared(): Nothing =
++  throw RuntimeException("JsonAdapter threw an IOException: $message", this)
+diff --git a/moshi/src/main/java/com/squareup/moshi/JsonDataException.kt b/moshi/src/main/java/com/squareup/moshi/JsonDataException.kt
+index 1ad1947c..79dd98d8 100644
+--- a/moshi/src/main/java/com/squareup/moshi/JsonDataException.kt
++++ b/moshi/src/main/java/com/squareup/moshi/JsonDataException.kt
+@@ -23,9 +23,9 @@ package com.squareup.moshi
+  * Exceptions of this type should be fixed by either changing the application code to accept the
+  * unexpected JSON, or by changing the JSON to conform to the application's expectations.
+  *
+- * This exception may also be triggered if a document's nesting exceeds 31 levels. This depth is
+- * sufficient for all practical applications, but shallow enough to avoid uglier failures like
+- * [StackOverflowError].
++ * This exception may also be triggered if a document's nesting exceeds 255 levels, whether the
++ * document is being read or written. This depth is sufficient for all practical applications, but
++ * shallow enough to avoid uglier failures like [StackOverflowError].
+  */
+ public class JsonDataException : RuntimeException {
+   public constructor() : super()
+diff --git a/moshi/src/main/java/com/squareup/moshi/JsonReader.kt b/moshi/src/main/java/com/squareup/moshi/JsonReader.kt
+index 95738a9f..4fa0cfba 100644
+--- a/moshi/src/main/java/com/squareup/moshi/JsonReader.kt
++++ b/moshi/src/main/java/com/squareup/moshi/JsonReader.kt
+@@ -321,7 +321,7 @@ public sealed class JsonReader : Closeable {
+    * Skips the next token, consuming it. This method is intended for use when the JSON token stream
+    * contains unrecognized or unhandled names.
+    *
+-   * This throws a [JsonDataException] if this parser has been configured to [failOnUnknown] names.
++   * @throws JsonDataException if this parser has been configured to [failOnUnknown] names.
+    */
+   @Throws(IOException::class) public abstract fun skipName()
+ 
+@@ -329,7 +329,8 @@ public sealed class JsonReader : Closeable {
+    * Returns the [string][Token.STRING] value of the next token, consuming it. If the next token is
+    * a number, this method will return its string form.
+    *
+-   * @throws JsonDataException if the next token is not a string or if this reader is closed.
++   * @throws JsonDataException if the next token is not a string.
++   * @throws IllegalStateException if this reader is closed.
+    */
+   @Throws(IOException::class) public abstract fun nextString(): String
+ 
+@@ -344,7 +345,8 @@ public sealed class JsonReader : Closeable {
+   /**
+    * Returns the [boolean][Token.BOOLEAN] value of the next token, consuming it.
+    *
+-   * @throws JsonDataException if the next token is not a boolean or if this reader is closed.
++   * @throws JsonDataException if the next token is not a boolean.
++   * @throws IllegalStateException if this reader is closed.
+    */
+   @Throws(IOException::class) public abstract fun nextBoolean(): Boolean
+ 
+@@ -352,7 +354,8 @@ public sealed class JsonReader : Closeable {
+    * Consumes the next token from the JSON stream and asserts that it is a literal null. Returns
+    * null.
+    *
+-   * @throws JsonDataException if the next token is not null or if this reader is closed.
++   * @throws JsonDataException if the next token is not null.
++   * @throws IllegalStateException if this reader is closed.
+    */
+   @Throws(IOException::class) public abstract fun <T> nextNull(): T?
+ 
+@@ -361,8 +364,17 @@ public sealed class JsonReader : Closeable {
+    * a string, this method will attempt to parse it as a double using
+    * [java.lang.Double.parseDouble].
+    *
+-   * @throws JsonDataException if the next token is not a literal value, or if the next literal
+-   *   value cannot be parsed as a double, or is non-finite.
++   * A non-finite value is refused unless this reader is [lenient]. Which exception reports that
++   * depends on what is being read: JSON itself has no literal for NaN or an infinity, so a document
++   * carrying one is malformed, while an object graph holding [Double.NaN] has no encoding to be
++   * wrong about. `1e400` is a well-formed literal that overflows to an infinity, so this is
++   * reachable without a malformed document.
++   *
++   * @throws JsonDataException if the next token is not a literal value, if the next literal value
++   *   cannot be parsed as a double, or if it is non-finite and this reader traverses an object
++   *   graph, as the one behind [JsonAdapter.fromJsonValue] does.
++   * @throws JsonEncodingException if the next literal value is non-finite and this reader reads
++   *   JSON text.
+    */
+   @Throws(IOException::class) public abstract fun nextDouble(): Double
+ 
+diff --git a/moshi/src/main/java/com/squareup/moshi/JsonWriter.kt b/moshi/src/main/java/com/squareup/moshi/JsonWriter.kt
+index 91a6b2b7..b4bcdd3d 100644
+--- a/moshi/src/main/java/com/squareup/moshi/JsonWriter.kt
++++ b/moshi/src/main/java/com/squareup/moshi/JsonWriter.kt
+@@ -163,8 +163,9 @@ public sealed class JsonWriter : Closeable, Flushable {
+    * Configure this writer to relax its syntax rules. By default, this writer only emits well-formed
+    * JSON as specified by [RFC 7159](http://www.ietf.org/rfc/rfc7159.txt). Setting the writer to
+    * lenient permits the following:
+-   * - Top-level values of any type. With strict writing, the top-level value must be an object or
+-   *   an array.
++   * - Streams that include multiple top-level values. With strict writing, each stream must contain
++   *   exactly one top-level value. A top-level value may be of any type in either mode, as RFC 7159
++   *   allows.
+    * - Numbers may be [NaNs][Double.isNaN] or [infinities][Double.isInfinite].
+    *
+    *   Returns true if this writer has relaxed syntax rules.
+diff --git a/moshi/src/main/java/com/squareup/moshi/Moshi.kt b/moshi/src/main/java/com/squareup/moshi/Moshi.kt
+index cc7ec957..e40a4558 100644
+--- a/moshi/src/main/java/com/squareup/moshi/Moshi.kt
++++ b/moshi/src/main/java/com/squareup/moshi/Moshi.kt
+@@ -21,8 +21,6 @@ import com.squareup.moshi.internal.ClassJsonAdapter
+ import com.squareup.moshi.internal.CollectionJsonAdapter
+ import com.squareup.moshi.internal.MapJsonAdapter
+ import com.squareup.moshi.internal.NO_ANNOTATIONS
+-import com.squareup.moshi.internal.NonNullJsonAdapter
+-import com.squareup.moshi.internal.NullSafeJsonAdapter
+ import com.squareup.moshi.internal.RecordJsonAdapter
+ import com.squareup.moshi.internal.StandardJsonAdapters
+ import com.squareup.moshi.internal.canonicalize
+@@ -106,14 +104,12 @@ public class Moshi private constructor(builder: Builder) {
+     fieldName: String? = null,
+   ): JsonAdapter<T> {
+     val adapter = adapter<T>(ktype.javaType, annotations, fieldName)
+-    val finalizedAdapter =
+-      if (adapter is NullSafeJsonAdapter<*> || adapter is NonNullJsonAdapter) {
+-        adapter
+-      } else if (ktype.isMarkedNullable) {
+-        adapter.nullSafe()
+-      } else {
+-        adapter.nonNull()
+-      }
++    // The marking decides, whatever the resolved adapter already is. Skipping this when the adapter
++    // was already null-safe made the marking inert for every built-in that arrives wrapped -
++    // String,
++    // enums, collections, arrays - so a non-nullable KType returned null. Both wrappers are
++    // idempotent, so re-applying the one the marking asks for is free when it is already there.
++    val finalizedAdapter = if (ktype.isMarkedNullable) adapter.nullSafe() else adapter.nonNull()
+     @Suppress("UNCHECKED_CAST")
+     return finalizedAdapter as JsonAdapter<T>
+   }
+diff --git a/moshi/src/main/java/com/squareup/moshi/internal/KotlinReflectTypes.kt b/moshi/src/main/java/com/squareup/moshi/internal/KotlinReflectTypes.kt
+index 652ba825..0939cc4f 100644
+--- a/moshi/src/main/java/com/squareup/moshi/internal/KotlinReflectTypes.kt
++++ b/moshi/src/main/java/com/squareup/moshi/internal/KotlinReflectTypes.kt
+@@ -5,10 +5,8 @@
+ 
+ package com.squareup.moshi.internal
+ 
+-import java.lang.reflect.GenericDeclaration
+ import java.lang.reflect.Modifier
+ import java.lang.reflect.Type
+-import java.lang.reflect.TypeVariable
+ import kotlin.reflect.KClass
+ import kotlin.reflect.KType
+ import kotlin.reflect.KTypeParameter
+@@ -20,7 +18,8 @@ import kotlin.reflect.KVariance
+  * function is `@ExperimentalStdlibApi`.
+  *
+  * This file contains a copy-paste of that code, implemented on only non-experimental APIs. It's
+- * also modified to use Moshi's `Type` implementations.
++ * also modified to use Moshi's `Type` implementations, and to refuse a type parameter rather than
++ * return a `TypeVariable` it cannot complete - see the `KTypeParameter` branch below.
+  *
+  * If/when Kotlin offers a non-experimental API to convert a `KType` to a Java `Type`, we should
+  * migrate to that and delete this file.
+@@ -31,7 +30,19 @@ internal val KType.javaType: Type
+ 
+ private fun KType.computeJavaType(forceWrapper: Boolean = false): Type {
+   when (val classifier = classifier) {
+-    is KTypeParameter -> return TypeVariableImpl(classifier)
++    // A deviation from the kotlin.reflect.javaType this file copies, and a deliberate one. That
++    // implementation returns a TypeVariable whose getGenericDeclaration() is unimplemented, which
++    // cannot be implemented on the non-experimental KTypeParameter API: it exposes the parameter's
++    // name, bounds and variance, never its declaring container. Every caller here hands the Type
++    // straight to Moshi, whose resolver reads that declaration on the way through any parameterized
++    // type, so the object could only fail - and it failed as a kotlin.NotImplementedError, an Error
++    // that a caller's catch (e: Exception) does not catch. Refusing where the Type is built makes
++    // every shape fail the same way, and leaves no half-built TypeVariable for anything to reach.
++    is KTypeParameter ->
++      throw IllegalArgumentException(
++        "Cannot create a Java type for the type parameter '${classifier.name}': a type parameter " +
++          "is not a serializable type. Resolve it to a concrete type first."
++      )
+ 
+     is KClass<*> -> {
+       val jClass = if (forceWrapper) classifier.javaObjectType else classifier.java
+@@ -114,27 +125,3 @@ private val KTypeProjection.javaType: Type
+         WildcardTypeImpl(upperBound = type.computeJavaType(forceWrapper = true), lowerBound = null)
+     }
+   }
+-
+-// Suppression of the error is needed for `AnnotatedType[] getAnnotatedBounds()` which is impossible
+-// to implement on JDK 6
+-// because `AnnotatedType` has only appeared in JDK 8.
+-@Suppress("ABSTRACT_MEMBER_NOT_IMPLEMENTED")
+-private class TypeVariableImpl(private val typeParameter: KTypeParameter) :
+-  TypeVariable<GenericDeclaration> {
+-  override fun getName(): String = typeParameter.name
+-
+-  override fun getGenericDeclaration(): GenericDeclaration =
+-    TODO(
+-      "getGenericDeclaration() is not yet supported for type variables created from KType: $typeParameter"
+-    )
+-
+-  override fun getBounds(): Array<Type> =
+-    typeParameter.upperBounds.map { it.computeJavaType(forceWrapper = true) }.toTypedArray()
+-
+-  override fun equals(other: Any?): Boolean =
+-    other is TypeVariable<*> && name == other.name && genericDeclaration == other.genericDeclaration
+-
+-  override fun hashCode(): Int = name.hashCode() xor genericDeclaration.hashCode()
+-
+-  override fun toString(): String = name
+-}
+diff --git a/moshi/src/main/java/com/squareup/moshi/internal/StandardJsonAdapters.kt b/moshi/src/main/java/com/squareup/moshi/internal/StandardJsonAdapters.kt
+index 33b59ba1..3ac0339b 100644
+--- a/moshi/src/main/java/com/squareup/moshi/internal/StandardJsonAdapters.kt
++++ b/moshi/src/main/java/com/squareup/moshi/internal/StandardJsonAdapters.kt
+@@ -95,7 +95,7 @@ internal object StandardJsonAdapters : JsonAdapter.Factory {
+     object : JsonAdapter<Char>() {
+       override fun fromJson(reader: JsonReader): Char {
+         val value = reader.nextString()
+-        if (value.length > 1) {
++        if (value.length != 1) {
+           throw JsonDataException(ERROR_FORMAT.format("a char", "\"$value\"", reader.path))
+         }
+         return value[0]
+diff --git a/moshi/src/main/java/com/squareup/moshi/internal/Util.kt b/moshi/src/main/java/com/squareup/moshi/internal/Util.kt
+index 673d65e6..94dbce4f 100644
+--- a/moshi/src/main/java/com/squareup/moshi/internal/Util.kt
++++ b/moshi/src/main/java/com/squareup/moshi/internal/Util.kt
+@@ -64,18 +64,22 @@ public val DEFAULT_CONSTRUCTOR_MARKER: Class<*>? =
+     null
+   }
+ 
+-/** A map from primitive types to their corresponding wrapper types. */
++/**
++ * A map from primitive types to their corresponding wrapper types. The values must be
++ * `javaObjectType` and not `java`: for a primitive-backed Kotlin type, `Int::class.java` is
++ * `int.class`, so writing the wrapper that way maps every primitive to itself and boxes nothing.
++ */
+ private val PRIMITIVE_TO_WRAPPER_TYPE: Map<Class<*>, Class<*>> =
+   buildMap(16) {
+-    put(knownNotNull(Boolean::class.javaPrimitiveType), Boolean::class.java)
+-    put(knownNotNull(Byte::class.javaPrimitiveType), Byte::class.java)
+-    put(knownNotNull(Char::class.javaPrimitiveType), Char::class.java)
+-    put(knownNotNull(Double::class.javaPrimitiveType), Double::class.java)
+-    put(knownNotNull(Float::class.javaPrimitiveType), Float::class.java)
+-    put(knownNotNull(Int::class.javaPrimitiveType), Int::class.java)
+-    put(knownNotNull(Long::class.javaPrimitiveType), Long::class.java)
+-    put(knownNotNull(Short::class.javaPrimitiveType), Short::class.java)
+-    put(Void.TYPE, Void::class.java)
++    put(knownNotNull(Boolean::class.javaPrimitiveType), Boolean::class.javaObjectType)
++    put(knownNotNull(Byte::class.javaPrimitiveType), Byte::class.javaObjectType)
++    put(knownNotNull(Char::class.javaPrimitiveType), Char::class.javaObjectType)
++    put(knownNotNull(Double::class.javaPrimitiveType), Double::class.javaObjectType)
++    put(knownNotNull(Float::class.javaPrimitiveType), Float::class.javaObjectType)
++    put(knownNotNull(Int::class.javaPrimitiveType), Int::class.javaObjectType)
++    put(knownNotNull(Long::class.javaPrimitiveType), Long::class.javaObjectType)
++    put(knownNotNull(Short::class.javaPrimitiveType), Short::class.javaObjectType)
++    put(Void.TYPE, Void::class.javaObjectType)
+   }
+ 
+ // Extracted as a method with a keep rule to prevent R8 from keeping Kotlin Metadata
+@@ -643,9 +647,21 @@ internal class ParameterizedTypeImpl(
+   }
+ 
+   override fun toString(): String {
+-    // TODO(jwilson): include the owner type if it's non-null.
+     val result = StringBuilder(30 * (typeArguments.size + 1))
+-    result.append(rawType.typeToString())
++    val owner = ownerType
++    if (owner is ParameterizedType) {
++      // The owner's own arguments are part of the type - Outer<String>.Box<Int> and
++      // Outer<Long>.Box<Int> are unequal - and rendering none of the owner printed them the same,
++      // so
++      // a refusal named a type the caller could not tell from one they had registered. Rendered the
++      // way the JDK renders it: the owner, then the nested type's name with the prefix it shares
++      // with the owner removed. An owner that is a plain Class is left out, because the raw type's
++      // binary name already carries it and including it would change every existing rendering.
++      result.append(owner).append('$')
++      result.append(rawType.typeToString().removePrefix(owner.rawType.typeToString() + "$"))
++    } else {
++      result.append(rawType.typeToString())
++    }
+     if (typeArguments.isEmpty()) {
+       return result.toString()
+     }
+diff --git a/moshi/src/main/java16/com/squareup/moshi/internal/RecordJsonAdapter.kt b/moshi/src/main/java16/com/squareup/moshi/internal/RecordJsonAdapter.kt
+index 157466c6..87be7788 100644
+--- a/moshi/src/main/java16/com/squareup/moshi/internal/RecordJsonAdapter.kt
++++ b/moshi/src/main/java16/com/squareup/moshi/internal/RecordJsonAdapter.kt
+@@ -23,11 +23,23 @@ import com.squareup.moshi.rawType
+ import java.lang.invoke.MethodHandle
+ import java.lang.invoke.MethodHandles
+ import java.lang.invoke.MethodType.methodType
+-import java.lang.reflect.InvocationTargetException
+ import java.lang.reflect.ParameterizedType
+ import java.lang.reflect.RecordComponent
+ import java.lang.reflect.Type
+ 
++/**
++ * Rethrows what a [MethodHandle] invocation threw. A MethodHandle hands back its target's throwable
++ * directly rather than wrapping it the way [java.lang.reflect.Method.invoke] does, so there is no
++ * [java.lang.reflect.InvocationTargetException] to unwrap here. This applies the same policy that
++ * unwrapping one would: unchecked throwables propagate unchanged, and a checked one is wrapped
++ * because [JsonAdapter.fromJson] and [JsonAdapter.toJson] declare only [java.io.IOException].
++ */
++private fun Throwable.rethrowTarget(): Nothing {
++  if (this is RuntimeException) throw this
++  if (this is Error) throw this
++  throw RuntimeException(this)
++}
++
+ /**
+  * A [JsonAdapter] that supports Java `record` classes via reflection.
+  *
+@@ -67,10 +79,13 @@ internal class RecordJsonAdapter<T>(
+     return try {
+       @Suppress("UNCHECKED_CAST")
+       constructor.invokeWithArguments(*resultsArray) as T
+-    } catch (e: InvocationTargetException) {
+-      throw e.rethrowCause()
+     } catch (e: Throwable) {
+-      // Don't throw a fatal error if it's just an absent primitive.
++      // A MethodHandle propagates whatever its target threw. Unlike core reflection it never wraps
++      // it in an InvocationTargetException, so this catch, not an InvocationTargetException one, is
++      // where the record's canonical constructor's own exception arrives.
++
++      // Don't throw a fatal error if it's just an absent primitive: that arrives here as the
++      // NullPointerException of unboxing a null argument.
+       for (i in componentBindingsArray.indices) {
+         if (
+           resultsArray[i] == null &&
+@@ -83,7 +98,7 @@ internal class RecordJsonAdapter<T>(
+           )
+         }
+       }
+-      throw AssertionError(e)
++      throw e.rethrowTarget()
+     }
+   }
+ 
+@@ -95,10 +110,9 @@ internal class RecordJsonAdapter<T>(
+       val componentValue =
+         try {
+           binding.accessor.invoke(value)
+-        } catch (e: InvocationTargetException) {
+-          throw e.rethrowCause()
+         } catch (e: Throwable) {
+-          throw AssertionError(e)
++          // Same as fromJson: this MethodHandle hands back the accessor's own throwable, unwrapped.
++          throw e.rethrowTarget()
+         }
+       binding.adapter.toJson(writer, componentValue)
+     }
+diff --git a/moshi/src/test/java/com/squareup/moshi/JsonCodecFactory.java b/moshi/src/test/java/com/squareup/moshi/JsonCodecFactory.java
+index b8406109..49a31ce3 100644
+--- a/moshi/src/test/java/com/squareup/moshi/JsonCodecFactory.java
++++ b/moshi/src/test/java/com/squareup/moshi/JsonCodecFactory.java
+@@ -79,6 +79,11 @@ abstract class JsonCodecFactory {
+             return false;
+           }
+ 
++          @Override
++          boolean readsObjectGraph() {
++            return true;
++          }
++
+           @Override
+           JsonWriter newWriter() {
+             writer = MoshiTesting.jsonValueWriter();
+@@ -125,6 +130,11 @@ abstract class JsonCodecFactory {
+             return false;
+           }
+ 
++          @Override
++          boolean readsObjectGraph() {
++            return true;
++          }
++
+           @Override
+           JsonWriter newWriter() throws IOException {
+             return value.newWriter();
+@@ -201,6 +211,17 @@ abstract class JsonCodecFactory {
+     return false;
+   }
+ 
++  /**
++   * True when this factory's reader traverses an in-memory object graph rather than JSON text. Such
++   * a reader has no encoding to complain about, so it reports a value it cannot read as a {@link
++   * JsonDataException}; a {@link JsonEncodingException} is an {@link IOException}, and {@link
++   * JsonAdapter#fromJsonValue} cannot declare one, so it would arrive at the caller wrapped in a
++   * {@link RuntimeException} instead of as the Moshi exception it should have been.
++   */
++  boolean readsObjectGraph() {
++    return false;
++  }
++
+   boolean supportsBigNumbers() {
+     return true;
+   }
+diff --git a/moshi/src/test/java/com/squareup/moshi/JsonReaderTest.java b/moshi/src/test/java/com/squareup/moshi/JsonReaderTest.java
+index 9a2a7a52..34335d95 100644
+--- a/moshi/src/test/java/com/squareup/moshi/JsonReaderTest.java
++++ b/moshi/src/test/java/com/squareup/moshi/JsonReaderTest.java
+@@ -343,6 +343,12 @@ public final class JsonReaderTest {
+       reader.nextDouble();
+       fail();
+     } catch (JsonEncodingException expected) {
++      // A document whose text says NaN is malformed JSON.
++      assertThat(factory.readsObjectGraph()).isFalse();
++    } catch (JsonDataException expected) {
++      // An object graph has no encoding to be malformed, and an IOException raised here would
++      // reach a fromJsonValue caller as an AssertionError.
++      assertThat(factory.readsObjectGraph()).isTrue();
+     }
+   }
+ 
+@@ -356,6 +362,10 @@ public final class JsonReaderTest {
+       fail();
+     } catch (JsonEncodingException expected) {
+       assertThat(expected).hasMessageThat().contains("NaN");
++      assertThat(factory.readsObjectGraph()).isFalse();
++    } catch (JsonDataException expected) {
++      assertThat(expected).hasMessageThat().contains("NaN");
++      assertThat(factory.readsObjectGraph()).isTrue();
+     }
+   }
+ 
+diff --git a/moshi/src/test/java/com/squareup/moshi/JsonValueReaderTest.java b/moshi/src/test/java/com/squareup/moshi/JsonValueReaderTest.java
+index f388d9fa..02348e58 100644
+--- a/moshi/src/test/java/com/squareup/moshi/JsonValueReaderTest.java
++++ b/moshi/src/test/java/com/squareup/moshi/JsonValueReaderTest.java
+@@ -457,6 +457,57 @@ public final class JsonValueReaderTest {
+     }
+   }
+ 
++  /**
++   * Every entry point must report a closed reader the same way, not just the two above. hasNext and
++   * skipValue used to return normally, and the numeric reads reported a type mismatch against the
++   * internal sentinel this reader pushes when it closes.
++   */
++  @Test
++  public void everyReadAfterCloseReportsTheReaderIsClosed() throws Exception {
++    List<Runnable> reads = new ArrayList<>();
++    List<JsonReader> readers = new ArrayList<>();
++    for (int i = 0; i < 10; i++) {
++      JsonReader reader = jsonValueReader(singletonList(1));
++      reader.beginArray();
++      reader.close();
++      readers.add(reader);
++    }
++    reads.add(uncheck(() -> readers.get(0).hasNext()));
++    reads.add(uncheck(() -> readers.get(1).peek()));
++    reads.add(uncheck(() -> readers.get(2).nextInt()));
++    reads.add(uncheck(() -> readers.get(3).nextLong()));
++    reads.add(uncheck(() -> readers.get(4).nextDouble()));
++    reads.add(uncheck(() -> readers.get(5).nextString()));
++    reads.add(uncheck(() -> readers.get(6).nextBoolean()));
++    reads.add(uncheck(() -> readers.get(7).skipValue()));
++    reads.add(uncheck(() -> readers.get(8).readJsonValue()));
++    reads.add(uncheck(() -> readers.get(9).beginObject()));
++    for (Runnable read : reads) {
++      try {
++        read.run();
++        fail("expected a closed reader to refuse this read");
++      } catch (IllegalStateException expected) {
++        assertThat(expected).hasMessageThat().isEqualTo("JsonReader is closed");
++      }
++    }
++  }
++
++  private interface ThrowingRead {
++    void run() throws Exception;
++  }
++
++  private static Runnable uncheck(ThrowingRead read) {
++    return () -> {
++      try {
++        read.run();
++      } catch (RuntimeException e) {
++        throw e;
++      } catch (Exception e) {
++        throw new AssertionError(e);
++      }
++    };
++  }
++
+   @Test
+   public void numberToStringCoersion() throws Exception {
+     JsonReader reader =
+diff --git a/moshi/src/test/java/com/squareup/moshi/KotlinExtensionsTest.kt b/moshi/src/test/java/com/squareup/moshi/KotlinExtensionsTest.kt
+index 45dcbcf2..10d10441 100644
+--- a/moshi/src/test/java/com/squareup/moshi/KotlinExtensionsTest.kt
++++ b/moshi/src/test/java/com/squareup/moshi/KotlinExtensionsTest.kt
+@@ -53,6 +53,26 @@ class KotlinExtensionsTest {
+     assertEquals(stringListArray, expected)
+   }
+ 
++  /**
++   * A primitive-backed type argument has to be boxed before it reaches [Types], which rejects
++   * primitives outright. Every primitive is driven because they are boxed through one table with an
++   * entry each, and an entry can be wrong on its own.
++   */
++  @Test
++  fun subtypeOfAndSupertypeOfBoxPrimitives() {
++    assertEquals(Types.subtypeOf(java.lang.Integer::class.java), subtypeOf<Int>())
++    assertEquals(Types.supertypeOf(java.lang.Integer::class.java), supertypeOf<Int>())
++    assertEquals(Types.subtypeOf(java.lang.Boolean::class.java), subtypeOf<Boolean>())
++    assertEquals(Types.subtypeOf(java.lang.Byte::class.java), subtypeOf<Byte>())
++    assertEquals(Types.subtypeOf(java.lang.Character::class.java), subtypeOf<Char>())
++    assertEquals(Types.subtypeOf(java.lang.Double::class.java), subtypeOf<Double>())
++    assertEquals(Types.subtypeOf(java.lang.Float::class.java), subtypeOf<Float>())
++    assertEquals(Types.subtypeOf(java.lang.Long::class.java), subtypeOf<Long>())
++    assertEquals(Types.subtypeOf(java.lang.Short::class.java), subtypeOf<Short>())
++    // A reference type is unaffected.
++    assertEquals(Types.subtypeOf(String::class.java), subtypeOf<String>())
++  }
++
+   @Test
+   fun addAdapterInferred() {
+     // An adapter that always returns -1
+@@ -90,4 +110,49 @@ class KotlinExtensionsTest {
+ 
+     assertEquals(listOf(-1), moshi.adapter<List<Int>>().fromJson("[5]"))
+   }
++
++  /**
++   * adapter(KType) documents that "while nullability of [ktype] itself is handled, nested types
++   * (such as in generics) are not resolved" - so the marking on the type itself must decide, for
++   * every type and not only for the ones whose adapter is not already null-safe. Driven at both
++   * markings across a set spanning both sides of that distinction, because the marking used to be
++   * honoured for Int and inert for String, an enum, a collection and an array.
++   */
++  @Test
++  fun ktypeNullabilityMarkingIsHonouredForEveryType() {
++    val moshi = Moshi.Builder().build()
++    val cases =
++      listOf(
++        "String" to (typeOf<String>() to typeOf<String?>()),
++        "Int" to (typeOf<Int>() to typeOf<Int?>()),
++        "Boolean" to (typeOf<Boolean>() to typeOf<Boolean?>()),
++        "MarkingEnum" to (typeOf<MarkingEnum>() to typeOf<MarkingEnum?>()),
++        "List<String>" to (typeOf<List<String>>() to typeOf<List<String>?>()),
++        "Map<String,Int>" to (typeOf<Map<String, Int>>() to typeOf<Map<String, Int>?>()),
++        "IntArray" to (typeOf<IntArray>() to typeOf<IntArray?>()),
++        "Array<String>" to (typeOf<Array<String>>() to typeOf<Array<String>?>()),
++        "Any" to (typeOf<Any>() to typeOf<Any?>()),
++      )
++
++    val wrong = mutableListOf<String>()
++    for ((name, markings) in cases) {
++      val (notNull, nullable) = markings
++      try {
++        moshi.adapter<Any?>(notNull).fromJson("null")
++        wrong += "$name: a non-nullable KType accepted a null document"
++      } catch (expected: JsonDataException) {
++        // The marking was applied.
++      }
++      assertEquals(
++        "$name: a nullable KType must accept a null document",
++        null,
++        moshi.adapter<Any?>(nullable).fromJson("null"),
++      )
++    }
++    assertEquals(emptyList<String>(), wrong)
++  }
++
++  enum class MarkingEnum {
++    RED
++  }
+ }
+diff --git a/moshi/src/test/java/com/squareup/moshi/MoshiTest.java b/moshi/src/test/java/com/squareup/moshi/MoshiTest.java
+index 1f7e18a8..ed883d4c 100644
+--- a/moshi/src/test/java/com/squareup/moshi/MoshiTest.java
++++ b/moshi/src/test/java/com/squareup/moshi/MoshiTest.java
+@@ -214,6 +214,14 @@ public final class MoshiTest {
+       assertThat(expected).hasMessageThat().isEqualTo("Expected a char but was \"ab\" at path $");
+     }
+ 
++    try {
++      // An empty string is not a character either.
++      adapter.fromJson("''");
++      fail();
++    } catch (JsonDataException expected) {
++      assertThat(expected).hasMessageThat().isEqualTo("Expected a char but was \"\" at path $");
++    }
++
+     // Nulls not allowed for char.class
+     try {
+       adapter.fromJson("null");
+@@ -245,6 +253,14 @@ public final class MoshiTest {
+       assertThat(expected).hasMessageThat().isEqualTo("Expected a char but was \"ab\" at path $");
+     }
+ 
++    try {
++      // An empty string is not a character either.
++      adapter.fromJson("''");
++      fail();
++    } catch (JsonDataException expected) {
++      assertThat(expected).hasMessageThat().isEqualTo("Expected a char but was \"\" at path $");
++    }
++
+     // Allow nulls for Character.class
+     assertThat(adapter.fromJson("null")).isEqualTo(null);
+     assertThat(adapter.toJson(null)).isEqualTo("null");
+diff --git a/moshi/src/test/java/com/squareup/moshi/internal/KotlinReflectTypesTest.kt b/moshi/src/test/java/com/squareup/moshi/internal/KotlinReflectTypesTest.kt
+index fa5a4110..e3d6ee0f 100644
+--- a/moshi/src/test/java/com/squareup/moshi/internal/KotlinReflectTypesTest.kt
++++ b/moshi/src/test/java/com/squareup/moshi/internal/KotlinReflectTypesTest.kt
+@@ -19,6 +19,7 @@ import assertk.Assert
+ import assertk.assertFailure
+ import assertk.assertThat
+ import assertk.assertions.containsExactly
++import assertk.assertions.hasMessage
+ import assertk.assertions.isEmpty
+ import assertk.assertions.isEqualTo
+ import assertk.assertions.isInstanceOf
+@@ -26,9 +27,7 @@ import assertk.assertions.isNull
+ import com.squareup.moshi.internal.javaType as moshiJavaType
+ import com.squareup.moshi.rawType
+ import java.lang.reflect.GenericArrayType
+-import java.lang.reflect.GenericDeclaration
+ import java.lang.reflect.ParameterizedType
+-import java.lang.reflect.TypeVariable
+ import java.lang.reflect.WildcardType
+ import kotlin.reflect.KFunction0
+ import kotlin.reflect.javaType as kotlinJavaType
+@@ -143,13 +142,19 @@ class KotlinReflectTypesTest {
+ 
+   @Test
+   fun typeVariable() {
++    // Moshi deviates from kotlin.reflect.javaType here, which returns a TypeVariable whose
++    // getGenericDeclaration() is an unimplemented TODO(). Moshi's own resolver reads that
++    // declaration on the way through any parameterized type, so List<T> and Map<String, T> raised
++    // kotlin.NotImplementedError - an Error - from a plain adapter lookup. The conversion refuses a
++    // type parameter instead, so every shape containing one fails the same way.
+     val function: KFunction0<String> = ::hello
+     val kotlinType = function.returnType
+-    val javaType = kotlinType.moshiJavaType as TypeVariable<GenericDeclaration>
+-    assertThat(javaType.bounds).containsExactly(Any::class.java)
+-    assertFailure { javaType.genericDeclaration }.isInstanceOf<NotImplementedError>()
+-    assertThat(javaType.name).isEqualTo("T")
+-    assertThat(javaType.toString()).isEqualTo("T")
++    assertFailure { kotlinType.moshiJavaType }
++      .isInstanceOf<IllegalArgumentException>()
++      .hasMessage(
++        "Cannot create a Java type for the type parameter 'T': a type parameter is not a " +
++          "serializable type. Resolve it to a concrete type first."
++      )
+   }
+ 
+   fun <T> hello(): T {

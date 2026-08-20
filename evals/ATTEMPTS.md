@@ -48,7 +48,7 @@ loss rather than hiding it.
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
 | lz4 | 2 | 15 | converged | evaluator countersigned | 0 |
 | magic_enum | 2 | 19 | converged | evaluator countersigned | 0 |
-| moshi | 3 | 30 | **not converged** | n/a | 0 |
+| moshi | 5 | 49 | converged | evaluator countersigned | 1 |
 | mruby (attempt 1) | 5 | 50 | **not converged** | n/a | 0 |
 | mruby (attempt 2) | 5 | 63 | **not converged** | n/a | 1 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
@@ -74,7 +74,7 @@ loss rather than hiding it.
 | validator | 4 | 31 | converged | evaluator countersigned | 1 |
 | yfinance | 1 | 9 | converged | evaluator countersigned | 0 |
 | zod | 4 | 39 | converged | evaluator countersigned | 0 |
-| zstd | 4 | 33 | **not converged** | n/a | 0 |
+| zstd | 6 | 54 | **not converged** | n/a | 1 |
 | PapaParse | audit only | - | audit, not a loop run | n/a | - |
 | **libuv** | at least 1 | at least 1 | **abandoned, no receipt** | n/a | - |
 
@@ -88,9 +88,9 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 34 brownfield convergences:
+The engine tightened over time. Of the 37 brownfield convergences:
 
-- **29** were countersigned by the adversarial evaluator, the current standard.
+- **32** were countersigned by the adversarial evaluator, the current standard.
   Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
@@ -104,7 +104,7 @@ The engine tightened over time. Of the 34 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 34 as one number
+Every receipt names the standard its own run met. Pooling all 37 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -118,7 +118,7 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 34 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 37 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
 `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
 `claude-agent-sdk-python`, `validator`, `clap`, `zod` and `go-cmp`, and each receipt names what it
@@ -596,6 +596,14 @@ is evidence quality was pointed at a library whose job is evidence, and the
 library's evaluator won the last word.
 
 ## Wave 3's two non-convergences: one map that never closed, one gate that refused twice
+
+**Later note, 2026-08-20: `moshi` has since converged** - two further runs
+under a changed engine cleared its last five rows and passed the gate, and
+its receipt is [here](moshi/REPORT.md). The account below is what its first
+three runs were, and it stands unedited, because a record that quietly
+becomes a success story once the outcome improves is not a record. `zstd`
+also ran two further rounds and did not converge; its row now reads 6 runs
+and 54 iterations, and the shape described below is unchanged.
 
 `moshi` and `zstd` are the two rows wave 3 did not convert (its other two,
 `lz4` and `Catch2`, converged and sit in the README receipts table). One is
