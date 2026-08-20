@@ -1092,7 +1092,12 @@ fi
 # the checkpoint's git add -A own those, and they may be user droppings the
 # hook has no right to demand committed. Skipped without git or a born HEAD.
 if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
-  dirty="$(git -C "$root" status --porcelain --untracked-files=no 2>/dev/null | head -n 1)"
+  # .jeffy/metrics/ is excluded because this hook writes it, and it writes it
+  # AFTER the iteration's checkpoint by construction: every turn would then
+  # open by telling the loop it forgot to commit a file the loop never wrote.
+  # Nothing else under .jeffy/ is excused - a probe battery belongs in the
+  # checkpoint like any other work. (P2-21)
+  dirty="$(git -C "$root" status --porcelain --untracked-files=no 2>/dev/null | grep -v '^.. \.jeffy/metrics/' | head -n 1)"
   if [ -n "$dirty" ]; then
     hygiene="$hygiene${hygiene:+; also }iteration $iter ended with uncommitted tracked changes ($dirty); checkpoint them"
   fi
@@ -1561,5 +1566,42 @@ if [ -n "$unswept_rows" ] && [ "$unswept_rows" != "0" ]; then
     fi
   fi
 fi
+# P2-21: one telemetry record per turn end. JOURNAL.md is prose - greppable,
+# which is enough for one run and useless across fifty - so the numbers this
+# hook already computes are also written as JSON: iterations to convergence,
+# rows swept per run, verify time, evaluator invocations, strike counts.
+#
+# It lives under .jeffy/metrics/ and is COMMITTED, which is the opposite of
+# where run exhaust usually goes and follows from this tree's own model:
+# .jeffy/ is loop memory, the checkpoints commit all of it on purpose, and
+# only the transient state file is ignored. It also lands inside a path the
+# loop-memory exclusion list already covers, so a metrics write can never
+# register as progress in the stall gate or the oscillation hash - the
+# alternative would have been telemetry that manufactures the very signal it
+# exists to measure.
+if [ -n "$run_tok" ]; then
+  metrics_dir="$root/.jeffy/metrics"
+  if mkdir -p "$metrics_dir" 2>/dev/null; then
+    jq -n -c \
+      --arg run "$runid8" --argjson iter "$iter" --argjson budget "$max" \
+      --arg task "$fp_task" --arg tree "$fp_hash" \
+      --argjson changed "${fp_changed:-0}" \
+      --arg rows_unswept "${unswept_rows:-}" \
+      --arg open_hm "${open_hm:-}" --argjson gate "${ev_art_ord:-0}" \
+      --argjson stall "${new_stall:-0}" --argjson osc "${new_osc:-0}" \
+      --argjson overrun "${new_overrun:-0}" \
+      --arg wall "${wall_elapsed:-}" --arg ctx "${ctx_growth:-}" \
+      '{run_token: $run, iteration: $iter, budget: $budget, task: $task,
+        content_tree_hash: $tree, changed_paths: $changed,
+        rows_unswept: (if $rows_unswept == "" then null else ($rows_unswept | tonumber) end),
+        open_above_low: (if $open_hm == "" then null else ($open_hm | tonumber) end),
+        evaluator_invocations: $gate, stall_strike: $stall,
+        oscillation_strike: $osc, overrun_strike: $overrun,
+        wall_elapsed_s: (if $wall == "" then null else ($wall | tonumber) end),
+        context_growth: (if $ctx == "" then null else (($ctx | tonumber) / 10) end),
+        cost_estimate_usd: null}' >> "$metrics_dir/$runid8.jsonl" 2>/dev/null || true
+  fi
+fi
+
 jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'
 exit 0

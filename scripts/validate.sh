@@ -424,6 +424,37 @@ else
   fault "stop-hook.sh does not share the verify bound with the wrapper; two timeout ladders will drift"
 fi
 
+# K2. The receipts reach the reader before the mechanism does. At five stars
+#     adoption is the binding constraint, and the receipts are the asset no
+#     competitor in this ecosystem publishes: a reader who leaves before
+#     reaching them has been sold nothing. This is a layout claim, so it is
+#     checked the way every other published claim here is - the three
+#     upstream-accepted fixes must appear before the Quickstart heading, and
+#     the receipts table must still carry every row the pie derives from, so
+#     a future reorder cannot quietly drop one. (P2-25)
+k2_qs="$(awk '/^## Quickstart/ { print NR; exit }' README.md)"
+k2_bad=""
+if [ -z "$k2_qs" ]; then
+  fault "README has no ## Quickstart heading; the receipts-above-the-fold check cannot anchor"
+else
+  for k2_link in 'sharkdp/bat/pull/3862' 'valyala/fasthttp/pull/2343' 'chalk/chalk/pull/687'; do
+    k2_at="$(grep -n -- "$k2_link" README.md | head -n 1 | cut -d: -f1)"
+    if [ -z "$k2_at" ]; then
+      k2_bad="$k2_bad $k2_link(absent)"
+    elif [ "$k2_at" -ge "$k2_qs" ]; then
+      k2_bad="$k2_bad $k2_link(line $k2_at, after Quickstart at $k2_qs)"
+    fi
+  done
+  # The table's contents are already derived elsewhere - the iteration cells,
+  # the standards split and the language pie all re-read it - so this asserts
+  # only what a reorder can break and nothing else re-checks: position.
+  if [ -n "$k2_bad" ]; then
+    fault "the receipts do not reach the reader before the mechanism does:$k2_bad"
+  else
+    pass "the three upstream-accepted fixes appear before the Quickstart heading"
+  fi
+fi
+
 # I. The product states its version, and it cannot drift from the release
 #    record: the hook's JEFFY_VERSION must equal the newest release heading
 #    in CHANGELOG.md. Both are bumped in the same release commit.
@@ -5333,6 +5364,60 @@ if command -v jq >/dev/null 2>&1; then
       printf '%s\n' "$hb_out"
       fault "stop hook ended a run early over an unparseable ledger line, which the severity floor treats as blocking"
     fi
+
+    # P2-21: run telemetry. JOURNAL.md is prose - enough for one run, useless
+    # across fifty - so the numbers this hook already computes are also
+    # written as JSON, one record per turn end. It is COMMITTED under
+    # .jeffy/metrics/ rather than gitignored, following this tree's own model
+    # (.jeffy is loop memory, the checkpoints commit all of it, only the
+    # transient state file is ignored), and it lands inside a path the
+    # loop-memory exclusion list already covers - telemetry that registered as
+    # progress would manufacture the very signal it exists to measure.
+    rm -rf "$hb_proj/.jeffy/metrics"
+    hb_write_state sess-1 3 10
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    hb_metrics="$(find "$hb_proj/.jeffy/metrics" -name '*.jsonl' -type f 2>/dev/null | head -n 1)"
+    if [ -n "$hb_metrics" ] && [ "$(wc -l < "$hb_metrics" | tr -d '[:space:]')" = "1" ] \
+      && jq -e '.iteration == 3 and has("evaluator_invocations") and has("content_tree_hash")' "$hb_metrics" >/dev/null 2>&1; then
+      pass "stop hook writes one valid telemetry record per turn end"
+    else
+      printf 'metrics=[%s]\n' "$hb_metrics"
+      fault "stop hook wrote no usable telemetry record at turn end"
+    fi
+
+    # Appends rather than overwrites: a run's record is its whole arc.
+    hb_write_state sess-1 4 10
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(wc -l < "$hb_metrics" | tr -d '[:space:]')" = "2" ] \
+      && [ "$(jq -s '[.[].iteration] | join(",")' "$hb_metrics" | tr -d '"')" = "3,4" ]; then
+      pass "telemetry appends one record per turn rather than overwriting the run's arc"
+    else
+      fault "the telemetry file did not accumulate across turns"
+    fi
+
+    # Never a cost figure: nothing here can measure spend, so nothing claims to.
+    if jq -e '.cost_estimate_usd == null' "$hb_metrics" >/dev/null 2>&1; then
+      pass "telemetry records a null cost rather than a number nothing measured"
+    else
+      fault "telemetry carries a fabricated cost estimate"
+    fi
+
+    # And the record itself must never read as progress to either tree gate.
+    if printf '%s' '.jeffy/metrics/x.jsonl' | grep -qE "$(sed -n 's/^JEFFY_LOOP_MEMORY_RE=.\(.*\).$/\1/p' "$hb_hook")"; then
+      pass "a telemetry write lands inside loop memory, so it cannot register as progress"
+    else
+      fault "the metrics path is outside the loop-memory exclusion list; writing telemetry would look like work"
+    fi
+
+    # The reader runs clean on populated, empty, and absent directories: a
+    # stats tool that dies on an untouched project is a stats tool nobody runs.
+    if bash scripts/jeffy-stats.sh "$hb_proj" >/dev/null 2>&1 \
+      && bash scripts/jeffy-stats.sh "$hb_tmp" >/dev/null 2>&1; then
+      pass "jeffy-stats reads a populated project and an untouched one without failing"
+    else
+      fault "jeffy-stats failed on a populated or an empty project"
+    fi
+    rm -rf "$hb_proj/.jeffy/metrics"
 
     # P2-26: context pressure, measured from the transcript rather than
     # counted in iterations. The engine re-feeds one session, so context
