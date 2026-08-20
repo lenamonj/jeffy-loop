@@ -71,6 +71,10 @@ prompt_path: $REF/iteration-prompt.txt
 focus: <sanitized focus, or empty>
 completion_promise: JEFFY CONVERGED
 started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+run_started_at: $(date +%s)
+iteration_started_at: $(date +%s)
+max_wall_clock_seconds: <seconds from --max-time, else 0>
+max_iteration_seconds: <seconds from --max-iter-time, else 0>
 base_head: $(git -C "$PR" rev-parse HEAD 2>/dev/null || echo none)
 <verify_timeout_seconds line when derived above, else omit this line entirely>
 ---
@@ -79,6 +83,23 @@ the run ends. Cancel with /cancel-jeffy, or delete this file to end the loop.
 EOF
 grep -n "session_id\|iteration:" "$PR/.claude/jeffy-loop.local.md"
 ```
+
+**Time ceilings.** A turn budget counts turns, and a turn is unbounded in
+time, so the state file carries two optional ceilings the Stop hook enforces
+at every turn end. Both are **0 (off) unless the launch sets them**, and that
+default is deliberate: this engine publishes no figure it has not measured,
+and the right ceiling belongs to the project rather than to the tool. For
+reference when choosing one, rounds of ten iterations in the published corpus
+run roughly 60 to 130 minutes. `--max-time <duration>` sets
+`max_wall_clock_seconds` and ends the run out of time the way exhaustion ends
+it out of turns; `--max-iter-time <duration>` sets `max_iteration_seconds`,
+after which a long iteration draws an ITERATION OVERRUN note and two
+consecutive overruns end the run. Accept `45m`, `2h`, `900s` or a bare
+integer of seconds, and `0` as an explicit opt-out. Neither ceiling can cut a
+turn short - the hook fires after it - and neither preempts the closing
+extension or a converged declaration. Whether a ceiling is set or not, the
+run state line reports elapsed wall time every iteration, so a run can see
+its own clock.
 
 Verify the write: the grep output must show the current session id and `iteration: 1`. If the session id line is empty or wrong, delete the file, report the failure, and stop. The iteration prompt itself is a single line stored at `$REF/iteration-prompt.txt`; the hook reads it from disk at every turn end and JSON-encodes it with jq, so its content never needs to be injected through the shell. Never edit iteration-prompt.txt casually: the loop's journal grammar, checkpoint discipline, run report, and closing rule all live in it, and it must stay a single line.
 

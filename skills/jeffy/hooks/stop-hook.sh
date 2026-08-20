@@ -938,6 +938,66 @@ if [ "$iter" -ge "$max" ]; then
   fi
 fi
 
+# P1-49: the wall-clock ceiling, and the per-iteration overrun note.
+# "Budget counts turns, and a single turn is unbounded in time and cost" was
+# true of every release before this one: a ten-turn budget had no upper bound
+# in hours. These two keys give it one, and both are OFF unless the launch
+# sets them - a default measured from nothing would be a number this engine
+# refuses to publish anywhere else. For reference when choosing one: rounds
+# of ten iterations in the published corpus run roughly 60 to 130 minutes.
+#
+# Placement is deliberate and load-bearing. This sits AFTER the closing
+# extension is decided and BEFORE the re-feed, and it yields to an extension
+# granted this turn: the window buys the convergence sequence, and a ceiling
+# that killed a run three iterations from a certified declaration would cost
+# more than the unbounded turn it was protecting against. A converged promise
+# is never touched by either ceiling - that branch has already returned.
+now_epoch="$(date +%s 2>/dev/null || echo 0)"
+run_started="$(fm run_started_at)"
+wall_max="$(fm max_wall_clock_seconds)"
+iter_started="$(fm iteration_started_at)"
+iter_max="$(fm max_iteration_seconds)"
+case "$run_started" in '' | *[!0-9]*) run_started="" ;; esac
+case "$wall_max" in '' | *[!0-9]*) wall_max=0 ;; esac
+case "$iter_started" in '' | *[!0-9]*) iter_started="" ;; esac
+case "$iter_max" in '' | *[!0-9]*) iter_max=0 ;; esac
+wall_elapsed=""
+if [ -n "$run_started" ] && [ "$now_epoch" -gt 0 ] && [ "$now_epoch" -ge "$run_started" ]; then
+  wall_elapsed=$((now_epoch - run_started))
+fi
+
+# A malformed epoch fails open with a note rather than trapping the session,
+# the way every other unparseable state value here does.
+if [ -n "$(fm run_started_at)" ] && [ -z "$run_started" ]; then
+  echo "jeffy stop hook: run_started_at is not an epoch integer; skipping the wall-clock ceiling." >&2
+fi
+
+overrun_flag="$(fm overrun)"
+case "$overrun_flag" in 1) overrun_flag=1 ;; *) overrun_flag=0 ;; esac
+new_overrun=0
+overrun_note=""
+if [ "$iter_max" -gt 0 ] && [ -n "$iter_started" ] && [ "$now_epoch" -ge "$iter_started" ]; then
+  iter_elapsed=$((now_epoch - iter_started))
+  if [ "$iter_elapsed" -gt "$iter_max" ]; then
+    # The hook fires after the turn, so it cannot cut a long iteration short;
+    # what it can do is refuse to let the next one be shaped the same way.
+    if [ "$overrun_flag" = "1" ] && [ -z "$extension" ]; then
+      echo "jeffy stop hook: two consecutive iterations exceeded the ${iter_max}s per-iteration ceiling (latest: iteration $iter at ${iter_elapsed}s); ending the run. Split the work or mark the task blocked in the next run." >&2
+      rm -f "$state"
+      exit 0
+    fi
+    new_overrun=1
+    overrun_note="iteration $iter took ${iter_elapsed}s against a ${iter_max}s per-iteration ceiling; split the next task into work that fits, or mark it blocked with the reason - a second consecutive overrun ends the run"
+  fi
+fi
+
+if [ "$wall_max" -gt 0 ] && [ -n "$wall_elapsed" ] && [ "$wall_elapsed" -gt "$wall_max" ] \
+  && [ -z "$extension" ] && [ -z "$corrective" ]; then
+  echo "jeffy stop hook: the run reached its wall-clock ceiling (${wall_elapsed}s against ${wall_max}s) at iteration $iter of $max; ending the run out of time rather than out of turns. The ledger and the map carry to the next run." >&2
+  rm -f "$state"
+  exit 0
+fi
+
 # Re-feed: advance the iteration counter in place, then block the stop with
 # the iteration prompt as the reason. The prompt file was resolved at launch;
 # a moved or removed jeffy skills folder leaves it stale, in which
@@ -1224,8 +1284,8 @@ tmp="$state.tmp"
 # archive_migrated rides along with the strict archive baseline it certifies:
 # the baseline this rewrite stores is strict, so the naive escape above has
 # done its one job and must never be taken again.
-if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory" -v rh="$new_rows_hist" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" '
-  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!sli) print "last_inventory: " li; if (rh != "" && !srh) print "rows_history: " rh; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory" -v rh="$new_rows_hist" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" -v it="$now_epoch" -v ov="$new_overrun" '
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!sli) print "last_inventory: " li; if (rh != "" && !srh) print "rows_history: " rh; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (it != "0" && !sit) print "iteration_started_at: " it; if (!sov) print "overrun: " ov; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
   fmc == 1 && /^last_inventory: / { print "last_inventory: " li; sli = 1; next }
   fmc == 1 && rh != "" && /^rows_history: / { print "rows_history: " rh; srh = 1; next }
@@ -1239,6 +1299,8 @@ if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory
   fmc == 1 && /^stall_ceremony: / { print "stall_ceremony: " sc; ssc = 1; next }
   fmc == 1 && /^last_archive: / { print "last_archive: " la; sla = 1; next }
   fmc == 1 && /^archive_migrated: / { print "archive_migrated: 1"; sam = 1; next }
+  fmc == 1 && it != "0" && /^iteration_started_at: / { print "iteration_started_at: " it; sit = 1; next }
+  fmc == 1 && /^overrun: / { print "overrun: " ov; sov = 1; next }
   { print }
 ' "$state" > "$tmp"; then
   mv "$tmp" "$state"
@@ -1267,6 +1329,9 @@ fi
 if [ -n "$stall_note" ]; then
   reason="$reason STALL: $stall_note."
 fi
+if [ -n "$overrun_note" ]; then
+  reason="$reason ITERATION OVERRUN: $overrun_note."
+fi
 if [ -n "$extension" ]; then
   reason="$reason CLOSING EXTENSION: one-time +2 iterations granted because only the convergence sequence remains. No further extension will be granted."
 fi
@@ -1279,6 +1344,18 @@ if [ -n "$open_now" ]; then
 fi
 if [ -n "$unswept_rows" ]; then
   run_state="$run_state; unswept rows $unswept_rows"
+fi
+# The wall figure rides the same line as the iteration arithmetic, so the run
+# plans against elapsed time the way it plans against remaining turns. It is
+# stated whenever it can be measured, ceiling or no ceiling: awareness is
+# free, and a run that can see the clock can choose to wrap up before one is
+# ever imposed.
+if [ -n "$wall_elapsed" ]; then
+  if [ "$wall_max" -gt 0 ]; then
+    run_state="$run_state; wall $((wall_elapsed / 60))m/$((wall_max / 60))m"
+  else
+    run_state="$run_state; wall $((wall_elapsed / 60))m (no ceiling set)"
+  fi
 fi
 run_state="$run_state; jeffy v$JEFFY_VERSION"
 reason="$reason $run_state."

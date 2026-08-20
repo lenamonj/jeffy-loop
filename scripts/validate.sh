@@ -5217,6 +5217,124 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook ended a run early over an unparseable ledger line, which the severity floor treats as blocking"
     fi
 
+    # P1-49: the time ceilings. A turn budget counts turns and a turn is
+    # unbounded in time, so these bound the run in hours. Both default to off,
+    # which is itself checked: a run with no keys must behave exactly as it
+    # did before this shipped. What matters most here is the precedence - a
+    # ceiling that preempted the closing extension would kill runs three
+    # iterations from a certified declaration, which is worse than the
+    # unbounded turn it was protecting against.
+    hb_now="$(date +%s)"
+
+    hb_write_state sess-1 3 10
+    hb_state_addkey "run_started_at: $((hb_now - 7200))"
+    hb_state_addkey 'max_wall_clock_seconds: 3600'
+    hb_err="$(hb_run sess-1 'worked the task' '' 2>&1 1>/dev/null)"
+    if [ ! -f "$hb_state" ] && printf '%s' "$hb_err" | grep -qF 'wall-clock ceiling'; then
+      pass "stop hook ends a run that passed its wall-clock ceiling, out of time rather than out of turns"
+    else
+      printf '%s\n' "$hb_err"
+      fault "stop hook ran past its declared wall-clock ceiling"
+    fi
+
+    hb_write_state sess-1 3 10
+    hb_state_addkey "run_started_at: $((hb_now - 999999))"
+    hb_state_addkey 'max_wall_clock_seconds: 0'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ -f "$hb_state" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no ceiling set'; then
+      pass "a wall-clock ceiling of 0 disables enforcement and still reports elapsed time"
+    else
+      printf '%s\n' "$hb_out"
+      fault "max_wall_clock_seconds: 0 did not disable the ceiling, or the run state dropped the wall figure"
+    fi
+
+    # Malformed epochs are an infrastructure gap, not evidence: fail open with
+    # a note, the way every other unparseable state value here does.
+    hb_write_state sess-1 3 10
+    hb_state_addkey 'run_started_at: not-an-epoch'
+    hb_state_addkey 'max_wall_clock_seconds: 60'
+    hb_out="$(hb_run sess-1 'worked the task' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ -f "$hb_state" ] \
+      && grep -q 'not an epoch integer' "$hb_tmp/hb_err.txt"; then
+      pass "a malformed run_started_at fails open with a diagnostic rather than trapping the session"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook mishandled a malformed epoch in the wall-clock ceiling"
+    fi
+
+    # A run with none of the keys is the pre-1.13.0 shape and must be untouched.
+    hb_write_state sess-1 3 10
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ -f "$hb_state" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'wall '; then
+      pass "a state file with no time keys behaves exactly as it did before the ceilings shipped"
+    else
+      printf '%s\n' "$hb_out"
+      fault "the time ceilings changed the behaviour of a state file that declares none"
+    fi
+
+    # Per-iteration overrun: the note first, the stop only on the second.
+    hb_write_state sess-1 3 10
+    hb_state_addkey "iteration_started_at: $((hb_now - 600))"
+    hb_state_addkey 'max_iteration_seconds: 60'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ITERATION OVERRUN' \
+      && grep -q '^overrun: 1$' "$hb_state"; then
+      pass "a long iteration draws an ITERATION OVERRUN note and arms the second strike"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook said nothing about an iteration that blew its per-iteration ceiling"
+    fi
+
+    hb_write_state sess-1 3 10
+    hb_state_addkey "iteration_started_at: $((hb_now - 600))"
+    hb_state_addkey 'max_iteration_seconds: 60'
+    hb_state_addkey 'overrun: 1'
+    hb_err="$(hb_run sess-1 'worked the task' '' 2>&1 1>/dev/null)"
+    if [ ! -f "$hb_state" ] && printf '%s' "$hb_err" | grep -qF 'two consecutive iterations exceeded'; then
+      pass "two consecutive per-iteration overruns end the run"
+    else
+      printf '%s\n' "$hb_err"
+      fault "the second consecutive overrun did not end the run"
+    fi
+
+    # Precedence, and this is the one that matters: a ceiling never robs a run
+    # of the closing extension it just earned.
+    hb_write_state sess-1 10 10
+    hb_state_addkey "run_started_at: $((hb_now - 999999))"
+    hb_state_addkey 'max_wall_clock_seconds: 60'
+    hb_write_backlog ''
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      printf -- '- [x] rowA: swept at abc123 - probed\n'
+    } > "$hb_proj/PLAN.md"
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ -f "$hb_state" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CLOSING EXTENSION'; then
+      pass "a blown wall-clock ceiling yields to a closing extension granted the same turn"
+    else
+      printf '%s\n' "$hb_out"
+      fault "a time ceiling preempted the closing extension, killing a run at its finish line"
+    fi
+
+    # And never a converged promise: that branch returns before the ceilings.
+    hb_write_state sess-1 3 10
+    hb_state_addkey "run_started_at: $((hb_now - 999999))"
+    hb_state_addkey 'max_wall_clock_seconds: 60'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "a valid converged promise is unaffected by a blown wall-clock ceiling"
+    else
+      printf '%s\n' "$hb_out"
+      fault "a time ceiling disturbed a valid convergence"
+    fi
+
     # P0-5 (P1-47): a Surface inventory row flip is progress to the stall
     # gate. The armed run whose inventory moved keeps going with the strike
     # cleared; the control with an identical inventory takes the second
