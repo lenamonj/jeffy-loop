@@ -25,6 +25,24 @@ state="$root/.claude/jeffy-loop.local.md"
 # own location: the installer copies hooks/ whole, and $0 is where it landed.
 # Absence is recorded, not fatal here - the converged stop turns it into a
 # refusal, which is where failing closed belongs. (P1-50)
+# Loop memory, enumerated once. Three things ask "did anything outside the
+# loop's own bookkeeping move": the converged-tree check, the stall gate, and
+# (from 1.13.0) the oscillation hash. They were two copies of one regex and
+# adding a third was the moment to stop: two definitions of one signal is one
+# too many, and when they drift the gates disagree about what progress is
+# while both look right in isolation. (P1-19's lesson, P1-48's application.)
+JEFFY_LOOP_MEMORY_RE='^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*|\.claude/jeffy-loop\.local\.md|\.claude/settings\.local\.json)$'
+
+# A digest of the tracked tree with loop memory excluded, so a run that
+# reverts its own work returns to a hash it already had. The plain tree hash
+# cannot do this: every iteration writes a journal entry, so the plain hash
+# always differs and an oscillating run looks like a progressing one forever.
+jeffy_content_tree_hash() { # $1 project root
+  git -C "$1" ls-tree -r HEAD 2>/dev/null | awk -F'\t' -v re="$JEFFY_LOOP_MEMORY_RE" '
+    NF == 2 && $2 !~ re { print $1 "\t" $2 }
+  ' | cksum | tr ' \t' '--'
+}
+
 qv_lib="${BASH_SOURCE[0]%/*}/lib/quiet-verify.sh"
 if [ -f "$qv_lib" ]; then
   # shellcheck source-path=SCRIPTDIR
@@ -308,7 +326,7 @@ if [ -n "$promise" ]; then
           # project root, so without it the exclusion matched nothing and the
           # gate rejected every declaration it saw.
           if [ -z "$violation" ]; then
-            nonstate="$(git -C "$root" diff --name-only --relative "$conv_hash" HEAD 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*|\.claude/jeffy-loop\.local\.md|\.claude/settings\.local\.json)$' | head -n 1)"
+            nonstate="$(git -C "$root" diff --name-only --relative "$conv_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
             if [ -n "$nonstate" ]; then
               violation="product path $nonstate changed after the Converged hash $conv_hash; certify the current tree before declaring"
             fi
@@ -1105,6 +1123,12 @@ esac
 # git HEAD and no ledger there is no signal at all: skip with a stderr note.
 stall_note=""
 new_stall=0
+# Both are read after this gate by the oscillation and attempt-limit checks,
+# and the gate assigns them only on the no-progress branch: under set -u an
+# iteration that DID make progress would then abort the hook entirely, which
+# is every healthy iteration. Initialised here so they always have a value.
+stall_exempt=""
+stall_type=""
 cur_head="none"
 if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
   cur_head="$(git -C "$root" rev-parse HEAD 2>/dev/null || echo none)"
@@ -1175,7 +1199,7 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ] || [ -n "$last_inventory" ]; 
   elif [ "$cur_head" != "none" ] && [ "$cur_head" != "$last_head" ]; then
     if [ -n "$last_head" ] && [ "$last_head" != "none" ] \
       && git -C "$root" rev-parse --verify --quiet "$last_head^{commit}" >/dev/null 2>&1; then
-      moved="$(git -C "$root" diff --name-only --relative "$last_head" "$cur_head" 2>/dev/null | grep -vE '^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy/.*|\.claude/jeffy-loop\.local\.md|\.claude/settings\.local\.json)$' | head -n 1)"
+      moved="$(git -C "$root" diff --name-only --relative "$last_head" "$cur_head" 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
       [ -n "$moved" ] && progress=1
     else
       progress=1
@@ -1267,6 +1291,98 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ] || [ -n "$last_inventory" ]; 
   fi
 fi
 
+# P1-48: oscillation and the attempt limit, the two thrash shapes the stall
+# gate cannot see. It asks whether anything moved; these ask whether what
+# moved went anywhere. A run that changes a source file every iteration and
+# reverts it two iterations later passes the stall gate every single time and
+# can burn a whole budget looking productive.
+#
+# The trail is one state key rather than six, in the shape rows_history
+# already uses: iteration|attempted-task|content-hash|changed-count, last 6.
+fp_hist="$(fm fingerprints)"
+# The attempted task is read here rather than borrowed from the stall gate:
+# that gate only looks up the journal when it found NO progress, and a run
+# burning attempts on one stubborn task is making progress by its measure
+# every time. Same lookup, same last-match-wins rule, no dependency on which
+# branch the stall gate took.
+fp_task="ceremony"
+if [ -f "$root/JOURNAL.md" ] && [ -n "$run_tok" ]; then
+  fp_type="$(awk -v tok="| $runid8 |" -v it="$iter" '
+    { sub(/\r$/, "") }
+    /^## iter / && index($0, tok) {
+      split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (t == "ROTATION" || t == "SALVAGE") next
+      n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n)
+      if (n + 0 == it + 0) type = t
+    }
+    END { print type }
+  ' "$root/JOURNAL.md")"
+  case "$fp_type" in
+    '' | AUDIT | EVALUATOR | RATCHET | WRAPUP | SWEEP | SALVAGE | ROTATION) fp_task="ceremony" ;;
+    *) fp_task="$fp_type" ;;
+  esac
+fi
+fp_hash="none"
+fp_changed=0
+if [ "$cur_head" != "none" ]; then
+  fp_hash="$(jeffy_content_tree_hash "$root")"
+  if [ -n "$last_head" ] && [ "$last_head" != "none" ] \
+    && git -C "$root" rev-parse --verify --quiet "$last_head^{commit}" >/dev/null 2>&1; then
+    fp_changed="$(git -C "$root" diff --name-only --relative "$last_head" "$cur_head" 2>/dev/null | grep -vcE "$JEFFY_LOOP_MEMORY_RE")"
+    case "$fp_changed" in '' | *[!0-9]*) fp_changed=0 ;; esac
+  fi
+fi
+new_fp_hist="$fp_hist${fp_hist:+;}$iter|$fp_task|$fp_hash|$fp_changed"
+new_fp_hist="$(printf '%s' "$new_fp_hist" | awk -F';' '{ s = (NF > 6) ? NF - 5 : 1; out = ""; for (i = s; i <= NF; i++) out = out (out == "" ? "" : ";") $i; print out }')"
+
+osc_flag="$(fm oscillation)"
+case "$osc_flag" in 1) osc_flag=1 ;; *) osc_flag=0 ;; esac
+new_osc="$osc_flag"
+osc_note=""
+attempt_note=""
+if [ "$fp_hash" != "none" ] && [ -z "$stall_exempt" ]; then
+  # Oscillation: this iteration's content hash is one the tree already had
+  # two or three iterations ago. Two back is a straight revert; three back
+  # catches the fix-fix-revert-revert shape.
+  fp_back2="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[3] } }')"
+  fp_back3="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 3) { split($(NF-2), a, "|"); print a[3] } }')"
+  fp_back2_it="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[1] } }')"
+  fp_back3_it="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 3) { split($(NF-2), a, "|"); print a[1] } }')"
+  fp_match=""
+  if [ -n "$fp_back2" ] && [ "$fp_hash" = "$fp_back2" ]; then
+    fp_match="$fp_back2_it"
+  elif [ -n "$fp_back3" ] && [ "$fp_hash" = "$fp_back3" ]; then
+    fp_match="$fp_back3_it"
+  fi
+  if [ -n "$fp_match" ]; then
+    if [ "$osc_flag" = "1" ] && [ -z "$extension" ] && [ -z "$corrective" ]; then
+      echo "jeffy stop hook: the tree has returned to a state it already held for the second time (iteration $iter matches iteration $fp_match, excluding loop memory); the run is oscillating rather than progressing, so it ends here. The ledger and the map carry to the next run." >&2
+      rm -f "$state"
+      exit 0
+    fi
+    new_osc=1
+    osc_note="iteration $iter left the tree byte-identical to how iteration $fp_match left it, excluding loop memory - work done since has been undone, so decide which version is right and record why in the journal; a second occurrence ends the run"
+  else
+    new_osc=0
+  fi
+
+  # Attempt limit: the same task attempted three iterations running and still
+  # open. "At most 3 fix attempts, then mark it blocked with a reason" has
+  # been in the iteration prompt since the beginning and was the last rule of
+  # its weight that nothing enforced.
+  if [ "$fp_task" != "ceremony" ] && [ -f "$root/BACKLOG.md" ]; then
+    # The trail holds the iterations BEFORE this one, so three consecutive
+    # attempts means this iteration plus the last two entries - not the two
+    # before those, which was an off-by-one that left this unreachable.
+    fp_prev1="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 1) { split($NF, a, "|"); print a[2] } }')"
+    fp_prev2="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[2] } }')"
+    if [ "$fp_task" = "$fp_prev1" ] && [ "$fp_task" = "$fp_prev2" ] \
+      && grep -qE "^- \[ \] $fp_task( |\()" "$root/BACKLOG.md"; then
+      attempt_note="$fp_task has been the attempted task for three consecutive iterations and is still open; the rule is at most three fix attempts, so mark it [b] with the reason it resisted and move to the next item rather than spending a fourth"
+    fi
+  fi
+fi
+
 # The extension is granted by the same rewrite that advances the counter, so
 # the new budget is on the state file before anything reads it: the iteration
 # suffix, the run-state note, and the next turn's budget test all see max+2.
@@ -1284,8 +1400,8 @@ tmp="$state.tmp"
 # archive_migrated rides along with the strict archive baseline it certifies:
 # the baseline this rewrite stores is strict, so the naive escape above has
 # done its one job and must never be taken again.
-if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory" -v rh="$new_rows_hist" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" -v it="$now_epoch" -v ov="$new_overrun" '
-  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!sli) print "last_inventory: " li; if (rh != "" && !srh) print "rows_history: " rh; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (it != "0" && !sit) print "iteration_started_at: " it; if (!sov) print "overrun: " ov; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory" -v rh="$new_rows_hist" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" -v it="$now_epoch" -v ov="$new_overrun" -v fp="$new_fp_hist" -v os="$new_osc" '
+  /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!sli) print "last_inventory: " li; if (rh != "" && !srh) print "rows_history: " rh; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (it != "0" && !sit) print "iteration_started_at: " it; if (!sov) print "overrun: " ov; if (fp != "" && !sfp) print "fingerprints: " fp; if (!sos) print "oscillation: " os; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
   fmc == 1 && /^last_inventory: / { print "last_inventory: " li; sli = 1; next }
   fmc == 1 && rh != "" && /^rows_history: / { print "rows_history: " rh; srh = 1; next }
@@ -1301,6 +1417,8 @@ if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory
   fmc == 1 && /^archive_migrated: / { print "archive_migrated: 1"; sam = 1; next }
   fmc == 1 && it != "0" && /^iteration_started_at: / { print "iteration_started_at: " it; sit = 1; next }
   fmc == 1 && /^overrun: / { print "overrun: " ov; sov = 1; next }
+  fmc == 1 && fp != "" && /^fingerprints: / { print "fingerprints: " fp; sfp = 1; next }
+  fmc == 1 && /^oscillation: / { print "oscillation: " os; sos = 1; next }
   { print }
 ' "$state" > "$tmp"; then
   mv "$tmp" "$state"
@@ -1331,6 +1449,12 @@ if [ -n "$stall_note" ]; then
 fi
 if [ -n "$overrun_note" ]; then
   reason="$reason ITERATION OVERRUN: $overrun_note."
+fi
+if [ -n "$osc_note" ]; then
+  reason="$reason OSCILLATION: $osc_note."
+fi
+if [ -n "$attempt_note" ]; then
+  reason="$reason ATTEMPT LIMIT: $attempt_note."
 fi
 if [ -n "$extension" ]; then
   reason="$reason CLOSING EXTENSION: one-time +2 iterations granted because only the convergence sequence remains. No further extension will be granted."

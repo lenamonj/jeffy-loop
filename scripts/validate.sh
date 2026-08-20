@@ -1537,6 +1537,9 @@ if command -v jq >/dev/null 2>&1; then
         printf 'Jeffy loop state.\n'
       } > "$hb_state"
     }
+    hb_state_addkey() { # $1 "key: value", inserted before the closing ---
+      awk -v kv="$1" 'BEGIN { c = 0 } /^---$/ { c++; if (c == 2) print kv } { print }' "$hb_state" > "$hb_state.k" && mv "$hb_state.k" "$hb_state"
+    }
     hb_write_plan() { # $1 command for PLAN.md's Command: line
       # The labeled line is the only shape the hook executes (the bare
       # first-line fallback was removed in 1.5.0), so every fixture that
@@ -2424,6 +2427,123 @@ if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$hb_out"
         fault "stop hook flagged untracked files as hygiene violations"
       fi
+      # P1-48: oscillation and the attempt limit. The stall gate asks whether
+      # anything moved; these ask whether what moved went anywhere. A run that
+      # edits a source file and reverts it two iterations later moves a
+      # non-memory path every single iteration, so it passes the stall gate
+      # forever while achieving nothing. These run in the git fixture because
+      # the content hash is a real ls-tree over a real repository - a synthetic
+      # state file would prove the arithmetic and not the behaviour.
+      hb_write_backlog ''
+      printf 'v-osc-A\n' > "$hb_proj/product.txt"
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m osc-a >/dev/null 2>&1 || true
+      hb_osc_head_a="$(hb_git rev-parse HEAD)"
+      hb_osc_hash_a="$(hb_git ls-tree -r HEAD | awk -F'\t' 'NF == 2 && $2 !~ /^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.jeffy\/.*|\.claude\/jeffy-loop\.local\.md|\.claude\/settings\.local\.json)$/ { print $1 "\t" $2 }' | cksum | tr ' \t' '--')"
+
+      printf 'v-osc-B\n' > "$hb_proj/product.txt"
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m osc-b >/dev/null 2>&1 || true
+
+      # Back to A: the tree now holds content it already held, which is the
+      # signature the plain tree hash cannot see because the journal moved too.
+      printf 'v-osc-A\n' > "$hb_proj/product.txt"
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m osc-back >/dev/null 2>&1 || true
+      hb_osc_head_c="$(hb_git rev-parse HEAD)"
+      hb_write_journal 3 10
+
+      hb_write_state_stall sess-1 3 10 "$hb_osc_head_a" stale-0 0
+      hb_state_addkey "fingerprints: 1|T1|$hb_osc_hash_a|1;2|T2|other-hash|1"
+      hb_out="$(hb_run sess-1 'worked the task' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'OSCILLATION' \
+        && grep -q '^oscillation: 1$' "$hb_state"; then
+        pass "stop hook sees a tree returned to a state it already held and calls it oscillation, not progress"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a revert-to-a-previous-tree as ordinary progress, which is a whole budget spent looking productive"
+      fi
+
+      # Armed, and it happens again: the run ends.
+      hb_write_state_stall sess-1 3 10 "$hb_osc_head_a" stale-0 0
+      hb_state_addkey "fingerprints: 1|T1|$hb_osc_hash_a|1;2|T2|other-hash|1"
+      hb_state_addkey 'oscillation: 1'
+      hb_err="$(hb_run sess-1 'worked the task' '' 2>&1 1>/dev/null)"
+      if [ ! -f "$hb_state" ] && printf '%s' "$hb_err" | grep -qF 'oscillating rather than progressing'; then
+        pass "a second oscillation ends the run"
+      else
+        printf '%s\n' "$hb_err"
+        fault "the second oscillation did not end the run"
+      fi
+
+      # A tree that genuinely moved forward is not oscillation, and the strike
+      # resets - the control that keeps this from firing on every run.
+      printf 'v-osc-D\n' > "$hb_proj/product.txt"
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m osc-d >/dev/null 2>&1 || true
+      hb_write_journal 3 10
+      hb_write_state_stall sess-1 3 10 "$hb_osc_head_c" stale-0 0
+      hb_state_addkey "fingerprints: 1|T1|$hb_osc_hash_a|1;2|T2|other-hash|1"
+      hb_state_addkey 'oscillation: 1'
+      hb_out="$(hb_run sess-1 'worked the task' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && [ -f "$hb_state" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'OSCILLATION' \
+        && grep -q '^oscillation: 0$' "$hb_state"; then
+        pass "a tree that moved somewhere new clears the oscillation strike"
+      else
+        printf '%s\n' "$hb_out"
+        fault "the oscillation strike did not reset on real progress, so a healthy run would die of it"
+      fi
+
+      # Attempt limit: the same task attempted three iterations running and
+      # still open. This makes the prompt's oldest unenforced rule mechanical.
+      hb_write_backlog '- [ ] T7 (Medium, runtime, correctness): resists fixing. Acceptance: test.'
+      hb_write_journal_task() { # $1 iteration, $2 max, $3 task id
+        printf '## iter %s/%s | sess-1-000000 | 2026-01-01 | %s | done\n\nTask: %s\n' \
+          "$1" "$2" "$3" "$3" >> "$hb_proj/JOURNAL.md"
+      }
+      : > "$hb_proj/JOURNAL.md"
+      hb_write_journal_task 3 10 T7
+      printf 'v-attempt\n' > "$hb_proj/product.txt"
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m attempt >/dev/null 2>&1 || true
+      hb_write_state_stall sess-1 3 10 "$(hb_git rev-parse HEAD)" stale-0 0
+      hb_state_addkey 'fingerprints: 1|T7|h1|2;2|T7|h2|1'
+      hb_out="$(hb_run sess-1 'worked the task' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ATTEMPT LIMIT' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'T7'; then
+        pass "stop hook enforces the three-attempt rule the prompt has always stated and nothing checked"
+      else
+        printf '%s\n' "$hb_out"
+        fault "a task attempted three iterations running and still open drew no attempt-limit note"
+      fi
+
+      # And it does not fire on a task that closed: the ledger is the oracle.
+      hb_write_backlog ''
+      hb_write_state_stall sess-1 3 10 "$(hb_git rev-parse HEAD)" stale-0 0
+      hb_state_addkey 'fingerprints: 1|T7|h1|2;2|T7|h2|1'
+      hb_out="$(hb_run sess-1 'worked the task' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'ATTEMPT LIMIT'; then
+        pass "the attempt limit stays silent once the task it counted has closed"
+      else
+        printf '%s\n' "$hb_out"
+        fault "the attempt limit fired on a task that is no longer open"
+      fi
+
+      # One exclusion list, two callers, asserted rather than assumed: if the
+      # oscillation hash and the stall gate ever disagree about what loop
+      # memory is, both gates look right and the pair is wrong.
+      if [ "$(grep -c 'JEFFY_LOOP_MEMORY_RE' "$hb_hook")" -ge 4 ] \
+        && [ "$(grep -c "grep -vE '\^(PLAN" "$hb_hook")" -eq 0 ]; then
+        pass "loop memory is enumerated once in the hook and shared by every gate that asks what moved"
+      else
+        fault "the hook carries more than one definition of loop memory; the stall gate and the oscillation hash will drift apart"
+      fi
+
       rm -f "$hb_proj/junk.txt" "$hb_state"
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     fi
@@ -5047,9 +5167,6 @@ if command -v jq >/dev/null 2>&1; then
     # pass. A state-key injector rides beside the fixtures: projection and
     # history scenarios need rows_history and stall ones last_inventory, and
     # the frontmatter is where the hook reads both.
-    hb_state_addkey() { # $1 "key: value", inserted before the closing ---
-      awk -v kv="$1" 'BEGIN { c = 0 } /^---$/ { c++; if (c == 2) print kv } { print }' "$hb_state" > "$hb_state.k" && mv "$hb_state.k" "$hb_state"
-    }
     hb_write_state sess-1 3 10
     {
       printf '# Backlog\n\n## Now\n'
