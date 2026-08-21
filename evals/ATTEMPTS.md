@@ -382,9 +382,13 @@ untrusted contributor and the model.** Described here by class only:
 **Redaction, 2026-08-14, disclosed rather than performed quietly.** This section
 originally named the exact mechanism of each of the three, and that text was
 public in this repository from 2026-08-14 until this commit. One of the three
-has since been reported to the vendor through their published security channel;
-the other two have not been reported, so their mechanics are withheld here as
-well. The original text remains in this repository's git history and is not
+has since been reported to the vendor through their published security channel
+and **was triaged on 2026-08-20**, meaning the vendor accepted it as a valid
+finding and scored it Low (2.3); the other two have not been reported, so
+their mechanics are withheld here as well. Triaged is not fixed, and the
+report commits in writing to publishing nothing while it is unfixed, so the
+mechanics stay withheld until it resolves - at which point this section says
+what it found. The original text remains in this repository's git history and is not
 being rewritten. Nothing about the findings is being retracted, softened or
 rescored - only the reproduction detail is withheld, and this note exists so the
 change is visible rather than silent. The counts, severities and every claim

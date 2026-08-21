@@ -26,6 +26,8 @@ Three fixes are in other people's code because a maintainer with no stake in thi
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
 - **[chalk](https://github.com/chalk/chalk/pull/687) - fixed upstream.** The maintainer reproduced the finding, then wrote and merged his own fix, shipped in v6.0.0.
 
+A fourth is not a fix and is not counted as one, but it is the strongest outside signal here: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) was triaged by Anthropic's own security program on 2026-08-20** - accepted as a valid finding and scored Low (2.3). It is triaged, not fixed, so its mechanics stay redacted here and in the receipt until the report resolves; that is what the report itself promised, and the promise outranks the announcement.
+
 Behind them: **<!-- count:converged -->37<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **18 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#external-validation-public-open-source-projects)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
