@@ -23,9 +23,11 @@ loss rather than hiding it.
 | bat | 1 | 10 | converged | evaluator countersigned | 0 |
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | Catch2 | 4 | 35 | converged | evaluator countersigned | 1 |
+| Carbon | 4 | 17 | **not converged** | n/a | 1 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
 | clap | 4 | 31 | converged | evaluator countersigned | 0 |
+| chroma.js | 4 | 30 | **not converged** | n/a | 1 |
 | claude-agent-sdk-python (attempt 1) | 3 | 30 | **not converged** | n/a | 0 |
 | claude-agent-sdk-python (attempt 2) | 3 | 30 | converged | evaluator countersigned | 1 |
 | claude-code-action (attempt 1) | 3 | 30 | **not converged** | n/a | 0 |
@@ -34,6 +36,7 @@ loss rather than hiding it.
 | cobra | 4 | 32 | converged | evaluator countersigned | 0 |
 | commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
+| decimal.js | 4 | 41 | **not converged** | n/a | 1 |
 | diff-so-fancy | 3 | 30 | **not converged** | n/a | 2 |
 | eemeli/yaml | 5 | 50 | **not converged** | n/a | 0 |
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
@@ -606,6 +609,74 @@ broadly than the check behind it - both filed (`T30`, `T31`) as the next
 run's first work, and both open at budget exhaustion. A loop whose weakness
 is evidence quality was pointed at a library whose job is evidence, and the
 library's evaluator won the last word.
+
+## Wave 4: three libraries where a wrong answer is silent, and none of them converged
+
+`Carbon`, `decimal.js` and `chroma.js` were run as one family on a
+pre-registered 4x10 budget each: value libraries where a wrong result never
+crashes, never throws, and fails only against a known answer. **All three are
+published as non-convergences.** The wave was also the first to run under
+engine v1.13.0 and carried that release's acceptance, which is recorded in
+the cohort file rather than here.
+
+`decimal.js` is `MikeMcl/decimal.js`, the JavaScript arbitrary-precision
+library. It is **not** `shopspring/decimal`, the Go library two rows above
+it. Different targets, different languages, never pooled.
+
+### decimal.js: an empty ledger, a swept map, and five verdicts that never landed
+
+4 runs, 41 iterations. **27 findings closed, 11 of them High** - the High
+count derived from the run's own explicit filing lines; the remaining
+severities are recorded in audit-score prose rather than in filing form and
+were hand-read. 19 of 19 rows swept from the first run onward, and it ends
+with **a completely empty ledger and five evaluator invocations across the
+four runs, none of which produced a declaration.** Shipped diff 16 files,
++1,337/-385.
+
+This is node-semver's shape, at greater length: every mechanical closing
+condition satisfied - map complete, ledger empty, suite green - and no
+verdict to rest a declaration on. A target that closes 27 findings including
+11 Highs and still cannot finish is the clearest statement available of what
+the gate costs, and of the fact that the gate is not a formality.
+
+### chroma.js: fully mapped, refused twice
+
+4 runs, 30 iterations, **20 findings closed - 9 High, 11 Medium** - in the
+colour-conversion library, with all 20 rows swept and 5 Lows carried at the
+end. Two evaluator invocations, both REJECT. Shipped diff 46 files,
++2,091/-393, the largest of the wave.
+
+### Carbon: the map never closed, in PHP this time
+
+4 runs, 17 iterations, **8 findings closed and every one of them High**, in
+the date library under a large share of PHP applications. It ends at **26 of
+37 rows swept with 25 items open on the ledger - sixteen Medium, nine Low,
+and not a single open High - and the evaluator gate never invoked.**
+
+That combination is worth reading twice. Under the ordering that shipped in
+v1.12.0 the map outranks every Medium, so eleven unswept rows should have
+been taken before sixteen Mediums were worked, and a run that could not
+clear them should have ended early with the arithmetic. Neither happened.
+The likeliest explanation is not disobedience but scope: **the projection
+that decides whether a map can be finished only ever looks at the current
+run, while the budget that matters is the wave.** Carbon's rows kept moving
+every round, so inside any single ten-iteration run the map looked
+reachable; only across four rounds is the shortfall obvious, and nothing in
+the engine sees four rounds. It is filed as the first real limit of the
+coverage guarantee, found by the mechanism that guarantee shipped with.
+
+### Both JavaScript targets were adopted without upstream test CI
+
+Neither `decimal.js` nor `chroma.js` has a test workflow at its base commit,
+so **their baselines were established locally and only locally**: green, ten
+runs out of ten, on the host that ran them. `chroma.js` additionally carries
+29 red check-runs at its base which are **all Dependabot dependency jobs**,
+none of them its test suite - the absence of test CI rather than a red
+baseline, and recorded here so a future reader does not have to guess. Both
+also leave an untracked `package-lock.json` that the iteration checkpoint
+would otherwise commit as the loop's own work; it was excluded locally
+through `.git/info/exclude` in each clone, never by editing the projects'
+own ignore files.
 
 ## Wave 3's two non-convergences: one map that never closed, one gate that refused twice
 
