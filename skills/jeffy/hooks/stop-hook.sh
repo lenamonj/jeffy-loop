@@ -349,6 +349,67 @@ if [ -n "$promise" ]; then
           echo "jeffy stop hook: PLAN.md has no Surface inventory section; skipping the inventory check." >&2
         fi
       fi
+      # P0-6: a swept row is a claim about code at a commit, and the code
+      # moves. The prompt has always said a row whose implementing code
+      # changed after its recorded commit is stale and flips back to unswept,
+      # and nothing has ever enforced it: two published runs were refused by
+      # the evaluator over exactly that, one carrying three rows recorded at a
+      # commit its parser had moved past, the other a row recorded two
+      # commits behind the header it covers. Both cost an invocation the
+      # declaration then did not have.
+      #
+      # Staleness needs to know which paths a row owns, which is why a swept
+      # row names the battery that swept it - the battery already declares
+      # its paths, so the row plus the battery is enough to ask git. A row
+      # naming no battery cannot be checked and is reported rather than
+      # refused: existing trees predate the form, exactly as the Surface
+      # inventory and Oracle class lines did when they shipped, and a check
+      # that refused every row written before it existed would refuse the
+      # whole corpus.
+      if [ -z "$violation" ] && [ -f "$root/PLAN.md" ] \
+        && command -v git >/dev/null 2>&1 \
+        && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+        stale_row=""
+        unlinked=0
+        linked=0
+        while IFS= read -r row; do
+          [ -n "$row" ] || continue
+          row_c="$(printf '%s' "$row" | grep -oE 'swept at [0-9a-f]{7,40}' | head -n 1 | awk '{print $3}')"
+          row_b="$(printf '%s' "$row" | grep -oE '\.jeffy/probes/[A-Za-z0-9._-]+' | head -n 1)"
+          if [ -z "$row_c" ] || [ -z "$row_b" ]; then
+            unlinked=$((unlinked + 1))
+            continue
+          fi
+          linked=$((linked + 1))
+          pf="$root/$row_b/paths"
+          [ -f "$pf" ] || continue
+          git -C "$root" rev-parse --verify --quiet "$row_c^{commit}" >/dev/null 2>&1 || continue
+          # The battery's own paths file is the row's scope. A path that
+          # changed since the row was recorded means the sweep certifies code
+          # that is no longer there.
+          # A blank line in a paths file makes grep -f match every path, so
+          # the empty lines come out before the file is used as a pattern
+          # list; an all-blank paths file leaves nothing to match and the row
+          # is passed over rather than refused on a vacuous hit.
+          pat="$(grep -v '^[[:space:]]*$' "$pf" 2>/dev/null)"
+          [ -n "$pat" ] || continue
+          moved="$(git -C "$root" diff --name-only --relative "$row_c" HEAD 2>/dev/null \
+            | grep -F -x -f <(printf '%s\n' "$pat") 2>/dev/null | head -n 1)"
+          if [ -n "$moved" ]; then
+            stale_row="$(printf '%s' "$row" | cut -c1-90) (recorded at $row_c; $moved has changed since)"
+            break
+          fi
+        done <<EOF
+$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[x\]/ { print }' "$root/PLAN.md" 2>/dev/null)
+EOF
+        if [ -n "$stale_row" ]; then
+          violation="a swept Surface inventory row is stale - $stale_row; re-sweep it and re-record the commit, or flip it back to unswept, then re-declare convergence"
+        elif [ "$linked" -eq 0 ] && [ "$unlinked" -gt 0 ]; then
+          echo "jeffy stop hook: no swept row names the battery that swept it ($unlinked rows), so staleness could not be derived; rows written from 1.14.0 carry it." >&2
+        elif [ "$unlinked" -gt 0 ]; then
+          echo "jeffy stop hook: $unlinked of $((linked + unlinked)) swept rows name no battery, so their staleness could not be derived." >&2
+        fi
+      fi
       # P1-46: a Declined entry's stated reason is a claim the declaration
       # rests on, and it was the one state-file claim the closing sequence
       # read but never re-verified - zstd lost its terminal gate verdict to

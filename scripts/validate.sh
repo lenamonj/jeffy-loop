@@ -2273,6 +2273,59 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook accepted a convergence promise with no certifying Converged line"
       fi
 
+      # P0-6: a swept row is a claim about code at a commit, and the code
+      # moves. arrow and spdlog were both refused by the evaluator over rows
+      # recorded at commits their sources had moved past - the rule that a
+      # stale row flips back to unswept has always been in the prompt with
+      # nothing behind it. Staleness needs the row's paths, which is why the
+      # row now names the battery that swept it and the battery's paths file
+      # supplies the scope. Both directions here, plus the migration case: a
+      # row written before the form existed cannot be derived and must fail
+      # open, exactly as the Surface inventory and Oracle class checks did.
+      mkdir -p "$hb_proj/.jeffy/probes/core"
+      printf 'product.txt\n' > "$hb_proj/.jeffy/probes/core/paths"
+      hb_git add .jeffy >/dev/null
+      hb_git commit -q -m probes
+      hb_recommit_artifact
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_write_plan_full none "- [x] core: swept at $hb_c1 via .jeffy/probes/core - probed every entry point"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is stale' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'product.txt has changed since' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook rejects the promise when a swept row's battery paths changed after its recorded commit"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted convergence over a stale Surface inventory row"
+      fi
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_write_plan_full none "- [x] core: swept at $hb_c2 via .jeffy/probes/core - re-swept after the change"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a swept row re-recorded at a commit its battery paths have not moved past"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a freshly re-recorded Surface inventory row"
+      fi
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_write_plan_full none "- [x] core: swept at $hb_c1 - probed every entry point"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'no swept row names the battery' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook fails open on swept rows predating the battery reference (stderr note)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt"
+        fault "stop hook mishandled a pre-1.14.0 swept row carrying no battery reference"
+      fi
+
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
       skip "converged-hash git scenarios (git not on PATH)"
