@@ -383,12 +383,20 @@ untrusted contributor and the model.** Described here by class only:
 originally named the exact mechanism of each of the three, and that text was
 public in this repository from 2026-08-14 until this commit. One of the three
 has since been reported to the vendor through their published security channel
-and **was triaged on 2026-08-20**, meaning the vendor accepted it as a valid
-finding and scored it Low (2.3); the other two have not been reported, so
-their mechanics are withheld here as well. Triaged is not fixed, and the
-report commits in writing to publishing nothing while it is unfixed, so the
-mechanics stay withheld until it resolves - at which point this section says
-what it found. The original text remains in this repository's git history and is not
+and **was scored Low (2.3) on 2026-08-20**, with Anthropic stating on
+2026-08-21 that their review of the report is ongoing; the other two have not
+been reported, so their mechanics are withheld here as well. Anthropic has
+also asked directly that the details stay unpublished until the report
+resolves, which matches the commitment the report already made, so the
+mechanics stay withheld until then - at which point this section says what it
+found.
+
+**A correction, kept visible.** For one day this section read that the vendor
+had "accepted it as a valid finding". That was an inference from a HackerOne
+reputation award, which is granted on triage, and not something Anthropic had
+said. Their own message says the review is ongoing. The inference was wrong to
+publish and the sentence is corrected rather than deleted, because a project
+that publishes its failures does not get to quietly fix its overclaims. The original text remains in this repository's git history and is not
 being rewritten. Nothing about the findings is being retracted, softened or
 rescored - only the reproduction detail is withheld, and this note exists so the
 change is visible rather than silent. The counts, severities and every claim
