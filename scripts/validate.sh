@@ -5495,6 +5495,28 @@ if command -v jq >/dev/null 2>&1; then
       fault "the metrics path is outside the loop-memory exclusion list; writing telemetry would look like work"
     fi
 
+    # P2-29: the record that matters most is the one the run ends on, and it
+    # was the only one never written - the write sat at the foot of the file,
+    # after every branch that ends a run had already exited, so three targets
+    # came up four records short across four runs each and every gap was a
+    # closing turn. A run ended by budget exhaustion has to leave one behind
+    # exactly as a re-feed does; it is an EXIT trap now rather than a
+    # trailing block, so the record does not depend on which branch ends the
+    # turn.
+    rm -rf "$hb_proj/.jeffy/metrics"
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    hb_endm="$(find "$hb_proj/.jeffy/metrics" -name '*.jsonl' -type f 2>/dev/null | head -n 1)"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && [ -n "$hb_endm" ] \
+      && [ "$(wc -l < "$hb_endm" | tr -d '[:space:]')" = "1" ] \
+      && jq -e '.iteration == 3 and .budget == 3' "$hb_endm" >/dev/null 2>&1; then
+      pass "a run ended by budget exhaustion still writes its closing telemetry record"
+    else
+      printf 'endm=[%s] out=[%s]\n' "$hb_endm" "$hb_out"
+      fault "the turn that ended the run left no telemetry record (the closing turn is the one that matters)"
+    fi
+    hb_write_state sess-1 3 10
+
     # The reader runs clean on populated, empty, and absent directories: a
     # stats tool that dies on an untouched project is a stats tool nobody runs.
     if bash scripts/jeffy-stats.sh "$hb_proj" >/dev/null 2>&1 \
