@@ -994,8 +994,13 @@ else
     printf '#!/bin/sh\nexit 0\n' > "$rt_bin/jq"
     chmod +x "$rt_bin/jq"
   fi
+  # P2-32: a file the shipped tree no longer carries is removed on install,
+  # planted here so the first run has one to remove.
+  mkdir -p "$rt_home/.claude/skills/jeffy/references"
+  printf 'stale\n' > "$rt_home/.claude/skills/jeffy/references/enhance-plan-default.md"
   if HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/run.log" 2>&1 \
     && [ -f "$rt_home/.claude/skills/jeffy/SKILL.md" ] \
+    && [ ! -f "$rt_home/.claude/skills/jeffy/references/enhance-plan-default.md" ] \
     && [ -f "$rt_home/.claude/skills/jeffy/references/iteration-prompt.txt" ] \
     && [ -f "$rt_home/.claude/skills/jeffy/hooks/stop-hook.sh" ] \
     && [ -f "$rt_home/.claude/skills/cancel-jeffy/SKILL.md" ]; then
@@ -1111,8 +1116,12 @@ if [ -n "$ps" ]; then
     # -ExecutionPolicy Bypass: a stock Windows box defaults to Restricted, which
     # blocks -File and would spuriously fail the check; the flag scopes to this
     # process only.
+    # P2-32: a file the shipped tree no longer carries is removed on install.
+    mkdir -p "$pr_home/.claude/skills/jeffy/references"
+    printf 'stale\n' > "$pr_home/.claude/skills/jeffy/references/enhance-plan-default.md"
     if pr_run >"$pr_tmp/run.log" 2>&1 \
       && [ -f "$pr_home/.claude/skills/jeffy/SKILL.md" ] \
+      && [ ! -f "$pr_home/.claude/skills/jeffy/references/enhance-plan-default.md" ] \
       && [ -f "$pr_home/.claude/skills/jeffy/references/iteration-prompt.txt" ] \
       && [ -f "$pr_home/.claude/skills/jeffy/hooks/stop-hook.sh" ] \
       && [ -f "$pr_home/.claude/skills/cancel-jeffy/SKILL.md" ]; then

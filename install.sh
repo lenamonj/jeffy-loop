@@ -62,6 +62,14 @@ for name in jeffy cancel-jeffy; do
   dest="$HOME/.claude/skills/$name"
   mkdir -p "$dest"
   cp -R "$script_dir/skills/$name/." "$dest/"
+  # A copy over the top never removes: references/enhance-plan-default.md
+  # outlived its removal in 1.11.0 on every installed host. Files the shipped
+  # tree no longer carries are removed, and nothing else - a template the user
+  # edited is still overwritten by the copy above, as it always was.
+  while IFS= read -r stale; do
+    [ -n "$stale" ] || continue
+    [ -e "$script_dir/skills/$name/$stale" ] || { rm -f "$dest/$stale"; echo "[OK] removed $dest/$stale (no longer shipped)"; }
+  done < <(cd "$dest" && find . -type f | sed 's|^\./||')
   echo "[OK] /$name skill installed to $dest"
 done
 chmod +x "$HOME/.claude/skills/jeffy/hooks/stop-hook.sh" 2>/dev/null || true

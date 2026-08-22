@@ -55,6 +55,16 @@ foreach ($name in @("jeffy", "cancel-jeffy")) {
     New-Item -ItemType Directory -Path $dest -Force | Out-Null
     $srcDir = Join-Path $PSScriptRoot "skills\$name"
     Copy-Item -Path (Join-Path $srcDir "*") -Destination $dest -Recurse -Force
+    # A copy over the top never removes: references\enhance-plan-default.md
+    # outlived its removal in 1.11.0 on every installed host. Files the shipped
+    # tree no longer carries are removed, and nothing else.
+    Get-ChildItem -Path $dest -Recurse -File | ForEach-Object {
+        $rel = $_.FullName.Substring($dest.Length).TrimStart('\', '/')
+        if (-not (Test-Path (Join-Path $srcDir $rel))) {
+            Remove-Item -LiteralPath $_.FullName -Force
+            Write-Host "[OK] removed $($_.FullName) (no longer shipped)"
+        }
+    }
     Write-Host "[OK] /$name skill installed to $dest"
 }
 

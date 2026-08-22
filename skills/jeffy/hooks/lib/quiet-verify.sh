@@ -13,7 +13,7 @@
 #
 # Why the wrapper exists: a green suite prints its whole passing output into
 # the window every iteration, in a session where context already
-# accumulates. The engine's own validator is 226 lines of "OK" on a green
+# accumulates. The engine's own validator is hundreds of lines of "OK" on a green
 # run. Success is therefore silent here, and only failure produces text.
 #
 # What silence must not cost: journal entries and published receipts quote

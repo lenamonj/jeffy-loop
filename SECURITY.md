@@ -10,7 +10,7 @@
 
 Jeffy Loop is deliberately small and auditable:
 
-- The entire engine is one shell script in this repo, `skills/jeffy/hooks/stop-hook.sh`, registered as a Claude Code Stop hook. It fires at turn end but exits instantly unless the current project has a live Jeffy state file naming that session - zero cost and zero behavior outside a run.
+- The entire engine is one shell script in this repo, `skills/jeffy/hooks/stop-hook.sh`, plus the small library it sources from `skills/jeffy/hooks/lib/` (the verify wrapper and the sandbox detector), registered as a Claude Code Stop hook. It fires at turn end but exits instantly unless the current project has a live Jeffy state file naming that session - zero cost and zero behavior outside a run.
 - The installer's only writes outside the cloned repo are the two skill folders it copies into `~/.claude/skills` (engine included), one hook registration in `~/.claude/settings.json`, and - only when jq is missing and the user answers yes to its prompt - a jq install through the system package manager (winget, Homebrew, or apt).
 - The hook and skills make no network calls. The loop drives local CLIs only (`git`, `jq`, and whatever your project's own verify command runs).
 - A run never pushes, never creates branches, and never widens its own operating envelope: envelope changes require your approval through the Proposed section of `BACKLOG.md`.
