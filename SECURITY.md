@@ -41,7 +41,7 @@ browser cookies, access tokens, every other repository on the disk.
 
 This is not a hypothetical for this project. Its own receipts describe
 cloning strangers' repositories and running an autonomous loop across them,
-and the corpus is now 37 targets deep.
+and the corpus is now 38 targets deep.
 
 The engine's answer is a statement rather than a restriction. At launch it
 runs `skills/jeffy/hooks/lib/detect-sandbox.sh`, records `sandboxed:

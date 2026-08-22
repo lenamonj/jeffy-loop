@@ -1,0 +1,1344 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 0ccc795..8a60bc0 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -17,4 +17,4 @@ jobs:
+         uses: actions/setup-go@v6
+         with:
+           go-version: ${{ matrix.go }}
+-      - run: go test
++      - run: go test ./...
+diff --git a/README.md b/README.md
+index 6f93bff..9a07a57 100644
+--- a/README.md
++++ b/README.md
+@@ -86,6 +86,8 @@ If you want to be really fancy with your env file you can do comments and export
+ # I am a comment and that is OK
+ SOME_VAR=someval
+ FOO=BAR # comments at line end are OK too
++EMPTY=# a value that opens with a comment marker is empty
++NOT_A_COMMENT=BAR#BAZ # a '#' after a non-space character stays in the value
+ export BAR=BAZ
+ ```
+ 
+@@ -123,6 +125,43 @@ myEnv, err := godotenv.Unmarshal(content)
+ 
+ Ruby's dotenv only allows `[A-Za-z0-9_.]` in key names, while Node's dotenv also permits `-`. godotenv has matched the Node charset since v1.4.0, so keys like `MY-VAR` parse cleanly here and in Node but will error under Ruby's dotenv.
+ 
++The charset is ASCII in all three. A name holding anything else is an error
++here, and the error names the character it found, so a file with a key of
++`Ω` reports `unexpected character "Ω" in variable name`; Ruby's and
++Node's dotenv ignore such a line instead.
++
++### Byte order marks
++
++A UTF-8 byte order mark at the start of a file is skipped, so an env file saved
++by a Windows editor loads exactly like one without it. Ruby's dotenv does the
++same by reading env files as `rb:bom|utf-8`, and Node's dotenv treats `U+FEFF`
++as leading whitespace in its line pattern. Only a mark at the very start is a
++byte order mark: a `U+FEFF` anywhere else is a stray character in a variable
++name and is an error.
++
++### Variable substitution
++
++A value can reference a variable defined earlier in the same file, or one
++already in the environment. `$NAME` and `${NAME}` both work, names resolve
++case-insensitively, and an undefined name expands to the empty string.
++
++```shell
++BASE=https://example.com
++ENDPOINT=$BASE/v1
++QUOTED="${BASE}/v2"
++LITERAL='$BASE stays as written'
++ESCAPED="\$BASE stays as written"
++NOT_A_COMMAND="$(BASE) stays as written"
++```
++
++Substitution happens in unquoted and double quoted values. Single quoted values
++are literal, a backslash escapes a single `$`, and `$(` is left alone because it
++opens command substitution rather than a variable reference.
++
++An unbraced `$NAME` ends at the first character outside `[A-Za-z0-9_]`, so
++`$BASE/v1` and `$BASE-suffix` keep their trailing text. Braces take the full key
++charset, so `${MY.KEY}` and `${MY-KEY}` resolve where the unbraced forms cannot.
++
+ ### Precedence & Conventions
+ 
+ Existing envs take precedence of envs that are loaded later.
+@@ -148,6 +187,27 @@ godotenv.Load(".env." + env + ".local")
+ If you need to, you can also use `godotenv.Overload()` to defy this convention
+ and overwrite existing envs instead of only supplanting them. Use with caution.
+ 
++When you pass several files to a single call, the three entry points resolve a
++key defined in more than one of them differently, and they do not agree:
++
++| Call | Winner for a shared key | Why |
++| --- | --- | --- |
++| `Load("a.env", "b.env")` | `a.env` | nothing already set is replaced, and `a.env` sets it first |
++| `Overload("a.env", "b.env")` | `b.env` | everything is replaced, so the last write stands |
++| `Read("a.env", "b.env")` | `b.env` | each file is merged over the ones before it |
++
++So `Read` does not preview what `Load` will do once more than one file is
++involved. Within a single file all three keep the last definition of a key.
++
++Loading several files is not atomic. A failure on the third file leaves the
++first two in the environment, and the call reports the error without undoing
++them; `Read` likewise returns the keys it had merged before the failure rather
++than an empty map. The file that fails contributes nothing when it cannot be
++opened or parsed, since each file is parsed in full before any of it is
++applied, and can contribute part of itself only when the operating system
++refuses one of its variables, in which case the keys it applied before the
++refusal vary between runs.
++
+ ### Command Mode
+ 
+ Assuming you've installed the command as above and you've got `$GOPATH/bin` in your `$PATH`
+@@ -160,9 +220,17 @@ If you don't specify `-f` it will fall back on the default of loading `.env` in
+ 
+ By default, it won't override existing environment variables; you can do that with the `-o` flag.
+ 
++The command's exit status is the wrapped command's own, so `godotenv -f .env
++sh -c 'exit 7'` exits 7 and it can be used inside a script or a CI step that
++reads exit codes. A failure that belongs to `godotenv` rather than to the
++wrapped command - a missing env file, a command that could not start - is
++printed to stderr with a `godotenv:` prefix and exits 1.
++
+ ### Writing Env Files
+ 
+-Godotenv can also write a map representing the environment to a correctly-formatted and escaped file
++Godotenv can also write a map representing the environment to a correctly-formatted and escaped file. A
++file it creates gets mode 0600, since env files hold credentials; writing over an existing file leaves
++that file's own mode alone.
+ 
+ ```go
+ env, err := godotenv.Unmarshal("KEY=value")
+diff --git a/autoload/autoload_test.go b/autoload/autoload_test.go
+new file mode 100644
+index 0000000..b443607
+--- /dev/null
++++ b/autoload/autoload_test.go
+@@ -0,0 +1,129 @@
++package autoload_test
++
++// autoload's whole contract is one init function, and an init only shows up in
++// a process that has already started, so nothing inside this test binary can
++// observe it: by the time a test runs, the import has long since happened and
++// the working directory is this package's own. Each case therefore builds a
++// small program that imports autoload for its side effect and runs it in a
++// directory this test controls. That is also why the test file imports nothing
++// from the package it covers.
++
++import (
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++// buildProbe compiles a program importing autoload against this working copy,
++// through a replace directive pointing at the module root, and returns its path.
++func buildProbe(t *testing.T) string {
++	t.Helper()
++
++	root, err := filepath.Abs("..")
++	if err != nil {
++		t.Fatal(err)
++	}
++	// A replace directive takes the path verbatim, and CI runs this on Windows
++	// too, where Abs returns backslashes; the go command accepts forward
++	// slashes on every platform.
++	root = filepath.ToSlash(root)
++
++	build := t.TempDir()
++	main := `package main
++
++import (
++	"fmt"
++	"os"
++
++	_ "github.com/joho/godotenv/autoload"
++)
++
++func main() {
++	fmt.Printf("AUTOLOADED=%q\n", os.Getenv("AUTOLOADED"))
++}
++`
++	mod := "module autoloadprobe\n\ngo 1.22\n\nrequire github.com/joho/godotenv v0.0.0\n\nreplace github.com/joho/godotenv => " + root + "\n"
++
++	if err := os.WriteFile(filepath.Join(build, "main.go"), []byte(main), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(build, "go.mod"), []byte(mod), 0o644); err != nil {
++		t.Fatal(err)
++	}
++
++	bin := filepath.Join(t.TempDir(), "autoloadprobe")
++	cmd := exec.Command("go", "build", "-o", bin, ".")
++	cmd.Dir = build
++	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
++	if out, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("go build: %v\n%s", err, out)
++	}
++	return bin
++}
++
++// runProbe runs the program in dir with an environment carrying nothing of its
++// own, so an answer can only have come from the file autoload read.
++func runProbe(t *testing.T, bin, dir string) string {
++	t.Helper()
++	cmd := exec.Command(bin)
++	cmd.Dir = dir
++	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
++	out, err := cmd.CombinedOutput()
++	if err != nil {
++		t.Fatalf("probe run in %s: %v\n%s", dir, err, out)
++	}
++	return strings.TrimSpace(string(out))
++}
++
++func workdir(t *testing.T, dotenv string) string {
++	t.Helper()
++	dir := t.TempDir()
++	if dotenv != "" {
++		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(dotenv), 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++	return dir
++}
++
++// The file is read from the working directory, so the same binary must give
++// three different answers in three directories. Two files that differ prove the
++// value came from the file rather than from anything ambient, and the directory
++// with no .env proves a missing file is not fatal, which is the whole reason
++// autoload discards the error Load returns.
++func TestAutoloadReadsDotEnvFromWorkingDirectory(t *testing.T) {
++	bin := buildProbe(t)
++
++	for _, c := range []struct {
++		name, dotenv, want string
++	}{
++		{"a .env sets the variable", "AUTOLOADED=yes\n", `AUTOLOADED="yes"`},
++		{"a different .env sets a different value", "AUTOLOADED=different\n", `AUTOLOADED="different"`},
++		{"no .env leaves it unset and does not abort", "", `AUTOLOADED=""`},
++	} {
++		t.Run(c.name, func(t *testing.T) {
++			if got := runProbe(t, bin, workdir(t, c.dotenv)); got != c.want {
++				t.Errorf("probe printed %s, want %s", got, c.want)
++			}
++		})
++	}
++}
++
++// Load never replaces a variable that is already set, and autoload is Load, so
++// an ambient value has to survive a .env that disagrees with it.
++func TestAutoloadDoesNotOverrideTheEnvironment(t *testing.T) {
++	bin := buildProbe(t)
++
++	cmd := exec.Command(bin)
++	cmd.Dir = workdir(t, "AUTOLOADED=fromFile\n")
++	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "AUTOLOADED=fromEnv"}
++	out, err := cmd.CombinedOutput()
++	if err != nil {
++		t.Fatalf("probe run: %v\n%s", err, out)
++	}
++	if got, want := strings.TrimSpace(string(out)), `AUTOLOADED="fromEnv"`; got != want {
++		t.Errorf("probe printed %s, want %s", got, want)
++	}
++}
+diff --git a/cmd/godotenv/cmd.go b/cmd/godotenv/cmd.go
+index 7ad0a50..530cbff 100644
+--- a/cmd/godotenv/cmd.go
++++ b/cmd/godotenv/cmd.go
+@@ -1,9 +1,11 @@
+ package main
+ 
+ import (
++	"errors"
+ 	"flag"
+ 	"fmt"
+-	"log"
++	"os"
++	"os/exec"
+ 	"strings"
+ 
+ 	"github.com/joho/godotenv"
+@@ -48,8 +50,20 @@ example
+ 	cmd := args[0]
+ 	cmdArgs := args[1:]
+ 
+-	err := godotenv.Exec(envFilenames, cmd, cmdArgs, overload)
+-	if err != nil {
+-		log.Fatal(err)
++	if err := godotenv.Exec(envFilenames, cmd, cmdArgs, overload); err != nil {
++		// The command's own stdout and stderr are already wired through, so a
++		// command that ran and failed needs no message from us, only its exit
++		// status passed along. Anything else - a missing env file, a command
++		// that could not start - is ours to report.
++		var exitErr *exec.ExitError
++		if errors.As(err, &exitErr) {
++			if code := exitErr.ExitCode(); code >= 0 {
++				os.Exit(code)
++			}
++			// Terminated by a signal, so there is no exit code to forward.
++			os.Exit(1)
++		}
++		fmt.Fprintln(os.Stderr, "godotenv:", err)
++		os.Exit(1)
+ 	}
+ }
+diff --git a/cmd/godotenv/cmd_test.go b/cmd/godotenv/cmd_test.go
+new file mode 100644
+index 0000000..597e5ab
+--- /dev/null
++++ b/cmd/godotenv/cmd_test.go
+@@ -0,0 +1,159 @@
++package main
++
++import (
++	"os"
++	"os/exec"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"testing"
++)
++
++// buildCLI builds the command once per test binary and returns its path. The
++// CLI is only observable as a process - its whole contract is what it puts on
++// stdout and what exit status it leaves behind - so every assertion below runs
++// the real binary rather than calling into main.
++func buildCLI(t *testing.T) string {
++	t.Helper()
++	if runtime.GOOS == "windows" {
++		t.Skip("these cases invoke a POSIX shell as the child command")
++	}
++
++	bin := filepath.Join(t.TempDir(), "godotenv")
++	build := exec.Command("go", "build", "-o", bin, ".")
++	if out, err := build.CombinedOutput(); err != nil {
++		t.Fatalf("go build: %v\n%s", err, out)
++	}
++	return bin
++}
++
++func runCLI(t *testing.T, bin, dir string, args ...string) (stdout, stderr string, code int) {
++	t.Helper()
++	cmd := exec.Command(bin, args...)
++	cmd.Dir = dir
++	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "PRESET=fromEnv"}
++
++	var outBuf, errBuf strings.Builder
++	cmd.Stdout = &outBuf
++	cmd.Stderr = &errBuf
++
++	if err := cmd.Run(); err != nil {
++		exitErr, ok := err.(*exec.ExitError)
++		if !ok {
++			t.Fatalf("running %v: %v", args, err)
++		}
++		code = exitErr.ExitCode()
++	}
++	return outBuf.String(), errBuf.String(), code
++}
++
++func envFile(t *testing.T, dir, name, body string) string {
++	t.Helper()
++	p := filepath.Join(dir, name)
++	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	return p
++}
++
++// The command is a wrapper, so a script calling it has to be able to read the
++// wrapped command's exit status. It used to collapse every non-zero status to
++// 1 and print the failure with a log timestamp on top.
++func TestExitStatusIsPassedThrough(t *testing.T) {
++	bin := buildCLI(t)
++	dir := t.TempDir()
++	f := envFile(t, dir, "x.env", "A=1\n")
++
++	for _, want := range []int{0, 1, 7, 130} {
++		_, stderr, code := runCLI(t, bin, dir, "-f", f, "sh", "-c", "exit "+itoa(want))
++		if code != want {
++			t.Errorf("child exiting %d gave cli exit %d", want, code)
++		}
++		if stderr != "" {
++			t.Errorf("child exiting %d produced unexpected stderr %q", want, stderr)
++		}
++	}
++}
++
++// A failure that is ours rather than the child's is reported on stderr, named,
++// and without a timestamp.
++func TestOwnFailuresAreReported(t *testing.T) {
++	bin := buildCLI(t)
++	dir := t.TempDir()
++	f := envFile(t, dir, "x.env", "A=1\n")
++
++	_, stderr, code := runCLI(t, bin, dir, "-f", filepath.Join(dir, "absent.env"), "true")
++	if code != 1 {
++		t.Errorf("a missing env file gave cli exit %d, want 1", code)
++	}
++	if !strings.HasPrefix(stderr, "godotenv: ") {
++		t.Errorf("a missing env file printed %q, want a godotenv: prefix", stderr)
++	}
++
++	_, stderr, code = runCLI(t, bin, dir, "-f", f, "definitely-not-a-real-binary")
++	if code != 1 {
++		t.Errorf("a missing command gave cli exit %d, want 1", code)
++	}
++	if !strings.HasPrefix(stderr, "godotenv: ") {
++		t.Errorf("a missing command printed %q, want a godotenv: prefix", stderr)
++	}
++}
++
++// The env file reaches the child, and -o decides whether it replaces a
++// variable the child already had.
++func TestEnvReachesChild(t *testing.T) {
++	bin := buildCLI(t)
++	dir := t.TempDir()
++	f := envFile(t, dir, "x.env", "PRESET=fromFile\nFRESH=fromFile\n")
++
++	stdout, _, code := runCLI(t, bin, dir, "-f", f, "sh", "-c", `printf '%s,%s' "$PRESET" "$FRESH"`)
++	if code != 0 || stdout != "fromEnv,fromFile" {
++		t.Errorf("without -o got %q exit %d, want %q and 0", stdout, code, "fromEnv,fromFile")
++	}
++
++	stdout, _, code = runCLI(t, bin, dir, "-o", "-f", f, "sh", "-c", `printf '%s,%s' "$PRESET" "$FRESH"`)
++	if code != 0 || stdout != "fromFile,fromFile" {
++		t.Errorf("with -o got %q exit %d, want %q and 0", stdout, code, "fromFile,fromFile")
++	}
++}
++
++// With no -f the command falls back to .env in the working directory.
++func TestDefaultsToDotEnv(t *testing.T) {
++	bin := buildCLI(t)
++	dir := t.TempDir()
++	envFile(t, dir, ".env", "FRESH=fromDefault\n")
++
++	stdout, _, code := runCLI(t, bin, dir, "sh", "-c", `printf %s "$FRESH"`)
++	if code != 0 || stdout != "fromDefault" {
++		t.Errorf("default .env got %q exit %d, want %q and 0", stdout, code, "fromDefault")
++	}
++}
++
++// -h and a bare invocation both print usage and exit 0 without running anything.
++func TestUsage(t *testing.T) {
++	bin := buildCLI(t)
++	dir := t.TempDir()
++
++	for _, args := range [][]string{{}, {"-h"}} {
++		stdout, _, code := runCLI(t, bin, dir, args...)
++		if code != 0 {
++			t.Errorf("%v exited %d, want 0", args, code)
++		}
++		if !strings.Contains(stdout, "Run a process with an env setup from a .env file") {
++			t.Errorf("%v did not print usage, got %q", args, stdout)
++		}
++	}
++}
++
++// itoa keeps the test free of a strconv import for four small numbers.
++func itoa(n int) string {
++	if n == 0 {
++		return "0"
++	}
++	var digits []byte
++	for n > 0 {
++		digits = append([]byte{byte('0' + n%10)}, digits...)
++		n /= 10
++	}
++	return string(digits)
++}
+diff --git a/godotenv.go b/godotenv.go
+index 9cc3688..6fc3ad6 100644
+--- a/godotenv.go
++++ b/godotenv.go
+@@ -47,6 +47,24 @@ func Parse(r io.Reader) (map[string]string, error) {
+ //	godotenv.Load("fileone", "filetwo")
+ //
+ // It's important to note that it WILL NOT OVERRIDE an env variable that already exists - consider the .env file to set dev vars or sensible defaults.
++//
++// Because nothing already set is ever replaced, the first file to define a key
++// is the one that wins: Load("a.env", "b.env") keeps a.env's value for a key
++// both files define. Read applies the opposite rule and lets the last file
++// win, so the two do not agree across files; see Read.
++//
++// A variable the operating system refuses to set is reported as an error
++// rather than skipped. Two shapes a parsed file can reach do this: a line with
++// an empty key, and a value containing a NUL byte.
++//
++// Applying the files is partial rather than atomic. Each file is applied as it
++// is read, so a failure stops the list without undoing anything before it:
++// Load("one.env", "missing.env") returns the open error with one.env already
++// in the environment. Inside the failing file itself, an open or parse failure
++// applies nothing, because the whole file is parsed before any of it is
++// applied; a refused variable is the one case that can leave that file partly
++// applied, and which of its other keys made it through varies between runs,
++// because they are applied in map order.
+ func Load(filenames ...string) (err error) {
+ 	filenames = filenamesOrDefault(filenames)
+ 
+@@ -70,6 +88,16 @@ func Load(filenames ...string) (err error) {
+ //	godotenv.Overload("fileone", "filetwo")
+ //
+ // It's important to note this WILL OVERRIDE an env variable that already exists - consider the .env file to forcefully set all vars.
++//
++// Because everything is replaced, the last file to define a key is the one
++// that wins: Overload("a.env", "b.env") keeps b.env's value for a key both
++// files define.
++//
++// Overload applies the files exactly as partially as Load does on a failure,
++// and reports a refused variable the same way: the files before the failing
++// one stay in the environment, an open or parse failure applies nothing from
++// the file that failed, and a refused variable can leave that file partly
++// applied.
+ func Overload(filenames ...string) (err error) {
+ 	filenames = filenamesOrDefault(filenames)
+ 
+@@ -82,8 +110,19 @@ func Overload(filenames ...string) (err error) {
+ 	return
+ }
+ 
+-// Read all env (with same file loading semantics as Load) but return values as
+-// a map rather than automatically writing values into env
++// Read reads the same files Load would read, defaulting to .env, and returns
++// their contents as a map instead of writing anything into the environment.
++// The process environment is neither consulted nor modified.
++//
++// Read does not reproduce Load's precedence across files. Each file is merged
++// over the ones before it, so the LAST file to define a key wins, where Load
++// keeps the FIRST file's value because it never replaces anything already set.
++// Read("a.env", "b.env") and Load("a.env", "b.env") therefore disagree on a
++// key both files define. Within a single file both keep the last definition.
++//
++// On a failure Read returns what it had merged before it, not nil: reading a
++// good file and then a missing one gives the good file's keys alongside the
++// open error.
+ func Read(filenames ...string) (envMap map[string]string, err error) {
+ 	filenames = filenamesOrDefault(filenames)
+ 	envMap = make(map[string]string)
+@@ -141,12 +180,21 @@ func Exec(filenames []string, cmd string, cmdArgs []string, overload bool) error
+ }
+ 
+ // Write serializes the given environment and writes it to a file.
++//
++// A file Write creates is created with mode 0600, because an env file holds
++// credentials and the process umask is not a safe place to decide that. Writing
++// over a file that already exists leaves its mode alone, so a deployment that
++// deliberately relaxed one keeps its choice.
+ func Write(envMap map[string]string, filename string) error {
+ 	content, err := Marshal(envMap)
+ 	if err != nil {
+ 		return err
+ 	}
+-	file, err := os.Create(filename)
++	// 0600 rather than os.Create's 0666: an env file holds credentials, and
++	// under the common 0022 umask os.Create left a new one at 0644, readable
++	// by every account on the machine. An existing file keeps whatever mode it
++	// already has, because the mode argument applies only on creation.
++	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -215,7 +263,9 @@ func loadFile(filename string, overload bool) error {
+ 
+ 	for key, value := range envMap {
+ 		if !currentEnv[key] || overload {
+-			_ = os.Setenv(key, value)
++			if err := os.Setenv(key, value); err != nil {
++				return fmt.Errorf("setting %q from %s: %w", key, filename, err)
++			}
+ 		}
+ 	}
+ 
+diff --git a/godotenv_test.go b/godotenv_test.go
+index 5a18db5..afa0218 100644
+--- a/godotenv_test.go
++++ b/godotenv_test.go
+@@ -5,7 +5,9 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"os"
++	"path/filepath"
+ 	"reflect"
++	"runtime"
+ 	"strings"
+ 	"testing"
+ )
+@@ -202,10 +204,71 @@ func TestKeyNameCharsetRejectsDisallowed(t *testing.T) {
+ 		"FOO+BAR=baz",
+ 		"FOO@BAR=baz",
+ 		"FOO/BAR=baz",
++		// A name may be followed by whitespace before the separator, so the
++		// first space ends it; a second name after that is not part of it.
++		// These used to parse as the keys "FOO BAR" and "FOO\tBAR".
++		"FOO BAR=baz",
++		"FOO\tBAR=baz",
++		// A statement with no separator at all used to yield the empty key
++		// holding the whole line as its value. A key that is empty because
++		// everything before the separator was whitespace is a separate case
++		// and is still accepted; TestParsing pins `="value"` on purpose, and
++		// changing that is a Proposed item rather than a fix.
++		"FOO",
++		// The charset is ASCII, as the README states and as ruby dotenv and
++		// node dotenv both have it. The scan used to judge one byte at a time,
++		// so a name was accepted whenever every byte of it happened to look
++		// like a Latin-1 letter: "\u00ea" parsed while "\u00e9" did not.
++		"\u03a9=1",
++		"CAF\u00c9=1",
++		"\u00ea=1",
++		"\u00e9=1",
++		// Not valid UTF-8 at all. This used to parse, because 0xFF alone is a
++		// letter in Latin-1.
++		"\xff=1",
+ 	}
+ 	for _, input := range disallowed {
+-		if _, err := Unmarshal(input); err == nil {
+-			t.Errorf("expected error parsing %q, got nil", input)
++		if got, err := Unmarshal(input); err == nil {
++			t.Errorf("expected error parsing %q, got %#v with nil error", input, got)
++		}
++	}
++
++	// The message must name the character the file contains. Judging bytes
++	// named a byte of the rune instead: the second byte of U+03A9 is 0xA9,
++	// which printed as an unrelated "\u00a9" the input never held.
++	_, err := Unmarshal("\u03a9=1")
++	if err == nil {
++		t.Fatal("expected an error for a non-ASCII variable name")
++	}
++	if !strings.Contains(err.Error(), "\u03a9") {
++		t.Errorf("error %q does not name the character it rejected", err)
++	}
++	if strings.Contains(err.Error(), "\u00a9") {
++		t.Errorf("error %q names a character the input does not contain", err)
++	}
++
++	// The forms that legitimately carry whitespace or a separator variant must
++	// keep parsing, or the check above is just breaking the parser.
++	allowed := map[string]map[string]string{
++		"FOO=v":        {"FOO": "v"},
++		"FOO =v":       {"FOO": "v"},
++		"FOO = v":      {"FOO": "v"},
++		"FOO\t=v":      {"FOO": "v"},
++		"FOO: v":       {"FOO": "v"},
++		"export FOO=v": {"FOO": "v"},
++		"F.O-O=v":      {"F.O-O": "v"},
++		"FOO=":         {"FOO": ""},
++	}
++	for input, want := range allowed {
++		got, err := Unmarshal(input)
++		if err != nil {
++			t.Errorf("parsing %q: %v", input, err)
++			continue
++		}
++		for k, v := range want {
++			if got[k] != v {
++				t.Errorf("parsing %q gave %#v, want %s=%q", input, got, k, v)
++			}
+ 		}
+ 	}
+ }
+@@ -313,6 +376,109 @@ func TestExpanding(t *testing.T) {
+ 	}
+ }
+ 
++func TestExpandKeyCharset(t *testing.T) {
++	// Ruby dotenv's Dotenv::Substitutions::Variable carries the /i flag and
++	// excludes command substitution with a (?!\() lookahead. This port had
++	// dropped both: names expanded only in upper case, and the $( guard was
++	// tested against the wrong submatch, so $(FOO) interpolated FOO.
++	t.Setenv("lower_env", "LOWERVAL")
++	tests := []struct {
++		name     string
++		input    string
++		expected map[string]string
++	}{
++		{
++			"expands a lower case name in braces",
++			"a=1\nb=${a}",
++			map[string]string{"a": "1", "b": "1"},
++		},
++		{
++			"expands a lower case name without braces",
++			"a=1\nb=$a",
++			map[string]string{"a": "1", "b": "1"},
++		},
++		{
++			"expands a mixed case name",
++			"aB=1\nc=${aB}",
++			map[string]string{"aB": "1", "c": "1"},
++		},
++		{
++			"expands a lower case name from the process environment",
++			"c=${lower_env}",
++			map[string]string{"c": "LOWERVAL"},
++		},
++		{
++			"leaves command substitution alone",
++			"FOO=bar\nB=\"$(FOO)\"",
++			map[string]string{"FOO": "bar", "B": "$(FOO)"},
++		},
++		{
++			"leaves a lower case command substitution alone",
++			"B=\"$(echo hi)\"",
++			map[string]string{"B": "$(echo hi)"},
++		},
++		{
++			"still stops an unbraced name at a hyphen or dot",
++			"FOO=bar\nB=\"$FOO-tail\"\nC=\"$FOO.tail\"",
++			map[string]string{"FOO": "bar", "B": "bar-tail", "C": "bar.tail"},
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			env, err := Parse(strings.NewReader(tt.input))
++			if err != nil {
++				t.Fatalf("Error: %s", err.Error())
++			}
++			for k, v := range tt.expected {
++				if env[k] != v {
++					t.Errorf("Key %s expected: %q, actual: %q", k, v, env[k])
++				}
++			}
++		})
++	}
++}
++
++func TestExpandBracedKeyCharset(t *testing.T) {
++	// The key charset accepts . and - but the expansion pattern did not, so a
++	// braced reference to such a key was mangled rather than resolved: ${A.B}
++	// came back as ".B}". Braces bound the name, so widening the charset there
++	// is unambiguous; the unbraced form has no terminator and must keep
++	// stopping at . and -, which is what ruby dotenv and node's dotenv-expand
++	// both do and what the last three cases pin.
++	t.Setenv("BRACED_FROM_ENV", "envValue")
++	tests := []struct {
++		name     string
++		input    string
++		key      string
++		expected string
++	}{
++		{"braced dotted key", "A.B=1\nC=${A.B}", "C", "1"},
++		{"braced hyphenated key", "A-B=1\nC=${A-B}", "C", "1"},
++		{"braced dotted key with a tail", "A.B=1\nC=\"${A.B}-tail\"", "C", "1-tail"},
++		{"braced key from the environment", "C=${BRACED_FROM_ENV}", "C", "envValue"},
++		{"braced undefined key expands empty", "C=${NO.SUCH.KEY}", "C", ""},
++		{"unbraced still stops at a hyphen", "FOO=bar\nC=\"$FOO-tail\"", "C", "bar-tail"},
++		{"unbraced still stops at a dot", "FOO=bar\nC=\"$FOO.tail\"", "C", "bar.tail"},
++		{"a half open brace still resolves", "FOO=bar\nC=\"${FOO\"", "C", "bar"},
++		{"a stray closing brace still resolves", "FOO=bar\nC=\"$FOO}\"", "C", "bar"},
++		{"empty braces are left alone", "C=\"${}\"", "C", "${}"},
++		{"command substitution is still left alone", "FOO=bar\nC=\"$(FOO)\"", "C", "$(FOO)"},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			env, err := Parse(strings.NewReader(tt.input))
++			if err != nil {
++				t.Fatalf("Error: %s", err.Error())
++			}
++			if env[tt.key] != tt.expected {
++				t.Errorf("Key %s expected: %q, actual: %q", tt.key, tt.expected, env[tt.key])
++			}
++		})
++	}
++}
++
+ func TestVariableStringValueSeparator(t *testing.T) {
+ 	input := "TEST_URLS=\"stratum+tcp://stratum.antpool.com:3333\nstratum+tcp://stratum.antpool.com:443\""
+ 	want := map[string]string{
+@@ -341,6 +507,114 @@ func TestVariableStringValueSeparator(t *testing.T) {
+ 	}
+ }
+ 
++func TestLoadReportsSetenvFailure(t *testing.T) {
++	// loadFile used to discard the result of os.Setenv, so Load reported
++	// success on a file it had failed to apply. Every failing input to
++	// os.Setenv was provoked directly; of the four that fail - an empty key, a
++	// NUL in the key, a NUL in the value, and an "=" in the key - the parser
++	// refuses the NUL key and splits the "=" one into a key and a value,
++	// leaving the empty key and a NUL in a value as the two that reach Setenv.
++	cases := map[string]string{
++		"empty key":    "=value\nOTHER=1\n",
++		"nul in value": "SETENV_NUL=va\x00lue\nOTHER=1\n",
++	}
++	for name, body := range cases {
++		t.Run(name, func(t *testing.T) {
++			f := filepath.Join(t.TempDir(), "x.env")
++			if err := os.WriteFile(f, []byte(body), 0o644); err != nil {
++				t.Fatal(err)
++			}
++			if err := Load(f); err == nil {
++				t.Error("Load returned nil for a file it could not apply")
++			}
++			if err := Overload(f); err == nil {
++				t.Error("Overload returned nil for a file it could not apply")
++			}
++		})
++	}
++
++	// A file with nothing objectionable in it must still load cleanly.
++	f := filepath.Join(t.TempDir(), "ok.env")
++	if err := os.WriteFile(f, []byte("SETENV_FINE=yes\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { os.Unsetenv("SETENV_FINE") })
++	if err := Load(f); err != nil {
++		t.Errorf("Load of a well formed file returned %v", err)
++	}
++	if got := os.Getenv("SETENV_FINE"); got != "yes" {
++		t.Errorf("SETENV_FINE=%q, want yes", got)
++	}
++}
++
++func TestMultiFilePrecedence(t *testing.T) {
++	// Load, Overload and Read take three different views of a key defined in
++	// more than one file, and each doc comment now states which. Nothing in
++	// the suite pinned any of them before, which is how Read's comment came to
++	// claim Load's semantics while doing the opposite.
++	dir := t.TempDir()
++	a := filepath.Join(dir, "a.env")
++	b := filepath.Join(dir, "b.env")
++	if err := os.WriteFile(a, []byte("SHARED=fromA\nONLY_A=1\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(b, []byte("SHARED=fromB\nONLY_B=2\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++
++	// Read merges each file over the ones before it, so the last file wins.
++	envMap, err := Read(a, b)
++	if err != nil {
++		t.Fatalf("Read(a, b): %v", err)
++	}
++	if envMap["SHARED"] != "fromB" {
++		t.Errorf("Read(a, b) gave SHARED=%q, want fromB", envMap["SHARED"])
++	}
++	if envMap["ONLY_A"] != "1" || envMap["ONLY_B"] != "2" {
++		t.Errorf("Read(a, b) lost a key: %#v", envMap)
++	}
++
++	// Load never replaces anything already set, so the first file wins.
++	os.Unsetenv("SHARED")
++	t.Cleanup(func() { os.Unsetenv("SHARED") })
++	if err := Load(a, b); err != nil {
++		t.Fatalf("Load(a, b): %v", err)
++	}
++	if got := os.Getenv("SHARED"); got != "fromA" {
++		t.Errorf("Load(a, b) set SHARED=%q, want fromA", got)
++	}
++
++	// Overload replaces everything, so the last file wins.
++	os.Unsetenv("SHARED")
++	if err := Overload(a, b); err != nil {
++		t.Fatalf("Overload(a, b): %v", err)
++	}
++	if got := os.Getenv("SHARED"); got != "fromB" {
++		t.Errorf("Overload(a, b) set SHARED=%q, want fromB", got)
++	}
++
++	// Within a single file, all three keep the last definition.
++	single := filepath.Join(dir, "dup.env")
++	if err := os.WriteFile(single, []byte("DUP=first\nDUP=second\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	envMap, err = Read(single)
++	if err != nil {
++		t.Fatalf("Read(dup): %v", err)
++	}
++	if envMap["DUP"] != "second" {
++		t.Errorf("Read of a duplicated key gave %q, want second", envMap["DUP"])
++	}
++	os.Unsetenv("DUP")
++	t.Cleanup(func() { os.Unsetenv("DUP") })
++	if err := Load(single); err != nil {
++		t.Fatalf("Load(dup): %v", err)
++	}
++	if got := os.Getenv("DUP"); got != "second" {
++		t.Errorf("Load of a duplicated key set %q, want second", got)
++	}
++}
++
+ func TestActualEnvVarsAreLeftAlone(t *testing.T) {
+ 	os.Clearenv()
+ 	os.Setenv("OPTION_A", "actualenv")
+@@ -521,6 +795,29 @@ func TestComments(t *testing.T) {
+ 	loadEnvAndCompareValues(t, Load, envFileName, expectedValues, noopPresets)
+ }
+ 
++func TestCommentAtStartOfValue(t *testing.T) {
++	// A '#' opening an unquoted value starts a comment and leaves the value
++	// empty, which is what ruby dotenv and node dotenv both do: their unquoted
++	// value patterns are [^#\r\n]+ and so never span a '#'. Quoted values are
++	// unaffected, and a '#' that follows a non-space rune stays literal, which
++	// is godotenv's own long-standing deviation and is pinned by TestComments.
++	cases := map[string]string{
++		"foo=#bar\n":        "",
++		"foo= #bar\n":       "",
++		"foo=#bar":          "",
++		"foo=#bar # more\n": "",
++	}
++	for input, expected := range cases {
++		envMap, err := Unmarshal(input)
++		if err != nil {
++			t.Fatalf("Input: %q Unexpected error: %v", input, err)
++		}
++		if envMap["foo"] != expected {
++			t.Errorf("Input: %q Expected foo=%q, got %q", input, expected, envMap["foo"])
++		}
++	}
++}
++
+ func TestIsInt(t *testing.T) {
+ 	checkAndCompare := func(s string, expected bool) {
+ 		if isInt(s) != expected {
+@@ -725,3 +1022,245 @@ func TestParserErrors(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestBOM(t *testing.T) {
++	// A Windows editor writes a UTF-8 byte order mark at the start of the file.
++	// Ruby dotenv drops it by reading env files as "rb:bom|utf-8" and node
++	// dotenv's line pattern treats U+FEFF as leading whitespace, so both parse
++	// a marked file. This parser used to reject one with a message naming a
++	// character the file does not contain.
++	const bom = "\uFEFF"
++
++	parsed := map[string]map[string]string{
++		bom + "A=1\n":            {"A": "1"},
++		bom + "# comment\nA=1\n": {"A": "1"},
++		bom + "export A=1\n":     {"A": "1"},
++		bom + "A=1\nB=2\n":       {"A": "1", "B": "2"},
++	}
++	for input, want := range parsed {
++		got, err := Unmarshal(input)
++		if err != nil {
++			t.Errorf("Unmarshal(%q): %v", input, err)
++			continue
++		}
++		if !reflect.DeepEqual(got, want) {
++			t.Errorf("Unmarshal(%q) gave %#v, want %#v", input, got, want)
++		}
++	}
++
++	// The mark on its own leaves an empty file, not an error.
++	if got, err := Unmarshal(bom); err != nil || len(got) != 0 {
++		t.Errorf("Unmarshal of the mark alone gave %#v, %v; want an empty map and no error", got, err)
++	}
++
++	// Only a leading mark is a byte order mark. One in the middle of the file
++	// is a stray character in a variable name and stays an error.
++	if got, err := Unmarshal("A=1\n" + bom + "B=2\n"); err == nil {
++		t.Errorf("Unmarshal with a mid-file mark gave %#v with nil error, want an error", got)
++	}
++
++	// The file path matters as much as the string path: writing the file is how
++	// a marked env file reaches the parser in practice.
++	dir := t.TempDir()
++	marked := filepath.Join(dir, "bom.env")
++	if err := os.WriteFile(marked, []byte(bom+"BOM_KEY=value\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	envMap, err := Read(marked)
++	if err != nil {
++		t.Fatalf("Read(%q): %v", marked, err)
++	}
++	if envMap["BOM_KEY"] != "value" {
++		t.Errorf("Read of a marked file gave %#v, want BOM_KEY=value", envMap)
++	}
++
++	os.Unsetenv("BOM_KEY")
++	t.Cleanup(func() { os.Unsetenv("BOM_KEY") })
++	if err := Load(marked); err != nil {
++		t.Fatalf("Load(%q): %v", marked, err)
++	}
++	if got := os.Getenv("BOM_KEY"); got != "value" {
++		t.Errorf("Load of a marked file set BOM_KEY=%q, want value", got)
++	}
++}
++
++func TestPartialApplicationOnFailure(t *testing.T) {
++	// Loading several files is not atomic, and the doc comments on Load,
++	// Overload and Read now say so. The three ways a file can fail were found
++	// by provoking each step of the operation rather than by reading the code:
++	// the open, the parse, and the setenv the operating system refuses.
++	dir := t.TempDir()
++	good := filepath.Join(dir, "good.env")
++	badSyntax := filepath.Join(dir, "bad.env")
++	refused := filepath.Join(dir, "refused.env")
++	missing := filepath.Join(dir, "absent.env")
++	for path, body := range map[string]string{
++		good:      "PARTIAL_FIRST=one\n",
++		badSyntax: "PARTIAL_SECOND=two\nFOO BAR=x\n",
++		refused:   "PARTIAL_THIRD=three\n=orphan\n",
++	} {
++		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++
++	keys := []string{"PARTIAL_FIRST", "PARTIAL_SECOND", "PARTIAL_THIRD"}
++	clear := func() {
++		for _, k := range keys {
++			os.Unsetenv(k)
++		}
++	}
++	t.Cleanup(clear)
++
++	for _, loader := range []struct {
++		name string
++		load func(...string) error
++	}{{"Load", Load}, {"Overload", Overload}} {
++		clear()
++		if err := loader.load(good, missing); err == nil {
++			t.Fatalf("%s with a missing second file returned no error", loader.name)
++		} else if got := os.Getenv("PARTIAL_FIRST"); got != "one" {
++			t.Errorf("%s: an open failure undid the file before it: PARTIAL_FIRST=%q, want one", loader.name, got)
++		}
++
++		clear()
++		if err := loader.load(good, badSyntax); err == nil {
++			t.Fatalf("%s with an unparseable second file returned no error", loader.name)
++		} else {
++			if got := os.Getenv("PARTIAL_FIRST"); got != "one" {
++				t.Errorf("%s: a parse failure undid the file before it: PARTIAL_FIRST=%q, want one", loader.name, got)
++			}
++			if got, ok := os.LookupEnv("PARTIAL_SECOND"); ok {
++				t.Errorf("%s: a parse failure applied %q from the file it could not parse", loader.name, got)
++			}
++		}
++
++		// A refused variable is the one failure that reaches setenv at all, so
++		// it is the only one that can leave its own file partly applied. Which
++		// of that file's other keys made it through is map order and varies
++		// between runs, so only the deterministic half is asserted here.
++		clear()
++		if err := loader.load(good, refused); err == nil {
++			t.Fatalf("%s with a refused variable returned no error", loader.name)
++		} else if got := os.Getenv("PARTIAL_FIRST"); got != "one" {
++			t.Errorf("%s: a refused variable undid the file before it: PARTIAL_FIRST=%q, want one", loader.name, got)
++		}
++	}
++
++	// Read carries the same shape into its return value: what it merged before
++	// the failure comes back with the error rather than being discarded.
++	clear()
++	envMap, err := Read(good, missing)
++	if err == nil {
++		t.Fatal("Read with a missing second file returned no error")
++	}
++	if envMap["PARTIAL_FIRST"] != "one" {
++		t.Errorf("Read discarded what it had merged before the failure: %#v", envMap)
++	}
++}
++
++func TestEscapedQuoteAtEndOfValue(t *testing.T) {
++	// A quoted value whose last character before the terminator is an escaped
++	// quote used to lose it: the terminator had already been located, but the
++	// value was then cut by trimming quote runes off both ends, which ate the
++	// escaped one too and left its backslash behind. Every expected value here
++	// is what ruby dotenv 3.2.0 returns for the same input.
++	cases := map[string]string{
++		`A="he said \"hi\""`: `he said "hi"`,
++		`A="\""`:             `"`,
++		`A="a\"\""`:          `a""`,
++		`A='it\''`:           `it\'`,
++		`A='say \'hi\''`:     `say \'hi\'`,
++		`A="a\\\""`:          `a\"`,
++		// Unchanged neighbours, kept here so a future trim cannot creep back in
++		// without failing: an escaped quote in the middle, an escaped backslash
++		// at the end, and the plain forms.
++		`A="a\"b"`:  `a"b`,
++		`A="bar\\"`: `bar\`,
++		`A="plain"`: `plain`,
++		`A='plain'`: `plain`,
++		`A=""`:      ``,
++		`A=''`:      ``,
++	}
++	for input, want := range cases {
++		envMap, err := Unmarshal(input + "\n")
++		if err != nil {
++			t.Errorf("Unmarshal(%q): %v", input, err)
++			continue
++		}
++		if got := envMap["A"]; got != want {
++			t.Errorf("Unmarshal(%q) gave A=%q, want %q", input, got, want)
++		}
++	}
++
++	// The same defect broke the library's own round trip, which is the claim
++	// the README makes for Write: Marshal escaped these values correctly and
++	// the parser then ate the closing quote reading them back.
++	for _, v := range []string{`he said "hi"`, `"`, `a""`, `back\`, `plain`} {
++		marshalled, err := Marshal(map[string]string{"A": v})
++		if err != nil {
++			t.Errorf("Marshal(%q): %v", v, err)
++			continue
++		}
++		back, err := Unmarshal(marshalled)
++		if err != nil {
++			t.Errorf("Unmarshal(%q): %v", marshalled, err)
++			continue
++		}
++		if back["A"] != v {
++			t.Errorf("round trip of %q gave %q via %q", v, back["A"], marshalled)
++		}
++	}
++}
++
++func TestWriteFileMode(t *testing.T) {
++	// An env file holds credentials, so Write creates one at 0600 rather than
++	// letting os.Create ask for 0666 and leaving the umask to decide - which
++	// left a new file at 0644, readable by every account on the machine.
++	if runtime.GOOS == "windows" {
++		t.Skip("Windows carries no POSIX permission bits to assert")
++	}
++
++	dir := t.TempDir()
++	created := filepath.Join(dir, "created.env")
++	if err := Write(map[string]string{"API_TOKEN": "s3cr3t"}, created); err != nil {
++		t.Fatalf("Write: %v", err)
++	}
++	info, err := os.Stat(created)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := info.Mode().Perm(); got != 0o600 {
++		t.Errorf("Write created a file with mode %04o, want 0600", got)
++	}
++
++	// An existing file keeps its own mode: the mode argument applies only when
++	// the file is created, and a deployment that relaxed one on purpose should
++	// not have that quietly reverted.
++	existing := filepath.Join(dir, "existing.env")
++	if err := os.WriteFile(existing, []byte("OLD=1\n"), 0o640); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.Chmod(existing, 0o640); err != nil {
++		t.Fatal(err)
++	}
++	if err := Write(map[string]string{"API_TOKEN": "s3cr3t"}, existing); err != nil {
++		t.Fatalf("Write over an existing file: %v", err)
++	}
++	info, err = os.Stat(existing)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := info.Mode().Perm(); got != 0o640 {
++		t.Errorf("Write changed an existing file's mode to %04o, want 0640", got)
++	}
++
++	// The content still reads back, so the mode change did not cost the write.
++	back, err := Read(created)
++	if err != nil {
++		t.Fatalf("Read: %v", err)
++	}
++	if back["API_TOKEN"] != "s3cr3t" {
++		t.Errorf("Read of the written file gave %#v", back)
++	}
++}
+diff --git a/parser.go b/parser.go
+index c07b55a..0d058af 100644
+--- a/parser.go
++++ b/parser.go
+@@ -8,6 +8,7 @@ import (
+ 	"regexp"
+ 	"strings"
+ 	"unicode"
++	"unicode/utf8"
+ )
+ 
+ const (
+@@ -25,6 +26,13 @@ var (
+ )
+ 
+ func parseBytes(src []byte, out map[string]string) error {
++	// A UTF-8 byte order mark is a marker, not content: Windows editors write
++	// one and both reference implementations skip it, ruby dotenv by opening
++	// every env file with the "rb:bom|utf-8" encoding and node dotenv by
++	// treating U+FEFF as leading whitespace in its line pattern. Only a mark at
++	// the very start of the input is one; a U+FEFF anywhere else is left to the
++	// key charset check, which rejects it.
++	src = bytes.TrimPrefix(src, []byte("\uFEFF"))
+ 	src = bytes.ReplaceAll(src, []byte("\r\n"), []byte("\n"))
+ 	cutset := src
+ 	for {
+@@ -89,31 +97,52 @@ func locateKeyName(src []byte) (key string, cutset []byte, err error) {
+ 
+ 	// locate key name end and validate it in single loop
+ 	offset := 0
+-loop:
+-	for i, char := range src {
+-		rchar := rune(char)
+-		if isSpace(rchar) {
++	sawSeparator := false
++	// Whitespace is allowed between the name and the separator, so the first
++	// space ends the name. Anything but more whitespace or the separator after
++	// that point is a second name, not part of the first.
++	nameEnded := false
++	// The scan decodes runes rather than walking bytes. A byte of a multi-byte
++	// rune means nothing on its own, and judging one both reported a character
++	// the file never contained and let a name through whenever every byte of it
++	// happened to look like a Latin-1 letter, which accepted 5602 non-ASCII
++	// runes while rejecting the other 134459 unicode letters. Decoding in place
++	// rather than ranging over string(src) keeps the scan allocation-free: src
++	// is the rest of the file, so converting it per statement is quadratic.
++	for i := 0; i < len(src); {
++		char, size := rune(src[i]), 1
++		if char >= utf8.RuneSelf {
++			char, size = utf8.DecodeRune(src[i:])
++		}
++		i += size
++
++		if isSpace(char) {
++			nameEnded = true
+ 			continue
+ 		}
+ 
+-		switch char {
+-		case '=', ':':
++		if char == '=' || char == ':' {
+ 			// library also supports yaml-style value declaration
+-			key = string(src[0:i])
+-			offset = i + 1
+-			break loop
+-		case '_':
+-		default:
+-			// variable name should match [A-Za-z0-9_.-]
+-			if unicode.IsLetter(rchar) || unicode.IsNumber(rchar) || rchar == '.' || rchar == '-' {
+-				continue
+-			}
++			key = string(src[0 : i-size])
++			offset = i
++			sawSeparator = true
++			break
++		}
+ 
+-			return "", nil, fmt.Errorf(
+-				`%w %q in variable name near %q`,
+-				ErrUnexpectedChar,
+-				string(char), string(src))
++		// variable name should match [A-Za-z0-9_.-], the charset the README
++		// documents and the one ruby dotenv and node dotenv both use.
++		nameChar := char == '_' || char == '.' || char == '-' ||
++			(char >= 'a' && char <= 'z') ||
++			(char >= 'A' && char <= 'Z') ||
++			(char >= '0' && char <= '9')
++		if nameChar && !nameEnded {
++			continue
+ 		}
++
++		return "", nil, fmt.Errorf(
++			`%w %q in variable name near %q`,
++			ErrUnexpectedChar,
++			string(char), string(src))
+ 	}
+ 
+ 	if len(src) == 0 {
+@@ -122,6 +151,14 @@ loop:
+ 
+ 	// trim whitespace
+ 	key = strings.TrimRightFunc(key, unicode.IsSpace)
++	if !sawSeparator {
++		// The statement carried no = and no : at all, so there is no key here.
++		// This used to yield the empty key holding the whole line as its value.
++		// A key that is empty because everything before the separator was
++		// whitespace is a different case and is still accepted: TestParsing
++		// pins `="value"` as the empty key on purpose.
++		return "", nil, fmt.Errorf("%w for variable name near %q", ErrZeroLengthString, string(src))
++	}
+ 	cutset = bytes.TrimLeftFunc(src[offset:], isSpace)
+ 	return key, cutset, nil
+ }
+@@ -155,7 +192,11 @@ func extractVarValue(src []byte, vars map[string]string) (value string, rest []b
+ 		// a comment, ie: foo=bar # baz # other
+ 		for i := 0; i < endOfVar; i++ {
+ 			if line[i] == charComment && i < endOfVar {
+-				if isSpace(line[i-1]) {
++				// A comment marker opening the value leaves an empty value,
++				// matching ruby dotenv and node dotenv, whose unquoted value
++				// patterns both exclude '#'. There is no preceding rune to
++				// inspect in that case.
++				if i == 0 || isSpace(line[i-1]) {
+ 					endOfVar = i
+ 					break
+ 				}
+@@ -182,9 +223,12 @@ func extractVarValue(src []byte, vars map[string]string) (value string, rest []b
+ 			continue
+ 		}
+ 
+-		// trim quotes
+-		trimFunc := isCharFunc(rune(quote))
+-		value = string(bytes.TrimLeftFunc(bytes.TrimRightFunc(src[0:i], trimFunc), trimFunc))
++		// The value is what sits between the opening quote and this terminator,
++		// which the scan has just located. Trimming quote runes off the ends
++		// instead ate the closing quote of a value that ended in an escaped
++		// one, so `A="he said \"hi\""` came back as `he said "hi` with a
++		// stray backslash where the quote had been.
++		value = string(src[1:i])
+ 		if quote == prefixDoubleQuote {
+ 			// unescape newlines for double quote (this is compat feature)
+ 			// and expand environment variables
+@@ -263,8 +307,18 @@ func isLineEnd(r rune) bool {
+ }
+ 
+ var (
+-	escapeRegex        = regexp.MustCompile(`\\.`)
+-	expandVarRegex     = regexp.MustCompile(`(\\)?(\$)(\()?\{?([A-Z0-9_]+)?\}?`)
++	escapeRegex = regexp.MustCompile(`\\.`)
++	// Ports ruby dotenv's Dotenv::Substitutions::Variable, which carries the
++	// /i flag, so variable names expand case-insensitively there and here.
++	//
++	// The first alternative widens a fully braced name to the whole key
++	// charset locateKeyName accepts, so ${MY.KEY} and ${MY-KEY} resolve rather
++	// than being mangled. Braces are what make that safe: an unbraced $MY-KEY
++	// has no terminator, so widening it there would swallow the "-KEY" that
++	// every other dotenv treats as literal text. The second alternative is the
++	// original lenient pattern, which keeps the narrow charset and still
++	// tolerates a half-open ${NAME or a stray NAME}.
++	expandVarRegex     = regexp.MustCompile(`(?i)(\\)?(\$)(\()?(?:\{([A-Z0-9_.-]+)\}|\{?([A-Z0-9_]+)?\}?)`)
+ 	unescapeCharsRegex = regexp.MustCompile(`\\([^$])`)
+ )
+ 
+@@ -275,16 +329,29 @@ func expandVariables(v string, m map[string]string) string {
+ 		if submatch == nil {
+ 			return s
+ 		}
+-		if submatch[1] == "\\" || submatch[2] == "(" {
++		if submatch[1] == "\\" {
+ 			return submatch[0][1:]
+-		} else if submatch[4] != "" {
+-			if val, ok := m[submatch[4]]; ok {
++		}
++		if submatch[3] == "(" {
++			// $( opens command substitution, never a variable reference.
++			// Ruby dotenv excludes it with a (?!\() lookahead, which RE2
++			// cannot express, so the match is handed back untouched.
++			return submatch[0]
++		}
++		// The name comes from whichever alternative matched: the braced one
++		// with the wide charset, or the lenient one with the narrow charset.
++		name := submatch[4]
++		if name == "" {
++			name = submatch[5]
++		}
++		if name != "" {
++			if val, ok := m[name]; ok {
+ 				return val
+ 			}
+-			if val, ok := os.LookupEnv(submatch[4]); ok {
++			if val, ok := os.LookupEnv(name); ok {
+ 				return val
+ 			}
+-			return m[submatch[4]]
++			return m[name]
+ 		}
+ 		return s
+ 	})

@@ -43,6 +43,7 @@ loss rather than hiding it.
 | FluentValidation | 1 | 8 | converged | evaluator countersigned | 0 |
 | go-cmp | 2 | 15 | converged | evaluator countersigned | 0 |
 | go-yaml | 3 | 29 | converged | evaluator countersigned | 0 |
+| godotenv | 2 | 19 | converged | evaluator countersigned | 0 |
 | goldmark | 5 | 47 | **not converged** | n/a | 0 |
 | gson | 1 | 2 | converged | evaluator countersigned | 0 |
 | Humanizer | 4 | 32 | **not converged** | n/a | 0 |
@@ -91,13 +92,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 37 brownfield convergences:
+The engine tightened over time. Of the 38 brownfield convergences:
 
-- **32** were countersigned by the adversarial evaluator, the current standard.
+- **33** were countersigned by the adversarial evaluator, the current standard.
   Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-  `claude-agent-sdk-python`, `validator`, `clap`, `zod` and `go-cmp` met
+  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp` and `godotenv` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -107,7 +108,7 @@ The engine tightened over time. Of the 37 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 37 as one number
+Every receipt names the standard its own run met. Pooling all 38 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -121,14 +122,14 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 37 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 38 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
 `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-`claude-agent-sdk-python`, `validator`, `clap`, `zod` and `go-cmp`, and each receipt names what it
+`claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp` and `godotenv`, and each receipt names what it
 carried - three Lows
 for `cJSON`, three for `swift-algorithms`, five for `magic_enum`, two for
 `commander.js`, four for `claude-code-action`, three for
-`claude-agent-sdk-python`, two for `validator`, six for `clap`, six for `zod`, five for `go-cmp`, and in
+`claude-agent-sdk-python`, two for `validator`, six for `clap`, six for `zod`, five for `go-cmp`, five for `godotenv`, and in
 `path-to-regexp`'s case no Low at all but one open Medium, blocked with its
 reason recorded.** That last one is the
 floor's edge and is worth stating plainly: `PTR-2` is a security finding, rated
