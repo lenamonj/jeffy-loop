@@ -10,7 +10,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Mac%20%7C%20Linux-0EA5E9?style=for-the-badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
 
-**[Quickstart](#quickstart)** &nbsp;·&nbsp; **[Usage](#usage)** &nbsp;·&nbsp; **[Why Jeffy](#why-jeffy)** &nbsp;·&nbsp; **[The receipts](#external-validation-public-open-source-projects)** &nbsp;·&nbsp; **[How a run works](#how-a-run-works)** &nbsp;·&nbsp; **[The rules](#the-rules-a-run-lives-by)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
+**[Quickstart](#quickstart)** &nbsp;·&nbsp; **[Usage](#usage)** &nbsp;·&nbsp; **[What makes it different](#what-makes-it-different)** &nbsp;·&nbsp; **[The receipts](#external-validation-public-open-source-projects)** &nbsp;·&nbsp; **[How a run works](#how-a-run-works)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
 
 </div>
 
@@ -135,25 +135,53 @@ Deleted the clone since installing? Clone it again and run the installer from th
 
 **Cancel.** Run `/cancel-jeffy`. It reports which loop it found, deletes the loop state file, and leaves `PLAN.md`, `BACKLOG.md`, and `JOURNAL.md` untouched, so the next `/jeffy` picks up exactly where it left off. (Equivalent manual action: delete `.claude/jeffy-loop.local.md` at the project root.)
 
-## Why Jeffy
+## What makes it different
 
-- **An engineer's judgment, not a linter's.** Every run starts from a real audit - architecture, correctness, security, testing, error handling, performance, accessibility, developer experience, and more - and every finding becomes a prioritized task with a concrete acceptance check. Evidence over assertion: a finding exists only if the loop can point at it.
+Five guarantees. Each one is enforced by the iteration prompt, the state files, or the Stop hook, and each is checkable in this repository.
 
-- **It cannot wreck your repo.** Every iteration ends in a local checkpoint commit, and a repo-level verify gate reverts any iteration that breaks the project on the spot. Nothing is ever pushed and no branches are created, so you review with `git log`, revert any single iteration, and squash the run when you are happy.
+**It audits like an engineer, not a linter.** Every run opens with a real audit across architecture, correctness, security, testing, performance and more. Every finding becomes a task with a runnable acceptance check, and a finding exists only if the loop can point at it.
 
-- **It doesn't invent problems.** Severity is judged against a declared operating envelope - your project's real input surfaces, not imagined attackers - so out-of-envelope findings cannot inflate the backlog. Only you can widen the envelope: the loop files a proposal and moves on.
+**It cannot wreck your repo.** Every iteration ends in a local checkpoint commit, and a verify gate reverts any iteration that breaks the project. Nothing is pushed, no branches are created.
 
-- **Done means no High, no Medium, and every Low on the record.** A declaration needs a fresh full audit finding zero High and zero Medium, with any open Low carried, named in the closing entry, and published beside the receipt rather than quietly dropped. A surface inventory bounds the claim, so "no findings" can never mean "nowhere looked".
+**"Done" is not the agent's opinion.** A declaration needs a fresh audit finding zero High and zero Medium, a fully swept surface inventory, and an adversarial evaluator's countersignature. Then a plain shell script re-checks all of it, re-runs your test suite, and refuses the stop if anything fails.
 
-- **Convergence needs a second signature.** An agent grading its own work praises it, so before the loop may claim anything an adversarial evaluator - a fresh-context sub-agent carrying none of the run's self-persuasion - re-runs the verify gate and every closed task's acceptance check, hunts for what was missed, and must return PASS. Each verdict is written to its own committed artifact naming every command it ran and that command's real exit status.
+**It cannot claim what it never looked at.** The whole public surface goes on a checklist before any finding is filed, each swept row records the commit it certified, and a row reopens when its code changes. "No findings" can never mean "nowhere looked".
 
-- **The stop is machine-checked, and the machine is tested.** The Stop hook is plain shell, not a model, and it refuses a converged stop that fails any of its conditions, re-feeding the evidence to the loop instead of letting the claim through. The engine itself is held to <!-- count:checks -->**257 behavioural checks**<!-- /count --> on each CI leg, Linux, Windows, and macOS, with a shellcheck lint pass riding the Linux leg on top.
+**Lessons become machinery.** A rule learned the hard way binds every iteration after it, and a rule that has to be written twice gets promoted into a mechanism. The engine itself is held to <!-- count:checks -->**251 behavioural checks**<!-- /count --> on Linux, Windows and macOS, each one added because something went wrong once.
 
-- **It has a self-learning mechanism, and it is pointed at itself.** A rule learned the hard way binds every iteration after it, and a rule that has to be written a second time is proposed for promotion into a mechanism, on the reasoning that a rule needing to be written twice is a rule the text is not enforcing. That is not an intention: it has happened on real targets whose published journals carry the loop's own words for it, and it is how a defect met in a stranger's repository becomes this engine's next version.
+<details>
+<summary><b>The full rule set a run lives by</b></summary>
+<br>
 
-- **It stops on purpose, and it shows its work.** Budget spent, convergence reached, progress stalled, or a decision only you can make - the loop ends itself and says which, instead of burning budget spinning. The run report lists iterations used, tasks closed with severities, the diffstat, anything blocked, and decisions waiting on you, over an append-only journal and checkpoint commits that hold the full greppable record.
+**Every iteration**
 
-Each of these is stated as an enforced condition in [the rules a run lives by](#the-rules-a-run-lives-by), and the mechanism behind the seventh is in [the loop improves the loop](#the-loop-improves-the-loop).
+- **One verified task.** Every task carries a runnable acceptance check; done means the check ran and passed. Three failed fix attempts mark it blocked rather than thrashing.
+- **Checkpoint everything, push nothing.** Every iteration ends in a local commit prefixed `jeffy:`, which is the revert unit. Pre-flight warns on a dirty tree. Without git, checkpoints degrade to journal-only discipline.
+- **The verify gate guards every change.** An iteration that newly breaks the verify command in `PLAN.md` is reverted and its task marked blocked.
+- **Interrupted work is salvaged, never discarded.** A run resuming over a dirty tree commits the salvage first.
+- **Stalls end runs before budgets do.** Progress means a path outside the loop's own memory moved, or the ledger changed. A checkpoint commit is not progress on its own, since the engine commits every iteration. The first flat iteration re-feeds with a note; a second consecutive one ends the run. The convergence sequence is exempt, capped at three iterations.
+- **The hook does the budget arithmetic.** Every re-feed carries the iteration count, open tasks per section, unswept rows, and what the convergence sequence still costs.
+
+**Every audit**
+
+- **Work from a written map.** The first audit lists the whole public surface and probes it breadth-first before filing anything.
+- **Prove correctness, not liveness.** A row that computes values needs a known answer or a strong invariant. Every documented parameter must change the output at two or more values; one that changes nothing is a finding.
+- **Keep the instruments.** Known-answer batteries live under `.jeffy/probes/` and are committed, so a re-sweep re-runs them instead of rebuilding them.
+- **Severity comes from the envelope.** Findings are scored against your project's real input surfaces. Envelope changes go to Proposed for your approval; the loop never widens its own mandate.
+- **The third strike forces structure.** The third finding sharing one root cause forces a structural fix or a decision, never a fourth spot patch.
+
+**Convergence**
+
+- **Convergence is sticky.** The converged commit is recorded, and relaunching on an unchanged tree re-verifies in O(1) instead of re-rolling the audit dice.
+- **The evaluator cannot be worn down.** At most two reviews per run, three when the first landed early. A rejection with no review left ends the run blocked, and it spends the remaining budget closing what the gate filed. A session that cannot spawn sub-agents ends blocked, because the gate is never waived.
+- **The stop is enforced in shell.** At the promise the hook re-checks every condition: zero open High and Medium with an unparseable severity blocking, a Converged line still certifying the tree, no unswept row, a declared oracle class, an evaluator PASS backed by its committed artifact, and your verify command exiting 0 when the hook re-runs it. That re-run is bounded by a timeout whose bound resolves as `verify_timeout_seconds`, else `Verify duration` x3 floored at 240s, else 240s, so a suite that legitimately runs long is bounded by its own measured time rather than refused for outrunning a bound nobody measured. The bound is enforced by `timeout`, `gtimeout`, or a shell watchdog, so it holds on a host with no GNU coreutils.
+
+**Always**
+
+- **Published code is run code.** Anything leaving the project must have been executed in exactly the form it is published.
+- **Lessons persist.** Operational rules are promoted into `PLAN.md`, which every future iteration reads. Add your own lines there: fix the loop, not the run.
+
+</details>
 
 <div align="center">
 
@@ -162,7 +190,7 @@ Each of these is stated as an enforced condition in [the rules a run lives by](#
   <img src="media/language-pie-light.png" alt="Pie chart of the 37 converged public targets by language: Python 9 at 24.3 percent, Go 5 at 13.5 percent, JavaScript 4 at 10.8 percent, TypeScript 4 at 10.8 percent, C++ 3 at 8.1 percent, Rust 3 at 8.1 percent, C 2 at 5.4 percent, C# 2 at 5.4 percent, Java 1 at 2.7 percent, Kotlin 1 at 2.7 percent, PHP 1 at 2.7 percent, Ruby 1 at 2.7 percent, Swift 1 at 2.7 percent." width="900">
 </picture>
 
-<sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, and the alt text above is derived from the same table by the repo validator, so neither the chart nor its description can disagree with it. Both read the slices largest first, ties alphabetical. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
+<sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
 
 </div>
 
@@ -170,7 +198,7 @@ Each of these is stated as an enforced condition in [the rules a run lives by](#
 
 Testing a tool against its own codebase proves little, so Jeffy was run against widely-used open-source projects with no connection to this repository. <!-- count:converged -->37<!-- /count --> of those runs converged, across <!-- count:languages -->13<!-- /count --> languages. That breadth is evidence of something specific rather than decoration: the engine ships no language-specific analyzer, no ruleset, and no per-ecosystem plugin. It works from what a project already has, its own test suite and its own verify command, so what carries from a Rust CLI to a Ruby linter to a C++ parser is the method itself.
 
-Every run used a local clone, and nothing went upstream without a filed issue or PR. Each was held to the rules current at its date, and those rules only tightened. Of the <!-- count:converged -->37<!-- /count -->, **<!-- count:countersigned -->32<!-- /count --> converged under the adversarial evaluator's countersignature, <!-- count:evaluator-unavailable -->1<!-- /count --> recorded the evaluator as unavailable and says so, and <!-- count:pre-evaluator -->4<!-- /count --> predate the gate entirely**. Every receipt names the standard its run met, so none of this requires taking our word for it.
+Every run used a local clone, and nothing went upstream without a filed issue or PR. Each was held to the rules current at its date, those rules only tightened, and every receipt names the standard its run met.
 
 A method that always converges is not measuring anything, so the record shows what the standard costs when a project resists it. python-dotenv was published here as *not converged* through four runs and 25 findings, and needed eight runs and 73 iterations before an audit finally filed nothing. sqlparse makes the point under a stricter rule: its budget of five runs was fixed in writing before its first iteration, four runs failed, and it converged on the fifth and last - one more rejection and it would have been published as a non-convergence, because the rule said so in advance. One row is not a loop run at all. PapaParse is an audit under the same method, kept in the table rather than hidden, and its conversion waits on four open upstream PRs.
 
@@ -258,13 +286,11 @@ Running `/jeffy` in a Claude Code session:
 
 ### Use several short runs, not one long one
 
-A budget is a ceiling, not a target, and the practice that produced every receipt here is the same one worth copying: **run `/jeffy 10`, let it finish, close the session, then open a new one and run `/jeffy 10` again.** The receipts that took 40 or 58 or 74 iterations got there as four to eight budgeted runs, never as one enormous budget.
+A budget is a ceiling, not a target. **Run `/jeffy 10`, let it finish, close the session, then open a new one and run it again.** The receipts that took 40 or 58 or 74 iterations got there as four to eight budgeted runs, never as one enormous budget.
 
-That is not superstition about round numbers. The loop is built to start each iteration from written state - `PLAN.md`, `BACKLOG.md` and the last few journal entries - precisely because a fresh reading of the record is more reliable than a long conversation's memory of it. Inside a single session, though, that conversation keeps growing: every audit, every diff, every command output stays in context, and the loop ends up reasoning over its own accumulated transcript instead of the files it was designed to reason over. A new session throws that away and forces it to re-read what it actually wrote. The receipts bear the cost of skipping this out: in the python-dotenv run, later runs kept filing Highs and Mediums on surface that earlier runs had already swept and scored clean.
+The reason is context. The loop starts each iteration from written state precisely because a fresh reading of the record beats a long conversation's memory of it, but inside one session that conversation keeps growing until the loop is reasoning over its own transcript instead of its files. A new session throws that away. The receipts show the cost of skipping it: in the python-dotenv run, later runs kept filing findings on surface earlier runs had already swept and scored clean.
 
-The restart also gives you the natural review point. Between runs the tree is committed, the report is written, and the handoff names what comes next, so it costs nothing to read the journal, answer anything filed under Proposed, and decide whether to keep going. And because every journal entry is stamped with the run that produced it, a bug introduced in run 3 stays attributable to run 3 rather than dissolving into one undifferentiated log.
-
-Nothing breaks if you hand it a bigger budget. The state files persist, the ratchet skips a re-audit on an unchanged tree, and a fresh run picks up exactly where the last one stopped. Short runs are simply how you get the loop's design working for you instead of against it.
+The restart is also the natural review point. Between runs the tree is committed and the report is written, so it costs nothing to read the journal, answer anything under Proposed, and decide whether to keep going.
 
 Jeffy built this repository by running on itself, and that convergence is re-earned, not archived - every fresh run has to reach it again with fresh evidence. One such run opens by filing three Mediums against the repo's own trust-model and check-count claims, spends an iteration on each, and still has to earn the stop. The dev journal stays out of the published tree, since state files are the loop's memory rather than the product, but the closing sequence, abridged, shows the texture of a converged stop:
 
@@ -313,61 +339,13 @@ When Jeffy converges on your project, the checkpoint lands in your `git log` and
 > [!IMPORTANT]
 > **Trust model.** The entire engine is one auditable shell script in this repo (`skills/jeffy/hooks/stop-hook.sh`), registered as a Claude Code Stop hook. It fires at turn end but exits instantly unless the current project has a live Jeffy state file naming that session - zero cost and zero behavior outside a run. The installer's only writes outside this repo are the two skill folders it copies into `~/.claude/skills` (engine included), that one hook registration in `~/.claude/settings.json`, and - only when jq is missing and you answer yes to its prompt - a jq install through your system package manager (winget, Homebrew, or apt).
 
-## The rules a run lives by
-
-Each rule is enforced by the iteration prompt, the state files, or the Stop hook itself - not by good intentions.
-
-**Every iteration**
-
-- **One verified task per iteration.** Every task carries a runnable acceptance check; done means the check ran and passed. Three failed fix attempts mark the task blocked with a reason instead of thrashing.
-- **Checkpoint everything, push nothing.** Every iteration ends in a local commit prefixed `jeffy:` - the revert and recovery unit. No pushes, no branches; pre-flight warns on a dirty tree so your work is never swept into a checkpoint. Without git, checkpoints degrade to journal-only discipline.
-- **The verify gate guards every change.** An iteration that newly breaks the verify command recorded in `PLAN.md` is reverted on the spot and its task marked blocked.
-- **Interrupted work is salvaged, never discarded.** A run that resumes over a dirty tree commits the salvage before touching anything.
-- **Every iteration answers for its hygiene.** Between iterations the hook checks the journal entry (heading grammar, with a run token telling two runs in one session apart), the checkpoint, and that `JOURNAL-archive.md` only ever grows. Violations ride the next re-feed as an ITERATION HYGIENE note.
-- **Stalls end runs before budgets do.** Progress means a path outside the loop's own memory moved, or that `BACKLOG.md` changed. The loop's own memory is `PLAN.md`, `BACKLOG.md`, `JOURNAL.md`, `JOURNAL-archive.md`, `.jeffy/`, and the two files under `.claude/` the loop and the harness write for themselves. A checkpoint commit is not progress on its own, which is the point: the engine commits every iteration, so a gate that watched HEAD would only ever watch itself. The first flat iteration re-feeds with a STALL note, and a second consecutive one ends the run from shell. The convergence sequence is exempt, because a closeout audit, the evaluator gate, a ratchet and a wrapup legitimately touch state files only. That exemption is capped at three consecutive iterations, the length of the sequence itself, because the entry type claiming it is eleven characters the run writes about itself. Without git, the ledger signal alone decides.
-- **The hook does the budget arithmetic.** Every re-feed carries a RUN STATE line the engine counts itself: the iteration and how many remain after it, open tasks per section, and unswept rows. Once the ledger is empty over a swept surface it also adds what the convergence sequence still costs, so a run plans its endgame instead of discovering it at the last iteration.
-
-**Every audit**
-
-- **Audits work from a written map, never from wandering.** The first audit lists the whole public surface as a checkbox inventory in `PLAN.md` and probes it breadth-first before filing anything. Every sweep records the commit it certified, a row reopens when its code changes, dimension scores claim only swept rows, and no run converges while a row is unswept.
-- **Sweeps prove correctness, not liveness.** A row that computes values needs a known answer or a strong invariant - run-without-crashing certifies nothing - and every documented parameter must be shown to change the output at two or more values. A parameter whose value changes nothing is a finding, never a pass.
-- **Instruments are kept, not rebuilt.** A row's known-answer battery lives under `.jeffy/probes/` and the checkpoints commit it, so a re-sweep re-runs the battery instead of reconstructing it, and a battery is updated in the same iteration as the behavior it pins.
-- **Every finding is classed by the files its fix will touch.** Backlog lines are written `- [ ] ID (Severity, class, dimension): finding. Acceptance: check.` with a class of runtime, test, build-ci, docs, or dev-tooling, and a section is ordered by severity first, then runtime ahead of the rest, because shipped behavior is what a user meets and perimeter work is what a run drifts into.
-- **Severity comes from the envelope, never from imagination.** Envelope changes and audit escalations go to the Proposed section of `BACKLOG.md` for your approval - the loop never widens its own mandate.
-- **Changes are made with the map open.** Before touching shared code the loop reads its callers and the tests that pin it and states the contract the change preserves; a change that alters behavior updates the documentation and reopens the affected inventory rows in the same iteration.
-- **The third strike forces structure.** Repeated-idiom fixes must enumerate and cover every sibling site; the third finding sharing one root cause forces a single structural fix or a user decision, never a fourth spot patch.
-
-**Convergence**
-
-- **Convergence is sticky.** The converged commit is recorded; relaunching on an unchanged tree re-verifies and re-converges in O(1) instead of re-rolling the audit dice. A seeded backlog or a focus directive always gets a real run, and settled defect classes are never re-litigated on unchanged code.
-- **Convergence needs the adversarial evaluator's signature.** One fresh-context sub-agent that assumes the work is broken re-runs the checks itself, bound by the same envelope and evidence rules. It runs the iteration the ledger first empties, given a clean full audit on the record and three or more iterations left, so that a rejection can still be answered.
-
-  The cap is absolute and cannot be worn down by persistence: at most two reviews per run, or three when the first landed before the budget's midpoint. What ends a run is a rejection with no review left, not the second one as such. A terminal rejection spends the rest of the budget closing the findings the gate filed and ends blocked, deferring the declaration to the next run's fresh gate rather than forfeiting iterations already paid for. A session that cannot spawn sub-agents records the reason and ends blocked, because the gate is never skipped and never waived. The ratchet never invokes it.
-- **The converged stop is enforced in shell.** At the promise, the Stop hook re-checks every condition itself, and all of them must hold:
-
-  - a ledger that exists with zero open High and zero open Medium - an open Low is carried and named, and a task line with no parseable severity blocks, because the floor fails closed;
-  - a Converged line whose commit is reachable from HEAD and still certifies the tree;
-  - no unswept inventory row;
-  - a verify command that has declared its oracle class and the targets this platform excludes;
-  - an evaluator PASS in the run's closing journal entry, backed by the gate's committed artifact at its highest invocation ordinal;
-  - the project's own verify command exiting 0 when the hook re-runs it.
-
-  That re-run is bounded by a timeout whose bound resolves as `verify_timeout_seconds`, else `Verify duration` x3 floored at 240s, else 240s, so a suite that legitimately runs long is bounded by its own measured time rather than refused for outrunning a bound nobody measured. The bound is enforced by `timeout`, `gtimeout`, or a shell watchdog, so it holds on a host with no GNU coreutils.
-
-  Violations block the stop and re-feed the evidence. A violation landing once the budget is spent buys one corrective re-feed, telling the run to record the refusal and close without claiming convergence, rather than the refusal going only to stderr where nobody reads it. One bound is worth stating because the engine does not deliver more: where a closing-extension gate has already ended the run for its own stated reason, that gate wins and the refusal is not re-fed. Genuinely missing infrastructure - no `PLAN.md`, no `Surface inventory` section - fails open with a stderr diagnostic; a missing ledger or journal does not, because every gate reads them.
-
-**Always**
-
-- **Published code is run code.** Anything that leaves the project - an issue body, a report, a pull request - must have been executed in exactly the form it is published. A trimmed version of a verified script is new, unverified code.
-- **Lessons persist.** An operational rule learned the hard way - a build quirk, a command that must not be used - is promoted to the Lessons section of `PLAN.md`, which every future iteration reads in full. Add your own lines there to steer future runs: fix the loop, not the run.
-
 ## The loop improves the loop
 
 The rule above - fix the loop, not the run - applies to Jeffy itself, and that is the part designed to compound. Most tools improve when their authors read bug reports. Jeffy improves by being run against its own source under its own rules, and by converting what that finds into machinery that cannot be forgotten. Four mechanisms do the work, and each leaves evidence in this repository you can check rather than take on trust.
 
 **The engine is audited by the engine, and the results are merged in public, failures included.** Jeffy is pointed at its own repository exactly as it is pointed at any external target: same envelope, same evidence rules, same adversarial gate, no privileged mode. Those runs are in this history under their own merge commits, and the subjects say what happened rather than what would read better. `ba032bc` merged the first self-run to converge under the gate, and shipped the first published evaluator artifacts with it. `20ab642` merged the v1.9.0 self-run, converged in 6 of 15 iterations. `d89c0ac` reads, in full, *"merge: three self-runs of harness work, none of which converged"*. Real fixes came out of that third merge and none of them earned a convergence stamp, so the commit says so. A tool that publishes only its successful self-audits is evidence of nothing.
 
-**A lesson a machine can check becomes a check, never a paragraph.** This is the mechanism that accumulates. When a run finds a defect in the engine, the fix is not a warning in the documentation but a behavioural check in `scripts/validate.sh` that fails if the defect returns. The count is the visible result: it started at 119 and stands at <!-- count:checks -->**257 behavioural checks**<!-- /count --> on a clone, each one added because something went wrong once and was made unable to go wrong silently again. The number in that sentence is itself derived by the validator rather than typed, which is the next mechanism.
+**A lesson a machine can check becomes a check, never a paragraph.** This is the mechanism that accumulates. When a run finds a defect in the engine, the fix is not a warning in the documentation but a behavioural check in `scripts/validate.sh` that fails if the defect returns. The count is the visible result: it started at 119 and stands at <!-- count:checks -->**251 behavioural checks**<!-- /count --> on a clone, each one added because something went wrong once and was made unable to go wrong silently again. The number in that sentence is itself derived by the validator rather than typed, which is the next mechanism.
 
 Check K is the clearest example, because it closed the hole it was born from. The lesson was that a published number must be recomputed from the run rather than copied from wherever it last appeared. Prose saying so would have been read and forgotten. Instead check K derives the check count this README publishes from the validator run itself and refuses a mismatch - and during a release build it did exactly that, rejecting a stale `203` that a human had already read past.
 

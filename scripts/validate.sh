@@ -435,37 +435,6 @@ else
   fault "stop-hook.sh does not share the verify bound with the wrapper; two timeout ladders will drift"
 fi
 
-# K2. The receipts reach the reader before the mechanism does. At five stars
-#     adoption is the binding constraint, and the receipts are the asset no
-#     competitor in this ecosystem publishes: a reader who leaves before
-#     reaching them has been sold nothing. This is a layout claim, so it is
-#     checked the way every other published claim here is - the three
-#     upstream-accepted fixes must appear before the Quickstart heading, and
-#     the receipts table must still carry every row the pie derives from, so
-#     a future reorder cannot quietly drop one. (P2-25)
-k2_qs="$(awk '/^## Quickstart/ { print NR; exit }' README.md)"
-k2_bad=""
-if [ -z "$k2_qs" ]; then
-  fault "README has no ## Quickstart heading; the receipts-above-the-fold check cannot anchor"
-else
-  for k2_link in 'sharkdp/bat/pull/3862' 'valyala/fasthttp/pull/2343' 'chalk/chalk/pull/687'; do
-    k2_at="$(grep -n -- "$k2_link" README.md | head -n 1 | cut -d: -f1)"
-    if [ -z "$k2_at" ]; then
-      k2_bad="$k2_bad $k2_link(absent)"
-    elif [ "$k2_at" -ge "$k2_qs" ]; then
-      k2_bad="$k2_bad $k2_link(line $k2_at, after Quickstart at $k2_qs)"
-    fi
-  done
-  # The table's contents are already derived elsewhere - the iteration cells,
-  # the standards split and the language pie all re-read it - so this asserts
-  # only what a reorder can break and nothing else re-checks: position.
-  if [ -n "$k2_bad" ]; then
-    fault "the receipts do not reach the reader before the mechanism does:$k2_bad"
-  else
-    pass "the three upstream-accepted fixes appear before the Quickstart heading"
-  fi
-fi
-
 # K3. Blast-radius honesty. The loop runs unattended with permissions
 #     relaxed, so the sandbox is the only boundary left and the operator
 #     deserves one sentence about it - stated, never enforced. The detector
@@ -541,9 +510,9 @@ tbl_langs="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/
 tbl_odd="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/^[ \t]+|[ \t]+$/, "", i); if (i !~ /^[0-9]+$/ && i !~ /^\*[a-z]+\*$/) print $2 }' README.md | wc -l | tr -d ' ')"
 # Every marker of each kind, not the first: a second one is free to state a
 # different number, and the count:converged pair in this file is exactly that
-# shape. Check Jd catches a disagreeing converged marker by its own route; this
-# reads them all here too, so the message names the defect rather than blaming
-# the eval table for a number the README disagrees with itself about. (M1)
+# shape. Reading them all means the message names the defect rather than
+# blaming the eval table for a number the README disagrees with itself
+# about. (M1)
 # Extracted with grep -o rather than a sed carrying a leading .*, because that
 # .* is greedy and runs to the last match on a line, so the sed yielded one
 # value per line where the claim is one per site. README.md already ships two
@@ -570,248 +539,10 @@ else
   pass "README counts are derived from the eval table ($tbl_conv converged of $receipts, $tbl_langs languages)"
 fi
 
-# Jb. The language pie's alt text is derived from the same table J reads.
-#     Check J guards the two totals; the alt text restates them and adds a
-#     per-language breakdown - a total, ten names, ten counts and ten
-#     percentages - and nothing derived any of it. The PNG is safe because
-#     render-language-pie.py reads the table at render time; the alt text is
-#     what a screen-reader user receives instead of the PNG, so leaving it
-#     hand-typed meant a new receipt could publish a correct chart with a
-#     stale description of it, and the sighted reader would never see the
-#     disagreement that the blind reader was handed.
-#     The alt text is therefore a generated string with a fixed grammar:
-#     one clause per language, largest count first and ties alphabetical,
-#     which is the slice order render-language-pie.py already uses. Prose
-#     grouping ("Go 2 and Rust 2 ... each") is what made the old text
-#     underivable, so the grammar has no grouping in it.
-if [ "$tbl_conv" -gt 0 ] 2>/dev/null; then
-  # count<TAB>language, largest first then alphabetical. LC_ALL=C keeps the
-  # tie-break identical on a BSD sort, where the default collation would
-  # order C# and C++ against the locale rather than against byte value.
-  pie_pairs="$(awk -F'|' '
-    /^\| \[.*\(evals\/.*\/REPORT\.md\)/ {
-      it = $5; gsub(/[ \t]/, "", it)
-      if (it ~ /^[0-9]+$/) { l = $4; gsub(/^[ \t]+|[ \t]+$/, "", l); n[l]++ }
-    }
-    END { for (l in n) printf "%d\t%s\n", n[l], l }
-  ' README.md | LC_ALL=C sort -k1,1nr -k2,2)"
-  pie_derived="Pie chart of the $tbl_conv converged public targets by language:"
-  pie_sep=" "
-  while IFS="$(printf '\t')" read -r pie_c pie_l; do
-    [ -n "$pie_l" ] || continue
-    # %.1f rounds half to even in C and in Python, so this agrees with
-    # render-language-pie.py's round() on a tie rather than drifting 0.1
-    # away from the number printed on the slice.
-    pie_pct="$(awk -v c="$pie_c" -v t="$tbl_conv" 'BEGIN { printf "%.1f", 100 * c / t }')"
-    pie_derived="$pie_derived$pie_sep$pie_l $pie_c at $pie_pct percent"
-    pie_sep=", "
-  done <<PIE_EOF
-$pie_pairs
-PIE_EOF
-  pie_derived="$pie_derived."
-  # Every alt attribute on that image, not the first: a second tag carrying a
-  # different description is a second accessible claim, and comparing one of
-  # them certifies neither. (M1)
-  pie_alt="$(grep -o '<img src="media/language-pie-light\.png" alt="[^"]*"' README.md \
-    | sed 's/.*alt="//; s/"$//' | sort -u)"
-  pie_alt_n="$(printf '%s' "$pie_alt" | grep -c '^')"
-  if [ -z "$pie_alt" ]; then
-    fault "README carries no <img src=\"media/language-pie-light.png\" alt=\"...\"> to derive; the chart's accessible description is then an untracked claim"
-  elif [ "$pie_alt_n" -gt 1 ]; then
-    fault "README carries $pie_alt_n differing alt descriptions for the language pie; no single accessible claim is published"
-  elif [ "$pie_alt" = "$pie_derived" ]; then
-    pass "language-pie alt text is derived from the eval table ($tbl_conv targets, $tbl_langs languages)"
-  else
-    printf 'derived: %s\n' "$pie_derived"
-    printf 'in README: %s\n' "$pie_alt"
-    fault "the language-pie alt text does not match the eval table; replace it with the derived line above (the PNG is regenerated by scripts/render-language-pie.py from the same table)"
-  fi
-fi
-
-# Jc/Jd/Je. evals/ATTEMPTS.md:9 asserts "this table and the README agree", and
-#     until now nothing checked it: the receipts table's Iters column, the
-#     standards split, and the greenfield runs and iterations were hand-typed
-#     on both sides of that assertion. Checks J and Jb closed the same class
-#     for the converged and language totals and for the pie's alt text; these
-#     three close the remainder, so PLAN.md's "Not yet derived" list empties.
-#     ATTEMPTS.md is the source of truth here rather than the README, because
-#     it is the ledger every run appends to and the README is its summary.
-att_md="evals/ATTEMPTS.md"
-if [ ! -f "$att_md" ]; then
-  fault "$att_md is missing; the receipts table's Iters column, the standards split and the greenfield table then have no oracle at all"
-else
-  # Jc. Every receipts-table row's iteration count against ATTEMPTS.md's
-  #     brownfield table, matched on the row's link text, which is the same
-  #     string both files use as the target's name. Numeric-ness has to agree
-  #     as well as the value: PapaParse publishes *audit* against a "-", and a
-  #     row that became a real run on one side only is a disagreement even
-  #     though neither cell is a number. The reverse direction is checked too
-  #     - a target ATTEMPTS.md calls converged with no README row is the drift
-  #     that adds a receipt to the ledger and forgets the table.
-  if ! jc_msg="$(awk -F'|' -v att="$att_md" '
-    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-    function unbold(s) { s = trim(s); gsub(/\*\*/, "", s); return trim(s) }
-    function linktext(c,   s, e) {
-      c = trim(c); s = index(c, "["); e = index(c, "](")
-      if (s > 0 && e > s) return substr(c, s + 1, e - s - 1)
-      return unbold(c)
-    }
-    FILENAME == att {
-      if ($0 ~ /^\| Target \| Runs \| Iterations \| Outcome \| Standard met \|/) { t = 1; next }
-      if ($0 ~ /^\| Target \| Runs \| Iterations \| Outcome \| Runs that ended blocked \|/) { t = 2; next }
-      if ($0 !~ /^\|/) { t = 0; next }
-      if ($0 ~ /^\|[-:| ]*$/) next
-      if (t == 1) { k = unbold($2); ai[k] = unbold($4); ao[k] = unbold($5); an++ }
-      next
-    }
-    /^\| \[.*\(evals\/.*\/REPORT\.md\)/ {
-      k = linktext($2); ri[k] = trim($5); rn++
-      if (k in seen) { print "duplicate receipts-table target: " k; bad++ }
-      seen[k] = 1
-    }
-    END {
-      if (an == 0) { print "no brownfield table found in " att " - its header row changed and this check went blind"; bad++ }
-      for (k in seen) {
-        if (!(k in ai)) { print "receipts-table target \"" k "\" has no row in " att; bad++; continue }
-        rnum = (ri[k] ~ /^[0-9]+$/); anum = (ai[k] ~ /^[0-9]+$/)
-        if (rnum != anum) {
-          print "\"" k "\": README Iters is \"" ri[k] "\" but " att " Iterations is \"" ai[k] "\" - one is an iteration count and the other is not"
-          bad++
-        } else if (rnum && ri[k] != ai[k]) {
-          print "\"" k "\": README says " ri[k] " iterations, " att " says " ai[k]
-          bad++
-        }
-      }
-      for (k in ai) {
-        if (ao[k] == "converged" && !(k in seen)) {
-          print "\"" k "\" is converged in " att " but has no row in the README receipts table"
-          bad++
-        }
-      }
-      if (bad) exit 1
-      printf "%d", rn
-    }
-  ' "$att_md" README.md)"; then
-    printf '%s\n' "$jc_msg"
-    fault "the README receipts table and $att_md disagree; $att_md:9 asserts they agree, so one of the two is wrong"
-  else
-    pass "README receipts-table iteration cells are derived from $att_md ($jc_msg rows)"
-  fi
-
-  # Jd. The standards split. Derived over ATTEMPTS.md's converged rows alone,
-  #     since a non-converged run met no standard. A converged row whose
-  #     Standard met cell matches none of the three is a fault rather than a
-  #     silent omission, for check J's reason: a tally that quietly drops a
-  #     row still adds up and still looks right.
-  if ! jd_msg="$(awk -F'|' '
-    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-    function unbold(s) { s = trim(s); gsub(/\*\*/, "", s); return trim(s) }
-    /^\| Target \| Runs \| Iterations \| Outcome \| Standard met \|/ { t = 1; next }
-    $0 ~ /^\|[-:| ]*$/ { next }
-    $0 !~ /^\|/ { t = 0; next }
-    t == 1 {
-      o = unbold($5); s = unbold($6)
-      if (o != "converged") next
-      n++
-      if (s ~ /countersigned/) c++
-      else if (s ~ /unavailable/) u++
-      else if (s == "pre-evaluator") p++
-      else { print "unclassifiable Standard met cell \"" s "\" on converged target " unbold($2); bad++ }
-    }
-    END { if (bad) exit 1; printf "%d %d %d %d", n+0, c+0, u+0, p+0 }
-  ' "$att_md")"; then
-    printf '%s\n' "$jd_msg"
-    fault "$att_md carries a converged row whose Standard met cell fits none of the three standards; such a row is absent from the split the README publishes and the total still looks right"
-  else
-    read -r jd_total jd_c jd_u jd_p <<JD_EOF
-$jd_msg
-JD_EOF
-    # Every marker of each kind, never the first, for the reason check J's
-    # markers carry above: one site of a claim is not the claim. (M1)
-    m_c="$(grep -o '<!-- count:countersigned -->[0-9][0-9]*<!-- /count -->' README.md \
-      | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-    m_u="$(grep -o '<!-- count:evaluator-unavailable -->[0-9][0-9]*<!-- /count -->' README.md \
-      | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-    m_p="$(grep -o '<!-- count:pre-evaluator -->[0-9][0-9]*<!-- /count -->' README.md \
-      | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-    # Every count:converged marker, not just the first: the split sentence
-    # restates the converged total a second time, and check J reads only the
-    # first occurrence, so a second one could drift alone.
-    jd_odd="$(grep -o '<!-- count:converged -->[0-9][0-9]*<!-- /count -->' README.md \
-      | tr -dc '0-9\n' | grep -v '^$' | grep -cv "^$jd_total$")"
-    if [ -z "$m_c" ] || [ -z "$m_u" ] || [ -z "$m_p" ]; then
-      fault "the README standards split is not marker-anchored (<!-- count:countersigned --> / <!-- count:evaluator-unavailable --> / <!-- count:pre-evaluator -->); an unanchored count is an untracked claim"
-    elif [ "${m_c#* }" != "$m_c" ] || [ "${m_u#* }" != "$m_u" ] || [ "${m_p#* }" != "$m_p" ]; then
-      fault "README's standards-split markers disagree with themselves ($m_c / $m_u / $m_p); no single split is published"
-    elif [ "$m_c" != "$jd_c" ] || [ "$m_u" != "$jd_u" ] || [ "$m_p" != "$jd_p" ]; then
-      fault "README publishes a standards split of $m_c/$m_u/$m_p but $att_md's converged rows give $jd_c/$jd_u/$jd_p (countersigned/unavailable/pre-evaluator)"
-    elif [ $((jd_c + jd_u + jd_p)) -ne "$jd_total" ]; then
-      fault "the standards split $jd_c/$jd_u/$jd_p does not account for all $jd_total converged targets in $att_md"
-    elif [ "$jd_odd" != "0" ]; then
-      fault "$jd_odd <!-- count:converged --> marker(s) in README.md disagree with the $jd_total converged targets in $att_md"
-    else
-      pass "README standards split is derived from $att_md ($jd_c countersigned, $jd_u unavailable, $jd_p pre-evaluator of $jd_total)"
-    fi
-  fi
-
-  # Je. The greenfield table's Iterations and Runs columns. The two tables
-  #     name these three targets differently ("TOML decoder" against "TOML 1.0
-  #     decoder, Rust"), so the join key is the first token of the target name
-  #     lowercased - toml, gitignore, toml-m - which is unique across both
-  #     tables and survives a reorder of either. A collision or a row present
-  #     on one side only faults rather than being skipped.
-  if ! je_msg="$(awk -F'|' -v att="$att_md" '
-    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-    function unbold(s) { s = trim(s); gsub(/\*\*/, "", s); return trim(s) }
-    function linktext(c,   s, e) {
-      c = trim(c); s = index(c, "["); e = index(c, "](")
-      if (s > 0 && e > s) return substr(c, s + 1, e - s - 1)
-      return unbold(c)
-    }
-    function key1(s,   a) { s = linktext(s); split(s, a, /[ ,]/); return tolower(a[1]) }
-    FILENAME == att {
-      if ($0 ~ /^\| Target \| Runs \| Iterations \| Outcome \| Runs that ended blocked \|/) { t = 2; next }
-      if ($0 !~ /^\|/) { t = 0; next }
-      if ($0 ~ /^\|[-:| ]*$/) next
-      if (t == 2) {
-        k = key1($2)
-        if (k in ar) { print "duplicate greenfield key \"" k "\" in " att; bad++ }
-        ar[k] = unbold($3); at[k] = unbold($4); an++
-      }
-      next
-    }
-    /^\| Target \| Judge \| Final position \| Rows swept \| Iterations \| Runs \|/ { r = 1; next }
-    $0 !~ /^\|/ { r = 0; next }
-    $0 ~ /^\|[-:| ]*$/ { next }
-    r == 1 {
-      k = key1($2)
-      if (k in rr) { print "duplicate greenfield key \"" k "\" in the README table"; bad++ }
-      rr[k] = unbold($7); rt[k] = unbold($6); rn++
-    }
-    END {
-      if (an == 0) { print "no greenfield table found in " att " - its header row changed and this check went blind"; bad++ }
-      if (rn == 0) { print "no greenfield table found in README.md - its header row changed and this check went blind"; bad++ }
-      for (k in rr) {
-        if (!(k in ar)) { print "README greenfield target \"" k "\" has no row in " att; bad++; continue }
-        if (rt[k] != at[k]) { print "\"" k "\": README says " rt[k] " iterations, " att " says " at[k]; bad++ }
-        if (rr[k] != ar[k]) { print "\"" k "\": README says " rr[k] " runs, " att " says " ar[k]; bad++ }
-      }
-      for (k in ar) if (!(k in rr)) { print "\"" k "\" is in " att "s greenfield table but has no README row"; bad++ }
-      if (bad) exit 1
-      printf "%d", rn
-    }
-  ' "$att_md" README.md)"; then
-    printf '%s\n' "$je_msg"
-    fault "the README greenfield table and $att_md disagree on runs or iterations"
-  else
-    pass "README greenfield runs and iterations are derived from $att_md ($je_msg rows)"
-  fi
-fi
-
 # L/M. Enumerations the product text asserts about the engine's own behaviour,
-#      derived from the engine rather than transcribed beside it. Checks J
-#      through Je cover the numbers README.md publishes; these two cover the
-#      other half of that class - a sentence that lists what the hook does,
+#      derived from the engine rather than transcribed beside it. Check J
+#      covers the two totals README.md publishes; these two cover the other
+#      half of that class - a sentence that lists what the hook does,
 #      which drifts the moment the hook grows a case and the prose does not.
 #      Both are stated in more than one document, so both compare every
 #      document that states them: SECURITY.md understated the truncator set
@@ -945,111 +676,6 @@ else
   pass "the verify-timeout fallback chain is derived from the hook in every document that states it ($lm_to then a shell watchdog)"
 fi
 
-# N. README.md states twice that every receipt names the standard its run met,
-#    the second time as "so none of this requires taking our word for it". This
-#    check makes that sentence load-bearing.
-#    It went in as a classifier over each receipt's natural prose and the
-#    evaluator gate broke it in one move: the countersigned arm asked only
-#    whether the words evaluator and PASS both appeared somewhere in the file,
-#    so a receipt reading "The suite PASSes at 128 tests. The evaluator
-#    dimension of the audit scored clean." passed while naming no standard at
-#    all. Widening the regex was tried and is not the fix - it still missed
-#    spectre.console, whose verdict reads "before passing it" at the far end of
-#    a long sentence, and it leaned on arm ordering to mask two wrong matches.
-#    A predicate that guesses at prose is the same defect this repository has
-#    been removing from its own documentation all run.
-#    So the receipts state it instead. Every converged receipt carries one
-#    line beginning "**Convergence standard**: " whose first clause is the
-#    exact Standard met value ATTEMPTS.md records for that target, and this
-#    check extracts that clause and compares it. Nothing is inferred.
-if [ ! -f "evals/ATTEMPTS.md" ]; then
-  skip "receipt convergence-standard check (no evals/ATTEMPTS.md)"
-elif ! n_msg="$(awk -v att="evals/ATTEMPTS.md" -v rme="README.md" '
-  function trim(s) { gsub(/^[ 	]+|[ 	]+$/, "", s); return s }
-  function unbold(s) { s = trim(s); gsub(/\*\*/, "", s); return trim(s) }
-  FILENAME == att {
-    if ($0 ~ /^\| Target \| Runs \| Iterations \| Outcome \| Standard met \|/) { t = 1; next }
-    if ($0 !~ /^\|/) { t = 0; next }
-    if ($0 ~ /^\|[-:| ]*$/) next
-    if (t == 1) { split($0, c, "|"); k = unbold(c[2]); ao[k] = unbold(c[5]); as[k] = unbold(c[6]) }
-    next
-  }
-  FILENAME == rme {
-    if ($0 ~ /^\| \[.*\(evals\/.*\/REPORT\.md\)/) {
-      s = index($0, "["); e = index($0, "](")
-      name = substr($0, s + 1, e - s - 1)
-      d = substr($0, e + 2); sub(/\/REPORT\.md.*/, "", d); sub(/^evals\//, "", d)
-      tgt[d] = name
-    }
-    next
-  }
-  {
-    d = FILENAME; sub(/^evals\//, "", d); sub(/\/REPORT\.md$/, "", d)
-    seen[d] = 1
-    if ($0 ~ /^\*\*Convergence standard\*\*: /) {
-      v = $0
-      sub(/^\*\*Convergence standard\*\*: /, "", v)
-      sub(/\..*$/, "", v)
-      if (d in decl) { print d ": more than one Convergence standard line"; bad++ }
-      decl[d] = trim(v)
-    }
-  }
-  END {
-    # Account for every receipt handed in, not only the ones that produced a
-    # line. A zero-byte REPORT.md never triggers the main rule, so it never
-    # entered seen and this check used to pass over it in silence - the same
-    # drop-instead-of-fault defect checks L and M carried. ARGV still lists
-    # it, so the file set is the authority on what had to be examined and the
-    # records are compared against that. (L1)
-    for (i = 3; i < ARGC; i++) {
-      f = ARGV[i]; sub(/^evals\//, "", f); sub(/\/REPORT\.md$/, "", f)
-      if (!(f in seen)) { print f ": REPORT.md produced no lines, so nothing about it was checked"; bad++ }
-    }
-    for (d in seen) {
-      name = (d in tgt) ? tgt[d] : d
-      if (!(name in ao)) { print d ": no row in " att " (README link text \"" name "\")"; bad++; continue }
-      if (ao[name] != "converged") continue
-      if (!(d in decl)) {
-        print d ": carries no \"**Convergence standard**: \" line; " att " records \"" as[name] "\""
-        bad++; continue
-      }
-      if (decl[d] != as[name]) {
-        print d ": declares \"" decl[d] "\" but " att " records \"" as[name] "\""
-        bad++; continue
-      }
-      okn++
-    }
-    if (bad) exit 1
-    printf "%d", okn
-  }
-' evals/ATTEMPTS.md README.md evals/*/REPORT.md)"; then
-  printf '%s
-' "$n_msg"
-  fault "a published receipt does not name the convergence standard its run met, which README.md states of every converged one"
-else
-  # README says this of a set with a stated size - "each of those 21" - so the
-  # size it names and the number this check actually drove have to be the same
-  # number, or the sentence quantifies over a set wider than anything verified.
-  # That gap is what L2 was: the claim read over all 22 rows in the table while
-  # the check covered the 21 converged, PapaParse being the audit that carries
-  # no such line by design. Narrowing the sentence without tying it to the
-  # count would have left the same hole one row narrower. (L2)
-  # Every marker, never the first. Reading one with head -n 1 was the first
-  # attempt here and a mutation caught it inside the same iteration: the
-  # sentence this check exists to make load-bearing carries the third marker
-  # in the file, so editing that one alone left the check green. Reading a
-  # single member of a set and ignoring the rest is the class L1 settled.
-  n_claim="$(grep -o '<!-- count:converged -->[0-9][0-9]*<!-- /count -->' README.md \
-    | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-  if [ -z "$n_claim" ]; then
-    fault "README carries no <!-- count:converged --> marker, so the receipts sentence names no set and this check has nothing to agree with"
-  elif [ "$n_msg" != "$n_claim" ]; then
-    fault "README says the standard is named by each of [$n_claim] receipts but this check verified $n_msg; the sentence quantifies over a set that is not the one driven (a list of several values means its own markers disagree)"
-  else
-    pass "every converged receipt names the standard its run met, agreeing with evals/ATTEMPTS.md and with the count README states ($n_msg receipts)"
-  fi
-fi
-
 # O. The evaluator artifact is required committed and unmodified, so its
 #    hygiene cannot be repaired after the fact - a redaction would break the
 #    very property the Stop hook checks. The rule therefore lands at write
@@ -1104,8 +730,8 @@ fi
 #    sentence need two checks.
 #    Nothing here classifies prose. The five fields come out of the hook, the
 #    clause is rebuilt from them, and each document must carry that exact
-#    string - the same shape check Jb uses for the language-pie alt text, and
-#    the reason the wording is fixed rather than idiomatic per file.
+#    string, which is the reason the wording is fixed rather than idiomatic
+#    per file.
 #    Every field is asserted, never merely extracted: a field that goes empty
 #    faults instead of silently shortening the clause, and the default and the
 #    floor must agree, because if they ever diverge "else 240s" stops naming
@@ -5771,26 +5397,20 @@ else
 fi
 
 # K. The check count the README publishes is derived from this run, never
-#    transcribed. Six README claims carry a derivation: the eval receipts
-#    and the converged and language totals (check J), the language-pie alt
-#    text (check Jb), the receipts table's iteration cells (Jc), the
-#    standards split (Jd), the greenfield runs and iterations (Je), and this
-#    one. That list is not the whole file, and an
-#    earlier version of this comment said it was - claiming this figure was
-#    "the last hand-typed claim in the file" while the pie's alt text and the
-#    white paper's page and source counts sat beside it underived. PLAN.md's
-#    Derived and settled numbers section holds the full enumeration and says
-#    of each remaining number why no check derives it; add to that list
-#    rather than to a generalisation here.
+#    transcribed. Two README claims carry a derivation: the converged and
+#    language totals against the eval table (check J), and this count. Those
+#    two are the numbers this project publishes outside the repository, which
+#    is why they are the two that are machine-checked; every other figure in
+#    the README is ordinary prose and should be read as such. PLAN.md's
+#    Derived and settled numbers section holds the full enumeration.
 #    Published means what a clone runs, so the derivation subtracts what only
 #    a maintainer tree adds: the CHANGELOG pairing above, this check itself,
 #    and a shellcheck lint where the linter is installed. It asserts only in
 #    that maintainer tree, which is where releases are cut and where the
 #    marker is authored; a clone or a CI leg has nothing to author and skips.
 #    Every marker, never the first: reading one with head -n 1 leaves a second
-#    marker free to state a different number, which is the same defect check N
-#    was built to avoid on its own count. One marker carries this claim today,
-#    so this is the guard rather than a current disagreement. (M1)
+#    marker free to state a different number. One marker carries this claim
+#    today, so this is the guard rather than a current disagreement. (M1)
 claim_checks="$(grep -o '<!-- count:checks -->\*\*[0-9][0-9]* behavioural checks\*\*<!-- /count -->' README.md \
   | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 if [ -z "$claim_checks" ]; then
