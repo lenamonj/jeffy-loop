@@ -42,6 +42,7 @@ loss rather than hiding it.
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
 | FluentValidation | 1 | 8 | converged | evaluator countersigned | 0 |
 | go-cmp | 2 | 15 | converged | evaluator countersigned | 0 |
+| go-humanize | 2 | 21 | **not converged** | n/a | 2 |
 | go-yaml | 3 | 29 | converged | evaluator countersigned | 0 |
 | godotenv | 2 | 19 | converged | evaluator countersigned | 0 |
 | goldmark | 5 | 47 | **not converged** | n/a | 0 |
@@ -610,6 +611,82 @@ broadly than the check behind it - both filed (`T30`, `T31`) as the next
 run's first work, and both open at budget exhaustion. A loop whose weakness
 is evidence quality was pointed at a library whose job is evidence, and the
 library's evaluator won the last word.
+
+## Cohort 2026-08-22: the cheap shape, one of two converged
+
+`godotenv` and `go-humanize` were the first two targets of a cohort chosen
+deliberately for the shape the corpus says converges - one job, a decidable
+oracle, a suite that runs in a second - on a **pre-registered budget of 1
+round x 10 iterations each, with a second round of 10 granted to any target
+that finished its first with a complete map**; both did, and the grants are
+recorded in the cohort file with the reason before either relaunch. They ran
+under engine v1.14.0. `godotenv` converged in round 2 and is published above.
+`go-humanize` did not, and this is its record.
+
+### go-humanize: the gate refused twice, and the second reason was the run's own regression
+
+2 runs, 21 iterations, **14 findings closed - 4 High, 10 Medium** - in the
+human-readable unit formatter for Go (bytes, SI, commas, ordinals, relative
+times), with the **map complete
+at 13 of 13 rows from the first audit** and the Verify command green at every
+checkpoint. It ends at **1 High, 2 Medium and 11 Low open**, both evaluator
+invocations REJECT, and no declaration.
+
+Round 1 filed 17 findings from one audit and closed seven of them - three
+Highs (`SI(1e34, "B")` returned `"10 B"` because off-table exponents yielded
+the empty prefix; `FormatFloat("", 1e30)` returned the int64 minimum, signed
+twice; `BigCommaf` mutated the caller's `*big.Float` so the second call
+disagreed with the first) and four Mediums - then ran out of budget with
+three Mediums and ten Lows open. Its closing turn wrote an honest
+not-converged report and then emitted the completion promise anyway; the
+Stop hook refused it over the open Mediums and the run recorded the refusal
+at an eleventh, corrective iteration. That is the same error `mruby` made on
+2026-08-09, and two instances make it the prompt's fault rather than the
+run's: the closing sentence reads as if the promise ends a run, and it is
+being reworded to say convergence only.
+
+Round 2 closed the three Mediums, found a fourth High while building the
+exact reference for a Low (`BYTES-DBLROUND`: the byte formatters rounded
+twice, once into a float64 and once in `fmt`), closed a fifth Medium, and at
+iteration 6 ran the full audit that scored zero High and zero Medium, so the
+gate was invoked at iteration 7. **It returned REJECT on four reasons, every
+one a claim the run had written rather than a defect in the library**: a
+comment in `bytes.go` describing a rounding rule iteration 5 had changed, a
+Settled-class grep whose recorded count no longer matched, an inventory row
+claiming agreement "over every value both families can hold" against a
+battery that drove 131 listed values and 20,000 random ones, and a comment
+pointing at a function the run had deleted. The same gate confirmed the code:
+0 panics in 81,756 adversarial `Parse` calls and 39,300 format calls, 0
+disagreements between the byte families over 300,000 randomised values, 0
+mismatches grading `BytesN` against exact rational arithmetic. The run filed
+the reasons as two Mediums and closed both.
+
+The second invocation, at iteration 10 of 10, was terminal - the first had
+landed after the midpoint, so the cap was two - and it returned REJECT again,
+this time on a finding that matters: **`BytesN(82854982, math.MinInt)` panics
+with `makeslice: cap out of range` and `BytesN(82854982, 1<<40)` exhausts
+memory, where the base commit returned a string for both.** Iteration 4's
+rewrite let `minDigits-1` wrap at the bottom of the int range. The suite
+never drives the digit count past a plausible range, the run's own battery
+graded n from -3 to 25, and the gate's probe went to the ends of the type.
+It is filed as `DIGITS-UNBOUNDED` (High), the next run's first task. The
+other three reasons: `run-all.sh` exits 1 in a fresh clone because a
+battery wrote into the gitignored `.jeffy/tmp/`; the boundary enumeration
+that closed `SWEEP-CLAIM` still missed the point where a rendering drops its
+decimal (`Bytes(9949)` is `"9.9 kB"`, `Bytes(9950)` is `"10 kB"`); and a
+comment that named the wrong caller for `oom`. Shipped diff across both
+runs: 16 files, +944/-80.
+
+Two engine notes from this target, both filed against the engine rather than
+the run. Eighteen of the 39 journal entries are `SALVAGE` entries over a
+single path, `.jeffy/metrics/<run>.jsonl` - v1.14.0 writes that telemetry
+from the Stop hook after each iteration's checkpoint, and the iteration
+prompt's salvage rule carried no exemption for it, so the run committed it
+separately at the start of every iteration, which is why the checkpoint
+count (29 in round 2) is nearly three per iteration. And the one-round
+budget was mis-derived from the historical mean, as the cohort file records:
+ten iterations closes a handful of findings, it does not converge a target
+that finds seventeen.
 
 ## Wave 4: three libraries where a wrong answer is silent, and none of them converged
 
