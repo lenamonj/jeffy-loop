@@ -89,7 +89,7 @@ if ($null -ne $settings) {
             foreach ($h in @($entry.hooks)) {
                 if ($null -ne $h -and "$($h.command)" -like "*skills/jeffy/hooks/stop-hook.sh*") {
                     $already = $true
-                    if (-not $h.PSObject.Properties['timeout']) { $upgrade += $h }
+                    if (-not $h.PSObject.Properties['timeout'] -or $h.timeout -eq 600) { $upgrade += $h }
                 }
             }
         }
@@ -97,20 +97,19 @@ if ($null -ne $settings) {
     if ($already -and $upgrade.Count -eq 0) {
         Write-Host "[OK] Jeffy Stop hook already registered in $settingsPath"
     } elseif ($already) {
-        # Pre-1.2 registration: the hook now runs the project's verify command
-        # at the converged stop, which the default hook timeout cannot
-        # contain, so add the timeout field exactly once.
+        # Pre-1.2 registration lacks the field; 1.2-1.14 carries 600s, which the
+        # verify bound can exceed (P1-58). Either shape moves to 1800s once.
         try {
-            foreach ($h in $upgrade) { $h | Add-Member -MemberType NoteProperty -Name timeout -Value 600 }
+            foreach ($h in $upgrade) { if ($h.PSObject.Properties['timeout']) { $h.timeout = 1800 } else { $h | Add-Member -MemberType NoteProperty -Name timeout -Value 1800 } }
             [System.IO.File]::WriteAllText($settingsPath, (($settings | ConvertTo-Json -Depth 32) + "`n"))
-            Write-Host "[OK] Jeffy Stop hook registration upgraded with a 600s timeout in $settingsPath"
+            Write-Host "[OK] Jeffy Stop hook registration upgraded to an 1800s timeout in $settingsPath"
         } catch {
-            Write-Host "[FAILED] could not upgrade the Stop hook timeout in $settingsPath ($($_.Exception.Message)); add `"timeout`": 600 to the hook entry by hand and re-run to verify."
+            Write-Host "[FAILED] could not upgrade the Stop hook timeout in $settingsPath ($($_.Exception.Message)); add `"timeout`": 1800 to the hook entry by hand and re-run to verify."
             $ok = $false
         }
     } else {
         try {
-            $hookObj = [pscustomobject]@{ type = "command"; command = $hookCmd; timeout = 600 }
+            $hookObj = [pscustomobject]@{ type = "command"; command = $hookCmd; timeout = 1800 }
             $entryObj = [pscustomobject]@{ hooks = @($hookObj) }
             if (-not $settings.PSObject.Properties['hooks']) {
                 $settings | Add-Member -MemberType NoteProperty -Name hooks -Value (New-Object psobject)
@@ -124,7 +123,7 @@ if ($null -ne $settings) {
             # on Windows PowerShell 5.1 would prepend one, and a BOM breaks
             # strict JSON parsers reading settings.json.
             [System.IO.File]::WriteAllText($settingsPath, (($settings | ConvertTo-Json -Depth 32) + "`n"))
-            Write-Host "[OK] Jeffy Stop hook registered in $settingsPath (600s timeout)"
+            Write-Host "[OK] Jeffy Stop hook registered in $settingsPath (1800s timeout)"
         } catch {
             Write-Host "[FAILED] could not update $settingsPath ($($_.Exception.Message)); add the Stop hook entry by hand (see README) and re-run to verify."
             $ok = $false

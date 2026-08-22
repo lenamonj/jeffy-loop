@@ -236,9 +236,12 @@ check_markers skills/jeffy/references/journal-default.md \
   "Append-only." \
   "never overwriting it" \
   "so two runs in one session are told apart" \
-  "or AUDIT or EVALUATOR or RATCHET"
+  "or AUDIT or SWEEP or EVALUATOR or RATCHET"
 check_markers skills/jeffy/references/iteration-prompt.txt \
   "Salvage first:" \
+  "ignoring any path under .jeffy/metrics/, which the Stop hook writes after every checkpoint" \
+  "To declare convergence, and only then, output the run report" \
+  "the promise is the declaration and never the way a turn or a run ends" \
   "then unswept or stale Surface inventory rows, then open Medium" \
   "never the mapping of unswept surface" \
   "Ratchet next:" \
@@ -279,7 +282,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "One transaction closes the run:" \
   "copy the fixed files aside" \
   "or a test run through head or tail" \
-  "or AUDIT or EVALUATOR or RATCHET" \
+  "or AUDIT or SWEEP or EVALUATOR or RATCHET" \
   ".jeffy/probes/" \
   "never run an audit inside it" \
   "One convergence shape is legal inside the window and only one" \
@@ -350,7 +353,9 @@ else
   qv_tmp="$(mktemp -d)"
   qv_plan="$qv_tmp/PLAN.md"
   qv_bad=0
-  qv_case() { printf '%s\n' "$@" > "$qv_plan"; }
+  # The wrapper reads its labelled lines from the ## Verify command section
+  # only, as the hook does (P1-59), so every case writes the heading first.
+  qv_case() { { printf '## Verify command\n'; printf '%s\n' "$@"; } > "$qv_plan"; }
 
   qv_case 'Command: true' 'Oracle class: deterministic'
   qv_out="$(bash "$qv_sh" "$qv_plan" "$qv_tmp" 2>"$qv_tmp/err")"
@@ -771,7 +776,9 @@ else
   # malformed directive; the first fix for this finding did exactly that. (G2)
   # shellcheck disable=SC2016
   p_key="$(sed -n 's/^[ \t]*vt="\$(fm \([a-z_][a-z_]*\))"$/\1/p' "$p_hook")"
-  p_lbl="$(grep -o "s/\^[A-Za-z][A-Za-z ]*:" "$p_hook" | sed 's|^s/\^||; s|:$||')"
+  # The label is read off the lib's scoped jeffy_plan_line call (P1-59), the
+  # one place the measured-duration line is named in code.
+  p_lbl="$(grep -o "jeffy_plan_line \"\$1\" '[A-Za-z][A-Za-z ]*'" "$p_hook" | sed "s/.*'\(.*\)'/\1/")"
   # shellcheck disable=SC2016
   p_mul="$(sed -n 's/^[ \t]*\*) vt=\$((vd \* \([0-9][0-9]*\))).*/\1/p' "$p_hook")"
   p_dfl="$(sed -n "s/^[ \t]*'' | \*\[!0-9\]\*) vt=\([0-9][0-9]*\) ;;.*/\1/p" "$p_hook")"
@@ -1022,21 +1029,21 @@ else
       jq -r '[.hooks.Stop[]?.hooks[]? | select((.command // "") | contains("skills/jeffy/hooks/stop-hook.sh")) | .timeout // "none" | tostring] | join(",")' \
         "$rt_home/.claude/settings.json" 2>/dev/null || echo ""
     }
-    if [ "$(rt_timeouts)" = "600" ]; then
-      pass "install.sh registers the Stop hook with a 600s timeout"
+    if [ "$(rt_timeouts)" = "1800" ]; then
+      pass "install.sh registers the Stop hook with an 1800s timeout"
     else
-      fault "install.sh fresh registration lacks the 600s timeout (got: $(rt_timeouts))"
+      fault "install.sh fresh registration lacks the 1800s timeout (got: $(rt_timeouts))"
     fi
     # Legacy upgrade: a pre-1.2 registration without the timeout field gets
     # it added exactly once, and a further run leaves the file byte-identical.
     jq -n --arg cmd "bash \"$rt_home/.claude/skills/jeffy/hooks/stop-hook.sh\"" \
       '{hooks: {Stop: [{hooks: [{type: "command", command: $cmd}]}]}}' > "$rt_home/.claude/settings.json"
     HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/upgrade.log" 2>&1 || true
-    if [ "$(rt_count)" = "1" ] && [ "$(rt_timeouts)" = "600" ]; then
+    if [ "$(rt_count)" = "1" ] && [ "$(rt_timeouts)" = "1800" ]; then
       cp "$rt_home/.claude/settings.json" "$rt_tmp/settings.after-upgrade"
       HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/upgrade2.log" 2>&1 || true
       if cmp -s "$rt_home/.claude/settings.json" "$rt_tmp/settings.after-upgrade"; then
-        pass "install.sh upgrades a legacy registration with the 600s timeout exactly once"
+        pass "install.sh upgrades a legacy registration to the 1800s timeout exactly once"
       else
         fault "install.sh kept rewriting the upgraded registration on later runs"
       fi
@@ -1045,6 +1052,23 @@ else
       cat "$rt_tmp/upgrade.log"
       echo "---------------------------------------"
       fault "install.sh did not upgrade a legacy hook registration with the timeout"
+    fi
+    # P1-58: a 1.2-1.14 registration carries 600s, which the verify bound can
+    # exceed; it moves to 1800s exactly once, and a later run leaves it alone.
+    jq -n --arg cmd "bash \"$rt_home/.claude/skills/jeffy/hooks/stop-hook.sh\"" \
+      '{hooks: {Stop: [{hooks: [{type: "command", command: $cmd, timeout: 600}]}]}}' > "$rt_home/.claude/settings.json"
+    HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/upgrade600.log" 2>&1 || true
+    if [ "$(rt_count)" = "1" ] && [ "$(rt_timeouts)" = "1800" ]; then
+      cp "$rt_home/.claude/settings.json" "$rt_tmp/settings.after-600"
+      HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/upgrade600b.log" 2>&1 || true
+      if cmp -s "$rt_home/.claude/settings.json" "$rt_tmp/settings.after-600"; then
+        pass "install.sh moves a 600s registration to 1800s exactly once (P1-58)"
+      else
+        fault "install.sh kept rewriting the 1800s registration on later runs"
+      fi
+    else
+      cat "$rt_tmp/upgrade600.log"
+      fault "install.sh left a 600s registration in place, below the bound the verify ladder can resolve (got: $(rt_timeouts))"
     fi
   else
     skip "install.sh hook-registration assertions (jq not on PATH)"
@@ -1117,12 +1141,12 @@ if [ -n "$ps" ]; then
       fault "install.ps1 duplicated or lost the hook registration on a second run"
     fi
     pr_timeout_count() {
-      grep -c '"timeout": *600' "$pr_home/.claude/settings.json" 2>/dev/null | tr -d '[:space:]'
+      grep -c '"timeout": *1800' "$pr_home/.claude/settings.json" 2>/dev/null | tr -d '[:space:]'
     }
     if [ "$(pr_timeout_count)" = "1" ]; then
-      pass "install.ps1 registers the Stop hook with a 600s timeout ($ps)"
+      pass "install.ps1 registers the Stop hook with an 1800s timeout ($ps)"
     else
-      fault "install.ps1 fresh registration lacks the 600s timeout"
+      fault "install.ps1 fresh registration lacks the 1800s timeout"
     fi
     # Legacy upgrade: a pre-1.2 registration without the timeout field gets
     # it added exactly once, and a further run leaves the file byte-identical.
@@ -1133,7 +1157,7 @@ if [ -n "$ps" ]; then
       cp "$pr_home/.claude/settings.json" "$pr_tmp/settings.after-upgrade"
       pr_run >"$pr_tmp/upgrade2.log" 2>&1 || true
       if cmp -s "$pr_home/.claude/settings.json" "$pr_tmp/settings.after-upgrade"; then
-        pass "install.ps1 upgrades a legacy registration with the 600s timeout exactly once ($ps)"
+        pass "install.ps1 upgrades a legacy registration to the 1800s timeout exactly once ($ps)"
       else
         fault "install.ps1 kept rewriting the upgraded registration on later runs"
       fi
@@ -1939,6 +1963,47 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook rejected a freshly re-recorded Surface inventory row"
       fi
 
+      # P0-8: the template says one glob per line, and through 1.14.0 the
+      # comparison was fixed-string, so a glob never matched and the gate was
+      # inert for 164 of the corpus's 756 paths files. A glob that covers the
+      # moved file refuses; a glob that does not covers nothing and accepts;
+      # a battery with no paths file is reported rather than passed over.
+      printf '*.txt\n' > "$hb_proj/.jeffy/probes/core/paths"
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_write_plan_full none "- [x] core: swept at $hb_c1 via .jeffy/probes/core - probed every entry point"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is stale' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'product.txt has changed since'; then
+        pass "stop hook derives staleness through a glob paths line (P0-8)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook treated a glob paths line as a literal and accepted convergence over a stale row"
+      fi
+      printf 'docs/*.md\n' > "$hb_proj/.jeffy/probes/core/paths"
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a row whose glob paths cover nothing that moved (P0-8 control)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused a row over a glob that matches no changed path"
+      fi
+      rm -f "$hb_proj/.jeffy/probes/core/paths"
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
+        && grep -q 'name a battery that has no paths file' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook reports a swept row whose battery has no paths file instead of passing it silently (P0-8)"
+      else
+        printf '%s\n' "$hb_out"; cat "$hb_tmp/hb_err.txt"
+        fault "stop hook said nothing about a battery with no paths file"
+      fi
+      printf 'product.txt\n' > "$hb_proj/.jeffy/probes/core/paths"
+
       hb_write_state sess-1 1 3
       hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
       hb_write_plan_full none "- [x] core: swept at $hb_c1 - probed every entry point"
@@ -1969,6 +2034,21 @@ if command -v jq >/dev/null 2>&1; then
     else
       fault "stop hook rejected a convergence promise with a green Verify command"
     fi
+    # P2-30: an entry carrying both verdicts reads as the REJECT. A PASS
+    # that quotes an earlier rejection verbatim is the model's to reword;
+    # a REJECT that also contains the eleven characters of a PASS must not
+    # declare on them.
+    hb_write_state sess-1 1 3
+    hb_write_journal_entries '## iter 1/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - after invocation 1 returned Evaluator: REJECT - one.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'records Evaluator: REJECT'; then
+      pass "stop hook reads an entry carrying both verdicts as the REJECT (P2-30)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let a PASS substring outrank a REJECT in the same closing entry"
+    fi
+    hb_write_journal 1 3
 
     hb_write_state sess-1 1 3
     hb_write_backlog ''
@@ -3050,6 +3130,20 @@ if command -v jq >/dev/null 2>&1; then
       pass "stop hook fails open on a malformed counter (stop allowed, state intact)"
     else
       fault "stop hook mishandled a malformed iteration counter"
+    fi
+    # P2-30: a state file missing its iteration line used to pass the guard,
+    # because the guard validated the concatenation of the two fields and
+    # "" + "3" read as a well-formed 3; the rewriter then never found a line
+    # to advance and the run re-fed forever. Missing is malformed.
+    {
+      printf -- '---\nsession_id: sess-1\nmax_iterations: 3\nprompt_path: %s\nfocus: speed\ncompletion_promise: JEFFY CONVERGED\nstarted_at: 2026-01-01T00:00:00Z\n---\nJeffy loop state.\n' "$hb_tmp/prompt.txt"
+    } > "$hb_state"
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ -z "$hb_out" ] && [ -f "$hb_state" ] && grep -q 'malformed state file' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook refuses a state file with no iteration line as malformed instead of re-feeding it forever (P2-30)"
+    else
+      printf '%s\n' "$hb_out"; cat "$hb_tmp/hb_err.txt"
+      fault "stop hook re-fed a state file that carries no iteration line"
     fi
 
     hb_write_state sess-1 1 3
@@ -5075,6 +5169,139 @@ if command -v jq >/dev/null 2>&1; then
     else
       printf '%s\n' "$hb_out"
       fault "stop hook ended a run early over an unparseable ledger line, which the severity floor treats as blocking"
+    fi
+
+    # P0-7: the sample filter. Through 1.14.0 every turn end was sampled into
+    # rows_history, so the opening audit and every High-fix turn sat in the
+    # window as "sweep iterations that swept nothing" and the first sweep
+    # turn after the Highs closed projected from them - six of eight rounds
+    # in the 2026-08-21 wave ended at iteration 4-5 of 10 on the turn their
+    # last High closed. A turn with an open High is not sampled.
+    hb_write_state sess-1 2 10
+    hb_state_addkey 'rows_history: 26'
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T3 (High, runtime, correctness): crash. Acceptance: test.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      for hb_i in $(seq 1 25); do printf -- '- [ ] row%s: scope\n' "$hb_i"; done
+    } > "$hb_proj/PLAN.md"
+    hb_write_journal_entries '## iter 2/10 | sess-1-000000 | 2026-01-01 | M8 | done'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^rows_history: 26$' "$hb_state"; then
+      pass "stop hook does not sample the sweep history on a turn where an open High held the queue (P0-7)"
+    else
+      printf '%s\n' "$hb_out"; grep '^rows_history' "$hb_state"
+      fault "stop hook sampled a High turn into the sweep history, which is how Carbon's four rounds died at iteration 4"
+    fi
+
+    # Nor is an AUDIT turn: it fills the map, it does not sweep it.
+    hb_write_state sess-1 1 10
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T1 (Low, docs, documentation): doc gap. Acceptance: grep.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_write_journal_entries '## iter 1/10 | sess-1-000000 | 2026-01-01 | AUDIT | audit'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! grep -q '^rows_history:' "$hb_state"; then
+      pass "stop hook does not sample the sweep history on an AUDIT turn (P0-7)"
+    else
+      printf '%s\n' "$hb_out"; grep '^rows_history' "$hb_state"
+      fault "stop hook sampled the opening audit into the sweep history"
+    fi
+
+    # A sweep-eligible turn is sampled, the control for both filters.
+    hb_write_state sess-1 3 10
+    hb_state_addkey 'rows_history: 26'
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      for hb_i in $(seq 1 20); do printf -- '- [ ] row%s: scope\n' "$hb_i"; done
+    } > "$hb_proj/PLAN.md"
+    hb_write_journal_entries '## iter 3/10 | sess-1-000000 | 2026-01-01 | SWEEP | done'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^rows_history: 26,20$' "$hb_state"; then
+      pass "stop hook samples the sweep history on a turn where the map was the top of the queue (P0-7 control)"
+    else
+      printf '%s\n' "$hb_out"; grep '^rows_history' "$hb_state"
+      fault "stop hook stopped sampling sweep-eligible turns, which would disarm the fail-fast entirely"
+    fi
+
+    # P0-7: the reserve is the convergence sequence, which is only next when
+    # nothing above Low is open. Same history and map, a Medium open: the
+    # projection (5) fits the unreserved room (6) and the run continues;
+    # Low-only, the reserve applies (room 3) and the run ends.
+    hb_write_state sess-1 4 10
+    hb_state_addkey 'rows_history: 15,13,11'
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T2 (Medium, runtime, correctness): real bug. Acceptance: test.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    {
+      printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+      for hb_i in 1 2 3 4 5 6 7 8 9; do printf -- '- [ ] row%s: scope\n' "$hb_i"; done
+    } > "$hb_proj/PLAN.md"
+    hb_write_journal_entries '## iter 4/10 | sess-1-000000 | 2026-01-01 | SWEEP | done'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ -f "$hb_state" ] && grep -q '^iteration: 5$' "$hb_state"; then
+      pass "stop hook does not reserve the convergence sequence from the sweep room while a Medium is open (P0-7)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook ended a run whose map fits the budget once the reserve it cannot use yet is left out"
+    fi
+    hb_write_state sess-1 4 10
+    hb_state_addkey 'rows_history: 15,13,11'
+    {
+      printf '# Backlog\n\n## Now\n'
+      printf -- '- [ ] T1 (Low, docs, documentation): doc gap. Acceptance: grep.\n'
+      printf '\n## Next\n\n## Later\n\n## Converged\n'
+    } > "$hb_proj/BACKLOG.md"
+    hb_err="$(hb_run sess-1 'worked the task' '' 2>&1 1>/dev/null)"
+    if [ ! -f "$hb_state" ] \
+      && printf '%s' "$hb_err" | grep -qF 'needs about 5 more sweep iterations against 3 available'; then
+      pass "stop hook still reserves the convergence sequence when only Lows are open (P0-7 control)"
+    else
+      printf '%s\n' "$hb_err"
+      fault "stop hook stopped reserving the convergence sequence on a Low-only ledger"
+    fi
+
+    # P0-7 replay: Carbon run 74e5d096 turn by turn, the hook keeping its own
+    # history. Audit at 26 unswept with a High filed; a High fix at 25 with
+    # the High still open; a sweep to 20 with the High still open; the High
+    # closed at 19. Under 1.14.0 the fourth turn ended the run (history
+    # 26,25,20,19 - 7 rows over 3 turns, 19 left, room 3); now only the
+    # fourth turn is a sample and the run continues.
+    hb_write_state sess-1 1 10
+    hb_carbon_turn() { # $1 iteration, $2 type, $3 severity-or-NONE, $4 unswept
+      {
+        printf '# Backlog\n\n## Now\n'
+        [ "$3" = NONE ] || printf -- '- [ ] T9 (%s, runtime, correctness): x. Acceptance: y.\n' "$3"
+        printf '\n## Next\n\n## Later\n\n## Converged\n'
+      } > "$hb_proj/BACKLOG.md"
+      {
+        printf '# Plan\n\n## Verify command\nCommand: true\n\n## Surface inventory\n'
+        for hb_i in $(seq 1 "$4"); do printf -- '- [ ] row%s: scope\n' "$hb_i"; done
+      } > "$hb_proj/PLAN.md"
+      hb_write_journal_entries "## iter $1/10 | sess-1-000000 | 2026-01-01 | $2 | done"
+      hb_run sess-1 'worked the task' '' >/dev/null 2>"$hb_tmp/carbon-err.txt"
+    }
+    hb_carbon_turn 1 AUDIT High 26
+    hb_carbon_turn 2 M8 High 25
+    hb_carbon_turn 3 SWEEP High 20
+    hb_carbon_turn 4 M12 NONE 19
+    if [ -f "$hb_state" ] && grep -q '^iteration: 5$' "$hb_state" \
+      && grep -q '^rows_history: 19$' "$hb_state"; then
+      pass "stop hook keeps the Carbon 74e5d096 round alive at iteration 4 (P0-7 replay: High turns are not sweep samples)"
+    else
+      cat "$hb_tmp/carbon-err.txt"; grep '^rows_history\|^iteration' "$hb_state" 2>/dev/null
+      fault "stop hook ended the Carbon replay at iteration 4 of 10 with 19 rows unswept, the 2026-08-21 failure"
     fi
 
     # P2-21: run telemetry. JOURNAL.md is prose - enough for one run, useless

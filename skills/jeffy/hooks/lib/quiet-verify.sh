@@ -38,10 +38,16 @@ set -u
 # reports presence separately through its exit status: 0 when the label
 # exists, 1 when it does not.
 jeffy_plan_line() { # $1 plan path, $2 label
+  # Scoped to the `## Verify command` section exactly as the hook's own reader
+  # is (P1-59): through 1.14.0 this took the first matching label anywhere in
+  # the file, so a `Command:` line quoted under Lessons made the per-iteration
+  # wrapper run one command and the converged stop another.
   [ -f "$1" ] || return 1
   awk -v lbl="$2" '
     { sub(/\r$/, "") }
-    index($0, lbl "\x3a") == 1 {
+    $0 == "## Verify command" { take = 1; next }
+    /^## / { take = 0 }
+    take && index($0, lbl "\x3a") == 1 {
       v = substr($0, length(lbl) + 2)
       sub(/^[ \t]+/, "", v)
       print v
@@ -58,15 +64,24 @@ jeffy_plan_line() { # $1 plan path, $2 label
 # tiny measurement can never make the gate twitchier than its default; else
 # 240. (P1-31, and the engine's own repository met that refusal first: a
 # 404s suite under a 240s default.)
+# Capped at 1740s: the installer registers the hook with an 1800s timeout,
+# and a bound the registration cannot honour is a declaration that is never
+# adjudicated - Claude Code kills the hook mid-suite and leaves the state
+# file as an orphan (P1-58). The clamp is said on stderr where it happens.
+JEFFY_VERIFY_BOUND_CAP=1740
 jeffy_verify_bound() { # $1 plan path, $2 verify_timeout_seconds from state (may be empty)
   vt="${2:-}"
   case "$vt" in '' | *[!0-9]*)
-    vd="$(sed -n 's/^Verify duration:[ \t]*\([0-9][0-9]*\)s.*/\1/p' "$1" 2>/dev/null | head -n 1)"
+    vd="$(jeffy_plan_line "$1" 'Verify duration' 2>/dev/null | sed -n 's/^\([0-9][0-9]*\)s.*/\1/p' | head -n 1)"
     case "$vd" in
       '' | *[!0-9]*) vt=240 ;;
       *) vt=$((vd * 3)); [ "$vt" -lt 240 ] && vt=240 ;;
     esac
   ;; esac
+  if [ "$vt" -gt "$JEFFY_VERIFY_BOUND_CAP" ]; then
+    echo "jeffy verify: the resolved bound of ${vt}s exceeds the ${JEFFY_VERIFY_BOUND_CAP}s cap the hook's registered 1800s timeout can honour; clamping to the cap" >&2
+    vt="$JEFFY_VERIFY_BOUND_CAP"
+  fi
   printf '%s' "$vt"
 }
 

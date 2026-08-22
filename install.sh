@@ -79,29 +79,30 @@ if command -v jq >/dev/null 2>&1; then
     echo "[FAILED] $settings is not valid JSON; fix it, then re-run this installer to register the hook."
     ok=0
   elif jq -e --arg frag "$hook_frag" '[.hooks.Stop[]?.hooks[]?.command // empty] | any(contains($frag))' "$settings" >/dev/null 2>&1; then
-    # Already registered. A pre-1.2 registration lacks the timeout field; the
-    # hook now runs the project's verify command at the converged stop, which
-    # the default hook timeout cannot contain, so upgrade it exactly once.
-    if jq -e --arg frag "$hook_frag" '[.hooks.Stop[]?.hooks[]? | select((.command // "") | contains($frag)) | has("timeout")] | all' "$settings" >/dev/null 2>&1; then
+    # Already registered. A pre-1.2 registration lacks the timeout field and a
+    # 1.2-1.14 registration carries 600s; the hook runs the project's verify
+    # command at the converged stop under a bound that can exceed 600s (P1-58),
+    # so upgrade either shape to 1800s exactly once.
+    if jq -e --arg frag "$hook_frag" '[.hooks.Stop[]?.hooks[]? | select((.command // "") | contains($frag)) | (has("timeout") and .timeout != 600)] | all' "$settings" >/dev/null 2>&1; then
       echo "[OK] Jeffy Stop hook already registered in $settings"
     else
       tmp="$(mktemp)"
-      if jq --arg frag "$hook_frag" '.hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | if ((.command // "") | contains($frag)) and (has("timeout") | not) then . + {"timeout": 600} else . end]) else . end]' "$settings" > "$tmp" \
+      if jq --arg frag "$hook_frag" '.hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | if ((.command // "") | contains($frag)) and ((has("timeout") | not) or .timeout == 600) then . + {"timeout": 1800} else . end]) else . end]' "$settings" > "$tmp" \
         && jq empty "$tmp" >/dev/null 2>&1; then
         mv "$tmp" "$settings"
-        echo "[OK] Jeffy Stop hook registration upgraded with a 600s timeout in $settings"
+        echo "[OK] Jeffy Stop hook registration upgraded to an 1800s timeout in $settings"
       else
         rm -f "$tmp"
-        echo "[FAILED] could not upgrade the Stop hook timeout in $settings; add \"timeout\": 600 to the hook entry by hand and re-run to verify."
+        echo "[FAILED] could not upgrade the Stop hook timeout in $settings; add \"timeout\": 1800 to the hook entry by hand and re-run to verify."
         ok=0
       fi
     fi
   else
     tmp="$(mktemp)"
-    if jq --arg cmd "$hook_cmd" '.hooks //= {} | .hooks.Stop //= [] | .hooks.Stop += [{"hooks": [{"type": "command", "command": $cmd, "timeout": 600}]}]' "$settings" > "$tmp" \
+    if jq --arg cmd "$hook_cmd" '.hooks //= {} | .hooks.Stop //= [] | .hooks.Stop += [{"hooks": [{"type": "command", "command": $cmd, "timeout": 1800}]}]' "$settings" > "$tmp" \
       && jq empty "$tmp" >/dev/null 2>&1; then
       mv "$tmp" "$settings"
-      echo "[OK] Jeffy Stop hook registered in $settings (600s timeout)"
+      echo "[OK] Jeffy Stop hook registered in $settings (1800s timeout)"
     else
       rm -f "$tmp"
       echo "[FAILED] could not update $settings; add the Stop hook entry by hand (see README) and re-run to verify."

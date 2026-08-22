@@ -43,6 +43,27 @@ jeffy_content_tree_hash() { # $1 project root
   ' | cksum | tr ' \t' '--'
 }
 
+# The primary journal type of one iteration of this run - the task id or the
+# ceremony keyword in the heading's fourth column - last match wins, ROTATION
+# and SALVAGE skipped, exactly as the stall gate reads it. Defined once because
+# three readers need it: the P0-5 sample filter (P0-7), the oscillation
+# fingerprint, and the stall exemption. Prints nothing without a run token,
+# because without started_at the run id is the bare session prefix every run
+# of the session shares.
+jeffy_iter_type() { # $1 journal path, $2 run token "| <runid8> |", $3 iteration
+  [ -f "$1" ] || return 0
+  awk -v tok="$2" -v it="$3" '
+    { sub(/\r$/, "") }
+    /^## iter / && index($0, tok) {
+      split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (t == "ROTATION" || t == "SALVAGE") next
+      n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n)
+      if (n + 0 == it + 0) type = t
+    }
+    END { print type }
+  ' "$1"
+}
+
 qv_lib="${BASH_SOURCE[0]%/*}/lib/quiet-verify.sh"
 if [ -f "$qv_lib" ]; then
   # shellcheck source-path=SCRIPTDIR
@@ -78,8 +99,11 @@ if [ -z "$fm_session" ] || [ "$fm_session" != "$session_id" ]; then
   exit 0
 fi
 
-case "$iter$max" in
-  '' | *[!0-9]*)
+# Each field is validated on its own: the concatenation read "" + "10" as a
+# well-formed "10", and a state file missing its iteration line re-fed
+# forever because the rewriter never found a line to advance (P2-30).
+case "${iter:-x}${max:-x}" in
+  *[!0-9]*)
     echo "jeffy stop hook: malformed state file $state (iteration=$iter, max_iterations=$max); not re-feeding. Run /cancel-jeffy or delete the file." >&2
     exit 0
     ;;
@@ -424,6 +448,7 @@ if [ -n "$promise" ]; then
         stale_row=""
         unlinked=0
         linked=0
+        nopaths=0
         while IFS= read -r row; do
           [ -n "$row" ] || continue
           row_c="$(printf '%s' "$row" | grep -oE 'swept at [0-9a-f]{7,40}' | head -n 1 | awk '{print $3}')"
@@ -434,19 +459,40 @@ if [ -n "$promise" ]; then
           fi
           linked=$((linked + 1))
           pf="$root/$row_b/paths"
-          [ -f "$pf" ] || continue
+          # A battery with no paths file has no scope to check against; it
+          # is counted and reported rather than silently passed (P0-8).
+          [ -f "$pf" ] || { nopaths=$((nopaths + 1)); continue; }
           git -C "$root" rev-parse --verify --quiet "$row_c^{commit}" >/dev/null 2>&1 || continue
           # The battery's own paths file is the row's scope. A path that
           # changed since the row was recorded means the sweep certifies code
           # that is no longer there.
-          # A blank line in a paths file makes grep -f match every path, so
-          # the empty lines come out before the file is used as a pattern
-          # list; an all-blank paths file leaves nothing to match and the row
-          # is passed over rather than refused on a vacuous hit.
+          # The template says one glob per line, and through 1.14.0 this
+          # compared them as fixed strings (grep -F -x): a literal path
+          # matched and a glob never did, so the gate was inert for 164 of
+          # the corpus's 756 paths files and 27 swept rows sat stale behind
+          # it unseen (P0-8). Each changed path is now matched against each
+          # non-blank line as a shell glob - a literal is a glob that matches
+          # itself, and `*` is allowed to cross `/`, because over-matching
+          # asks for a re-sweep while under-matching certifies moved code.
+          # A blank line would match nothing under case, but is skipped for
+          # the same reason as before: an all-blank file is no scope at all
+          # and the row is passed over rather than refused on a vacuous hit.
           pat="$(grep -v '^[[:space:]]*$' "$pf" 2>/dev/null)"
           [ -n "$pat" ] || continue
-          moved="$(git -C "$root" diff --name-only --relative "$row_c" HEAD 2>/dev/null \
-            | grep -F -x -f <(printf '%s\n' "$pat") 2>/dev/null | head -n 1)"
+          moved=""
+          while IFS= read -r chg; do
+            [ -n "$chg" ] || continue
+            while IFS= read -r gl; do
+              [ -n "$gl" ] || continue
+              # shellcheck disable=SC2254  # the pattern is the point
+              case "$chg" in $gl) moved="$chg"; break ;; esac
+            done <<EOF2
+$pat
+EOF2
+            [ -n "$moved" ] && break
+          done <<EOF2
+$(git -C "$root" diff --name-only --relative "$row_c" HEAD 2>/dev/null)
+EOF2
           if [ -n "$moved" ]; then
             stale_row="$(printf '%s' "$row" | cut -c1-90) (recorded at $row_c; $moved has changed since)"
             break
@@ -460,6 +506,9 @@ EOF
           echo "jeffy stop hook: no swept row names the battery that swept it ($unlinked rows), so staleness could not be derived; rows written from 1.14.0 carry it." >&2
         elif [ "$unlinked" -gt 0 ]; then
           echo "jeffy stop hook: $unlinked of $((linked + unlinked)) swept rows name no battery, so their staleness could not be derived." >&2
+        fi
+        if [ -z "$stale_row" ] && [ "$nopaths" -gt 0 ]; then
+          echo "jeffy stop hook: $nopaths swept row(s) name a battery that has no paths file, so their staleness could not be derived; a battery declares the paths it covers in .jeffy/probes/<battery>/paths, one glob per line." >&2
         fi
       fi
       # P1-46: a Declined entry's stated reason is a claim the declaration
@@ -621,9 +670,9 @@ EOF
             END {
               if (!found) print "none"
               else if (type == "RATCHET") print "ratchet"
-              else if (ev) print "pass"
-              else if (un) print "unavailable"
               else if (rj) print "reject"
+              else if (un) print "unavailable"
+              else if (ev) print "pass"
               else print "missing"
             }
           ' "$root/JOURNAL.md")"
@@ -900,17 +949,38 @@ fi
 rows_hist="$(fm rows_history)"
 hist_k=0; hist_first=""; hist_last=""; hist_deltas=""
 proj_needed=""; new_rows_hist=""
+# P0-7: a sample is taken only on a turn where the map was the top of the
+# queue, so the rate is a sweep rate. Through 1.14.0 every turn end was
+# sampled - the opening audit and every iteration an open High legitimately
+# outranked the map - and the first sweep turn after the Highs closed
+# projected from a window of zeros: Carbon's four rounds and chroma.js's
+# first two all ended at iteration 4-5 of 10 on the turn their last High
+# closed, 24 budgeted iterations never run. The open_high guard below still
+# suppresses the stop itself; this keeps those turns out of the window too.
+# An AUDIT turn is excluded by the same logic: it fills the map, it does not
+# sweep it. A High turn's sample is dropped rather than the history reset,
+# because a High that appears mid-sweep and is fixed next turn should not
+# throw away the rate the sweep turns earned.
+cur_iter_type=""
+if [ -n "$run_tok" ]; then
+  cur_iter_type="$(jeffy_iter_type "$root/JOURNAL.md" "| $runid8 |" "$iter")"
+fi
 if [ -n "$unswept_rows" ]; then
   case "$rows_hist" in
-    '' ) new_rows_hist="$unswept_rows" ;;
-    *[!0-9,]*) new_rows_hist="$unswept_rows" ;;
-    *) new_rows_hist="$rows_hist,$unswept_rows" ;;
+    '' | *[!0-9,]*) new_rows_hist="" ;;
+    *) new_rows_hist="$rows_hist" ;;
   esac
+  if [ "$open_high" = "0" ] && [ "$cur_iter_type" != "AUDIT" ]; then
+    new_rows_hist="$new_rows_hist${new_rows_hist:+,}$unswept_rows"
+  fi
   # keep the last 6 samples
   new_rows_hist="$(printf '%s' "$new_rows_hist" | awk -F, '{ s = (NF > 6) ? NF - 5 : 1; out = ""; for (i = s; i <= NF; i++) out = out (out == "" ? "" : ",") $i; print out }')"
-  hist_k="$(printf '%s' "$new_rows_hist" | awk -F, '{ print NF }')"
-  hist_first="$(printf '%s' "$new_rows_hist" | awk -F, '{ print $1 }')"
-  hist_last="$(printf '%s' "$new_rows_hist" | awk -F, '{ print $NF }')"
+  hist_k=0
+  if [ -n "$new_rows_hist" ]; then
+    hist_k="$(printf '%s' "$new_rows_hist" | awk -F, '{ print NF }')"
+    hist_first="$(printf '%s' "$new_rows_hist" | awk -F, '{ print $1 }')"
+    hist_last="$(printf '%s' "$new_rows_hist" | awk -F, '{ print $NF }')"
+  fi
   if [ "$hist_k" -ge 2 ]; then
     hist_deltas=$((hist_first - hist_last))
     if [ "$hist_deltas" -gt 0 ] && [ "$unswept_rows" -gt 0 ]; then
@@ -933,7 +1003,16 @@ fi
 if [ -n "$unswept_rows" ] && [ "$unswept_rows" != "0" ] \
   && [ "$open_high" = "0" ] && [ -z "$violation" ] \
   && [ "$hist_k" -ge 4 ] && [ "$iter" -lt "$max" ]; then
-  sweep_room=$((max - iter - 3))
+  # P0-7: the three-iteration reserve is the convergence sequence, and that
+  # is only the next thing when nothing above Low is open. With a Medium
+  # still on the ledger the run cannot declare inside this budget anyway,
+  # and what the stop then protects is the chance to finish the map and
+  # carry the Medium forward - so the reserve is not taken from the room.
+  if [ "$open_hm" = "0" ]; then
+    sweep_room=$((max - iter - 3))
+  else
+    sweep_room=$((max - iter))
+  fi
   if [ "$hist_deltas" -le 0 ]; then
     echo "jeffy stop hook: the map is not clearing - $unswept_rows rows are unswept and 0 rows were swept over the last $((hist_k - 1)) iterations with nothing above Low on the ledger; ending the run early rather than spending the remaining $((max - iter)) iterations the same way (P0-5). The map and ledger carry to the next run." >&2
     rm -f "$state"
@@ -1210,7 +1289,11 @@ if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/de
   # open by telling the loop it forgot to commit a file the loop never wrote.
   # Nothing else under .jeffy/ is excused - a probe battery belongs in the
   # checkpoint like any other work. (P2-21)
-  dirty="$(git -C "$root" status --porcelain --untracked-files=no 2>/dev/null | grep -v '^.. \.jeffy/metrics/' | head -n 1)"
+  # The pathspec keeps a project below the repository root to its own tree,
+  # and the filter is unanchored because status prints repo-root-relative
+  # paths even then - anchored at the root it let proj/.jeffy/metrics/
+  # through and fired every turn in a subdirectory project (P2-30).
+  dirty="$(git -C "$root" status --porcelain --untracked-files=no -- . 2>/dev/null | grep -v '\.jeffy/metrics/' | head -n 1)"
   if [ -n "$dirty" ]; then
     hygiene="$hygiene${hygiene:+; also }iteration $iter ended with uncommitted tracked changes ($dirty); checkpoint them"
   fi
@@ -1463,16 +1546,7 @@ fp_hist="$(fm fingerprints)"
 # branch the stall gate took.
 fp_task="ceremony"
 if [ -f "$root/JOURNAL.md" ] && [ -n "$run_tok" ]; then
-  fp_type="$(awk -v tok="| $runid8 |" -v it="$iter" '
-    { sub(/\r$/, "") }
-    /^## iter / && index($0, tok) {
-      split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
-      if (t == "ROTATION" || t == "SALVAGE") next
-      n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n)
-      if (n + 0 == it + 0) type = t
-    }
-    END { print type }
-  ' "$root/JOURNAL.md")"
+  fp_type="$cur_iter_type"
   case "$fp_type" in
     '' | AUDIT | EVALUATOR | RATCHET | WRAPUP | SWEEP | SALVAGE | ROTATION) fp_task="ceremony" ;;
     *) fp_task="$fp_type" ;;
@@ -1496,7 +1570,15 @@ case "$osc_flag" in 1) osc_flag=1 ;; *) osc_flag=0 ;; esac
 new_osc="$osc_flag"
 osc_note=""
 attempt_note=""
-if [ "$fp_hash" != "none" ] && [ -z "$stall_exempt" ]; then
+# P1-57: a ceremony iteration - an audit that files tasks, a sweep, a gate
+# that files, a wrapup - leaves the content hash where it was by design, and
+# three in a row read as a revert-revert. The fingerprint trail still records
+# them; the comparison skips them. The no-progress exemption below already
+# covered the flat case; this covers the progressing one, which the false
+# strikes on decimal.js and chroma.js all were.
+osc_skip=""
+case "$cur_iter_type" in AUDIT | EVALUATOR | RATCHET | WRAPUP | SWEEP) osc_skip=1 ;; esac
+if [ "$fp_hash" != "none" ] && [ -z "$stall_exempt" ] && [ -z "$osc_skip" ]; then
   # Oscillation: this iteration's content hash is one the tree already had
   # two or three iterations ago. Two back is a straight revert; three back
   # catches the fix-fix-revert-revert shape.
