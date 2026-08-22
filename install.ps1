@@ -58,11 +58,14 @@ foreach ($name in @("jeffy", "cancel-jeffy")) {
     # A copy over the top never removes: references\enhance-plan-default.md
     # outlived its removal in 1.11.0 on every installed host. Files the shipped
     # tree no longer carries are removed, and nothing else.
-    Get-ChildItem -Path $dest -Recurse -File | ForEach-Object {
-        $rel = $_.FullName.Substring($dest.Length).TrimStart('\', '/')
-        if (-not (Test-Path (Join-Path $srcDir $rel))) {
-            Remove-Item -LiteralPath $_.FullName -Force
-            Write-Host "[OK] removed $($_.FullName) (no longer shipped)"
+    # -Name yields paths relative to $dest, so no string arithmetic against
+    # the absolute form: a $HOME spelled as an 8.3 short path (RUNNER~1 on
+    # the CI runner) does not match the long path Get-ChildItem reports,
+    # and a Substring on that mismatch once removed every installed file.
+    foreach ($rel in @(Get-ChildItem -Path $dest -Recurse -File -Name)) {
+        if (-not (Test-Path -LiteralPath (Join-Path $srcDir $rel))) {
+            Remove-Item -LiteralPath (Join-Path $dest $rel) -Force
+            Write-Host "[OK] removed $(Join-Path $dest $rel) (no longer shipped)"
         }
     }
     Write-Host "[OK] /$name skill installed to $dest"

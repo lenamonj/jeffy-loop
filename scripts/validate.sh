@@ -1149,6 +1149,29 @@ if [ -n "$ps" ]; then
       echo "------------------------------------------"
       fault "install.ps1 duplicated or lost the hook registration on a second run"
     fi
+    # 1.15.0's stale-file sync computed each installed file's relative path by
+    # string arithmetic against $HOME, and a $HOME spelled as an 8.3 short path
+    # (RUNNER~1 on the CI runner) does not match the long path Get-ChildItem
+    # reports: every installed file was removed as "no longer shipped". The
+    # sync now lists relative names, and this runs the installer under the
+    # short-path spelling to keep it that way.
+    if command -v cygpath >/dev/null 2>&1 && pr_home_s="$(cygpath -d "$pr_home" 2>/dev/null)" && [ -n "$pr_home_s" ]; then
+      pr_drive_s="${pr_home_s%%\\*}"; pr_rest_s="${pr_home_s#"$pr_drive_s"}"
+      HOME="$pr_home" USERPROFILE="$pr_home_s" HOMEDRIVE="$pr_drive_s" HOMEPATH="$pr_rest_s" \
+        PATH="$pr_bin:$PATH" "$ps" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$pr_file_n" >"$pr_tmp/short.log" 2>&1 || true
+      if [ -f "$pr_home/.claude/skills/jeffy/SKILL.md" ] \
+        && [ -f "$pr_home/.claude/skills/jeffy/hooks/stop-hook.sh" ] \
+        && [ -f "$pr_home/.claude/skills/jeffy/hooks/lib/quiet-verify.sh" ] \
+        && [ -f "$pr_home/.claude/skills/jeffy/references/iteration-prompt.txt" ] \
+        && [ -f "$pr_home/.claude/skills/cancel-jeffy/SKILL.md" ] \
+        && ! grep -q 'SKILL.md (no longer shipped)' "$pr_tmp/short.log"; then
+        pass "install.ps1 keeps every installed file under an 8.3 short-path HOME ($ps)"
+      else
+        echo "---- install.ps1 short-path run output ----"
+        cat "$pr_tmp/short.log"
+        fault "install.ps1 removed installed files under an 8.3 short-path HOME (the 1.15.0 sync defect)"
+      fi
+    fi
     pr_timeout_count() {
       grep -c '"timeout": *1800' "$pr_home/.claude/settings.json" 2>/dev/null | tr -d '[:space:]'
     }
