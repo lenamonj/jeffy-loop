@@ -137,10 +137,33 @@ fi
 #    That has shipped a shellcheck-only breakage twice. CHANGELOG.md marks the
 #    maintainer tree, the same predicate the pairing and count checks use.
 if command -v shellcheck >/dev/null 2>&1; then
-  if shellcheck -x install.sh scripts/validate.sh skills/jeffy/hooks/stop-hook.sh skills/jeffy/hooks/lib/quiet-verify.sh; then
-    pass "shell scripts lint clean (shellcheck)"
+  # The file list is derived from the tree, never typed. A typed list drifts on
+  # every addition and already had: 1.13.0 added hooks/lib/quiet-verify.sh and
+  # hooks/lib/detect-sandbox.sh together and only the first reached this line,
+  # leaving shipped runtime the launcher executes at every launch outside the
+  # only linter this project runs, alongside scripts/jeffy-stats.sh. evals/ is
+  # excluded on purpose: a published receipt's oracle is its own target, and
+  # editing one to satisfy a lint here would break the receipt's claim. An
+  # empty derivation is reported as a skip rather than passed over, because a
+  # lint that ran over nothing is not a clean lint. (S1)
+  if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    sc_files="$(git ls-files '*.sh' | grep -v '^evals/')"
   else
-    fault "shellcheck reported issues (see output above)"
+    sc_files=""
+  fi
+  sc_n="$(printf '%s' "$sc_files" | grep -c . || true)"
+  if [ -z "$sc_files" ]; then
+    skip "shellcheck lint (not a git checkout, so the file list cannot be derived)"
+  else
+    # The list is split on purpose, and the directive sits in front of a whole
+    # compound command rather than an elif branch, because shellcheck refuses
+    # a directive on a branch (SC1123) - the same hoisting the Lessons record.
+    # shellcheck disable=SC2086
+    if shellcheck -x $sc_files; then
+      pass "shell scripts lint clean (shellcheck, $sc_n files derived from the tree)"
+    else
+      fault "shellcheck reported issues (see output above)"
+    fi
   fi
 elif [ -f CHANGELOG.md ]; then
   fault "shellcheck is not on PATH, and this is the maintainer tree releases are cut from - a skip here is a lint that first runs in CI, after the push"
