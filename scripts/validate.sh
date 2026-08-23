@@ -1630,8 +1630,31 @@ if command -v jq >/dev/null 2>&1; then
     # carried, not blocking - the accept-path stderr note names it so the run
     # report cannot omit it. High, Medium, and any line whose severity the
     # parser cannot read still block, the last because a floor that guesses
-    # is a floor gamed by omission. Five scenarios, one severity token
-    # mutated between them, so each fails under exactly one mutation.
+    # is a floor gamed by omission.
+    #
+    # Five scenarios, and what each is alone in catching - established by
+    # mutating the classifier five ways and reading which check fell, not by
+    # inspection (E1). This paragraph used to say "one severity token mutated
+    # between them, so each fails under exactly one mutation". That described
+    # the four scenarios preceding R3 and was wrong about the set it named:
+    # two of these differ by their class field rather than by a severity word,
+    # and the fifth has no severity token to mutate at all.
+    #   1. (Low) bare - the ) side of the classifier's [,)]. Narrow that class
+    #      to , and this is the only check that falls, 259 of 260.
+    #   2. (Low, docs, documentation) - the , side. Narrow the class to ) and
+    #      only this one falls, 259 of 260.
+    #   3. (Medium, ...) - Medium is outside the carried set. Widen the
+    #      pattern to (Low|Medium) and only this one falls, 259 of 260.
+    #   4. (High, ...) - the same for High, 259 of 260.
+    #   5. no parenthetical at all - the fail-closed default, and the one with
+    #      no isolating mutation. Saying so is the point rather than an
+    #      omission: make the classifier fail open, carrying anything that is
+    #      not High or Medium, and five checks fall together at 255 of 260.
+    #      Its own is among them and names itself - "guessed a severity for an
+    #      unparseable task line instead of failing closed" - and the other
+    #      four fall because an unparseable line is then carried everywhere
+    #      the converged stop reads a ledger. That blast radius is what
+    #      failing open costs, not a weakness in this scenario.
     # The classifier's severity pattern ends [,)], so a Low is carried whether
     # its parenthetical names a class or not, and both alternatives are driven
     # here. R3: for one release only the comma side was, and a scenario set
