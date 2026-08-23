@@ -948,10 +948,23 @@ skills/jeffy/SKILL.md"
 if [ ! -f "$q_src" ]; then
   fault "$q_src is missing; the launcher's blast-radius disclosure has no detector to read"
 else
-  q_ans="$(sed -n 's/^[ \t]*echo \([a-z][a-z]*\)$/\1/p' "$q_src" | sort -u | tr '\n' ' ')"
-  q_echo_all="$(grep -cE '^[ \t]*echo([ \t]|$)' "$q_src")"
-  q_echo_kept="$(sed -n 's/^[ \t]*echo \([a-z][a-z]*\)$/\1/p' "$q_src" | wc -l | tr -d '[:space:]')"
-  q_other="$(grep -nE '^[ \t]*(printf|cat|tee)([ \t]|$)' "$q_src" | tr '\n' ' ')"
+  # Every echo wherever it sits on a line, never only a line-initial one, and
+  # the comment lines removed first so a comment naming the word cannot
+  # manufacture a disagreement. Anchoring at line start was the defect the
+  # evaluator gate reproduced: an answer added as `if [ ... ]; then echo maybe;
+  # exit 0; fi` on one line, or the same condensed with && and braces, was
+  # missed by the extractor and by the counter at once, and the counts agreed
+  # because both were blind the same way, so the derived set stayed three while
+  # the detector really answered four. A guard that extracts and a guard that
+  # counts must not share a blind spot. (E1)
+  q_body="$(grep -v '^[[:space:]]*#' "$q_src")"
+  q_hits="$(printf '%s\n' "$q_body" | grep -oE '(^|[^[:alnum:]_])echo +[a-z]+')"
+  q_ans="$(printf '%s\n' "$q_hits" | sed 's/.*echo *//' | grep -v '^$' | sort -u | tr '\n' ' ')"
+  q_echo_all="$(printf '%s\n' "$q_body" | grep -oE '(^|[^[:alnum:]_])echo([^[:alnum:]_]|$)' | grep -c .)"
+  q_echo_kept="$(printf '%s\n' "$q_hits" | grep -c .)"
+  # The same widening on the other-output guard, for the same reason: a printf
+  # answering mid-line is the shape this check would otherwise never see.
+  q_other="$(printf '%s\n' "$q_body" | grep -nE '(^|[^[:alnum:]_])(printf|cat|tee)([^[:alnum:]_]|$)' | tr '\n' ' ')"
   q_files="$q_floor"
   if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
     while IFS= read -r -d '' q_extra; do
