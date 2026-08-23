@@ -2422,6 +2422,32 @@ if command -v jq >/dev/null 2>&1; then
         fault "the first task iteration after a run of ceremony iterations took a false oscillation strike; a second one ends a healthy run with budget left"
       fi
 
+      # A5: the other half of the same gate. Equality of content hashes is
+      # what a tree that came back produces AND what a tree that never moved
+      # produces, and the second is a project whose whole work product is loop
+      # memory - which this engine's own repository is, since PLAN.md,
+      # BACKLOG.md, JOURNAL.md and .jeffy/ are all excluded from the hash. Its
+      # trail read one hash across four work iterations with fp_changed 0 on
+      # every one, took a strike at iteration 5 and would have ended the run
+      # at the next repeat. The trail here is work entries, not ceremony, so
+      # the P1-57 filter above does not reach it; what clears it is that
+      # nothing moved after the matched iteration.
+      printf 'v-osc-A\n' > "$hb_proj/product.txt"
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m osc-a-static >/dev/null 2>&1 || true
+      hb_write_journal 5 10
+      hb_write_state_stall sess-1 5 10 "$hb_osc_head_a" stale-0 0
+      hb_state_addkey "fingerprints: 1|T1|$hb_osc_hash_a|0;2|T2|$hb_osc_hash_a|0"
+      hb_out="$(hb_run sess-1 'worked the task' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'OSCILLATION' \
+        && grep -q '^oscillation: 0$' "$hb_state"; then
+        pass "a tree that never moved is not oscillating against its own unchanged hash"
+      else
+        printf '%s\n' "$hb_out"
+        fault "a run whose work product is all loop memory took a false oscillation strike; the tree never left its opening state, so it cannot have returned to it"
+      fi
+
       # Attempt limit: the same task attempted three iterations running and
       # still open. This makes the prompt's oldest unenforced rule mechanical.
       hb_write_backlog '- [ ] T7 (Medium, runtime, correctness): resists fixing. Acceptance: test.'

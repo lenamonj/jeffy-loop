@@ -1611,6 +1611,34 @@ if [ "$fp_hash" != "none" ] && [ -z "$stall_exempt" ] && [ -z "$osc_skip" ]; the
   elif [ -n "$fp_back3" ] && [ "$fp_hash" = "$fp_back3" ]; then
     fp_match="$fp_back3_it"
   fi
+  # A2/A5: equality is two different observations. A tree that moved away and
+  # came back produces it, and so does a tree that never moved at all, and
+  # only the first is oscillation. fp_changed sits beside every hash in the
+  # trail - the count of non-loop-memory paths that iteration touched - and
+  # was recorded from the day the trail existed without anything reading it.
+  # It is read here: a match counts only when something moved after the
+  # iteration matched, which for a tree that never left its opening state is
+  # never. This engine's own repository is that project. PLAN.md, BACKLOG.md,
+  # JOURNAL.md and the whole of .jeffy/ are loop memory, so a run spent on
+  # governance and documentation leaves the content hash where it was at every
+  # iteration, struck on its second work iteration and would have died on its
+  # third with a diagnostic saying work had been undone. Ceremony entries are
+  # counted here even though the comparison above skips them: a ceremony
+  # iteration that changed a tracked file moved the tree, whoever wrote it.
+  # A trail predating this field reads 0 and suppresses the strike, which is
+  # the safe direction for a gate whose false positive ends a healthy run.
+  if [ -n "$fp_match" ]; then
+    osc_moved="$(printf '%s' "$fp_hist" | awk -F';' -v after="$fp_match" -v cur="$fp_changed" '
+      {
+        m = (cur + 0 > 0) ? 1 : 0
+        for (i = 1; i <= NF; i++) {
+          split($i, a, "|")
+          if (a[1] + 0 > after + 0 && a[4] + 0 > 0) m = 1
+        }
+        print m
+      }')"
+    [ "$osc_moved" = "1" ] || fp_match=""
+  fi
   if [ -n "$fp_match" ]; then
     if [ "$osc_flag" = "1" ] && [ -z "$extension" ] && [ -z "$corrective" ]; then
       echo "jeffy stop hook: the tree has returned to a state it already held for the second time (iteration $iter matches iteration $fp_match, excluding loop memory); the run is oscillating rather than progressing, so it ends here. The ledger and the map carry to the next run." >&2
