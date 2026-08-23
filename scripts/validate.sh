@@ -904,6 +904,96 @@ $p_extra"
   fi
 fi
 
+# Q. The sandbox detector's answer set, derived from the echo statements in
+#    detect-sandbox.sh and compared against every document that enumerates
+#    it. The launcher acts on that set - it discloses the blast radius on one
+#    answer and stays silent on the rest - so an answer the detector can give
+#    that no document names is an answer the launcher has no instruction for,
+#    and the disclosure is the one thing this engine says about what a run can
+#    reach. (A4)
+#    Nothing here classifies prose. Each document states the set in one
+#    canonical form, the pipe-separated enumeration the loop state file's own
+#    sandboxed line carries, and the locator matches that form by shape rather
+#    than by its values, so a restatement naming a different set is found and
+#    compared rather than passed over. The launcher skill's prose disposition
+#    was narrowed to "any other answer" in the same commit for that reason: an
+#    enumeration written twice in two grammars is exactly the drift this pair
+#    of derivation checks exists to prevent.
+#    The derivation accounts for every answer the detector prints rather than
+#    the ones this pattern recognises: the echo statements are counted as well
+#    as extracted, and any other output statement faults, because a detector
+#    that answered through printf would leave the derived set silently and
+#    every document omitting that answer would go on agreeing with a check
+#    that never saw it. Same account-for-everything rule as checks L and M,
+#    for the same reason. (L1)
+#    The comparison is a set. These documents enumerate the values the answer
+#    may take and claim no order among them, which is the difference from
+#    check M, where the order of the chain is the claim itself. (M1)
+#    What is derived here is the set each document publishes, and not which
+#    member the banner keys on: that disposition is prose in the launcher's
+#    own paragraph. It is the narrowing that makes the prose total - one
+#    named answer discloses, any other stays silent - so an answer added to
+#    the detector cannot leave the launcher with no instruction, and this
+#    check is what tells a maintainer the new answer needs a decision.
+#    The document set is the floor below widened from the tree: any tracked
+#    markdown that names the detector and carries an enumeration joins the
+#    comparison in the commit that introduces it. The floor pair must each
+#    state the set, so rewriting one of them into a grammar this locator
+#    cannot see faults rather than passing in silence; a widened document is
+#    compared where it enumerates and is never required to.
+q_src="skills/jeffy/hooks/lib/detect-sandbox.sh"
+q_floor="SECURITY.md
+skills/jeffy/SKILL.md"
+if [ ! -f "$q_src" ]; then
+  fault "$q_src is missing; the launcher's blast-radius disclosure has no detector to read"
+else
+  q_ans="$(sed -n 's/^[ \t]*echo \([a-z][a-z]*\)$/\1/p' "$q_src" | sort -u | tr '\n' ' ')"
+  q_echo_all="$(grep -cE '^[ \t]*echo([ \t]|$)' "$q_src")"
+  q_echo_kept="$(sed -n 's/^[ \t]*echo \([a-z][a-z]*\)$/\1/p' "$q_src" | wc -l | tr -d '[:space:]')"
+  q_other="$(grep -nE '^[ \t]*(printf|cat|tee)([ \t]|$)' "$q_src" | tr '\n' ' ')"
+  q_files="$q_floor"
+  if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    while IFS= read -r -d '' q_extra; do
+      case "$q_extra" in evals/* | .jeffy/*) continue ;; esac
+      grep -q 'detect-sandbox\.sh' "$q_extra" || continue
+      grep -qE '[a-z]+(\|[a-z]+)+' "$q_extra" || continue
+      printf '%s\n' "$q_files" | grep -Fxq -- "$q_extra" || q_files="$q_files
+$q_extra"
+    done < <(git ls-files -z '*.md')
+  fi
+  q_bad=""
+  while IFS= read -r q_f; do
+    [ -n "$q_f" ] || continue
+    if [ ! -f "$q_f" ]; then
+      q_bad="$q_bad $q_f(absent)"
+      continue
+    fi
+    q_sites="$(grep -oE '[a-z]+(\|[a-z]+)+' "$q_f")"
+    if [ -z "$q_sites" ]; then
+      q_bad="$q_bad $q_f(states no answer-set enumeration)"
+      continue
+    fi
+    q_i=0
+    while IFS= read -r q_site; do
+      [ -n "$q_site" ] || continue
+      q_i=$((q_i + 1))
+      q_got="$(printf '%s\n' "$q_site" | tr '|' '\n' | sort -u | tr '\n' ' ')"
+      [ "$q_got" = "$q_ans" ] || q_bad="$q_bad ${q_f}#${q_i}[${q_got}]"
+    done < <(printf '%s\n' "$q_sites")
+  done < <(printf '%s\n' "$q_files")
+  if [ -z "$q_ans" ]; then
+    fault "the sandbox detector's answers could not be enumerated; its echo statements moved and this check went blind"
+  elif [ "$q_echo_kept" -ne "$q_echo_all" ]; then
+    fault "$q_src carries $q_echo_all echo statements but this check extracted $q_echo_kept; one is written in a shape the pattern misses and would leave the derived answer set unnoticed"
+  elif [ -n "$q_other" ]; then
+    fault "$q_src answers through a statement other than echo ($q_other); the answer set is derived from its echo lines alone and would not see it"
+  elif [ -n "$q_bad" ]; then
+    fault "the sandbox detector answers [$q_ans] but the product text disagrees:$q_bad"
+  else
+    pass "the sandbox detector's answer set is derived from the detector in every document that enumerates it ($q_ans)"
+  fi
+fi
+
 # 6b. The iteration prompt's shape invariants: one single line, no double
 #     quotes, no CR bytes. The Stop hook cats the file into its block reason
 #     and jq handles the JSON encoding, so nothing breaks mechanically - these

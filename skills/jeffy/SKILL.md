@@ -91,7 +91,7 @@ and record its answer as `sandboxed` in the state file. When it answers `no`,
 the launch banner carries one further line: *"Not sandboxed: this run has
 whatever access this shell has - credentials, SSH keys, tokens - and an
 unattended agent usually runs with permissions relaxed. See SECURITY.md."*
-On `yes` or `unknown`, say nothing. **It never blocks and never prompts.**
+On any other answer, say nothing. **It never blocks and never prompts.**
 The loop does not widen its own mandate, and it has no business narrowing the
 operator's either; what it owes them is one honest sentence about what is
 reachable, said once, before the run rather than after it.
