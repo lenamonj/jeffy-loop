@@ -435,6 +435,25 @@ else
     qv_bad=1; echo "  placeholder refusal did not name itself: [$(cat "$qv_tmp/err")]"
   fi
 
+  # ...and the guard is anchored, so a real command is not mistaken for one.
+  # Unanchored it read any `<` before a `>` as unfilled, which refused a
+  # command carrying a redirect pair at exit 2 with the wrong cause named -
+  # every iteration, while the converged stop ran the same line without
+  # complaint. Both directions are pinned: the placeholder above must still be
+  # refused, and this must run. (A2)
+  qv_case 'Command: bash -c true < /dev/null > /dev/null' 'Oracle class: deterministic'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  a Command carrying a redirect pair was refused: [$(cat "$qv_tmp/err")]"
+  fi
+
+  # A redirecting command that genuinely fails must still fail, so the anchor
+  # did not turn the arm into a pass-through.
+  qv_case 'Command: bash -c "exit 3" < /dev/null' 'Oracle class: deterministic'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  if [ "$?" -ne 3 ]; then
+    qv_bad=1; echo "  a failing redirecting command did not report its own exit status"
+  fi
+
   qv_case 'Command: none' 'Oracle class: deterministic'
   if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err" ||
     ! grep -q 'not configured' "$qv_tmp/err"; then

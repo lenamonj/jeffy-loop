@@ -150,12 +150,20 @@ qv_main() {
       echo "verify: not configured" >&2
       exit 0
       ;;
-    *'<'*'>'*)
+    '<'*'>')
       # A fresh project still carrying the template's own placeholder. Running
       # it produces a bash syntax error reported as a failed suite, which
       # reads exactly like the project being broken - the one thing this
       # wrapper must never say when it is not true. The launch lint refuses a
       # placeholder at launch; this refuses it at the gate, and names it.
+      #
+      # Anchored, matching the hook's own oracle_unfilled rather than merely
+      # resembling it: the payload has to BE a placeholder, not contain one.
+      # Unanchored, this arm read any command carrying a redirect pair as
+      # unfilled - `make test < /dev/null > out.log` was refused at exit 2
+      # with a message naming the wrong cause, every iteration, while the
+      # converged stop ran the same line without complaint because it calls
+      # jeffy_verify_run directly and never reaches this guard. (A2)
       echo "verify: Command is still the template placeholder ($qv_cmd); the first audit fills it with the project's real gate, or with none and a one-line reason" >&2
       exit 2
       ;;
