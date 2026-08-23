@@ -994,6 +994,88 @@ $q_extra"
   fi
 fi
 
+# R. The journal heading grammar's two enumerations - the ceremony keywords in
+#    its fourth column and the status vocabulary in its fifth - derived from
+#    the iteration prompt, which is the instruction the loop obeys, and
+#    compared against every shipped document that restates the grammar. The
+#    prompt is the authority here rather than one of two peers: the loop reads
+#    it at every turn end and writes headings from it, while the journal
+#    template documents the same grammar for a reader. Nothing derived one
+#    from the other until now, so a release adding a status or a ceremony
+#    keyword to the prompt left the template documenting a grammar the loop
+#    no longer writes, and the drift shows up as product text disagreeing
+#    with the product. (B1)
+#    Both halves are compared because both are in the same line and only one
+#    of them is inert: the Stop hook parses the fourth column - jeffy_iter_type
+#    splits a heading on the pipe and reads f[4] against ROTATION and SALVAGE -
+#    and never the fifth, so a ceremony-keyword drift can reach a mechanism
+#    while a status drift misleads a reader. Fixing the half that was filed and
+#    leaving its sibling in the same line unguarded is instance patching.
+#    Each side is asserted to have matched exactly once, never merely to be
+#    non-empty: a second match concatenates into the extracted value, and the
+#    comparison then holds two enumerations against one, which is the defect
+#    check P was repaired for. (M1)
+#    The comparison is a set on both halves. The grammar lists alternatives for
+#    one column and claims no order among them, which is check L's reason
+#    rather than check M's. (M1)
+r_prompt="skills/jeffy/references/iteration-prompt.txt"
+r_floor="skills/jeffy/references/journal-default.md"
+r_cer_pat='task-id or [A-Z][A-Za-z]*( or [A-Z][A-Za-z]*)*'
+# Two tr calls rather than one carrying a duplicated replacement set: a set2
+# shorter than set1 is padded by repeating its last character on GNU and is not
+# something to rely on across the BSD userland the macOS leg runs, and the
+# linter reports the duplicate at info level, which check 5 above takes its
+# fault branch on. (B1)
+r_set() { printf '%s\n' "$1" | tr '|' '\n' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | sed '/^$/d' | sort -u | tr '\n' ' '; }
+if [ ! -f "$r_prompt" ]; then
+  fault "$r_prompt is missing; the journal heading grammar has no authority to derive from"
+else
+  r_st_raw="$(grep -oE 'status is one of [a-z, ]+' "$r_prompt" | sed 's/^status is one of //')"
+  r_cer_raw="$(grep -oE "$r_cer_pat" "$r_prompt" | sed 's/^task-id or //')"
+  r_st_n="$(printf '%s\n' "$r_st_raw" | grep -c .)"
+  r_cer_n="$(printf '%s\n' "$r_cer_raw" | grep -c .)"
+  r_st="$(r_set "$r_st_raw")"
+  r_cer="$(r_set "$(printf '%s\n' "$r_cer_raw" | sed 's/ or /,/g')")"
+  r_files="$r_floor"
+  if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    while IFS= read -r -d '' r_extra; do
+      case "$r_extra" in evals/* | .jeffy/*) continue ;; esac
+      grep -q '## iter <' "$r_extra" || continue
+      printf '%s\n' "$r_files" | grep -Fxq -- "$r_extra" || r_files="$r_files
+$r_extra"
+    done < <(git ls-files -z '*.md')
+  fi
+  r_bad=""
+  while IFS= read -r r_f; do
+    [ -n "$r_f" ] || continue
+    if [ ! -f "$r_f" ]; then
+      r_bad="$r_bad $r_f(absent)"
+      continue
+    fi
+    r_f_st_raw="$(grep -oE '[a-z]+(\|[a-z]+)+' "$r_f")"
+    r_f_cer_raw="$(grep -oE "$r_cer_pat" "$r_f" | sed 's/^task-id or //')"
+    r_f_st_n="$(printf '%s\n' "$r_f_st_raw" | grep -c .)"
+    r_f_cer_n="$(printf '%s\n' "$r_f_cer_raw" | grep -c .)"
+    if [ "$r_f_st_n" -ne 1 ] || [ "$r_f_cer_n" -ne 1 ]; then
+      r_bad="$r_bad $r_f(states the grammar's enumerations $r_f_cer_n times and its status vocabulary $r_f_st_n times, not once each)"
+      continue
+    fi
+    r_f_st="$(r_set "$r_f_st_raw")"
+    r_f_cer="$(r_set "$(printf '%s\n' "$r_f_cer_raw" | sed 's/ or /,/g')")"
+    [ "$r_f_st" = "$r_st" ] || r_bad="$r_bad ${r_f}(status[$r_f_st])"
+    [ "$r_f_cer" = "$r_cer" ] || r_bad="$r_bad ${r_f}(ceremony[$r_f_cer])"
+  done < <(printf '%s\n' "$r_files")
+  if [ -z "$r_st" ] || [ -z "$r_cer" ]; then
+    fault "the iteration prompt's journal heading grammar could not be enumerated (status [$r_st], ceremony [$r_cer]); the sentence moved and this check went blind"
+  elif [ "$r_st_n" -ne 1 ] || [ "$r_cer_n" -ne 1 ]; then
+    fault "the iteration prompt states its status vocabulary $r_st_n times and its ceremony keywords $r_cer_n times, not once each; a second statement concatenates into the derived set and this check would compare two enumerations against one"
+  elif [ -n "$r_bad" ]; then
+    fault "the iteration prompt writes journal headings with ceremony keywords [$r_cer] and statuses [$r_st] but the shipped grammar disagrees:$r_bad"
+  else
+    pass "the journal heading grammar's ceremony keywords and status vocabulary are derived from the iteration prompt in every document that restates it ($r_cer/ $r_st)"
+  fi
+fi
+
 # 6b. The iteration prompt's shape invariants: one single line, no double
 #     quotes, no CR bytes. The Stop hook cats the file into its block reason
 #     and jq handles the JSON encoding, so nothing breaks mechanically - these
