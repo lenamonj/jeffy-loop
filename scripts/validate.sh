@@ -2352,6 +2352,34 @@ if command -v jq >/dev/null 2>&1; then
         fault "the oscillation strike did not reset on real progress, so a healthy run would die of it"
       fi
 
+      # P1-57 was half-applied through 1.15.1. The current iteration was
+      # exempted when it was ceremony, but the trail it compared against was
+      # still indexed positionally, so the first task iteration after a run of
+      # sweeps was measured against a ceremony iteration's content hash -
+      # unchanged by design - and took a strike for work nobody had undone.
+      # Under coverage-first ordering that is the normal shape rather than a
+      # corner, since a run sweeps its map for several iterations and then
+      # starts on the ledger; this engine's own repository hit it at iteration
+      # 5 of a 10-iteration run, four sweeps followed by one task. A second
+      # occurrence ends the run, so the cost is a healthy run dying with
+      # budget left. The trail here is all ceremony and the tree is back at
+      # hash A, which is exactly the shape that used to fault.
+      printf 'v-osc-A\n' > "$hb_proj/product.txt"
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m osc-a-again >/dev/null 2>&1 || true
+      hb_write_journal 5 10
+      hb_write_state_stall sess-1 5 10 "$hb_osc_head_a" stale-0 0
+      hb_state_addkey "fingerprints: 1|ceremony|$hb_osc_hash_a|0;2|ceremony|$hb_osc_hash_a|0;3|ceremony|$hb_osc_hash_a|0"
+      hb_out="$(hb_run sess-1 'worked the task' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'OSCILLATION' \
+        && grep -q '^oscillation: 0$' "$hb_state"; then
+        pass "a task iteration is not oscillating against a ceremony iteration's unchanged hash"
+      else
+        printf '%s\n' "$hb_out"
+        fault "the first task iteration after a run of ceremony iterations took a false oscillation strike; a second one ends a healthy run with budget left"
+      fi
+
       # Attempt limit: the same task attempted three iterations running and
       # still open. This makes the prompt's oldest unenforced rule mechanical.
       hb_write_backlog '- [ ] T7 (Medium, runtime, correctness): resists fixing. Acceptance: test.'

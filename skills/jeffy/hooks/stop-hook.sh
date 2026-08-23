@@ -1573,19 +1573,38 @@ attempt_note=""
 # P1-57: a ceremony iteration - an audit that files tasks, a sweep, a gate
 # that files, a wrapup - leaves the content hash where it was by design, and
 # three in a row read as a revert-revert. The fingerprint trail still records
-# them; the comparison skips them. The no-progress exemption below already
-# covered the flat case; this covers the progressing one, which the false
-# strikes on decimal.js and chroma.js all were.
+# them; the comparison skips them, on BOTH sides. The no-progress exemption
+# below already covered the flat case; this covers the progressing one, which
+# the false strikes on decimal.js and chroma.js all were.
+#
+# Skipping only the current iteration was half the fix and shipped that way
+# through 1.15.1. The trail was still indexed positionally, so the first task
+# iteration after a stretch of ceremony ones was compared against a ceremony
+# iteration's hash - a hash that is unchanged by design - and took a strike
+# for work nobody had undone. Coverage-first ordering makes that the normal
+# shape rather than a corner: a run sweeps its map for several iterations and
+# then starts on the ledger. This engine's own repository hit it at iteration
+# 5 of a 10-iteration run, four sweeps followed by one task. The comparison
+# now runs over the work entries alone, so "two back" means two work
+# iterations back rather than two turns back.
 osc_skip=""
 case "$cur_iter_type" in AUDIT | EVALUATOR | RATCHET | WRAPUP | SWEEP) osc_skip=1 ;; esac
 if [ "$fp_hash" != "none" ] && [ -z "$stall_exempt" ] && [ -z "$osc_skip" ]; then
   # Oscillation: this iteration's content hash is one the tree already had
   # two or three iterations ago. Two back is a straight revert; three back
   # catches the fix-fix-revert-revert shape.
-  fp_back2="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[3] } }')"
-  fp_back3="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 3) { split($(NF-2), a, "|"); print a[3] } }')"
-  fp_back2_it="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[1] } }')"
-  fp_back3_it="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 3) { split($(NF-2), a, "|"); print a[1] } }')"
+  # The work-only view of the trail. Same field order, ceremony entries
+  # dropped, so the indexing below is unchanged for a trail that carries no
+  # ceremony entry at all - which is every trail the earlier scenarios build.
+  fp_work="$(printf '%s' "$fp_hist" | awk -F';' '{
+    out = ""
+    for (i = 1; i <= NF; i++) { split($i, a, "|"); if (a[2] != "ceremony") out = out (out == "" ? "" : ";") $i }
+    print out
+  }')"
+  fp_back2="$(printf '%s' "$fp_work" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[3] } }')"
+  fp_back3="$(printf '%s' "$fp_work" | awk -F';' '{ if (NF >= 3) { split($(NF-2), a, "|"); print a[3] } }')"
+  fp_back2_it="$(printf '%s' "$fp_work" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[1] } }')"
+  fp_back3_it="$(printf '%s' "$fp_work" | awk -F';' '{ if (NF >= 3) { split($(NF-2), a, "|"); print a[1] } }')"
   fp_match=""
   if [ -n "$fp_back2" ] && [ "$fp_hash" = "$fp_back2" ]; then
     fp_match="$fp_back2_it"
