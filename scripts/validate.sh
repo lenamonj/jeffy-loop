@@ -353,7 +353,8 @@ check_markers skills/jeffy/SKILL.md \
   "Mode guard:" \
   "Enhance mode was removed in v1.11.0" \
   'base_head: $(git -C ' \
-  "the Stop hook uses it to tell a genuine convergence ratchet"
+  "the Stop hook uses it to tell a genuine convergence ratchet" \
+  "compare that file with the installed one byte for byte"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
