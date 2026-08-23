@@ -1573,24 +1573,71 @@ attempt_note=""
 # P1-57: a ceremony iteration - an audit that files tasks, a sweep, a gate
 # that files, a wrapup - leaves the content hash where it was by design, and
 # three in a row read as a revert-revert. The fingerprint trail still records
-# them; the comparison skips them. The no-progress exemption below already
-# covered the flat case; this covers the progressing one, which the false
-# strikes on decimal.js and chroma.js all were.
+# them; the comparison skips them, on BOTH sides. The no-progress exemption
+# below already covered the flat case; this covers the progressing one, which
+# the false strikes on decimal.js and chroma.js all were.
+#
+# Skipping only the current iteration was half the fix and shipped that way
+# through 1.15.1. The trail was still indexed positionally, so the first task
+# iteration after a stretch of ceremony ones was compared against a ceremony
+# iteration's hash - a hash that is unchanged by design - and took a strike
+# for work nobody had undone. Coverage-first ordering makes that the normal
+# shape rather than a corner: a run sweeps its map for several iterations and
+# then starts on the ledger. This engine's own repository hit it at iteration
+# 5 of a 10-iteration run, four sweeps followed by one task. The comparison
+# now runs over the work entries alone, so "two back" means two work
+# iterations back rather than two turns back.
 osc_skip=""
 case "$cur_iter_type" in AUDIT | EVALUATOR | RATCHET | WRAPUP | SWEEP) osc_skip=1 ;; esac
 if [ "$fp_hash" != "none" ] && [ -z "$stall_exempt" ] && [ -z "$osc_skip" ]; then
   # Oscillation: this iteration's content hash is one the tree already had
   # two or three iterations ago. Two back is a straight revert; three back
   # catches the fix-fix-revert-revert shape.
-  fp_back2="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[3] } }')"
-  fp_back3="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 3) { split($(NF-2), a, "|"); print a[3] } }')"
-  fp_back2_it="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[1] } }')"
-  fp_back3_it="$(printf '%s' "$fp_hist" | awk -F';' '{ if (NF >= 3) { split($(NF-2), a, "|"); print a[1] } }')"
+  # The work-only view of the trail. Same field order, ceremony entries
+  # dropped, so the indexing below is unchanged for a trail that carries no
+  # ceremony entry at all - which is every trail the earlier scenarios build.
+  fp_work="$(printf '%s' "$fp_hist" | awk -F';' '{
+    out = ""
+    for (i = 1; i <= NF; i++) { split($i, a, "|"); if (a[2] != "ceremony") out = out (out == "" ? "" : ";") $i }
+    print out
+  }')"
+  fp_back2="$(printf '%s' "$fp_work" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[3] } }')"
+  fp_back3="$(printf '%s' "$fp_work" | awk -F';' '{ if (NF >= 3) { split($(NF-2), a, "|"); print a[3] } }')"
+  fp_back2_it="$(printf '%s' "$fp_work" | awk -F';' '{ if (NF >= 2) { split($(NF-1), a, "|"); print a[1] } }')"
+  fp_back3_it="$(printf '%s' "$fp_work" | awk -F';' '{ if (NF >= 3) { split($(NF-2), a, "|"); print a[1] } }')"
   fp_match=""
   if [ -n "$fp_back2" ] && [ "$fp_hash" = "$fp_back2" ]; then
     fp_match="$fp_back2_it"
   elif [ -n "$fp_back3" ] && [ "$fp_hash" = "$fp_back3" ]; then
     fp_match="$fp_back3_it"
+  fi
+  # A2/A5: equality is two different observations. A tree that moved away and
+  # came back produces it, and so does a tree that never moved at all, and
+  # only the first is oscillation. fp_changed sits beside every hash in the
+  # trail - the count of non-loop-memory paths that iteration touched - and
+  # was recorded from the day the trail existed without anything reading it.
+  # It is read here: a match counts only when something moved after the
+  # iteration matched, which for a tree that never left its opening state is
+  # never. This engine's own repository is that project. PLAN.md, BACKLOG.md,
+  # JOURNAL.md and the whole of .jeffy/ are loop memory, so a run spent on
+  # governance and documentation leaves the content hash where it was at every
+  # iteration, struck on its second work iteration and would have died on its
+  # third with a diagnostic saying work had been undone. Ceremony entries are
+  # counted here even though the comparison above skips them: a ceremony
+  # iteration that changed a tracked file moved the tree, whoever wrote it.
+  # A trail predating this field reads 0 and suppresses the strike, which is
+  # the safe direction for a gate whose false positive ends a healthy run.
+  if [ -n "$fp_match" ]; then
+    osc_moved="$(printf '%s' "$fp_hist" | awk -F';' -v after="$fp_match" -v cur="$fp_changed" '
+      {
+        m = (cur + 0 > 0) ? 1 : 0
+        for (i = 1; i <= NF; i++) {
+          split($i, a, "|")
+          if (a[1] + 0 > after + 0 && a[4] + 0 > 0) m = 1
+        }
+        print m
+      }')"
+    [ "$osc_moved" = "1" ] || fp_match=""
   fi
   if [ -n "$fp_match" ]; then
     if [ "$osc_flag" = "1" ] && [ -z "$extension" ] && [ -z "$corrective" ]; then

@@ -137,10 +137,33 @@ fi
 #    That has shipped a shellcheck-only breakage twice. CHANGELOG.md marks the
 #    maintainer tree, the same predicate the pairing and count checks use.
 if command -v shellcheck >/dev/null 2>&1; then
-  if shellcheck -x install.sh scripts/validate.sh skills/jeffy/hooks/stop-hook.sh skills/jeffy/hooks/lib/quiet-verify.sh; then
-    pass "shell scripts lint clean (shellcheck)"
+  # The file list is derived from the tree, never typed. A typed list drifts on
+  # every addition and already had: 1.13.0 added hooks/lib/quiet-verify.sh and
+  # hooks/lib/detect-sandbox.sh together and only the first reached this line,
+  # leaving shipped runtime the launcher executes at every launch outside the
+  # only linter this project runs, alongside scripts/jeffy-stats.sh. evals/ is
+  # excluded on purpose: a published receipt's oracle is its own target, and
+  # editing one to satisfy a lint here would break the receipt's claim. An
+  # empty derivation is reported as a skip rather than passed over, because a
+  # lint that ran over nothing is not a clean lint. (S1)
+  if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    sc_files="$(git ls-files '*.sh' | grep -v '^evals/')"
   else
-    fault "shellcheck reported issues (see output above)"
+    sc_files=""
+  fi
+  sc_n="$(printf '%s' "$sc_files" | grep -c . || true)"
+  if [ -z "$sc_files" ]; then
+    skip "shellcheck lint (not a git checkout, so the file list cannot be derived)"
+  else
+    # The list is split on purpose, and the directive sits in front of a whole
+    # compound command rather than an elif branch, because shellcheck refuses
+    # a directive on a branch (SC1123) - the same hoisting the Lessons record.
+    # shellcheck disable=SC2086
+    if shellcheck -x $sc_files; then
+      pass "shell scripts lint clean (shellcheck, $sc_n files derived from the tree)"
+    else
+      fault "shellcheck reported issues (see output above)"
+    fi
   fi
 elif [ -f CHANGELOG.md ]; then
   fault "shellcheck is not on PATH, and this is the maintainer tree releases are cut from - a skip here is a lint that first runs in CI, after the push"
@@ -330,7 +353,8 @@ check_markers skills/jeffy/SKILL.md \
   "Mode guard:" \
   "Enhance mode was removed in v1.11.0" \
   'base_head: $(git -C ' \
-  "the Stop hook uses it to tell a genuine convergence ratchet"
+  "the Stop hook uses it to tell a genuine convergence ratchet" \
+  "compare that file with the installed one byte for byte"
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
@@ -410,6 +434,25 @@ else
     qv_bad=1; echo "  template placeholder was executed as a command"
   elif ! grep -q 'template placeholder' "$qv_tmp/err"; then
     qv_bad=1; echo "  placeholder refusal did not name itself: [$(cat "$qv_tmp/err")]"
+  fi
+
+  # ...and the guard is anchored, so a real command is not mistaken for one.
+  # Unanchored it read any `<` before a `>` as unfilled, which refused a
+  # command carrying a redirect pair at exit 2 with the wrong cause named -
+  # every iteration, while the converged stop ran the same line without
+  # complaint. Both directions are pinned: the placeholder above must still be
+  # refused, and this must run. (A2)
+  qv_case 'Command: bash -c true < /dev/null > /dev/null' 'Oracle class: deterministic'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  a Command carrying a redirect pair was refused: [$(cat "$qv_tmp/err")]"
+  fi
+
+  # A redirecting command that genuinely fails must still fail, so the anchor
+  # did not turn the arm into a pass-through.
+  qv_case 'Command: bash -c "exit 3" < /dev/null' 'Oracle class: deterministic'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  if [ "$?" -ne 3 ]; then
+    qv_bad=1; echo "  a failing redirecting command did not report its own exit status"
   fi
 
   qv_case 'Command: none' 'Oracle class: deterministic'
@@ -859,6 +902,191 @@ $p_extra"
     else
       pass "the verify-bound derivation chain is regenerated from the hook and stated identically in every document that carries it ($p_want)"
     fi
+  fi
+fi
+
+# Q. The sandbox detector's answer set, derived from the echo statements in
+#    detect-sandbox.sh and compared against every document that enumerates
+#    it. The launcher acts on that set - it discloses the blast radius on one
+#    answer and stays silent on the rest - so an answer the detector can give
+#    that no document names is an answer the launcher has no instruction for,
+#    and the disclosure is the one thing this engine says about what a run can
+#    reach. (A4)
+#    Nothing here classifies prose. Each document states the set in one
+#    canonical form, the pipe-separated enumeration the loop state file's own
+#    sandboxed line carries, and the locator matches that form by shape rather
+#    than by its values, so a restatement naming a different set is found and
+#    compared rather than passed over. The launcher skill's prose disposition
+#    was narrowed to "any other answer" in the same commit for that reason: an
+#    enumeration written twice in two grammars is exactly the drift this pair
+#    of derivation checks exists to prevent.
+#    The derivation accounts for every answer the detector prints rather than
+#    the ones this pattern recognises: the echo statements are counted as well
+#    as extracted, and any other output statement faults, because a detector
+#    that answered through printf would leave the derived set silently and
+#    every document omitting that answer would go on agreeing with a check
+#    that never saw it. Same account-for-everything rule as checks L and M,
+#    for the same reason. (L1)
+#    The comparison is a set. These documents enumerate the values the answer
+#    may take and claim no order among them, which is the difference from
+#    check M, where the order of the chain is the claim itself. (M1)
+#    What is derived here is the set each document publishes, and not which
+#    member the banner keys on: that disposition is prose in the launcher's
+#    own paragraph. It is the narrowing that makes the prose total - one
+#    named answer discloses, any other stays silent - so an answer added to
+#    the detector cannot leave the launcher with no instruction, and this
+#    check is what tells a maintainer the new answer needs a decision.
+#    The document set is the floor below widened from the tree: any tracked
+#    markdown that names the detector and carries an enumeration joins the
+#    comparison in the commit that introduces it. The floor pair must each
+#    state the set, so rewriting one of them into a grammar this locator
+#    cannot see faults rather than passing in silence; a widened document is
+#    compared where it enumerates and is never required to.
+q_src="skills/jeffy/hooks/lib/detect-sandbox.sh"
+q_floor="SECURITY.md
+skills/jeffy/SKILL.md"
+if [ ! -f "$q_src" ]; then
+  fault "$q_src is missing; the launcher's blast-radius disclosure has no detector to read"
+else
+  # Every echo wherever it sits on a line, never only a line-initial one, and
+  # the comment lines removed first so a comment naming the word cannot
+  # manufacture a disagreement. Anchoring at line start was the defect the
+  # evaluator gate reproduced: an answer added as `if [ ... ]; then echo maybe;
+  # exit 0; fi` on one line, or the same condensed with && and braces, was
+  # missed by the extractor and by the counter at once, and the counts agreed
+  # because both were blind the same way, so the derived set stayed three while
+  # the detector really answered four. A guard that extracts and a guard that
+  # counts must not share a blind spot. (E1)
+  q_body="$(grep -v '^[[:space:]]*#' "$q_src")"
+  q_hits="$(printf '%s\n' "$q_body" | grep -oE '(^|[^[:alnum:]_])echo +[a-z]+')"
+  q_ans="$(printf '%s\n' "$q_hits" | sed 's/.*echo *//' | grep -v '^$' | sort -u | tr '\n' ' ')"
+  q_echo_all="$(printf '%s\n' "$q_body" | grep -oE '(^|[^[:alnum:]_])echo([^[:alnum:]_]|$)' | grep -c .)"
+  q_echo_kept="$(printf '%s\n' "$q_hits" | grep -c .)"
+  # The same widening on the other-output guard, for the same reason: a printf
+  # answering mid-line is the shape this check would otherwise never see.
+  q_other="$(printf '%s\n' "$q_body" | grep -nE '(^|[^[:alnum:]_])(printf|cat|tee)([^[:alnum:]_]|$)' | tr '\n' ' ')"
+  q_files="$q_floor"
+  if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    while IFS= read -r -d '' q_extra; do
+      case "$q_extra" in evals/* | .jeffy/*) continue ;; esac
+      grep -q 'detect-sandbox\.sh' "$q_extra" || continue
+      grep -qE '[a-z]+(\|[a-z]+)+' "$q_extra" || continue
+      printf '%s\n' "$q_files" | grep -Fxq -- "$q_extra" || q_files="$q_files
+$q_extra"
+    done < <(git ls-files -z '*.md')
+  fi
+  q_bad=""
+  while IFS= read -r q_f; do
+    [ -n "$q_f" ] || continue
+    if [ ! -f "$q_f" ]; then
+      q_bad="$q_bad $q_f(absent)"
+      continue
+    fi
+    q_sites="$(grep -oE '[a-z]+(\|[a-z]+)+' "$q_f")"
+    if [ -z "$q_sites" ]; then
+      q_bad="$q_bad $q_f(states no answer-set enumeration)"
+      continue
+    fi
+    q_i=0
+    while IFS= read -r q_site; do
+      [ -n "$q_site" ] || continue
+      q_i=$((q_i + 1))
+      q_got="$(printf '%s\n' "$q_site" | tr '|' '\n' | sort -u | tr '\n' ' ')"
+      [ "$q_got" = "$q_ans" ] || q_bad="$q_bad ${q_f}#${q_i}[${q_got}]"
+    done < <(printf '%s\n' "$q_sites")
+  done < <(printf '%s\n' "$q_files")
+  if [ -z "$q_ans" ]; then
+    fault "the sandbox detector's answers could not be enumerated; its echo statements moved and this check went blind"
+  elif [ "$q_echo_kept" -ne "$q_echo_all" ]; then
+    fault "$q_src carries $q_echo_all echo statements but this check extracted $q_echo_kept; one is written in a shape the pattern misses and would leave the derived answer set unnoticed"
+  elif [ -n "$q_other" ]; then
+    fault "$q_src answers through a statement other than echo ($q_other); the answer set is derived from its echo lines alone and would not see it"
+  elif [ -n "$q_bad" ]; then
+    fault "the sandbox detector answers [$q_ans] but the product text disagrees:$q_bad"
+  else
+    pass "the sandbox detector's answer set is derived from the detector in every document that enumerates it ($q_ans)"
+  fi
+fi
+
+# R. The journal heading grammar's two enumerations - the ceremony keywords in
+#    its fourth column and the status vocabulary in its fifth - derived from
+#    the iteration prompt, which is the instruction the loop obeys, and
+#    compared against every shipped document that restates the grammar. The
+#    prompt is the authority here rather than one of two peers: the loop reads
+#    it at every turn end and writes headings from it, while the journal
+#    template documents the same grammar for a reader. Nothing derived one
+#    from the other until now, so a release adding a status or a ceremony
+#    keyword to the prompt left the template documenting a grammar the loop
+#    no longer writes, and the drift shows up as product text disagreeing
+#    with the product. (B1)
+#    Both halves are compared because both are in the same line and only one
+#    of them is inert: the Stop hook parses the fourth column - jeffy_iter_type
+#    splits a heading on the pipe and reads f[4] against ROTATION and SALVAGE -
+#    and never the fifth, so a ceremony-keyword drift can reach a mechanism
+#    while a status drift misleads a reader. Fixing the half that was filed and
+#    leaving its sibling in the same line unguarded is instance patching.
+#    Each side is asserted to have matched exactly once, never merely to be
+#    non-empty: a second match concatenates into the extracted value, and the
+#    comparison then holds two enumerations against one, which is the defect
+#    check P was repaired for. (M1)
+#    The comparison is a set on both halves. The grammar lists alternatives for
+#    one column and claims no order among them, which is check L's reason
+#    rather than check M's. (M1)
+r_prompt="skills/jeffy/references/iteration-prompt.txt"
+r_floor="skills/jeffy/references/journal-default.md"
+r_cer_pat='task-id or [A-Z][A-Za-z]*( or [A-Z][A-Za-z]*)*'
+# Two tr calls rather than one carrying a duplicated replacement set: a set2
+# shorter than set1 is padded by repeating its last character on GNU and is not
+# something to rely on across the BSD userland the macOS leg runs, and the
+# linter reports the duplicate at info level, which check 5 above takes its
+# fault branch on. (B1)
+r_set() { printf '%s\n' "$1" | tr '|' '\n' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | sed '/^$/d' | sort -u | tr '\n' ' '; }
+if [ ! -f "$r_prompt" ]; then
+  fault "$r_prompt is missing; the journal heading grammar has no authority to derive from"
+else
+  r_st_raw="$(grep -oE 'status is one of [a-z, ]+' "$r_prompt" | sed 's/^status is one of //')"
+  r_cer_raw="$(grep -oE "$r_cer_pat" "$r_prompt" | sed 's/^task-id or //')"
+  r_st_n="$(printf '%s\n' "$r_st_raw" | grep -c .)"
+  r_cer_n="$(printf '%s\n' "$r_cer_raw" | grep -c .)"
+  r_st="$(r_set "$r_st_raw")"
+  r_cer="$(r_set "$(printf '%s\n' "$r_cer_raw" | sed 's/ or /,/g')")"
+  r_files="$r_floor"
+  if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    while IFS= read -r -d '' r_extra; do
+      case "$r_extra" in evals/* | .jeffy/*) continue ;; esac
+      grep -q '## iter <' "$r_extra" || continue
+      printf '%s\n' "$r_files" | grep -Fxq -- "$r_extra" || r_files="$r_files
+$r_extra"
+    done < <(git ls-files -z '*.md')
+  fi
+  r_bad=""
+  while IFS= read -r r_f; do
+    [ -n "$r_f" ] || continue
+    if [ ! -f "$r_f" ]; then
+      r_bad="$r_bad $r_f(absent)"
+      continue
+    fi
+    r_f_st_raw="$(grep -oE '[a-z]+(\|[a-z]+)+' "$r_f")"
+    r_f_cer_raw="$(grep -oE "$r_cer_pat" "$r_f" | sed 's/^task-id or //')"
+    r_f_st_n="$(printf '%s\n' "$r_f_st_raw" | grep -c .)"
+    r_f_cer_n="$(printf '%s\n' "$r_f_cer_raw" | grep -c .)"
+    if [ "$r_f_st_n" -ne 1 ] || [ "$r_f_cer_n" -ne 1 ]; then
+      r_bad="$r_bad $r_f(states the grammar's enumerations $r_f_cer_n times and its status vocabulary $r_f_st_n times, not once each)"
+      continue
+    fi
+    r_f_st="$(r_set "$r_f_st_raw")"
+    r_f_cer="$(r_set "$(printf '%s\n' "$r_f_cer_raw" | sed 's/ or /,/g')")"
+    [ "$r_f_st" = "$r_st" ] || r_bad="$r_bad ${r_f}(status[$r_f_st])"
+    [ "$r_f_cer" = "$r_cer" ] || r_bad="$r_bad ${r_f}(ceremony[$r_f_cer])"
+  done < <(printf '%s\n' "$r_files")
+  if [ -z "$r_st" ] || [ -z "$r_cer" ]; then
+    fault "the iteration prompt's journal heading grammar could not be enumerated (status [$r_st], ceremony [$r_cer]); the sentence moved and this check went blind"
+  elif [ "$r_st_n" -ne 1 ] || [ "$r_cer_n" -ne 1 ]; then
+    fault "the iteration prompt states its status vocabulary $r_st_n times and its ceremony keywords $r_cer_n times, not once each; a second statement concatenates into the derived set and this check would compare two enumerations against one"
+  elif [ -n "$r_bad" ]; then
+    fault "the iteration prompt writes journal headings with ceremony keywords [$r_cer] and statuses [$r_st] but the shipped grammar disagrees:$r_bad"
+  else
+    pass "the journal heading grammar's ceremony keywords and status vocabulary are derived from the iteration prompt in every document that restates it ($r_cer/ $r_st)"
   fi
 fi
 
@@ -1588,8 +1816,31 @@ if command -v jq >/dev/null 2>&1; then
     # carried, not blocking - the accept-path stderr note names it so the run
     # report cannot omit it. High, Medium, and any line whose severity the
     # parser cannot read still block, the last because a floor that guesses
-    # is a floor gamed by omission. Five scenarios, one severity token
-    # mutated between them, so each fails under exactly one mutation.
+    # is a floor gamed by omission.
+    #
+    # Five scenarios, and what each is alone in catching - established by
+    # mutating the classifier five ways and reading which check fell, not by
+    # inspection (E1). This paragraph used to say "one severity token mutated
+    # between them, so each fails under exactly one mutation". That described
+    # the four scenarios preceding R3 and was wrong about the set it named:
+    # two of these differ by their class field rather than by a severity word,
+    # and the fifth has no severity token to mutate at all.
+    #   1. (Low) bare - the ) side of the classifier's [,)]. Narrow that class
+    #      to , and this is the only check that falls, 259 of 260.
+    #   2. (Low, docs, documentation) - the , side. Narrow the class to ) and
+    #      only this one falls, 259 of 260.
+    #   3. (Medium, ...) - Medium is outside the carried set. Widen the
+    #      pattern to (Low|Medium) and only this one falls, 259 of 260.
+    #   4. (High, ...) - the same for High, 259 of 260.
+    #   5. no parenthetical at all - the fail-closed default, and the one with
+    #      no isolating mutation. Saying so is the point rather than an
+    #      omission: make the classifier fail open, carrying anything that is
+    #      not High or Medium, and five checks fall together at 255 of 260.
+    #      Its own is among them and names itself - "guessed a severity for an
+    #      unparseable task line instead of failing closed" - and the other
+    #      four fall because an unparseable line is then carried everywhere
+    #      the converged stop reads a ledger. That blast radius is what
+    #      failing open costs, not a weakness in this scenario.
     # The classifier's severity pattern ends [,)], so a Low is carried whether
     # its parenthetical names a class or not, and both alternatives are driven
     # here. R3: for one release only the comma side was, and a scenario set
@@ -2350,6 +2601,60 @@ if command -v jq >/dev/null 2>&1; then
       else
         printf '%s\n' "$hb_out"
         fault "the oscillation strike did not reset on real progress, so a healthy run would die of it"
+      fi
+
+      # P1-57 was half-applied through 1.15.1. The current iteration was
+      # exempted when it was ceremony, but the trail it compared against was
+      # still indexed positionally, so the first task iteration after a run of
+      # sweeps was measured against a ceremony iteration's content hash -
+      # unchanged by design - and took a strike for work nobody had undone.
+      # Under coverage-first ordering that is the normal shape rather than a
+      # corner, since a run sweeps its map for several iterations and then
+      # starts on the ledger; this engine's own repository hit it at iteration
+      # 5 of a 10-iteration run, four sweeps followed by one task. A second
+      # occurrence ends the run, so the cost is a healthy run dying with
+      # budget left. The trail here is all ceremony and the tree is back at
+      # hash A, which is exactly the shape that used to fault.
+      printf 'v-osc-A\n' > "$hb_proj/product.txt"
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m osc-a-again >/dev/null 2>&1 || true
+      hb_write_journal 5 10
+      hb_write_state_stall sess-1 5 10 "$hb_osc_head_a" stale-0 0
+      hb_state_addkey "fingerprints: 1|ceremony|$hb_osc_hash_a|0;2|ceremony|$hb_osc_hash_a|0;3|ceremony|$hb_osc_hash_a|0"
+      hb_out="$(hb_run sess-1 'worked the task' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'OSCILLATION' \
+        && grep -q '^oscillation: 0$' "$hb_state"; then
+        pass "a task iteration is not oscillating against a ceremony iteration's unchanged hash"
+      else
+        printf '%s\n' "$hb_out"
+        fault "the first task iteration after a run of ceremony iterations took a false oscillation strike; a second one ends a healthy run with budget left"
+      fi
+
+      # A5: the other half of the same gate. Equality of content hashes is
+      # what a tree that came back produces AND what a tree that never moved
+      # produces, and the second is a project whose whole work product is loop
+      # memory - which this engine's own repository is, since PLAN.md,
+      # BACKLOG.md, JOURNAL.md and .jeffy/ are all excluded from the hash. Its
+      # trail read one hash across four work iterations with fp_changed 0 on
+      # every one, took a strike at iteration 5 and would have ended the run
+      # at the next repeat. The trail here is work entries, not ceremony, so
+      # the P1-57 filter above does not reach it; what clears it is that
+      # nothing moved after the matched iteration.
+      printf 'v-osc-A\n' > "$hb_proj/product.txt"
+      hb_git add -A >/dev/null 2>&1
+      hb_git commit -q -m osc-a-static >/dev/null 2>&1 || true
+      hb_write_journal 5 10
+      hb_write_state_stall sess-1 5 10 "$hb_osc_head_a" stale-0 0
+      hb_state_addkey "fingerprints: 1|T1|$hb_osc_hash_a|0;2|T2|$hb_osc_hash_a|0"
+      hb_out="$(hb_run sess-1 'worked the task' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'OSCILLATION' \
+        && grep -q '^oscillation: 0$' "$hb_state"; then
+        pass "a tree that never moved is not oscillating against its own unchanged hash"
+      else
+        printf '%s\n' "$hb_out"
+        fault "a run whose work product is all loop memory took a false oscillation strike; the tree never left its opening state, so it cannot have returned to it"
       fi
 
       # Attempt limit: the same task attempted three iterations running and
