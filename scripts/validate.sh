@@ -958,7 +958,12 @@ else
   # the detector really answered four. A guard that extracts and a guard that
   # counts must not share a blind spot. (E1)
   q_body="$(grep -v '^[[:space:]]*#' "$q_src")"
-  q_hits="$(printf '%s\n' "$q_body" | grep -oE '(^|[^[:alnum:]_])echo +[a-z]+')"
+  # The whole argument token, never its leading lowercase run: `echo no-signal`
+  # read as `no` and left the published set unchanged on a branch no grading
+  # host executes (F1, the gate's observation beside its PASS). An answer the
+  # documents cannot spell in their pipe form then faults on comparison, which
+  # is the right direction.
+  q_hits="$(printf '%s\n' "$q_body" | grep -oE '(^|[^[:alnum:]_])echo +[^[:space:];&|)}]+')"
   q_ans="$(printf '%s\n' "$q_hits" | sed 's/.*echo *//' | grep -v '^$' | sort -u | tr '\n' ' ')"
   q_echo_all="$(printf '%s\n' "$q_body" | grep -oE '(^|[^[:alnum:]_])echo([^[:alnum:]_]|$)' | grep -c .)"
   q_echo_kept="$(printf '%s\n' "$q_hits" | grep -c .)"
