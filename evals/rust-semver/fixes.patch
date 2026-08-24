@@ -1,0 +1,495 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index a6e33b8..091f3dc 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -36,6 +36,8 @@ jobs:
+         if: matrix.rust == 'nightly'
+       - run: cargo test
+         if: matrix.rust != '1.68.0'
++      - run: cargo test --all-features
++        if: matrix.rust != '1.68.0'
+       - run: cargo check --no-default-features
+       - run: cargo check --features serde
+       - run: cargo check --no-default-features --features serde
+@@ -94,7 +96,7 @@ jobs:
+     steps:
+       - uses: actions/checkout@v7
+       - uses: dtolnay/rust-toolchain@clippy
+-      - run: cargo clippy --tests --benches -- -Dclippy::all -Dclippy::pedantic
++      - run: cargo clippy --tests --benches --all-features -- -Dclippy::all -Dclippy::pedantic
+ 
+   miri:
+     name: Miri
+diff --git a/.gitignore b/.gitignore
+index 1fcb0fb..2d74d12 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -3,3 +3,4 @@
+ /package.json
+ /target/
+ /Cargo.lock
++.claude/jeffy-loop.local.md
+diff --git a/Cargo.toml b/Cargo.toml
+index caf7ebe..9a35ce0 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -6,7 +6,15 @@ categories = ["data-structures", "no-std"]
+ description = "Parser and evaluator for Cargo's flavor of Semantic Versioning"
+ documentation = "https://docs.rs/semver"
+ edition = "2021"
+-exclude = ["build.rs"]
++exclude = [
++    "build.rs",
++    "/.claude",
++    "/.jeffy",
++    "/BACKLOG.md",
++    "/JOURNAL-archive.md",
++    "/JOURNAL.md",
++    "/PLAN.md",
++]
+ keywords = ["cargo"]
+ license = "MIT OR Apache-2.0"
+ repository = "https://github.com/dtolnay/semver"
+@@ -23,6 +31,9 @@ serde = { package = "serde_core", version = "1.0.220", optional = true, default-
+ [target.'cfg(any())'.dependencies]
+ serde = { version = "1.0.220", optional = true, default-features = false }
+ 
++[dev-dependencies]
++serde_test = "1.0.177"
++
+ [target.'cfg(not(miri))'.dev-dependencies]
+ criterion = { version = "0.8", default-features = false }
+ 
+@@ -30,6 +41,10 @@ criterion = { version = "0.8", default-features = false }
+ name = "parse"
+ harness = false
+ 
++[[test]]
++name = "test_serde"
++required-features = ["serde"]
++
+ [package.metadata.docs.rs]
+ features = ["serde"]
+ targets = ["x86_64-unknown-linux-gnu"]
+diff --git a/src/display.rs b/src/display.rs
+index d7446e5..75852bc 100644
+--- a/src/display.rs
++++ b/src/display.rs
+@@ -32,60 +32,108 @@ impl Display for Version {
+ 
+ impl Display for VersionReq {
+     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+-        if self.comparators.is_empty() {
+-            return formatter.write_str("*");
+-        }
+-        for (i, comparator) in self.comparators.iter().enumerate() {
+-            if i > 0 {
+-                formatter.write_str(", ")?;
++        let do_display = |formatter: &mut fmt::Formatter| -> fmt::Result {
++            if self.comparators.is_empty() {
++                return formatter.write_str("*");
+             }
+-            write!(formatter, "{}", comparator)?;
+-        }
+-        Ok(())
++            for (i, comparator) in self.comparators.iter().enumerate() {
++                if i > 0 {
++                    formatter.write_str(", ")?;
++                }
++                write!(formatter, "{}", comparator)?;
++            }
++            Ok(())
++        };
++
++        let do_len = || -> usize {
++            if self.comparators.is_empty() {
++                return 1;
++            }
++            let separators = 2 * (self.comparators.len() - 1);
++            self.comparators.iter().map(comparator_len).sum::<usize>() + separators
++        };
++
++        pad(formatter, do_display, do_len)
+     }
+ }
+ 
+ impl Display for Comparator {
+     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+-        let op = match self.op {
+-            Op::Exact => "=",
+-            Op::Greater => ">",
+-            Op::GreaterEq => ">=",
+-            Op::Less => "<",
+-            Op::LessEq => "<=",
+-            Op::Tilde => "~",
+-            Op::Caret => "^",
+-            Op::Wildcard => "",
+-        };
+-        formatter.write_str(op)?;
+-        write!(formatter, "{}", self.major)?;
+-        if let Some(minor) = &self.minor {
+-            write!(formatter, ".{}", minor)?;
+-            if let Some(patch) = &self.patch {
+-                write!(formatter, ".{}", patch)?;
+-                if !self.pre.is_empty() {
+-                    write!(formatter, "-{}", self.pre)?;
++        let do_display = |formatter: &mut fmt::Formatter| -> fmt::Result {
++            formatter.write_str(op_str(self.op))?;
++            write!(formatter, "{}", self.major)?;
++            if let Some(minor) = &self.minor {
++                write!(formatter, ".{}", minor)?;
++                if let Some(patch) = &self.patch {
++                    write!(formatter, ".{}", patch)?;
++                    if !self.pre.is_empty() {
++                        write!(formatter, "-{}", self.pre)?;
++                    }
++                } else if self.op == Op::Wildcard {
++                    formatter.write_str(".*")?;
+                 }
+             } else if self.op == Op::Wildcard {
+                 formatter.write_str(".*")?;
+             }
+-        } else if self.op == Op::Wildcard {
+-            formatter.write_str(".*")?;
+-        }
+-        Ok(())
++            Ok(())
++        };
++
++        pad(formatter, do_display, || comparator_len(self))
+     }
+ }
+ 
+ impl Display for Prerelease {
+     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+-        formatter.write_str(self.as_str())
++        pad(
++            formatter,
++            |formatter| formatter.write_str(self.as_str()),
++            || self.as_str().len(),
++        )
+     }
+ }
+ 
+ impl Display for BuildMetadata {
+     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+-        formatter.write_str(self.as_str())
++        pad(
++            formatter,
++            |formatter| formatter.write_str(self.as_str()),
++            || self.as_str().len(),
++        )
++    }
++}
++
++fn op_str(op: Op) -> &'static str {
++    match op {
++        Op::Exact => "=",
++        Op::Greater => ">",
++        Op::GreaterEq => ">=",
++        Op::Less => "<",
++        Op::LessEq => "<=",
++        Op::Tilde => "~",
++        Op::Caret => "^",
++        Op::Wildcard => "",
++    }
++}
++
++// The printed length of a Comparator, following the same branches as its
++// Display impl above. The two must agree exactly or padding is off by their
++// difference, which is what test_align_comparator pins.
++fn comparator_len(comparator: &Comparator) -> usize {
++    let mut len = op_str(comparator.op).len() + digits(comparator.major);
++    if let Some(minor) = comparator.minor {
++        len += 1 + digits(minor);
++        if let Some(patch) = comparator.patch {
++            len += 1 + digits(patch);
++            if !comparator.pre.is_empty() {
++                len += 1 + comparator.pre.len();
++            }
++        } else if comparator.op == Op::Wildcard {
++            len += 2;
++        }
++    } else if comparator.op == Op::Wildcard {
++        len += 2;
+     }
++    len
+ }
+ 
+ impl Debug for Version {
+diff --git a/src/serde.rs b/src/serde.rs
+index 1fcc7d8..b59c3b9 100644
+--- a/src/serde.rs
++++ b/src/serde.rs
+@@ -37,7 +37,7 @@ impl<'de> Deserialize<'de> for Version {
+     {
+         struct VersionVisitor;
+ 
+-        impl<'de> Visitor<'de> for VersionVisitor {
++        impl Visitor<'_> for VersionVisitor {
+             type Value = Version;
+ 
+             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+@@ -63,7 +63,7 @@ impl<'de> Deserialize<'de> for VersionReq {
+     {
+         struct VersionReqVisitor;
+ 
+-        impl<'de> Visitor<'de> for VersionReqVisitor {
++        impl Visitor<'_> for VersionReqVisitor {
+             type Value = VersionReq;
+ 
+             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+@@ -89,7 +89,7 @@ impl<'de> Deserialize<'de> for Comparator {
+     {
+         struct ComparatorVisitor;
+ 
+-        impl<'de> Visitor<'de> for ComparatorVisitor {
++        impl Visitor<'_> for ComparatorVisitor {
+             type Value = Comparator;
+ 
+             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+diff --git a/tests/test_identifier.rs b/tests/test_identifier.rs
+index 40d8596..4cd4ced 100644
+--- a/tests/test_identifier.rs
++++ b/tests/test_identifier.rs
+@@ -8,7 +8,7 @@
+ mod util;
+ 
+ use crate::util::*;
+-use semver::Prerelease;
++use semver::{BuildMetadata, Prerelease};
+ 
+ #[test]
+ fn test_new() {
+@@ -49,3 +49,85 @@ fn test_prerelease() {
+     let err = prerelease_err("1.b\0");
+     assert_to_string(err, "unexpected character in pre-release identifier");
+ }
++
++#[test]
++fn test_build_metadata_order() {
++    // The precedence documented on BuildMetadata: dot-separated identifiers
++    // compared left to right, digits-only identifiers compared numerically,
++    // any numeric identifier below any non-numeric one, and a longer set of
++    // fields above a shorter one. Every pair is compared in both directions,
++    // because the numeric-versus-non-numeric rule and the longer-set rule each
++    // have an arm that only runs when the operands are that way round.
++    let bs = [
++        "demo",
++        "demo.85",
++        "demo.90",
++        "demo.090",
++        "demo.200",
++        "demo.1a0",
++        "demo.a",
++        "memo",
++    ];
++    for (i, a) in bs.iter().enumerate() {
++        for (j, b) in bs.iter().enumerate() {
++            let (a, b) = (build_metadata(a), build_metadata(b));
++            assert_eq!(a.cmp(&b), i.cmp(&j), "{a} vs {b}");
++        }
++    }
++}
++
++#[test]
++fn test_build_metadata_leading_zeros() {
++    // Leading zeros are legal in build metadata and nowhere else in the
++    // grammar, so two identifiers can be numerically equal and still distinct.
++    // They are then ordered by how they are written, shorter first.
++    let bs = ["0", "00", "1", "01", "001", "2", "02", "002", "10"];
++    for (i, a) in bs.iter().enumerate() {
++        for (j, b) in bs.iter().enumerate() {
++            let (a, b) = (build_metadata(a), build_metadata(b));
++            assert_eq!(a.cmp(&b), i.cmp(&j), "{a} vs {b}");
++        }
++    }
++}
++
++#[test]
++fn test_prerelease_order() {
++    // The corresponding chain documented on Prerelease. Same three rules, but
++    // leading zeros are forbidden here, so no two identifiers are numerically
++    // equal without being identical.
++    let ps = [
++        "alpha",
++        "alpha.85",
++        "alpha.90",
++        "alpha.200",
++        "alpha.0a",
++        "alpha.1a0",
++        "alpha.a",
++        "beta",
++    ];
++    for (i, a) in ps.iter().enumerate() {
++        for (j, b) in ps.iter().enumerate() {
++            let (a, b) = (prerelease(a), prerelease(b));
++            assert_eq!(a.cmp(&b), i.cmp(&j), "{a} vs {b}");
++        }
++    }
++    // An absent pre-release is a real release and outranks every pre-release.
++    assert!(prerelease("zzz") < Prerelease::EMPTY);
++}
++
++#[test]
++fn test_align() {
++    let p = prerelease("alpha.1");
++    assert_eq!("alpha.1   ", format!("{p:10}"));
++    assert_eq!("   alpha.1", format!("{p:>10}"));
++    assert_eq!("*alpha.1**", format!("{p:*^10}"));
++    assert_eq!("alpha.7", format!("{:3}", prerelease("alpha.7")));
++
++    let b = build_metadata("build.5");
++    assert_eq!("build.5   ", format!("{b:10}"));
++    assert_eq!("   build.5", format!("{b:>10}"));
++
++    assert_eq!("", Prerelease::EMPTY.to_string());
++    assert_eq!("     ", format!("{:5}", Prerelease::EMPTY));
++    assert_eq!("     ", format!("{:5}", BuildMetadata::EMPTY));
++}
+diff --git a/tests/test_serde.rs b/tests/test_serde.rs
+new file mode 100644
+index 0000000..43b3a34
+--- /dev/null
++++ b/tests/test_serde.rs
+@@ -0,0 +1,66 @@
++#![allow(clippy::wildcard_imports)]
++
++mod util;
++
++use crate::util::*;
++use semver::{Version, VersionReq};
++use serde_test::{assert_de_tokens_error, assert_tokens, Token};
++
++#[test]
++fn test_version() {
++    assert_tokens(&version("1.2.3"), &[Token::Str("1.2.3")]);
++    assert_tokens(&version("0.0.0"), &[Token::Str("0.0.0")]);
++    assert_tokens(&version("1.2.3-alpha.1"), &[Token::Str("1.2.3-alpha.1")]);
++    assert_tokens(&version("1.2.3+build.5"), &[Token::Str("1.2.3+build.5")]);
++    assert_tokens(
++        &version("1.2.3-alpha.1+build.5"),
++        &[Token::Str("1.2.3-alpha.1+build.5")],
++    );
++    assert_tokens(
++        &version("18446744073709551615.0.0"),
++        &[Token::Str("18446744073709551615.0.0")],
++    );
++}
++
++#[test]
++fn test_version_req() {
++    assert_tokens(&VersionReq::STAR, &[Token::Str("*")]);
++    assert_tokens(&req("1.0.0"), &[Token::Str("^1.0.0")]);
++    assert_tokens(&req("=1.0"), &[Token::Str("=1.0")]);
++    assert_tokens(&req("~1.2.3"), &[Token::Str("~1.2.3")]);
++    assert_tokens(&req("1.x"), &[Token::Str("1.*")]);
++    assert_tokens(&req(">=1.2, <1.5"), &[Token::Str(">=1.2, <1.5")]);
++}
++
++#[test]
++fn test_comparator() {
++    assert_tokens(&comparator("^1.2.3"), &[Token::Str("^1.2.3")]);
++    assert_tokens(&comparator("1.2.3"), &[Token::Str("^1.2.3")]);
++    assert_tokens(&comparator("=1.2"), &[Token::Str("=1.2")]);
++    assert_tokens(&comparator("1.*"), &[Token::Str("1.*")]);
++    assert_tokens(&comparator(">=1.2.3-alpha"), &[Token::Str(">=1.2.3-alpha")]);
++}
++
++#[test]
++fn test_de_parse_error() {
++    assert_de_tokens_error::<Version>(
++        &[Token::Str("1.0")],
++        "unexpected end of input while parsing minor version number",
++    );
++    assert_de_tokens_error::<VersionReq>(
++        &[Token::Str("@1")],
++        "unexpected character '@' while parsing major version number",
++    );
++}
++
++#[test]
++fn test_de_wrong_type() {
++    assert_de_tokens_error::<Version>(
++        &[Token::U64(1)],
++        "invalid type: integer `1`, expected semver version",
++    );
++    assert_de_tokens_error::<semver::Comparator>(
++        &[Token::Bool(true)],
++        "invalid type: boolean `true`, expected semver comparator",
++    );
++}
+diff --git a/tests/test_version_req.rs b/tests/test_version_req.rs
+index f3e4d80..46f0170 100644
+--- a/tests/test_version_req.rs
++++ b/tests/test_version_req.rs
+@@ -478,3 +478,69 @@ fn test_wildcard_and_another() {
+         "wildcard req (*) must be the only comparator in the version req",
+     );
+ }
++
++#[test]
++fn test_align() {
++    let ref r = req(">=1.2, <1.5");
++    assert_eq!(">=1.2, <1.5         ", format!("{:20}", r));
++    assert_eq!("         >=1.2, <1.5", format!("{:>20}", r));
++    assert_eq!("****>=1.2, <1.5*****", format!("{:*^20}", r));
++    assert_eq!("*                   ", format!("{:20}", VersionReq::STAR));
++    assert_eq!(">=1.2, <1.5", format!("{:3}", r));
++
++    // The length a Comparator reports for padding follows the same branches as
++    // the printed form; if the two ever disagree the padding is off by their
++    // difference, so every shape is checked for agreement.
++    for text in [
++        "=1.2.3",
++        ">1.2.3",
++        ">=1.2.3",
++        "<1.2.3",
++        "<=1.2.3",
++        "~1.2.3",
++        "^1.2.3",
++        "1.2.3",
++        "1.2.*",
++        "1.*",
++        "^1",
++        "=1.2",
++        ">=10.200.3000",
++        "=1.2.3-alpha.1",
++        "^0.0.0",
++        ">=18446744073709551615.18446744073709551615.18446744073709551615",
++    ] {
++        let c = comparator(text);
++        let padded = format!("{:80}", c);
++        assert_eq!(padded.len(), 80, "{}", c);
++        assert_eq!(padded.trim_end(), c.to_string(), "{}", c);
++    }
++}
++
++#[test]
++fn test_from_iter() {
++    // semver::VersionReq is spelled out rather than using this file's
++    // VersionReq alias, which the test_node_semver cfg swaps for a wrapper
++    // around npm's semver: FromIterator is this crate's own impl and has no
++    // counterpart on the other side of that differential.
++    let r: semver::VersionReq = [comparator(">=1.2.3"), comparator("<2.0.0")]
++        .into_iter()
++        .collect();
++    assert_eq!(r.comparators.len(), 2);
++    assert_to_string(&r, ">=1.2.3, <2.0.0");
++    assert_eq!(r, semver::VersionReq::parse(">=1.2.3, <2.0.0").unwrap());
++    assert!(r.matches(&version("1.5.0")));
++    assert!(!r.matches(&version("1.2.2")));
++    assert!(!r.matches(&version("2.0.0")));
++
++    // Comparators are kept in iteration order, so a requirement built this way
++    // prints in the order it was collected, not in a normalized one.
++    let reversed: semver::VersionReq = [comparator("<2.0.0"), comparator(">=1.2.3")]
++        .into_iter()
++        .collect();
++    assert_to_string(&reversed, "<2.0.0, >=1.2.3");
++
++    // Collecting nothing yields the star requirement.
++    let empty: semver::VersionReq = Vec::new().into_iter().collect();
++    assert_eq!(empty, semver::VersionReq::STAR);
++    assert_to_string(&empty, "*");
++}

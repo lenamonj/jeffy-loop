@@ -1,0 +1,918 @@
+diff --git a/.github/workflows/tests.yaml b/.github/workflows/tests.yaml
+index 138397c..5c5e4f1 100644
+--- a/.github/workflows/tests.yaml
++++ b/.github/workflows/tests.yaml
+@@ -17,4 +17,14 @@ jobs:
+       - uses: actions/setup-go@v4
+         with:
+           go-version: ${{ matrix.go-version }}
+-      - run: go test -v ./...
++      - run: go vet ./...
++      - run: go test -race -count=1 -v ./...
++      - run: GOOS=js GOARCH=wasm go build ./...
++  format:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v3
++      - uses: actions/setup-go@v4
++        with:
++          go-version: 1.21
++      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..6fae25c
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1 @@
++.claude/jeffy-loop.local.md
+diff --git a/dce.go b/dce.go
+index fa820b9..9302a1c 100644
+--- a/dce.go
++++ b/dce.go
+@@ -42,7 +42,7 @@ func NewDCESecurity(domain Domain, id uint32) (UUID, error) {
+ // NewDCEPerson returns a DCE Security (Version 2) UUID in the person
+ // domain with the id returned by os.Getuid.
+ //
+-//  NewDCESecurity(Person, uint32(os.Getuid()))
++//	NewDCESecurity(Person, uint32(os.Getuid()))
+ func NewDCEPerson() (UUID, error) {
+ 	return NewDCESecurity(Person, uint32(os.Getuid()))
+ }
+@@ -50,7 +50,7 @@ func NewDCEPerson() (UUID, error) {
+ // NewDCEGroup returns a DCE Security (Version 2) UUID in the group
+ // domain with the id returned by os.Getgid.
+ //
+-//  NewDCESecurity(Group, uint32(os.Getgid()))
++//	NewDCESecurity(Group, uint32(os.Getgid()))
+ func NewDCEGroup() (UUID, error) {
+ 	return NewDCESecurity(Group, uint32(os.Getgid()))
+ }
+diff --git a/go.mod b/go.mod
+index fc84cd7..e68e50e 100644
+--- a/go.mod
++++ b/go.mod
+@@ -1 +1,3 @@
+ module github.com/google/uuid
++
++go 1.16
+diff --git a/hash.go b/hash.go
+index d3bc00a..1c947fd 100644
+--- a/hash.go
++++ b/hash.go
+@@ -45,7 +45,7 @@ func NewHash(h hash.Hash, space UUID, data []byte, version int) UUID {
+ // NewMD5 returns a new MD5 (Version 3) UUID based on the
+ // supplied name space and data.  It is the same as calling:
+ //
+-//  NewHash(md5.New(), space, data, 3)
++//	NewHash(md5.New(), space, data, 3)
+ func NewMD5(space UUID, data []byte) UUID {
+ 	return NewHash(md5.New(), space, data, 3)
+ }
+@@ -53,7 +53,7 @@ func NewMD5(space UUID, data []byte) UUID {
+ // NewSHA1 returns a new SHA1 (Version 5) UUID based on the
+ // supplied name space and data.  It is the same as calling:
+ //
+-//  NewHash(sha1.New(), space, data, 5)
++//	NewHash(sha1.New(), space, data, 5)
+ func NewSHA1(space UUID, data []byte) UUID {
+ 	return NewHash(sha1.New(), space, data, 5)
+ }
+diff --git a/node.go b/node.go
+index d651a2b..34bfaa2 100644
+--- a/node.go
++++ b/node.go
+@@ -81,8 +81,9 @@ func SetNodeID(id []byte) bool {
+ 	return true
+ }
+ 
+-// NodeID returns the 6 byte node id encoded in uuid.  It returns nil if uuid is
+-// not valid.  The NodeID is only well defined for version 1 and 2 UUIDs.
++// NodeID returns the 6 byte node id encoded in uuid.  It always returns 6
++// bytes, copied out of uuid, because a UUID has no invalid form.  The NodeID is
++// only well defined for version 1 and 2 UUIDs.
+ func (uuid UUID) NodeID() []byte {
+ 	var node [6]byte
+ 	copy(node[:], uuid[10:])
+diff --git a/node_js.go b/node_js.go
+index b2a0bc8..f745d70 100644
+--- a/node_js.go
++++ b/node_js.go
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by a BSD-style
+ // license that can be found in the LICENSE file.
+ 
++//go:build js
+ // +build js
+ 
+ package uuid
+diff --git a/node_net.go b/node_net.go
+index 0cbbcdd..e91358f 100644
+--- a/node_net.go
++++ b/node_net.go
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by a BSD-style
+ // license that can be found in the LICENSE file.
+ 
++//go:build !js
+ // +build !js
+ 
+ package uuid
+diff --git a/null.go b/null.go
+index d7fcbf2..b69a8c1 100644
+--- a/null.go
++++ b/null.go
+@@ -17,15 +17,14 @@ var jsonNull = []byte("null")
+ // NullUUID implements the SQL driver.Scanner interface so
+ // it can be used as a scan destination:
+ //
+-//  var u uuid.NullUUID
+-//  err := db.QueryRow("SELECT name FROM foo WHERE id=?", id).Scan(&u)
+-//  ...
+-//  if u.Valid {
+-//     // use u.UUID
+-//  } else {
+-//     // NULL value
+-//  }
+-//
++//	var u uuid.NullUUID
++//	err := db.QueryRow("SELECT name FROM foo WHERE id=?", id).Scan(&u)
++//	...
++//	if u.Valid {
++//	   // use u.UUID
++//	} else {
++//	   // NULL value
++//	}
+ type NullUUID struct {
+ 	UUID  UUID
+ 	Valid bool // Valid is true if UUID is not NULL
+@@ -57,7 +56,8 @@ func (nu NullUUID) Value() (driver.Value, error) {
+ 	return nu.UUID.Value()
+ }
+ 
+-// MarshalBinary implements encoding.BinaryMarshaler.
++// MarshalBinary implements encoding.BinaryMarshaler. An invalid NullUUID
++// marshals to an empty slice, which UnmarshalBinary decodes back to one.
+ func (nu NullUUID) MarshalBinary() ([]byte, error) {
+ 	if nu.Valid {
+ 		return nu.UUID[:], nil
+@@ -67,8 +67,17 @@ func (nu NullUUID) MarshalBinary() ([]byte, error) {
+ }
+ 
+ // UnmarshalBinary implements encoding.BinaryUnmarshaler.
++//
++// An empty slice is the null form MarshalBinary produces for an invalid
++// NullUUID, and it decodes back to one. No UUID encodes to zero bytes, so the
++// null form cannot be confused with a value.
+ func (nu *NullUUID) UnmarshalBinary(data []byte) error {
++	if len(data) == 0 {
++		*nu = NullUUID{}
++		return nil
++	}
+ 	if len(data) != 16 {
++		nu.Valid = false
+ 		return fmt.Errorf("invalid UUID (got %d bytes)", len(data))
+ 	}
+ 	copy(nu.UUID[:], data)
+@@ -76,7 +85,8 @@ func (nu *NullUUID) UnmarshalBinary(data []byte) error {
+ 	return nil
+ }
+ 
+-// MarshalText implements encoding.TextMarshaler.
++// MarshalText implements encoding.TextMarshaler. An invalid NullUUID marshals
++// to "null", which UnmarshalText decodes back to one.
+ func (nu NullUUID) MarshalText() ([]byte, error) {
+ 	if nu.Valid {
+ 		return nu.UUID.MarshalText()
+@@ -86,7 +96,15 @@ func (nu NullUUID) MarshalText() ([]byte, error) {
+ }
+ 
+ // UnmarshalText implements encoding.TextUnmarshaler.
++//
++// "null" is the form MarshalText produces for an invalid NullUUID, and it
++// decodes back to one. No UUID text form is four bytes long, so the null form
++// cannot be confused with a value.
+ func (nu *NullUUID) UnmarshalText(data []byte) error {
++	if bytes.Equal(data, jsonNull) {
++		*nu = NullUUID{}
++		return nil
++	}
+ 	id, err := ParseBytes(data)
+ 	if err != nil {
+ 		nu.Valid = false
+diff --git a/null_test.go b/null_test.go
+index fe0fe8d..7e4c93f 100644
+--- a/null_test.go
++++ b/null_test.go
+@@ -7,6 +7,7 @@ package uuid
+ import (
+ 	"bytes"
+ 	"encoding/json"
++	"strings"
+ 	"testing"
+ )
+ 
+@@ -102,34 +103,85 @@ func TestNullUUIDMarshalText(t *testing.T) {
+ }
+ 
+ func TestNullUUIDUnmarshalText(t *testing.T) {
++	valid := MustParse("12345678-abcd-1234-abcd-0123456789ab")
+ 	tests := []struct {
+-		nullUUID NullUUID
++		name    string
++		data    string
++		want    NullUUID
++		wantErr bool
+ 	}{
+-		{
+-			nullUUID: NullUUID{},
+-		},
+-		{
+-			nullUUID: NullUUID{
+-				UUID:  MustParse("12345678-abcd-1234-abcd-0123456789ab"),
+-				Valid: true,
+-			},
+-		},
++		{name: "canonical", data: valid.String(), want: NullUUID{UUID: valid, Valid: true}},
++		{name: "urn", data: "urn:uuid:" + valid.String(), want: NullUUID{UUID: valid, Valid: true}},
++		{name: "braced", data: "{" + valid.String() + "}", want: NullUUID{UUID: valid, Valid: true}},
++		{name: "unhyphened", data: strings.ReplaceAll(valid.String(), "-", ""), want: NullUUID{UUID: valid, Valid: true}},
++		{name: "null", data: "null", want: NullUUID{}},
++		{name: "empty", data: "", wantErr: true},
++		{name: "malformed", data: "nope", wantErr: true},
++		{name: "bad hex", data: "zzzzzzzz-abcd-1234-abcd-0123456789ab", wantErr: true},
+ 	}
+ 	for _, test := range tests {
+-		var uText []byte
+-		var uErr error
+-		nuText, nuErr := test.nullUUID.MarshalText()
+-		if test.nullUUID.Valid {
+-			uText, uErr = test.nullUUID.UUID.MarshalText()
+-		} else {
+-			uText = []byte("null")
+-		}
+-		if nuErr != uErr {
+-			t.Errorf("expected error %e, got %e", nuErr, uErr)
+-		}
+-		if !bytes.Equal(nuText, uText) {
+-			t.Errorf("expected text data %s, got %s", string(nuText), string(uText))
+-		}
++		test := test
++		t.Run(test.name, func(t *testing.T) {
++			// Start from a populated value.  A decoder reuses its destination,
++			// so a case that leaves the previous value in place is a real bug
++			// and a test that starts from the zero value cannot see it.
++			out := NullUUID{UUID: Max, Valid: true}
++			err := out.UnmarshalText([]byte(test.data))
++			if test.wantErr {
++				if err == nil {
++					t.Fatalf("UnmarshalText(%q) returned no error", test.data)
++				}
++				if out.Valid {
++					t.Errorf("UnmarshalText(%q) left Valid true", test.data)
++				}
++				return
++			}
++			if err != nil {
++				t.Fatalf("UnmarshalText(%q) returned unexpected error %v", test.data, err)
++			}
++			if out != test.want {
++				t.Errorf("UnmarshalText(%q) = %+v, want %+v", test.data, out, test.want)
++			}
++		})
++	}
++}
++
++func TestNullUUIDUnmarshalBinary(t *testing.T) {
++	valid := MustParse("12345678-abcd-1234-abcd-0123456789ab")
++	tests := []struct {
++		name    string
++		data    []byte
++		want    NullUUID
++		wantErr bool
++	}{
++		{name: "sixteen bytes", data: valid[:], want: NullUUID{UUID: valid, Valid: true}},
++		{name: "empty slice", data: []byte{}, want: NullUUID{}},
++		{name: "nil slice", data: nil, want: NullUUID{}},
++		{name: "one byte", data: make([]byte, 1), wantErr: true},
++		{name: "fifteen bytes", data: make([]byte, 15), wantErr: true},
++		{name: "seventeen bytes", data: make([]byte, 17), wantErr: true},
++	}
++	for _, test := range tests {
++		test := test
++		t.Run(test.name, func(t *testing.T) {
++			out := NullUUID{UUID: Max, Valid: true}
++			err := out.UnmarshalBinary(test.data)
++			if test.wantErr {
++				if err == nil {
++					t.Fatalf("UnmarshalBinary(%x) returned no error", test.data)
++				}
++				if out.Valid {
++					t.Errorf("UnmarshalBinary(%x) left Valid true", test.data)
++				}
++				return
++			}
++			if err != nil {
++				t.Fatalf("UnmarshalBinary(%x) returned unexpected error %v", test.data, err)
++			}
++			if out != test.want {
++				t.Errorf("UnmarshalBinary(%x) = %+v, want %+v", test.data, out, test.want)
++			}
++		})
+ 	}
+ }
+ 
+@@ -212,3 +264,61 @@ func TestNullUUIDUnmarshalJSON(t *testing.T) {
+ 		t.Errorf("expected nil when unmarshalling null, got %s", err)
+ 	}
+ }
++
++// TestNullUUIDRoundTrip pins every codec pair NullUUID implements against the
++// value its own marshaler produces.  The invalid state is the interesting one:
++// a NullUUID that marshals to a null form its unmarshaler rejects cannot
++// survive a text or binary encoder, and each pair is documented as an
++// implementation of the matching encoding interface.
++func TestNullUUIDRoundTrip(t *testing.T) {
++	states := map[string]NullUUID{
++		"invalid": {},
++		"valid":   {UUID: MustParse("12345678-abcd-1234-abcd-0123456789ab"), Valid: true},
++	}
++
++	for name, in := range states {
++		in := in
++		t.Run("text/"+name, func(t *testing.T) {
++			data, err := in.MarshalText()
++			if err != nil {
++				t.Fatalf("MarshalText returned unexpected error %v", err)
++			}
++			var out NullUUID
++			if err := out.UnmarshalText(data); err != nil {
++				t.Fatalf("UnmarshalText(%q) returned unexpected error %v", data, err)
++			}
++			if out != in {
++				t.Errorf("got %+v, want %+v", out, in)
++			}
++		})
++
++		t.Run("binary/"+name, func(t *testing.T) {
++			data, err := in.MarshalBinary()
++			if err != nil {
++				t.Fatalf("MarshalBinary returned unexpected error %v", err)
++			}
++			var out NullUUID
++			if err := out.UnmarshalBinary(data); err != nil {
++				t.Fatalf("UnmarshalBinary(%x) returned unexpected error %v", data, err)
++			}
++			if out != in {
++				t.Errorf("got %+v, want %+v", out, in)
++			}
++		})
++
++		t.Run("json/"+name, func(t *testing.T) {
++			data, err := in.MarshalJSON()
++			if err != nil {
++				t.Fatalf("MarshalJSON returned unexpected error %v", err)
++			}
++			var out NullUUID
++			if err := out.UnmarshalJSON(data); err != nil {
++				t.Fatalf("UnmarshalJSON(%s) returned unexpected error %v", data, err)
++			}
++			if out != in {
++				t.Errorf("got %+v, want %+v", out, in)
++			}
++		})
++	}
++
++}
+diff --git a/sql.go b/sql.go
+index 2e02ec0..f04f4c5 100644
+--- a/sql.go
++++ b/sql.go
+@@ -12,21 +12,36 @@ import (
+ // Scan implements sql.Scanner so UUIDs can be read from databases transparently.
+ // Currently, database types that map to string and []byte are supported. Please
+ // consult database-specific driver documentation for matching types.
++//
++// A SQL NULL, an empty string and an empty byte slice all set uuid to Nil and
++// report no error, because UUID has no way to represent the absence of a value.
++// Use NullUUID when a NULL has to be told apart from the Nil UUID. Setting uuid
++// rather than leaving it untouched matters because database/sql reuses a single
++// destination across the rows of a result set.
++//
++// A source that cannot be parsed is reported as an error wrapping the one Parse
++// returned, so errors.Is and IsInvalidLengthError match a Scan error exactly as
++// they match the error from Parse itself.
+ func (uuid *UUID) Scan(src interface{}) error {
+ 	switch src := src.(type) {
+ 	case nil:
++		*uuid = Nil
+ 		return nil
+ 
+ 	case string:
+ 		// if an empty UUID comes from a table, we return a null UUID
+ 		if src == "" {
++			*uuid = Nil
+ 			return nil
+ 		}
+ 
+-		// see Parse for required string format
++		// see Parse for required string format.  The parse error is wrapped
++		// rather than reformatted, so errors.Is reaches the package's own
++		// sentinels - ErrInvalidLength, ErrInvalidUUIDFormat and
++		// ErrInvalidURNPrefix - through a Scan error.
+ 		u, err := Parse(src)
+ 		if err != nil {
+-			return fmt.Errorf("Scan: %v", err)
++			return fmt.Errorf("Scan: %w", err)
+ 		}
+ 
+ 		*uuid = u
+@@ -34,6 +49,7 @@ func (uuid *UUID) Scan(src interface{}) error {
+ 	case []byte:
+ 		// if an empty UUID comes from a table, we return a null UUID
+ 		if len(src) == 0 {
++			*uuid = Nil
+ 			return nil
+ 		}
+ 
+diff --git a/sql_test.go b/sql_test.go
+index 929b10f..bcad926 100644
+--- a/sql_test.go
++++ b/sql_test.go
+@@ -111,3 +111,43 @@ func TestValue(t *testing.T) {
+ 		t.Error("Value() did not return expected string")
+ 	}
+ }
++
++// TestScanEmptyResetsDestination pins the behaviour Scan's own comments
++// describe: a NULL, an empty string and an empty byte slice each yield a null
++// UUID.  The destination is deliberately populated first, because database/sql
++// reuses one destination across the rows of a result set, and a NULL row that
++// leaves the previous row's UUID in place is a silently wrong read.
++func TestScanEmptyResetsDestination(t *testing.T) {
++	const populated = "f47ac10b-58cc-0372-8567-0e02b2c3d479"
++
++	empties := map[string]interface{}{
++		"nil":              nil,
++		"empty string":     "",
++		"empty byte slice": []byte{},
++		"nil byte slice":   []byte(nil),
++	}
++
++	for name, src := range empties {
++		t.Run(name, func(t *testing.T) {
++			uuid := MustParse(populated)
++			if err := uuid.Scan(src); err != nil {
++				t.Fatalf("Scan(%v) returned unexpected error %v", src, err)
++			}
++			if uuid != Nil {
++				t.Errorf("Scan(%v) left %v in the destination, want %v", src, uuid, Nil)
++			}
++		})
++	}
++}
++
++// TestNullUUIDScanEmptyStringResetsUUID covers the same reset through NullUUID,
++// which delegates every non-nil value to UUID.Scan.
++func TestNullUUIDScanEmptyStringResetsUUID(t *testing.T) {
++	nu := NullUUID{UUID: MustParse("f47ac10b-58cc-0372-8567-0e02b2c3d479"), Valid: true}
++	if err := nu.Scan(""); err != nil {
++		t.Fatalf("Scan(\"\") returned unexpected error %v", err)
++	}
++	if nu.UUID != Nil {
++		t.Errorf("Scan(\"\") left %v in the destination, want %v", nu.UUID, Nil)
++	}
++}
+diff --git a/time.go b/time.go
+index efa4d42..6ec3f58 100644
+--- a/time.go
++++ b/time.go
+@@ -43,12 +43,17 @@ func (t Time) UnixTime() (sec, nsec int64) {
+ // clock sequence as well as adjusting the clock sequence as needed.  An error
+ // is returned if the current time cannot be determined.
+ func GetTime() (Time, uint16, error) {
+-	defer timeMu.Unlock()
+-	timeMu.Lock()
+ 	return getTime(nil)
+ }
+ 
++// getTime returns the Time and clock sequence for customTime, or for the
++// current time when customTime is nil.  It takes timeMu itself, because it
++// reads and updates lasttime and clockSeq, so callers must not already hold
++// timeMu and no unlocked variant is left for one to reach past it by mistake.
+ func getTime(customTime *time.Time) (Time, uint16, error) {
++	defer timeMu.Unlock()
++	timeMu.Lock()
++
+ 	var t time.Time
+ 	if customTime == nil { // When not provided, use the current time
+ 		t = timeNow()
+@@ -114,6 +119,12 @@ func setClockSequence(seq int) {
+ 
+ // Time returns the time in 100s of nanoseconds since 15 Oct 1582 encoded in
+ // uuid.  The time is only defined for version 1, 2, 6 and 7 UUIDs.
++//
++// A version 2 UUID carries the DCE id in the four bytes a version 1 UUID uses
++// for the low half of the timestamp, so those 32 bits hold no time and are
++// read as zero.  The result therefore never runs ahead of the real time and
++// may trail it by up to 7m9.4967296s, which is the resolution DCE 1.1 leaves
++// a version 2 UUID.
+ func (uuid UUID) Time() Time {
+ 	var t Time
+ 	switch uuid.Version() {
+@@ -125,6 +136,14 @@ func (uuid UUID) Time() Time {
+ 	case 7:
+ 		time := binary.BigEndian.Uint64(uuid[:8])
+ 		t = Time((time>>16)*10000 + g1582ns100)
++	case 2:
++		// The DCE id occupies uuid[0:4], where a version 1 UUID keeps
++		// time_low, so only time_mid and time_hi survive.  Reading those
++		// four bytes as time instead would offset the result by the id,
++		// which is as often ahead of the real time as behind it.
++		time := int64(binary.BigEndian.Uint16(uuid[4:6])) << 32
++		time |= int64(binary.BigEndian.Uint16(uuid[6:8])&0xfff) << 48
++		t = Time(time)
+ 	default: // forward compatible
+ 		time := int64(binary.BigEndian.Uint32(uuid[0:4]))
+ 		time |= int64(binary.BigEndian.Uint16(uuid[4:6])) << 32
+diff --git a/uuid.go b/uuid.go
+index dc75cee..f94ed0b 100644
+--- a/uuid.go
++++ b/uuid.go
+@@ -52,7 +52,7 @@ var (
+ 	ErrInvalidBracketedFormat = errors.New("invalid bracketed UUID format")
+ )
+ 
+-type URNPrefixError struct { prefix string }
++type URNPrefixError struct{ prefix string }
+ 
+ func (e URNPrefixError) Error() string {
+ 	return fmt.Sprintf("invalid urn prefix: %q", e.prefix)
+@@ -92,6 +92,9 @@ func IsInvalidLengthError(err error) bool {
+ // e.g.  {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}.  Only the middle 36 bytes are
+ // examined in the latter case.  Parse should not be used to validate strings as
+ // it parses non-standard encodings as indicated above.
++//
++// On any error Parse returns Nil, so no bytes decoded from a rejected input
++// reach the caller.
+ func Parse(s string) (UUID, error) {
+ 	var uuid UUID
+ 	switch len(s) {
+@@ -101,7 +104,7 @@ func Parse(s string) (UUID, error) {
+ 	// urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+ 	case 36 + 9:
+ 		if !strings.EqualFold(s[:9], "urn:uuid:") {
+-			return uuid, URNPrefixError{s[:9]}
++			return Nil, URNPrefixError{s[:9]}
+ 		}
+ 		s = s[9:]
+ 
+@@ -111,21 +114,21 @@ func Parse(s string) (UUID, error) {
+ 
+ 	// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ 	case 32:
+-		var ok bool
+ 		for i := range uuid {
+-			uuid[i], ok = xtob(s[i*2], s[i*2+1])
++			v, ok := xtob(s[i*2], s[i*2+1])
+ 			if !ok {
+-				return uuid, ErrInvalidUUIDFormat
++				return Nil, ErrInvalidUUIDFormat
+ 			}
++			uuid[i] = v
+ 		}
+ 		return uuid, nil
+ 	default:
+-		return uuid, invalidLengthError{len(s)}
++		return Nil, invalidLengthError{len(s)}
+ 	}
+ 	// s is now at least 36 bytes long
+ 	// it must be of the form  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+ 	if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
+-		return uuid, ErrInvalidUUIDFormat
++		return Nil, ErrInvalidUUIDFormat
+ 
+ 	}
+ 	for i, x := range [16]int{
+@@ -137,7 +140,7 @@ func Parse(s string) (UUID, error) {
+ 	} {
+ 		v, ok := xtob(s[x], s[x+1])
+ 		if !ok {
+-			return uuid, ErrInvalidUUIDFormat
++			return Nil, ErrInvalidUUIDFormat
+ 		}
+ 		uuid[i] = v
+ 	}
+@@ -145,33 +148,34 @@ func Parse(s string) (UUID, error) {
+ }
+ 
+ // ParseBytes is like Parse, except it parses a byte slice instead of a string.
++// It returns Nil on any error, exactly as Parse does.
+ func ParseBytes(b []byte) (UUID, error) {
+ 	var uuid UUID
+ 	switch len(b) {
+ 	case 36: // xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+ 	case 36 + 9: // urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+ 		if !bytes.EqualFold(b[:9], []byte("urn:uuid:")) {
+-			return uuid, URNPrefixError{string(b[:9])}
++			return Nil, URNPrefixError{string(b[:9])}
+ 		}
+ 		b = b[9:]
+ 	case 36 + 2: // {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
+ 		b = b[1:]
+ 	case 32: // xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+-		var ok bool
+ 		for i := 0; i < 32; i += 2 {
+-			uuid[i/2], ok = xtob(b[i], b[i+1])
++			v, ok := xtob(b[i], b[i+1])
+ 			if !ok {
+-				return uuid, ErrInvalidUUIDFormat
++				return Nil, ErrInvalidUUIDFormat
+ 			}
++			uuid[i/2] = v
+ 		}
+ 		return uuid, nil
+ 	default:
+-		return uuid, invalidLengthError{len(b)}
++		return Nil, invalidLengthError{len(b)}
+ 	}
+ 	// s is now at least 36 bytes long
+ 	// it must be of the form  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+ 	if b[8] != '-' || b[13] != '-' || b[18] != '-' || b[23] != '-' {
+-		return uuid, ErrInvalidUUIDFormat
++		return Nil, ErrInvalidUUIDFormat
+ 	}
+ 	for i, x := range [16]int{
+ 		0, 2, 4, 6,
+@@ -182,7 +186,7 @@ func ParseBytes(b []byte) (UUID, error) {
+ 	} {
+ 		v, ok := xtob(b[x], b[x+1])
+ 		if !ok {
+-			return uuid, ErrInvalidUUIDFormat
++			return Nil, ErrInvalidUUIDFormat
+ 		}
+ 		uuid[i] = v
+ 	}
+@@ -215,10 +219,12 @@ func Must(uuid UUID, err error) UUID {
+ }
+ 
+ // Validate returns an error if s is not a properly formatted UUID in one of the following formats:
+-//   xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+-//   urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+-//   xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+-//   {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
++//
++//	xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
++//	urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
++//	xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
++//	{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
++//
+ // It returns an error if the format is invalid, otherwise nil.
+ func Validate(s string) error {
+ 	switch len(s) {
+@@ -267,8 +273,10 @@ func Validate(s string) error {
+ 	return nil
+ }
+ 
+-// String returns the string form of uuid, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+-// , or "" if uuid is invalid.
++// String returns the string form of uuid,
++// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.  A UUID is a 16 byte array with no
++// invalid form, so the result is always 36 characters; the zero value formats
++// as the Nil UUID.
+ func (uuid UUID) String() string {
+ 	var buf [36]byte
+ 	encodeHex(buf[:], uuid)
+@@ -276,7 +284,8 @@ func (uuid UUID) String() string {
+ }
+ 
+ // URN returns the RFC 2141 URN form of uuid,
+-// urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx,  or "" if uuid is invalid.
++// urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.  The result is always 45
++// characters, for the same reason String's is always 36.
+ func (uuid UUID) URN() string {
+ 	var buf [36 + 9]byte
+ 	copy(buf[:], "urn:uuid:")
+@@ -344,6 +353,14 @@ func (v Variant) String() string {
+ //
+ // Calling SetRand with nil sets the random number generator to the default
+ // generator.
++//
++// SetRand is not thread-safe and should only be called when there is no
++// possibility that New or any other generation function will be called
++// concurrently, because it writes a package-level reader that every generator
++// reads without synchronisation.  Set it once, before generation begins.
++//
++// The reader is then shared by every generating goroutine, so it must itself
++// be safe for concurrent use.  The default, crypto/rand.Reader, is.
+ func SetRand(r io.Reader) {
+ 	if r == nil {
+ 		rander = rand.Reader
+@@ -360,6 +377,12 @@ func SetRand(r io.Reader) {
+ // Since the pool is stored on the Go heap, this feature may be a bad fit
+ // for security sensitive applications.
+ //
++// The pool is shared and guarded by a single mutex, so every pooled
++// generation serializes on it however well the underlying source scales.
++// That trade favours the pool when one goroutine generates UUIDs and can
++// reverse it when many do, so measure before enabling the pool in a program
++// that generates from several goroutines at once.
++//
+ // Both EnableRandPool and DisableRandPool are not thread-safe and should
+ // only be called when there is no possibility that New or any other
+ // UUID Version 4 generation function will be called concurrently.
+diff --git a/uuid_test.go b/uuid_test.go
+index 906ecbe..a7409b0 100644
+--- a/uuid_test.go
++++ b/uuid_test.go
+@@ -928,3 +928,37 @@ func TestVersion7MonotonicityStrict(t *testing.T) {
+ 		u1 = u2
+ 	}
+ }
++
++// TestParseFailureReturnsNil pins the contract that a rejected input yields
++// Nil rather than a partly decoded UUID.  Without it a caller that ignores the
++// error holds bytes taken straight from the input it just rejected, and the
++// 32 byte form used to hand back 0xff for an unparsable pair.
++func TestParseFailureReturnsNil(t *testing.T) {
++	bad := []string{
++		"",
++		"abc",
++		"f47ac10b-58cc-0372-8567-0e02b2c3d4zz",
++		"f47ac10b58cc037285670e02b2c3d4zz",
++		"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
++		"f47ac10bX58cc-0372-8567-0e02b2c3d479",
++		"urn:uuiZ:f47ac10b-58cc-0372-8567-0e02b2c3d479",
++	}
++	for _, s := range bad {
++		u, err := Parse(s)
++		if err == nil {
++			t.Errorf("Parse(%q) returned no error", s)
++			continue
++		}
++		if u != Nil {
++			t.Errorf("Parse(%q) = %v, want %v", s, u, Nil)
++		}
++		b, err := ParseBytes([]byte(s))
++		if err == nil {
++			t.Errorf("ParseBytes(%q) returned no error", s)
++			continue
++		}
++		if b != Nil {
++			t.Errorf("ParseBytes(%q) = %v, want %v", s, b, Nil)
++		}
++	}
++}
+diff --git a/version1.go b/version1.go
+index 4631096..a996cae 100644
+--- a/version1.go
++++ b/version1.go
+@@ -10,10 +10,11 @@ import (
+ 
+ // NewUUID returns a Version 1 UUID based on the current NodeID and clock
+ // sequence, and the current time.  If the NodeID has not been set by SetNodeID
+-// or SetNodeInterface then it will be set automatically.  If the NodeID cannot
+-// be set NewUUID returns nil.  If clock sequence has not been set by
+-// SetClockSequence then it will be set automatically.  If GetTime fails to
+-// return the current NewUUID returns nil and an error.
++// or SetNodeInterface then it will be set automatically, falling back to random
++// bits when no interface offers a usable hardware address, so setting it does
++// not fail.  If the clock sequence has not been set by SetClockSequence then it
++// will be set automatically.  If the current time cannot be determined NewUUID
++// returns Nil and that error.
+ //
+ // In most cases, New should be used.
+ func NewUUID() (UUID, error) {
+diff --git a/version4.go b/version4.go
+index 7697802..62ac273 100644
+--- a/version4.go
++++ b/version4.go
+@@ -9,7 +9,7 @@ import "io"
+ // New creates a new random UUID or panics.  New is equivalent to
+ // the expression
+ //
+-//    uuid.Must(uuid.NewRandom())
++//	uuid.Must(uuid.NewRandom())
+ func New() UUID {
+ 	return Must(NewRandom())
+ }
+@@ -17,7 +17,7 @@ func New() UUID {
+ // NewString creates a new random UUID and returns it as a string or panics.
+ // NewString is equivalent to the expression
+ //
+-//    uuid.New().String()
++//	uuid.New().String()
+ func NewString() string {
+ 	return Must(NewRandom()).String()
+ }
+@@ -31,11 +31,11 @@ func NewString() string {
+ //
+ // A note about uniqueness derived from the UUID Wikipedia entry:
+ //
+-//  Randomly generated UUIDs have 122 random bits.  One's annual risk of being
+-//  hit by a meteorite is estimated to be one chance in 17 billion, that
+-//  means the probability is about 0.00000000006 (6 × 10−11),
+-//  equivalent to the odds of creating a few tens of trillions of UUIDs in a
+-//  year and having one duplicate.
++//	Randomly generated UUIDs have 122 random bits.  One's annual risk of being
++//	hit by a meteorite is estimated to be one chance in 17 billion, that
++//	means the probability is about 0.00000000006 (6 × 10−11),
++//	equivalent to the odds of creating a few tens of trillions of UUIDs in a
++//	year and having one duplicate.
+ func NewRandom() (UUID, error) {
+ 	if !poolEnabled {
+ 		return NewRandomFromReader(rander)
+diff --git a/version6_test.go b/version6_test.go
+index 690c09d..a768ad9 100644
+--- a/version6_test.go
++++ b/version6_test.go
+@@ -1,6 +1,7 @@
+ package uuid
+ 
+ import (
++	"sync"
+ 	"testing"
+ 	"time"
+ )
+@@ -89,3 +90,82 @@ func contains(t *testing.T, arr []string, str string) bool {
+ 
+ 	return false
+ }
++
++// TestNewV6WithTimeConcurrent pins the locking contract of the custom-time
++// path.  NewV6WithTime reaches the same package clock state that GetTime,
++// NewUUID and NewV6 use, so it has to take timeMu like they do.  The two
++// failure signals are independent: the race detector reports the unsynchronised
++// access, and the uniqueness assertion catches a clock sequence increment lost
++// to a torn read-modify-write, which is the outcome the sequence exists to
++// prevent.
++func TestNewV6WithTimeConcurrent(t *testing.T) {
++	const (
++		workers     = 8
++		perWorker   = 250
++		totalPerGen = workers * perWorker
++	)
++
++	custom := time.Now()
++
++	var (
++		wg sync.WaitGroup
++		mu sync.Mutex
++	)
++	seen := make(map[UUID]string, totalPerGen*3)
++
++	record := func(kind string, id UUID) {
++		mu.Lock()
++		defer mu.Unlock()
++		if prev, dup := seen[id]; dup {
++			t.Errorf("duplicate uuid %v produced by %s and %s", id, prev, kind)
++			return
++		}
++		seen[id] = kind
++	}
++
++	for i := 0; i < workers; i++ {
++		wg.Add(3)
++		go func() {
++			defer wg.Done()
++			for j := 0; j < perWorker; j++ {
++				id, err := NewV6WithTime(&custom)
++				if err != nil {
++					t.Errorf("NewV6WithTime returned unexpected error %v", err)
++					return
++				}
++				if id.Version() != 6 {
++					t.Errorf("got version %d, want 6", id.Version())
++					return
++				}
++				record("NewV6WithTime", id)
++			}
++		}()
++		go func() {
++			defer wg.Done()
++			for j := 0; j < perWorker; j++ {
++				id, err := NewV6()
++				if err != nil {
++					t.Errorf("NewV6 returned unexpected error %v", err)
++					return
++				}
++				record("NewV6", id)
++			}
++		}()
++		go func() {
++			defer wg.Done()
++			for j := 0; j < perWorker; j++ {
++				id, err := NewUUID()
++				if err != nil {
++					t.Errorf("NewUUID returned unexpected error %v", err)
++					return
++				}
++				record("NewUUID", id)
++			}
++		}()
++	}
++	wg.Wait()
++
++	if len(seen) != totalPerGen*3 {
++		t.Errorf("got %d distinct uuids, want %d", len(seen), totalPerGen*3)
++	}
++}

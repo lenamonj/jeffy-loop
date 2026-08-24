@@ -43,10 +43,12 @@ loss rather than hiding it.
 | FluentValidation | 1 | 8 | converged | evaluator countersigned | 0 |
 | go-cmp | 2 | 15 | converged | evaluator countersigned | 0 |
 | go-humanize | 2 | 21 | **not converged** | n/a | 2 |
+| go-uuid | 2 | 20 | converged | evaluator countersigned | 0 |
 | go-yaml | 3 | 29 | converged | evaluator countersigned | 0 |
 | godotenv | 2 | 19 | converged | evaluator countersigned | 0 |
 | goldmark | 5 | 47 | **not converged** | n/a | 0 |
 | gson | 1 | 2 | converged | evaluator countersigned | 0 |
+| heck | 2 | 17 | converged | evaluator countersigned | 0 |
 | Humanizer | 4 | 32 | **not converged** | n/a | 0 |
 | image-rs (attempt 1) | 2 | 10 | **not converged** | n/a | 2 |
 | image-rs (attempt 2) | 3 | 30 | **not converged** | n/a | 0 |
@@ -66,6 +68,7 @@ loss rather than hiding it.
 | records | 1 | 7 | converged | pre-evaluator | 0 |
 | rrule | 4 | 33 | converged | evaluator countersigned | 0 |
 | RuboCop | 1 | 7 | converged | evaluator countersigned | 0 |
+| rust-semver | 2 | 16 | converged | evaluator countersigned | 1 |
 | rust-url | 3 | 30 | converged | evaluator countersigned | 0 |
 | shopspring/decimal | 4 | 33 | **not converged** | n/a | 4 |
 | spdlog | 4 | 40 | **not converged** | n/a | 1 |

@@ -1,0 +1,1070 @@
+diff --git a/.github/workflows/rust.yml b/.github/workflows/rust.yml
+index 9278413..38c9b3a 100644
+--- a/.github/workflows/rust.yml
++++ b/.github/workflows/rust.yml
+@@ -12,7 +12,7 @@ jobs:
+     name: Build
+     runs-on: ubuntu-24.04
+     steps:
+-      - uses: actions/checkout@v2
++      - uses: actions/checkout@v7
+       - uses: dtolnay/rust-toolchain@master
+         with:
+           toolchain: 1.56
+@@ -23,7 +23,7 @@ jobs:
+     name: Run tests
+     runs-on: ubuntu-24.04
+     steps:
+-      - uses: actions/checkout@v2
++      - uses: actions/checkout@v7
+       - uses: dtolnay/rust-toolchain@stable
+       - run: cargo test
+ 
+@@ -31,7 +31,7 @@ jobs:
+     name: Check formatting
+     runs-on: ubuntu-24.04
+     steps:
+-      - uses: actions/checkout@v2
++      - uses: actions/checkout@v7
+       - uses: dtolnay/rust-toolchain@stable
+         with:
+           components: rustfmt
+@@ -41,7 +41,7 @@ jobs:
+     name: Catch common mistakes
+     runs-on: ubuntu-24.04
+     steps:
+-      - uses: actions/checkout@v2
++      - uses: actions/checkout@v7
+       - uses: dtolnay/rust-toolchain@stable
+         with:
+           components: clippy
+diff --git a/.gitignore b/.gitignore
+index a9d37c5..a1c9a6e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,3 @@
+ target
+ Cargo.lock
++.claude/jeffy-loop.local.md
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 18d752b..8b8fc88 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,27 @@
+ # unreleased
+ 
++- Apply Unicode's Final_Sigma condition when lowercasing, in full: a `Σ` takes
++  its final form `ς` only when a cased character precedes it and none follows it,
++  in both directions across any run of case-ignorable characters. So
++  `"Σ".to_snake_case()` is now `"σ"`, `"1Σ".to_snake_case()` is now `"1σ"`,
++  `"AʼΣ".to_snake_case()` is now `"aʼς"` and `"ΑΣ1".to_snake_case()` is now
++  `"ας1"`. A word carrying a capital sigma is lowercased through
++  `str::to_lowercase`, so the two can no longer disagree; a word without one
++  still streams into the formatter without allocating.
++- Titlecase the first character of a word rather than uppercasing it, so
++  `"ß".to_upper_camel_case()` is now `"Ss"`, `"ﬄe".to_title_case()` is now
++  `"Ffle"`, `"ǳab".to_title_case()` is now `"ǲab"`, and Georgian Mkhedruli,
++  which has no titlecase, is left unchanged instead of being uppercased.
++  A Greek character carrying an iota subscript keeps the subscript rather than
++  raising it to a capital iota, so `"ᾀβ".to_title_case()` is now `"ᾈβ"` and
++  `"ᾲ".to_title_case()` is now `"Ὰ"` followed by U+0345.
++- Derive `Debug`, `Clone` and `Copy` on all eight `As*Case` wrappers, so a type
++  holding one can derive them too.
++- Honour the formatter's width, fill, alignment and precision in every
++  `As*Case` wrapper, so `format!("{:>20}", AsSnakeCase("aB"))` pads to twenty
++  columns as `format!("{:>20}", "a_b")` does. A wrapper formatted without any of
++  those parameters still streams into the formatter without allocating.
++
+ # 0.5.0
+ 
+ - Add `no_std` support.
+diff --git a/README.md b/README.md
+index 9b9b4e8..1d2c777 100644
+--- a/README.md
++++ b/README.md
+@@ -11,14 +11,17 @@ consistent, and reasonably well performing.
+ Word boundaries are defined by non-alphanumeric characters, as well as
+ within those words in this manner:
+ 
+-1. If an uppercase character is followed by lowercase letters, a word
+-boundary is considered to be just prior to that uppercase character.
+-2. If multiple uppercase characters are consecutive, they are considered to
+-be within a single word, except that the last will be part of the next word
+-if it is followed by lowercase characters (see rule 1).
+-
+-That is, "HelloWorld" is segmented `Hello|World` whereas "XMLHttpRequest" is
+-segmented `XML|Http|Request`.
++1. A word boundary is considered to be just prior to an uppercase character
++when the last cased character before it was lowercase.
++2. Consecutive uppercase characters are within a single word, except that the
++last is part of the next word when a lowercase character follows it.
++3. Digits are neither uppercase nor lowercase. They belong to the word they
++appear in and leave the case of the last cased character standing, so a
++boundary can fall between a digit and an uppercase character.
++
++That is, "HelloWorld" is segmented `Hello|World`, "XMLHttpRequest" is segmented
++`XML|Http|Request`, "parseHTTPResponse" is segmented `parse|HTTP|Response`, and
++"abc123DEF456" is segmented `abc123|DEF456`.
+ 
+ Characters not within words (such as spaces, punctuations, and underscores)
+ are not included in the output string except as they are a part of the case
+diff --git a/src/kebab.rs b/src/kebab.rs
+index b30b0e4..d176ace 100644
+--- a/src/kebab.rs
++++ b/src/kebab.rs
+@@ -2,7 +2,7 @@ use core::fmt;
+ 
+ use alloc::{borrow::ToOwned, string::ToString};
+ 
+-use crate::{lowercase, transform};
++use crate::{lowercase, pad_with, transform};
+ 
+ /// This trait defines a kebab case conversion.
+ ///
+@@ -37,17 +37,20 @@ impl ToKebabCase for str {
+ /// let sentence = "We are going to inherit the earth.";
+ /// assert_eq!(format!("{}", AsKebabCase(sentence)), "we-are-going-to-inherit-the-earth");
+ /// ```
++#[derive(Debug, Clone, Copy)]
+ pub struct AsKebabCase<T: AsRef<str>>(pub T);
+ 
+ impl<T: AsRef<str>> fmt::Display for AsKebabCase<T> {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+-        transform(self.0.as_ref(), lowercase, |f| write!(f, "-"), f)
++        pad_with(f, |f| {
++            transform(self.0.as_ref(), lowercase, |f| write!(f, "-"), f)
++        })
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::ToKebabCase;
++    use super::{AsKebabCase, ToKebabCase};
+ 
+     macro_rules! t {
+         ($t:ident : $s1:expr => $s2:expr) => {
+@@ -72,4 +75,38 @@ mod tests {
+     // Japanese and Chinese do not have word separation.
+     t!(test12: "ファイルを読み込み" => "ファイルを読み込み");
+     t!(test13: "祝你一天过得愉快" => "祝你一天过得愉快");
++
++    /// Width, fill, alignment and precision must reach the conversion, so the
++    /// wrapper formats exactly as the string it produces would.
++    #[test]
++    fn format_parameters_are_honoured() {
++        use alloc::format;
++        assert_eq!(format!("{}", AsKebabCase("aB")), "a-b");
++        assert_eq!(
++            format!("{:>10}", AsKebabCase("aB")),
++            format!("{:>10}", "a-b")
++        );
++        assert_eq!(
++            format!("{:-<10}", AsKebabCase("aB")),
++            format!("{:-<10}", "a-b")
++        );
++        assert_eq!(format!("{:^9}", AsKebabCase("aB")), format!("{:^9}", "a-b"));
++        assert_eq!(format!("{:.2}", AsKebabCase("aB")), format!("{:.2}", "a-b"));
++    }
++
++    /// Input holding no alphanumeric character has no words, so it converts to
++    /// the empty string rather than to a run of boundaries.
++    #[test]
++    fn input_without_words_converts_to_nothing() {
++        use alloc::format;
++        for input in ["", "_", "___", "-_-", "  ", "\u{a0}", ".", "!?"] {
++            assert_eq!(input.to_kebab_case(), "", "trait on {:?}", input);
++            assert_eq!(
++                format!("{}", AsKebabCase(input)),
++                "",
++                "wrapper on {:?}",
++                input
++            );
++        }
++    }
+ }
+diff --git a/src/lib.rs b/src/lib.rs
+index 5d3a4d8..5e39a93 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,14 +9,17 @@
+ //! Word boundaries are defined by non-alphanumeric characters, as well as
+ //! within those words in this manner:
+ //!
+-//! 1. If an uppercase character is followed by lowercase letters, a word
+-//!    boundary is considered to be just prior to that uppercase character.
+-//! 2. If multiple uppercase characters are consecutive, they are considered to
+-//!    be within a single word, except that the last will be part of the next wo
+-//!    word if it is followed by lowercase characters (see rule 1).
++//! 1. A word boundary is considered to be just prior to an uppercase character
++//!    when the last cased character before it was lowercase.
++//! 2. Consecutive uppercase characters are within a single word, except that
++//!    the last is part of the next word when a lowercase character follows it.
++//! 3. Digits are neither uppercase nor lowercase. They belong to the word they
++//!    appear in and leave the case of the last cased character standing, so a
++//!    boundary can fall between a digit and an uppercase character.
+ //!
+-//! That is, "HelloWorld" is segmented `Hello|World` whereas "XMLHttpRequest" is
+-//! segmented `XML|Http|Request`.
++//! That is, "HelloWorld" is segmented `Hello|World`, "XMLHttpRequest" is
++//! segmented `XML|Http|Request`, "parseHTTPResponse" is segmented
++//! `parse|HTTP|Response`, and "abc123DEF456" is segmented `abc123|DEF456`.
+ //!
+ //! Characters not within words (such as spaces, punctuations, and underscores)
+ //! are not included in the output string except as they are a part of the case
+@@ -158,19 +161,75 @@ where
+     Ok(())
+ }
+ 
++/// Runs `body` against `f`, honouring the formatter's width, fill, alignment
++/// and precision when any of them is set.
++///
++/// Those parameters can only be applied to a finished string, so when one is
++/// present the conversion is written to a buffer and then padded. With none set,
++/// which is the ordinary case, the conversion streams straight into the
++/// formatter and nothing is allocated.
++fn pad_with<F>(f: &mut fmt::Formatter, body: F) -> fmt::Result
++where
++    F: Fn(&mut fmt::Formatter) -> fmt::Result,
++{
++    if f.width().is_none() && f.precision().is_none() {
++        return body(f);
++    }
++
++    struct Streamed<F>(F);
++
++    impl<F: Fn(&mut fmt::Formatter) -> fmt::Result> fmt::Display for Streamed<F> {
++        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
++            (self.0)(f)
++        }
++    }
++
++    f.pad(&alloc::format!("{}", Streamed(body)))
++}
++
+ fn lowercase(s: &str, f: &mut fmt::Formatter) -> fmt::Result {
+-    let mut chars = s.chars().peekable();
+-    while let Some(c) = chars.next() {
+-        if c == 'Σ' && chars.peek().is_none() {
+-            write!(f, "ς")?;
++    lowercase_after(s, false, f)
++}
++
++/// Lowercases `s`, where `prev_cased` says whether a cased character precedes
++/// it within the same word.
++///
++/// A capital sigma takes its final form under Unicode's Final_Sigma condition,
++/// which asks for a cased character before it and none after it, in both
++/// directions across any run of case-ignorable characters. `core` exposes
++/// neither the Cased nor the Case_Ignorable property, so a word carrying a
++/// capital sigma is lowercased through `alloc`'s `str::to_lowercase`, which
++/// implements the condition. Sigma is the only character that method treats
++/// differently from `char::to_lowercase`, so every other word still streams
++/// into the formatter without allocating.
++fn lowercase_after(s: &str, prev_cased: bool, f: &mut fmt::Formatter) -> fmt::Result {
++    if s.contains('Σ') {
++        // The condition asks only whether a cased character precedes, never
++        // which one, so an `a` stands in for the rest of the word. It lowercases
++        // to itself, so dropping it again is dropping one leading byte.
++        let lowered = if prev_cased {
++            alloc::format!("a{}", s).to_lowercase()
+         } else {
+-            write!(f, "{}", c.to_lowercase())?;
+-        }
++            s.to_lowercase()
++        };
++        return f.write_str(if prev_cased { &lowered[1..] } else { &lowered });
++    }
++
++    for c in s.chars() {
++        write!(f, "{}", c.to_lowercase())?;
+     }
+ 
+     Ok(())
+ }
+ 
++/// Whether `c` is cased: uppercase, lowercase, or titlecase - the last being
++/// the case that has both an uppercase and a lowercase mapping of its own.
++fn cased(c: char) -> bool {
++    c.is_uppercase()
++        || c.is_lowercase()
++        || (c.to_uppercase().next() != Some(c) && c.to_lowercase().next() != Some(c))
++}
++
+ fn uppercase(s: &str, f: &mut fmt::Formatter) -> fmt::Result {
+     for c in s.chars() {
+         write!(f, "{}", c.to_uppercase())?;
+@@ -182,11 +241,124 @@ fn uppercase(s: &str, f: &mut fmt::Formatter) -> fmt::Result {
+ fn capitalize(s: &str, f: &mut fmt::Formatter) -> fmt::Result {
+     let mut char_indices = s.char_indices();
+     if let Some((_, c)) = char_indices.next() {
+-        write!(f, "{}", c.to_uppercase())?;
++        titlecase(c, f)?;
+         if let Some((i, _)) = char_indices.next() {
+-            lowercase(&s[i..], f)?;
++            lowercase_after(&s[i..], cased(c), f)?;
++        }
++    }
++
++    Ok(())
++}
++
++/// Writes the titlecase form of `c`.
++///
++/// Titlecase is not uppercase. A character whose uppercase mapping expands to
++/// several characters titlecases to that mapping with everything after its
++/// first cased character lowercased, so `\u{df}` gives `Ss` rather than `SS`; the four Latin digraphs
++/// have a middle form of their own, so `\u{1f3}` gives `\u{1f2}` rather than
++/// `\u{1f1}`; and Georgian Mkhedruli has no titlecase at all, so those letters
++/// are written unchanged. A Greek character carrying an iota subscript keeps
++/// the subscript rather than raising it to a capital iota: most have a
++/// precomposed titlecase form, and the nine that do not take their uppercase
++/// expansion with the iota written as the combining mark `\u{345}`.
++fn titlecase(c: char, f: &mut fmt::Formatter) -> fmt::Result {
++    match c {
++        '\u{1c4}'..='\u{1c6}' => return write!(f, "\u{1c5}"),
++        '\u{1c7}'..='\u{1c9}' => return write!(f, "\u{1c8}"),
++        '\u{1ca}'..='\u{1cc}' => return write!(f, "\u{1cb}"),
++        '\u{1f1}'..='\u{1f3}' => return write!(f, "\u{1f2}"),
++        '\u{10d0}'..='\u{10ff}' => return write!(f, "{}", c),
++
++        // Greek with an iota subscript. Across U+1F80..U+1FAF the titlecase
++        // form is the same code point with bit 3 set, which maps the small
++        // letters onto their capital-plus-prosgegrammeni forms and leaves
++        // those forms alone.
++        '\u{1f80}'..='\u{1faf}' => {
++            if let Some(t) = char::from_u32(c as u32 | 8) {
++                return write!(f, "{}", t);
++            }
++        }
++        '\u{1fb3}' | '\u{1fbc}' => return write!(f, "\u{1fbc}"),
++        '\u{1fc3}' | '\u{1fcc}' => return write!(f, "\u{1fcc}"),
++        '\u{1ff3}' | '\u{1ffc}' => return write!(f, "\u{1ffc}"),
++
++        // The nine with no precomposed titlecase form uppercase to a sequence
++        // ending in a capital iota, where the titlecase keeps the subscript.
++        '\u{1fb2}' | '\u{1fb4}' | '\u{1fb7}' | '\u{1fc2}' | '\u{1fc4}' | '\u{1fc7}'
++        | '\u{1ff2}' | '\u{1ff4}' | '\u{1ff7}' => {
++            for u in c.to_uppercase() {
++                write!(f, "{}", if u == '\u{399}' { '\u{345}' } else { u })?;
++            }
++            return Ok(());
++        }
++        _ => {}
++    }
++
++    // Only the first cased character of the uppercase mapping stays uppercase,
++    // and an uncased character can come before it: U+0149 uppercases to an
++    // apostrophe followed by N, and titlecases to that same pair.
++    let mut seen_cased = false;
++    for u in c.to_uppercase() {
++        if seen_cased {
++            write!(f, "{}", u.to_lowercase())?;
++        } else {
++            write!(f, "{}", u)?;
++            seen_cased = cased(u);
+         }
+     }
+ 
+     Ok(())
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use alloc::string::String;
++
++    /// The wrappers are plain newtypes, so a caller must be able to derive the
++    /// ordinary traits on a type that holds one. Holding all eight in one
++    /// derived struct is what makes the derive reach every wrapper.
++    #[test]
++    fn wrappers_can_be_derived_through() {
++        #[derive(Debug, Clone, Copy)]
++        struct Holder<'a> {
++            kebab: AsKebabCase<&'a str>,
++            lower_camel: AsLowerCamelCase<&'a str>,
++            shouty_kebab: AsShoutyKebabCase<&'a str>,
++            shouty_snake: AsShoutySnakeCase<&'a str>,
++            snake: AsSnakeCase<&'a str>,
++            title: AsTitleCase<&'a str>,
++            train: AsTrainCase<&'a str>,
++            upper_camel: AsUpperCamelCase<&'a str>,
++        }
++
++        let h = Holder {
++            kebab: AsKebabCase("aB"),
++            lower_camel: AsLowerCamelCase("aB"),
++            shouty_kebab: AsShoutyKebabCase("aB"),
++            shouty_snake: AsShoutySnakeCase("aB"),
++            snake: AsSnakeCase("aB"),
++            title: AsTitleCase("aB"),
++            train: AsTrainCase("aB"),
++            upper_camel: AsUpperCamelCase("aB"),
++        };
++        let copied = h;
++
++        assert_eq!(alloc::format!("{}", copied.kebab), "a-b");
++        assert_eq!(alloc::format!("{}", copied.lower_camel), "aB");
++        assert_eq!(alloc::format!("{}", h.shouty_kebab), "A-B");
++        assert_eq!(alloc::format!("{}", h.shouty_snake), "A_B");
++        assert_eq!(alloc::format!("{}", h.snake), "a_b");
++        assert_eq!(alloc::format!("{}", h.title), "A B");
++        assert_eq!(alloc::format!("{}", h.train), "A-B");
++        assert_eq!(alloc::format!("{}", h.upper_camel), "AB");
++        assert!(alloc::format!("{:?}", h).contains("AsSnakeCase"));
++
++        // `Holder` is `Copy`, so cloning it is a lint rather than a check. A
++        // wrapper over an owned string is the shape where `Clone` has work.
++        let owned = AsSnakeCase(String::from("aB"));
++        let cloned = owned.clone();
++        assert_eq!(alloc::format!("{}", cloned), "a_b");
++        assert!(alloc::format!("{:?}", cloned).contains("AsSnakeCase"));
++    }
++}
+diff --git a/src/lower_camel.rs b/src/lower_camel.rs
+index a31fc33..31f88f5 100644
+--- a/src/lower_camel.rs
++++ b/src/lower_camel.rs
+@@ -5,7 +5,7 @@ use alloc::{
+     string::{String, ToString},
+ };
+ 
+-use crate::{capitalize, lowercase, transform};
++use crate::{capitalize, lowercase, pad_with, transform};
+ 
+ /// This trait defines a lower camel case conversion.
+ ///
+@@ -41,30 +41,33 @@ impl ToLowerCamelCase for str {
+ /// let sentence = "It is we who built these palaces and cities.";
+ /// assert_eq!(format!("{}", AsLowerCamelCase(sentence)), "itIsWeWhoBuiltThesePalacesAndCities");
+ /// ```
++#[derive(Debug, Clone, Copy)]
+ pub struct AsLowerCamelCase<T: AsRef<str>>(pub T);
+ 
+ impl<T: AsRef<str>> fmt::Display for AsLowerCamelCase<T> {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+-        let mut first = true;
+-        transform(
+-            self.0.as_ref(),
+-            |s, f| {
+-                if first {
+-                    first = false;
+-                    lowercase(s, f)
+-                } else {
+-                    capitalize(s, f)
+-                }
+-            },
+-            |_| Ok(()),
+-            f,
+-        )
++        pad_with(f, |f| {
++            let mut first = true;
++            transform(
++                self.0.as_ref(),
++                |s, f| {
++                    if first {
++                        first = false;
++                        lowercase(s, f)
++                    } else {
++                        capitalize(s, f)
++                    }
++                },
++                |_| Ok(()),
++                f,
++            )
++        })
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::ToLowerCamelCase;
++    use super::{AsLowerCamelCase, ToLowerCamelCase};
+ 
+     macro_rules! t {
+         ($t:ident : $s1:expr => $s2:expr) => {
+@@ -85,4 +88,44 @@ mod tests {
+     t!(test8: "this-contains_ ALLKinds OfWord_Boundaries" => "thisContainsAllKindsOfWordBoundaries");
+     t!(test9: "XΣXΣ baﬄe" => "xσxςBaﬄe");
+     t!(test10: "XMLHttpRequest" => "xmlHttpRequest");
++
++    /// Width, fill, alignment and precision must reach the conversion, so the
++    /// wrapper formats exactly as the string it produces would.
++    #[test]
++    fn format_parameters_are_honoured() {
++        use alloc::format;
++        assert_eq!(format!("{}", AsLowerCamelCase("aB")), "aB");
++        assert_eq!(
++            format!("{:>10}", AsLowerCamelCase("aB")),
++            format!("{:>10}", "aB")
++        );
++        assert_eq!(
++            format!("{:-<10}", AsLowerCamelCase("aB")),
++            format!("{:-<10}", "aB")
++        );
++        assert_eq!(
++            format!("{:^9}", AsLowerCamelCase("aB")),
++            format!("{:^9}", "aB")
++        );
++        assert_eq!(
++            format!("{:.2}", AsLowerCamelCase("aB")),
++            format!("{:.2}", "aB")
++        );
++    }
++
++    /// Input holding no alphanumeric character has no words, so it converts to
++    /// the empty string rather than to a run of boundaries.
++    #[test]
++    fn input_without_words_converts_to_nothing() {
++        use alloc::format;
++        for input in ["", "_", "___", "-_-", "  ", "\u{a0}", ".", "!?"] {
++            assert_eq!(input.to_lower_camel_case(), "", "trait on {:?}", input);
++            assert_eq!(
++                format!("{}", AsLowerCamelCase(input)),
++                "",
++                "wrapper on {:?}",
++                input
++            );
++        }
++    }
+ }
+diff --git a/src/shouty_kebab.rs b/src/shouty_kebab.rs
+index bfa271d..afa48f7 100644
+--- a/src/shouty_kebab.rs
++++ b/src/shouty_kebab.rs
+@@ -2,7 +2,7 @@ use core::fmt;
+ 
+ use alloc::{borrow::ToOwned, string::ToString};
+ 
+-use crate::{transform, uppercase};
++use crate::{pad_with, transform, uppercase};
+ 
+ /// This trait defines a shouty kebab case conversion.
+ ///
+@@ -28,7 +28,7 @@ impl ToShoutyKebabCase for str {
+     }
+ }
+ 
+-/// This wrapper performs a kebab case conversion in [`fmt::Display`].
++/// This wrapper performs a shouty kebab case conversion in [`fmt::Display`].
+ ///
+ /// ## Example:
+ ///
+@@ -38,17 +38,20 @@ impl ToShoutyKebabCase for str {
+ /// let sentence = "We are going to inherit the earth.";
+ /// assert_eq!(format!("{}", AsShoutyKebabCase(sentence)), "WE-ARE-GOING-TO-INHERIT-THE-EARTH");
+ /// ```
++#[derive(Debug, Clone, Copy)]
+ pub struct AsShoutyKebabCase<T: AsRef<str>>(pub T);
+ 
+ impl<T: AsRef<str>> fmt::Display for AsShoutyKebabCase<T> {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+-        transform(self.0.as_ref(), uppercase, |f| write!(f, "-"), f)
++        pad_with(f, |f| {
++            transform(self.0.as_ref(), uppercase, |f| write!(f, "-"), f)
++        })
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::ToShoutyKebabCase;
++    use super::{AsShoutyKebabCase, ToShoutyKebabCase};
+ 
+     macro_rules! t {
+         ($t:ident : $s1:expr => $s2:expr) => {
+@@ -70,4 +73,44 @@ mod tests {
+     t!(test9: "XΣXΣ baﬄe" => "XΣXΣ-BAFFLE");
+     t!(test10: "XMLHttpRequest" => "XML-HTTP-REQUEST");
+     t!(test11: "SHOUTY-KEBAB-CASE" => "SHOUTY-KEBAB-CASE");
++
++    /// Width, fill, alignment and precision must reach the conversion, so the
++    /// wrapper formats exactly as the string it produces would.
++    #[test]
++    fn format_parameters_are_honoured() {
++        use alloc::format;
++        assert_eq!(format!("{}", AsShoutyKebabCase("aB")), "A-B");
++        assert_eq!(
++            format!("{:>10}", AsShoutyKebabCase("aB")),
++            format!("{:>10}", "A-B")
++        );
++        assert_eq!(
++            format!("{:-<10}", AsShoutyKebabCase("aB")),
++            format!("{:-<10}", "A-B")
++        );
++        assert_eq!(
++            format!("{:^9}", AsShoutyKebabCase("aB")),
++            format!("{:^9}", "A-B")
++        );
++        assert_eq!(
++            format!("{:.2}", AsShoutyKebabCase("aB")),
++            format!("{:.2}", "A-B")
++        );
++    }
++
++    /// Input holding no alphanumeric character has no words, so it converts to
++    /// the empty string rather than to a run of boundaries.
++    #[test]
++    fn input_without_words_converts_to_nothing() {
++        use alloc::format;
++        for input in ["", "_", "___", "-_-", "  ", "\u{a0}", ".", "!?"] {
++            assert_eq!(input.to_shouty_kebab_case(), "", "trait on {:?}", input);
++            assert_eq!(
++                format!("{}", AsShoutyKebabCase(input)),
++                "",
++                "wrapper on {:?}",
++                input
++            );
++        }
++    }
+ }
+diff --git a/src/shouty_snake.rs b/src/shouty_snake.rs
+index 12b074a..7e98da7 100644
+--- a/src/shouty_snake.rs
++++ b/src/shouty_snake.rs
+@@ -2,7 +2,7 @@ use core::fmt;
+ 
+ use alloc::{borrow::ToOwned, string::ToString};
+ 
+-use crate::{transform, uppercase};
++use crate::{pad_with, transform, uppercase};
+ 
+ /// This trait defines a shouty snake case conversion.
+ ///
+@@ -42,7 +42,7 @@ impl ToShoutySnakeCase for str {
+     }
+ }
+ 
+-/// This wrapper performs a shouty snake  case conversion in [`fmt::Display`].
++/// This wrapper performs a shouty snake case conversion in [`fmt::Display`].
+ ///
+ /// ## Example:
+ ///
+@@ -52,17 +52,20 @@ impl ToShoutySnakeCase for str {
+ /// let sentence = "That world is growing in this minute.";
+ /// assert_eq!(format!("{}", AsShoutySnakeCase(sentence)), "THAT_WORLD_IS_GROWING_IN_THIS_MINUTE");
+ /// ```
++#[derive(Debug, Clone, Copy)]
+ pub struct AsShoutySnakeCase<T: AsRef<str>>(pub T);
+ 
+ impl<T: AsRef<str>> fmt::Display for AsShoutySnakeCase<T> {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+-        transform(self.0.as_ref(), uppercase, |f| write!(f, "_"), f)
++        pad_with(f, |f| {
++            transform(self.0.as_ref(), uppercase, |f| write!(f, "_"), f)
++        })
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::{ToShoutySnakeCase, ToShoutySnekCase};
++    use super::{AsShoutySnakeCase, ToShoutySnakeCase, ToShoutySnekCase};
+ 
+     macro_rules! t {
+         ($t:ident : $s1:expr => $s2:expr) => {
+@@ -84,4 +87,44 @@ mod tests {
+     t!(test8: "this-contains_ ALLKinds OfWord_Boundaries" => "THIS_CONTAINS_ALL_KINDS_OF_WORD_BOUNDARIES");
+     t!(test9: "XΣXΣ baﬄe" => "XΣXΣ_BAFFLE");
+     t!(test10: "XMLHttpRequest" => "XML_HTTP_REQUEST");
++
++    /// Width, fill, alignment and precision must reach the conversion, so the
++    /// wrapper formats exactly as the string it produces would.
++    #[test]
++    fn format_parameters_are_honoured() {
++        use alloc::format;
++        assert_eq!(format!("{}", AsShoutySnakeCase("aB")), "A_B");
++        assert_eq!(
++            format!("{:>10}", AsShoutySnakeCase("aB")),
++            format!("{:>10}", "A_B")
++        );
++        assert_eq!(
++            format!("{:-<10}", AsShoutySnakeCase("aB")),
++            format!("{:-<10}", "A_B")
++        );
++        assert_eq!(
++            format!("{:^9}", AsShoutySnakeCase("aB")),
++            format!("{:^9}", "A_B")
++        );
++        assert_eq!(
++            format!("{:.2}", AsShoutySnakeCase("aB")),
++            format!("{:.2}", "A_B")
++        );
++    }
++
++    /// Input holding no alphanumeric character has no words, so it converts to
++    /// the empty string rather than to a run of boundaries.
++    #[test]
++    fn input_without_words_converts_to_nothing() {
++        use alloc::format;
++        for input in ["", "_", "___", "-_-", "  ", "\u{a0}", ".", "!?"] {
++            assert_eq!(input.to_shouty_snake_case(), "", "trait on {:?}", input);
++            assert_eq!(
++                format!("{}", AsShoutySnakeCase(input)),
++                "",
++                "wrapper on {:?}",
++                input
++            );
++        }
++    }
+ }
+diff --git a/src/snake.rs b/src/snake.rs
+index 381707d..0d974c7 100644
+--- a/src/snake.rs
++++ b/src/snake.rs
+@@ -4,7 +4,7 @@ use alloc::{
+     string::{String, ToString},
+ };
+ 
+-use crate::{lowercase, transform};
++use crate::{lowercase, pad_with, transform};
+ 
+ /// This trait defines a snake case conversion.
+ ///
+@@ -52,17 +52,20 @@ impl ToSnakeCase for str {
+ /// let sentence = "We carry a new world here, in our hearts.";
+ /// assert_eq!(format!("{}", AsSnakeCase(sentence)), "we_carry_a_new_world_here_in_our_hearts");
+ /// ```
++#[derive(Debug, Clone, Copy)]
+ pub struct AsSnakeCase<T: AsRef<str>>(pub T);
+ 
+ impl<T: AsRef<str>> fmt::Display for AsSnakeCase<T> {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+-        transform(self.0.as_ref(), lowercase, |f| write!(f, "_"), f)
++        pad_with(f, |f| {
++            transform(self.0.as_ref(), lowercase, |f| write!(f, "_"), f)
++        })
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::{ToSnakeCase, ToSnekCase};
++    use super::{AsSnakeCase, ToSnakeCase, ToSnekCase};
+ 
+     macro_rules! t {
+         ($t:ident : $s1:expr => $s2:expr) => {
+@@ -98,4 +101,63 @@ mod tests {
+     t!(test23: "ABC123dEEf456FOO" => "abc123d_e_ef456_foo");
+     t!(test24: "abcDEF" => "abc_def");
+     t!(test25: "ABcDE" => "a_bc_de");
++    // The Final_Sigma condition: a word-final sigma takes its final form only
++    // when a cased character precedes it.
++    t!(test26: "\u{3a3}" => "\u{3c3}");
++    t!(test27: "1\u{3a3}" => "1\u{3c3}");
++    t!(test28: "A\u{3a3}" => "a\u{3c2}");
++    t!(test29: "\u{3a3}\u{3a3}" => "\u{3c3}\u{3c2}");
++    t!(test30: "a1\u{3a3}" => "a1_\u{3c3}");
++    // The condition reaches across case-ignorable characters in both
++    // directions: they neither break the cased sequence before the sigma nor
++    // supply the cased character after it.
++    t!(test31: "A\u{2bc}\u{3a3}" => "a\u{2bc}\u{3c2}");
++    t!(test32: "\u{391}\u{3a3}1" => "\u{3b1}\u{3c2}1");
++    t!(test33: "\u{391}\u{3a3}\u{2bc}" => "\u{3b1}\u{3c2}\u{2bc}");
++    t!(test34: "\u{391}\u{3a3}\u{2bc}\u{392}" => "\u{3b1}\u{3c3}\u{2bc}\u{3b2}");
++
++    /// Width, fill, alignment and precision must reach the conversion, so the
++    /// wrapper formats exactly as the string it produces would.
++    #[test]
++    fn format_parameters_are_honoured() {
++        use alloc::format;
++        assert_eq!(format!("{}", AsSnakeCase("aB")), "a_b");
++        assert_eq!(
++            format!("{:>10}", AsSnakeCase("aB")),
++            format!("{:>10}", "a_b")
++        );
++        assert_eq!(
++            format!("{:-<10}", AsSnakeCase("aB")),
++            format!("{:-<10}", "a_b")
++        );
++        assert_eq!(format!("{:^9}", AsSnakeCase("aB")), format!("{:^9}", "a_b"));
++        assert_eq!(format!("{:.2}", AsSnakeCase("aB")), format!("{:.2}", "a_b"));
++    }
++
++    /// Input holding no alphanumeric character has no words, so it converts to
++    /// the empty string rather than to a run of boundaries.
++    #[test]
++    fn input_without_words_converts_to_nothing() {
++        use alloc::format;
++        for input in ["", "_", "___", "-_-", "  ", "\u{a0}", ".", "!?"] {
++            assert_eq!(input.to_snake_case(), "", "trait on {:?}", input);
++            assert_eq!(
++                format!("{}", AsSnakeCase(input)),
++                "",
++                "wrapper on {:?}",
++                input
++            );
++        }
++    }
++
++    /// The four segmentations the crate root documents, applied by the rules a
++    /// reader is given there.
++    #[test]
++    fn documented_segmentations() {
++        assert_eq!("HelloWorld".to_snake_case(), "hello_world");
++        assert_eq!("XMLHttpRequest".to_snake_case(), "xml_http_request");
++        assert_eq!("parseHTTPResponse".to_snake_case(), "parse_http_response");
++        assert_eq!("abc123DEF456".to_snake_case(), "abc123_def456");
++        assert_eq!("abcDEF".to_snake_case(), "abc_def");
++    }
+ }
+diff --git a/src/title.rs b/src/title.rs
+index 2453430..45e70e3 100644
+--- a/src/title.rs
++++ b/src/title.rs
+@@ -5,7 +5,7 @@ use alloc::{
+     string::{String, ToString},
+ };
+ 
+-use crate::{capitalize, transform};
++use crate::{capitalize, pad_with, transform};
+ 
+ /// This trait defines a title case conversion.
+ ///
+@@ -41,17 +41,20 @@ impl ToTitleCase for str {
+ /// let sentence = "We have always lived in slums and holes in the wall.";
+ /// assert_eq!(format!("{}", AsTitleCase(sentence)), "We Have Always Lived In Slums And Holes In The Wall");
+ /// ```
++#[derive(Debug, Clone, Copy)]
+ pub struct AsTitleCase<T: AsRef<str>>(pub T);
+ 
+ impl<T: AsRef<str>> fmt::Display for AsTitleCase<T> {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+-        transform(self.0.as_ref(), capitalize, |f| write!(f, " "), f)
++        pad_with(f, |f| {
++            transform(self.0.as_ref(), capitalize, |f| write!(f, " "), f)
++        })
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::ToTitleCase;
++    use super::{AsTitleCase, ToTitleCase};
+ 
+     macro_rules! t {
+         ($t:ident : $s1:expr => $s2:expr) => {
+@@ -72,4 +75,58 @@ mod tests {
+     t!(test8: "this-contains_ ALLKinds OfWord_Boundaries" => "This Contains All Kinds Of Word Boundaries");
+     t!(test9: "XΣXΣ baﬄe" => "Xσxς Baﬄe");
+     t!(test10: "XMLHttpRequest" => "Xml Http Request");
++    t!(test11: "1\u{3a3}" => "1\u{3c3}");
++    t!(test12: "A\u{3a3}" => "A\u{3c2}");
++    // Titlecase is not uppercase: an expanding uppercase mapping keeps only its
++    // first character uppercased, the Latin digraphs have their own middle
++    // form, and Georgian Mkhedruli has no titlecase.
++    t!(test13: "\u{fb04}e" => "Ffle");
++    t!(test14: "\u{df}" => "Ss");
++    t!(test15: "\u{1f3}ab" => "\u{1f2}ab");
++    t!(test16: "\u{10e5}\u{10d0}\u{10e0}\u{10d7}\u{10e3}\u{10da}\u{10d8}" => "\u{10e5}\u{10d0}\u{10e0}\u{10d7}\u{10e3}\u{10da}\u{10d8}");
++    // A Greek character carrying an iota subscript keeps the subscript: most
++    // have a precomposed titlecase form, and those already in that form
++    // titlecase to themselves; the rest take their uppercase expansion with
++    // the iota written as the combining mark rather than as a capital letter.
++    t!(test17: "\u{1f80}\u{3b2}" => "\u{1f88}\u{3b2}");
++    t!(test18: "\u{1f88}\u{3b2}" => "\u{1f88}\u{3b2}");
++    t!(test19: "\u{1fa7}" => "\u{1faf}");
++    t!(test20: "\u{1fb3}" => "\u{1fbc}");
++    t!(test21: "\u{1ff3}" => "\u{1ffc}");
++    t!(test22: "\u{1fb2}" => "\u{1fba}\u{345}");
++    t!(test23: "\u{1ff7}" => "\u{3a9}\u{342}\u{345}");
++
++    /// Width, fill, alignment and precision must reach the conversion, so the
++    /// wrapper formats exactly as the string it produces would.
++    #[test]
++    fn format_parameters_are_honoured() {
++        use alloc::format;
++        assert_eq!(format!("{}", AsTitleCase("aB")), "A B");
++        assert_eq!(
++            format!("{:>10}", AsTitleCase("aB")),
++            format!("{:>10}", "A B")
++        );
++        assert_eq!(
++            format!("{:-<10}", AsTitleCase("aB")),
++            format!("{:-<10}", "A B")
++        );
++        assert_eq!(format!("{:^9}", AsTitleCase("aB")), format!("{:^9}", "A B"));
++        assert_eq!(format!("{:.2}", AsTitleCase("aB")), format!("{:.2}", "A B"));
++    }
++
++    /// Input holding no alphanumeric character has no words, so it converts to
++    /// the empty string rather than to a run of boundaries.
++    #[test]
++    fn input_without_words_converts_to_nothing() {
++        use alloc::format;
++        for input in ["", "_", "___", "-_-", "  ", "\u{a0}", ".", "!?"] {
++            assert_eq!(input.to_title_case(), "", "trait on {:?}", input);
++            assert_eq!(
++                format!("{}", AsTitleCase(input)),
++                "",
++                "wrapper on {:?}",
++                input
++            );
++        }
++    }
+ }
+diff --git a/src/train.rs b/src/train.rs
+index 3b975e2..baa2777 100644
+--- a/src/train.rs
++++ b/src/train.rs
+@@ -2,7 +2,7 @@ use core::fmt;
+ 
+ use alloc::{borrow::ToOwned, string::ToString};
+ 
+-use crate::{capitalize, transform};
++use crate::{capitalize, pad_with, transform};
+ 
+ /// This trait defines a train case conversion.
+ ///
+@@ -38,17 +38,20 @@ impl ToTrainCase for str {
+ /// let sentence = "We are going to inherit the earth.";
+ /// assert_eq!(format!("{}", AsTrainCase(sentence)), "We-Are-Going-To-Inherit-The-Earth");
+ /// ```
++#[derive(Debug, Clone, Copy)]
+ pub struct AsTrainCase<T: AsRef<str>>(pub T);
+ 
+ impl<T: AsRef<str>> fmt::Display for AsTrainCase<T> {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+-        transform(self.0.as_ref(), capitalize, |f| write!(f, "-"), f)
++        pad_with(f, |f| {
++            transform(self.0.as_ref(), capitalize, |f| write!(f, "-"), f)
++        })
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::ToTrainCase;
++    use super::{AsTrainCase, ToTrainCase};
+ 
+     macro_rules! t {
+         ($t:ident : $s1:expr => $s2:expr) => {
+@@ -83,4 +86,38 @@ mod tests {
+     t!(test23: "ABC123dEEf456FOO" => "Abc123d-E-Ef456-Foo");
+     t!(test24: "abcDEF" => "Abc-Def");
+     t!(test25: "ABcDE" => "A-Bc-De");
++
++    /// Width, fill, alignment and precision must reach the conversion, so the
++    /// wrapper formats exactly as the string it produces would.
++    #[test]
++    fn format_parameters_are_honoured() {
++        use alloc::format;
++        assert_eq!(format!("{}", AsTrainCase("aB")), "A-B");
++        assert_eq!(
++            format!("{:>10}", AsTrainCase("aB")),
++            format!("{:>10}", "A-B")
++        );
++        assert_eq!(
++            format!("{:-<10}", AsTrainCase("aB")),
++            format!("{:-<10}", "A-B")
++        );
++        assert_eq!(format!("{:^9}", AsTrainCase("aB")), format!("{:^9}", "A-B"));
++        assert_eq!(format!("{:.2}", AsTrainCase("aB")), format!("{:.2}", "A-B"));
++    }
++
++    /// Input holding no alphanumeric character has no words, so it converts to
++    /// the empty string rather than to a run of boundaries.
++    #[test]
++    fn input_without_words_converts_to_nothing() {
++        use alloc::format;
++        for input in ["", "_", "___", "-_-", "  ", "\u{a0}", ".", "!?"] {
++            assert_eq!(input.to_train_case(), "", "trait on {:?}", input);
++            assert_eq!(
++                format!("{}", AsTrainCase(input)),
++                "",
++                "wrapper on {:?}",
++                input
++            );
++        }
++    }
+ }
+diff --git a/src/upper_camel.rs b/src/upper_camel.rs
+index 7b29b0d..a53e81f 100644
+--- a/src/upper_camel.rs
++++ b/src/upper_camel.rs
+@@ -5,7 +5,7 @@ use alloc::{
+     string::{String, ToString},
+ };
+ 
+-use crate::{capitalize, transform};
++use crate::{capitalize, pad_with, transform};
+ 
+ /// This trait defines an upper camel case conversion.
+ ///
+@@ -44,7 +44,7 @@ impl<T: ?Sized + ToUpperCamelCase> ToPascalCase for T {
+     }
+ }
+ 
+-/// This wrapper performs a upper camel case conversion in [`fmt::Display`].
++/// This wrapper performs an upper camel case conversion in [`fmt::Display`].
+ ///
+ /// ## Example:
+ ///
+@@ -54,17 +54,18 @@ impl<T: ?Sized + ToUpperCamelCase> ToPascalCase for T {
+ /// let sentence = "We are not in the least afraid of ruins.";
+ /// assert_eq!(format!("{}", AsUpperCamelCase(sentence)), "WeAreNotInTheLeastAfraidOfRuins");
+ /// ```
++#[derive(Debug, Clone, Copy)]
+ pub struct AsUpperCamelCase<T: AsRef<str>>(pub T);
+ 
+ impl<T: AsRef<str>> fmt::Display for AsUpperCamelCase<T> {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+-        transform(self.0.as_ref(), capitalize, |_| Ok(()), f)
++        pad_with(f, |f| transform(self.0.as_ref(), capitalize, |_| Ok(()), f))
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::{ToPascalCase, ToUpperCamelCase};
++    use super::{AsUpperCamelCase, ToPascalCase, ToUpperCamelCase};
+ 
+     macro_rules! t {
+         ($t:ident : $s1:expr => $s2:expr) => {
+@@ -86,4 +87,46 @@ mod tests {
+     t!(test8: "this-contains_ ALLKinds OfWord_Boundaries" => "ThisContainsAllKindsOfWordBoundaries");
+     t!(test9: "XΣXΣ baﬄe" => "XσxςBaﬄe");
+     t!(test10: "XMLHttpRequest" => "XmlHttpRequest");
++    t!(test11: "\u{df}" => "Ss");
++    t!(test12: "\u{1f3}ab" => "\u{1f2}ab");
++
++    /// Width, fill, alignment and precision must reach the conversion, so the
++    /// wrapper formats exactly as the string it produces would.
++    #[test]
++    fn format_parameters_are_honoured() {
++        use alloc::format;
++        assert_eq!(format!("{}", AsUpperCamelCase("aB")), "AB");
++        assert_eq!(
++            format!("{:>10}", AsUpperCamelCase("aB")),
++            format!("{:>10}", "AB")
++        );
++        assert_eq!(
++            format!("{:-<10}", AsUpperCamelCase("aB")),
++            format!("{:-<10}", "AB")
++        );
++        assert_eq!(
++            format!("{:^9}", AsUpperCamelCase("aB")),
++            format!("{:^9}", "AB")
++        );
++        assert_eq!(
++            format!("{:.2}", AsUpperCamelCase("aB")),
++            format!("{:.2}", "AB")
++        );
++    }
++
++    /// Input holding no alphanumeric character has no words, so it converts to
++    /// the empty string rather than to a run of boundaries.
++    #[test]
++    fn input_without_words_converts_to_nothing() {
++        use alloc::format;
++        for input in ["", "_", "___", "-_-", "  ", "\u{a0}", ".", "!?"] {
++            assert_eq!(input.to_upper_camel_case(), "", "trait on {:?}", input);
++            assert_eq!(
++                format!("{}", AsUpperCamelCase(input)),
++                "",
++                "wrapper on {:?}",
++                input
++            );
++        }
++    }
+ }
