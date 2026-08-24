@@ -1,0 +1,416 @@
+diff --git a/.gitignore b/.gitignore
+index ab24966..e06e12d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -45,3 +45,4 @@ venv/
+ 
+ # Ruff
+ .ruff_cache/
++.claude/jeffy-loop.local.md
+diff --git a/MANIFEST.in b/MANIFEST.in
+deleted file mode 100644
+index f8b823d..0000000
+--- a/MANIFEST.in
++++ /dev/null
+@@ -1,9 +0,0 @@
+-include README.rst
+-include LICENSE
+-include docs/*.rst
+-include docs/Makefile
+-include docs/make.bat
+-include docs/conf.py
+-include docs/_static/*
+-include tox.ini
+-include tests/*.py
+diff --git a/docs/api.rst b/docs/api.rst
+index 1034ab9..a335763 100644
+--- a/docs/api.rst
++++ b/docs/api.rst
+@@ -100,7 +100,7 @@ These tools yield items from an iterable, plus additional data.
+ 
+ **Itertools recipes**
+ 
+-.. function:: padnone
++.. autofunction:: padnone
+   :noindex:
+ .. autofunction:: pad_none
+ .. autofunction:: ncycles
+@@ -144,6 +144,7 @@ These tools support thread-safe concurrency.
+ .. autofunction:: concurrent_tee
+ .. autoclass:: serialize
+ .. autofunction:: synchronized
++.. autoclass:: AbortThread
+ 
+ 
+ Summarizing
+@@ -348,6 +349,7 @@ The tools focus on simple statistics.
+ .. autofunction:: running_mean
+ .. autofunction:: running_median
+ .. autofunction:: running_statistics
++.. autoclass:: Stats
+ 
+ 
+ Others
+@@ -369,6 +371,7 @@ Others
+ .. autoclass:: time_limited
+ .. autofunction:: map_if(iterable, pred, func, func_else=lambda x: x)
+ .. autofunction:: doublestarmap
++.. autofunction:: raise_
+ 
+ ----
+ 
+diff --git a/more_itertools/more.py b/more_itertools/more.py
+index f2dbe57..da04e04 100755
+--- a/more_itertools/more.py
++++ b/more_itertools/more.py
+@@ -229,9 +229,13 @@ def chunked(iterable, n, strict=False):
+     ``True``, then ``ValueError`` will be raised before the last
+     list is yielded.
+ 
++    *n* must be at least 1, or ``None`` for a single list holding
++    everything; ``ValueError`` is raised otherwise, because no sequence of
++    zero-length lists can hold the input.
++
+     """
+-    if n is not None and n < 0:
+-        raise ValueError('n must be at least 0')
++    if n is not None and n < 1:
++        raise ValueError('n must be at least 1')
+ 
+     iterator = iter(partial(take, n, iter(iterable)), [])
+     if strict:
+@@ -667,6 +671,21 @@ def one(iterable, too_short=None, too_long=None):
+ 
+ 
+ def raise_(exception, *args):
++    """Raise *exception*, constructed from *args*.
++
++    ``raise`` is a statement, so it cannot appear where an expression is
++    required. This wraps it in a call, which lets a ``lambda`` raise:
++
++        >>> too_short = lambda n: raise_(ValueError, f'only got {n}')
++        >>> too_short(3)
++        Traceback (most recent call last):
++            ...
++        ValueError: only got 3
++
++    :func:`strictly_n` builds its default *too_short* and *too_long* hooks
++    this way.
++
++    """
+     raise exception(*args)
+ 
+ 
+@@ -1116,7 +1135,12 @@ def substrings_indexes(seq, reverse=False):
+     ('ore', 1, 4)
+     ('more', 0, 4)
+ 
+-    Set *reverse* to ``True`` to yield the same items in the opposite order.
++    Set *reverse* to ``True`` to yield the longest substrings first. Within
++    a given length the substrings are still ordered by position, so this is
++    not the exact reverse of the default order:
++
++    >>> [substr for substr, i, j in substrings_indexes('more', reverse=True)]
++    ['more', 'mor', 'ore', 'mo', 'or', 're', 'm', 'o', 'r', 'e']
+ 
+ 
+     """
+@@ -1486,6 +1510,15 @@ def side_effect(func, iterable, chunk_size=None, before=None, after=None):
+         >>> list(pair_sums)
+         [1, 5, 9]
+ 
++    *chunk_size* must be at least 1, or ``None`` to invoke *func* on each
++    item individually; ``ValueError`` is raised otherwise, because no
++    sequence of zero-length chunks can hold the input:
++
++        >>> list(side_effect(func, [0, 1, 2], 0))
++        Traceback (most recent call last):
++            ...
++        ValueError: n must be at least 1
++
+     Writing to a file-like object:
+ 
+         >>> from io import StringIO
+@@ -1536,9 +1569,12 @@ def sliced(seq, n, strict=False):
+     This function will only work for iterables that support slicing.
+     For non-sliceable iterables, see :func:`chunked`.
+ 
++    *n* must be at least 1; ``ValueError`` is raised otherwise, because no
++    sequence of zero-length slices can hold the input.
++
+     """
+-    if n < 0:
+-        raise ValueError('n must be at least 0')
++    if n < 1:
++        raise ValueError('n must be at least 1')
+ 
+     iterator = takewhile(len, (seq[i : i + n] for i in count(0, n)))
+     if strict:
+@@ -3846,15 +3882,31 @@ def _sample_weighted(iterator, k, weights, strict):
+     # Implementation of "A-ExpJ" from the 2006 paper by Efraimidis et al. :
+     # "Weighted random sampling with a reservoir".
+ 
+-    # Log-transform for numerical stability for weights that are small/large
+-    weight_keys = (log(random()) / weight for weight in weights)
++    # Pair each element with its weight as the two are consumed together.
++    # A zero weight means the element can never be drawn, so it is dropped
++    # here rather than divided by below; a negative weight has no meaning
++    # for a weighted draw and is rejected.
++    def selectable():
++        for weight, element in zip(weights, iterator):
++            if weight < 0:
++                raise ValueError(
++                    f'weights must be non-negative, got {weight!r}'
++                )
++            if weight:
++                yield weight, element
++
++    pairs = selectable()
+ 
+     # Fill up the reservoir (collection of samples) with the first `k`
+     # weight-keys and elements, then heapify the list.
+-    reservoir = take(k, zip(weight_keys, iterator))
++    # Log-transform for numerical stability for weights that are small/large
++    reservoir = take(k, ((log(random()) / w, e) for w, e in pairs))
+     if strict and len(reservoir) < k:
+         raise ValueError('Sample larger than population')
+ 
++    if not reservoir:
++        return []
++
+     heapify(reservoir)
+ 
+     # The number of jumps before changing the reservoir is a random variable
+@@ -3862,7 +3914,7 @@ def _sample_weighted(iterator, k, weights, strict):
+     smallest_weight_key, _ = reservoir[0]
+     weights_to_skip = log(random()) / smallest_weight_key
+ 
+-    for weight, element in zip(weights, iterator):
++    for weight, element in pairs:
+         if weight >= weights_to_skip:
+             # The notation here is consistent with the paper, but we store
+             # the weight-keys in log-space for better numerical stability.
+@@ -3949,6 +4001,11 @@ def sample(iterable, k, weights=None, *, counts=None, strict=False):
+     does not match the behavior of :func:`random.sample`'s *counts*
+     parameter). Note that *weights* may not be used with *counts*.
+ 
++    A weight of zero means the element is never selected, so it does not
++    count toward the population; if fewer than *k* elements carry a
++    positive weight, the same rule as a short *iterable* applies below.
++    A negative weight raises ``ValueError``.
++
+     If the length of *iterable* is less than *k*,
+     ``ValueError`` is raised if *strict* is ``True`` and
+     all elements are returned (in shuffled order) if *strict* is ``False``.
+@@ -4032,7 +4089,19 @@ def is_sorted(iterable, key=None, reverse=False, strict=False):
+ 
+ 
+ class AbortThread(BaseException):
+-    pass
++    """Raised inside a :class:`callback_iter` callback to stop its function.
++
++    :class:`callback_iter` runs the function it wraps on a worker thread. If
++    the ``with`` block is left before that function has finished, the next
++    call the function makes to its callback raises this instead of returning,
++    so the worker unwinds rather than running to completion, and accessing
++    the ``result`` property then re-raises it.
++
++    It derives from :class:`BaseException` rather than :class:`Exception`, so
++    a broad ``except Exception`` inside the wrapped function does not swallow
++    the cancellation.
++
++    """
+ 
+ 
+ class callback_iter:
+@@ -5051,6 +5120,8 @@ def outer_product(func, xs, ys, *args, **kwargs):
+     pairs of items. Returns a 2D matrix with ``len(xs)`` rows and ``len(ys)``
+     columns.
+     Also accepts ``*args`` and ``**kwargs`` that are passed to ``func``.
++    An empty *ys* gives ``len(xs)`` rows of no columns, and an empty *xs*
++    gives no rows at all.
+ 
+     Multiplication table:
+ 
+@@ -5074,6 +5145,12 @@ def outer_product(func, xs, ys, *args, **kwargs):
+     [('cat', 'cat', 'cat'), ('cat', 'wolf', 'wolf'), ('cat', 'wolf', 'mouse')]
+     """
+     ys = tuple(ys)
++    if not ys:
++        # A zero-column matrix still has one row per element of *xs*.
++        # product() yields nothing here and batched() rejects a zero-length
++        # batch, so the rows are produced directly.
++        return (() for _ in xs)
++
+     return batched(
+         starmap(lambda x, y: func(x, y, *args, **kwargs), product(xs, ys)),
+         n=len(ys),
+diff --git a/more_itertools/recipes.py b/more_itertools/recipes.py
+index 1b5a625..f05cdaf 100644
+--- a/more_itertools/recipes.py
++++ b/more_itertools/recipes.py
+@@ -1568,6 +1568,14 @@ def running_max(iterable, *, maxlen=None):
+ 
+ @dataclass(frozen=True, slots=True)
+ class Stats:
++    """A snapshot of the values :func:`running_statistics` has seen.
++
++    An immutable record of the dataset *size*, its *minimum*, *median* and
++    *maximum* values, and its arithmetic *mean*. :func:`running_statistics`
++    yields one of these per input value.
++
++    """
++
+     size: int
+     minimum: float
+     median: float
+@@ -1585,6 +1593,15 @@ def running_statistics(iterable, *, maxlen=None):
+     Yields instances of a ``Stats`` dataclass with fields for the dataset *size*,
+     *minimum* value, *median* value, *maximum* value, and the arithmetic *mean*.
+ 
++    For example:
++
++        >>> data = [40, 30, 50, 46, 39, 44]
++        >>> list(running_statistics(data))[-1]
++        Stats(size=6, minimum=30, median=42.0, maximum=50, mean=41.5)
++
++        >>> list(running_statistics(data, maxlen=3))[-1]
++        Stats(size=3, minimum=39, median=44, maximum=46, mean=43.0)
++
+     Supports numeric types such as int, float, Decimal, and Fraction,
+     but not complex numbers which are unorderable.
+     """
+diff --git a/pyproject.toml b/pyproject.toml
+index 9fe61f9..f03c017 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -43,6 +43,22 @@ Documentation = "https://more-itertools.readthedocs.io/en/stable/"
+ [tool.flit.module]
+ name = "more_itertools"
+ 
++# flit >= 4 no longer selects sdist contents from version control, so the
++# paths a source distribution needs beyond the module are listed here.
++# "docs/" would otherwise sweep in the Sphinx output that "make docs"
++# leaves behind, which CI builds immediately before "make package".
++[tool.flit.sdist]
++include = [
++    "docs/",
++    "requirements/",
++    "tests/",
++    "setup.cfg",
++    "tox.ini",
++]
++exclude = [
++    "docs/_build/",
++]
++
+ [tool.ruff]
+ indent-width = 4
+ line-length = 79
+diff --git a/tests/test_more.py b/tests/test_more.py
+index 8303601..a07cd9f 100644
+--- a/tests/test_more.py
++++ b/tests/test_more.py
+@@ -75,10 +75,20 @@ class ChunkedTests(TestCase):
+         the behavior of :func:`sliced`."""
+         self.assertRaisesRegex(
+             ValueError,
+-            "n must be at least 0",
++            "n must be at least 1",
+             lambda: list(mi.chunked('ABCDE', -1)),
+         )
+ 
++    def test_zero(self):
++        """Zero-length chunks cannot hold the input, so ``n`` of 0 raises
++        rather than silently discarding it."""
++        for strict in (False, True):
++            self.assertRaisesRegex(
++                ValueError,
++                "n must be at least 1",
++                lambda: list(mi.chunked('ABCDE', 0, strict=strict)),
++            )
++
+     def test_strict_false(self):
+         """Test when ``n`` does not divide evenly into the length of the
+         iterable and strict is false.
+@@ -1439,6 +1449,17 @@ class SlicedTests(TestCase):
+             ValueError, lambda: list(mi.sliced(seq, -1, strict=True))
+         )
+ 
++    def test_zero(self):
++        """Zero-length slices cannot hold the input, so ``n`` of 0 raises
++        rather than silently discarding it."""
++        seq = 'ABCDEFG'
++        for strict in (False, True):
++            self.assertRaisesRegex(
++                ValueError,
++                "n must be at least 1",
++                lambda: list(mi.sliced(seq, 0, strict=strict)),
++            )
++
+     def test_numpy_like_array(self):
+         # Numpy arrays don't behave like Python lists - calling bool()
+         # on them doesn't return False for empty lists and True for non-empty
+@@ -4551,6 +4572,44 @@ class SampleTests(TestCase):
+         with self.assertRaises(ValueError):
+             mi.sample(data, 6, strict=True)
+ 
++    def test_zero_weight(self):
++        # A zero-weighted element is never selected, wherever it sits in
++        # the weights sequence
++        data = list(range(10))
++        for weights in (
++            [0] + [1] * 9,
++            [1] * 9 + [0],
++            [0, 0, 0, 1, 1, 1, 1, 1, 1, 1],
++        ):
++            excluded = {d for d, w in zip(data, weights) if not w}
++            for _ in range(50):
++                actual = mi.sample(data, 3, weights=weights)
++                self.assertEqual(len(actual), 3)
++                self.assertFalse(excluded & set(actual))
++
++    def test_all_zero_weights(self):
++        # No element is selectable, so the same rule as a short iterable
++        # applies
++        data = list(range(10))
++        self.assertEqual(mi.sample(data, 3, weights=[0] * 10), [])
++        with self.assertRaises(ValueError):
++            mi.sample(data, 3, weights=[0] * 10, strict=True)
++
++    def test_negative_weight(self):
++        data = list(range(10))
++        for weights in ([-1] + [1] * 9, [1] * 9 + [-0.5]):
++            with self.assertRaisesRegex(
++                ValueError, 'weights must be non-negative'
++            ):
++                mi.sample(data, 3, weights=weights)
++
++    def test_empty_weighted(self):
++        # The weighted path matches the unweighted one on an empty
++        # population
++        self.assertEqual(mi.sample([], 3, weights=[]), [])
++        with self.assertRaises(ValueError):
++            mi.sample([], 3, weights=[], strict=True)
++
+     def test_counts(self):
+         # Test with counts
+         seed(0)
+@@ -6251,6 +6310,17 @@ class OuterProductTests(TestCase):
+         ]
+         self.assertEqual(result, expected)
+ 
++    def test_empty_ys(self):
++        # A zero-column matrix still has one row per element of xs
++        self.assertEqual(
++            [tuple(r) for r in mi.outer_product(mul, [1, 2, 3], [])],
++            [(), (), ()],
++        )
++
++    def test_empty_xs(self):
++        self.assertEqual(list(mi.outer_product(mul, [], [1, 2])), [])
++        self.assertEqual(list(mi.outer_product(mul, [], [])), [])
++
+ 
+ class IterSuppressTests(TestCase):
+     class Producer:

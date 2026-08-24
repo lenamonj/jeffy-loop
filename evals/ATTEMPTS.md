@@ -57,6 +57,8 @@ loss rather than hiding it.
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
 | lz4 | 2 | 15 | converged | evaluator countersigned | 0 |
 | magic_enum | 2 | 19 | converged | evaluator countersigned | 0 |
+| marshmallow | 1 | 10 | converged | evaluator countersigned | 0 |
+| more-itertools | 2 | 16 | converged | evaluator countersigned | 0 |
 | moshi | 5 | 49 | converged | evaluator countersigned | 1 |
 | mruby (attempt 1) | 5 | 50 | **not converged** | n/a | 0 |
 | mruby (attempt 2) | 5 | 63 | **not converged** | n/a | 1 |
@@ -80,6 +82,7 @@ loss rather than hiding it.
 | speedtest-cli | 1 | 5 | converged | pre-evaluator | 0 |
 | swift-algorithms | 3 | 24 | converged | evaluator countersigned | 1 |
 | ta | 6 | 64 | converged | evaluator **unavailable**, recorded | 0 |
+| tenacity | 2 | 20 | **not converged** | n/a | 2 |
 | testify | 4 | 40 | **not converged** | n/a | 2 |
 | thor | 2 | 20 | **not converged** | n/a | 0 |
 | validator | 4 | 31 | converged | evaluator countersigned | 1 |
@@ -99,13 +102,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 42 brownfield convergences:
+The engine tightened over time. Of the 44 brownfield convergences:
 
-- **37** were countersigned by the adversarial evaluator, the current standard.
+- **39** were countersigned by the adversarial evaluator, the current standard.
   Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck` and `ryu` met
+  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow` and `more-itertools` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -115,7 +118,7 @@ The engine tightened over time. Of the 42 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 42 as one number
+Every receipt names the standard its own run met. Pooling all 44 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -129,7 +132,7 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 42 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 44 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
 `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
 `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp` and `godotenv`, and each receipt names what it
@@ -1137,3 +1140,30 @@ more find worth naming: the published Go module zip carried the loop's own
 state files (Q006) - the third packaging channel (crates.io, npm, Go
 modules) the 1.16.0 artifact-channel discipline caught in its first
 cohort.
+
+## tenacity, two runs and four rejections against the retry library
+
+`jd/tenacity` is the retry decorator under a large share of Python's API
+clients, run in the 2026-08-24 Python wave against a pre-registered two
+rounds of ten. It did not converge, and it is the wave's density record:
+**11 findings closed - 1 High, 7 Medium, 3 Low - across an 18-of-18 sweep**,
++646/-95 over 22 files, with all four evaluator invocations spent and both
+runs ending blocked on terminal second REJECTs. The High is concurrency:
+one `AsyncRetrying` instance driven from two concurrent coroutines shared
+per-instance iteration state. The gate's own findings carried the run:
+`TornadoRetrying.__call__` never consults `enabled`, the one inert site of
+six (the sweep had certified that row without exercising the documented
+parameter); the exponential-wait docstrings rewritten by this very run's
+DOC-001 fix are off by one attempt, and the docs battery shares the same
+index conflation, so instrument and prose agreed with each other while
+both disagreed with the running loop; the release note for that fix
+carries the identical off-by-one. The final rejection planted seven
+falsehoods in the documentation the run's battery claims to grade and the
+battery stayed green - an instrument never observed failing, certifying
+prose it does not parse. The ledger at close holds 2 Medium and 2 Low,
+all gate-filed instrument and documentation debt with acceptance lines.
+One classification for the wave's acceptance record: of the nine REJECT
+reasons across the four verdicts, eight are product or instrument
+defects; one - a PLAN.md sentence naming a carried finding that exists
+nowhere on the ledger - follows from the state files alone and is
+recorded against P1-63's claim-currency class.

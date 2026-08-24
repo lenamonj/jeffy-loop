@@ -1,0 +1,877 @@
+diff --git a/.gitignore b/.gitignore
+index fa9759a4..d3c71a97 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -83,3 +83,4 @@ dmypy.json
+ 
+ # ruff
+ .ruff_cache
++.claude/jeffy-loop.local.md
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index ae983d74..527618e4 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -14,6 +14,60 @@ Bug fixes:
+   (not `ValueError`) for NaN in `TimeDelta <marshmallow.fields.TimeDelta>`
+   (:pr:`3004`).
+   Thanks :user:`vidigoat` for the PR.
++- A ``pass_collection`` pre-load hook that changes the item count no longer makes
++  `Schema.load <marshmallow.Schema.load>` raise ``ValueError`` from ``zip``, and a
++  hook that drops items no longer leaves a ``None`` in the loaded result or calls a
++  ``pass_original`` post-load hook for an item that does not exist.
++- After a ``pass_collection`` pre-load unwraps an envelope, the raw input is a
++  mapping, so ``pass_original`` hooks now receive `None` per item instead of the
++  mapping's keys.
++- A ``pass_original`` post-dump hook receives the original object again when ``obj``
++  is a collection that is not a registered ``Sequence``, such as a set, a ``dict``
++  view or an ORM queryset.
++- A `validates <marshmallow.decorators.validates>` validator on a field whose
++  ``attribute`` contains a dot now runs. Deserialization writes such a value as a
++  nested path, and the validator dispatch looked it up as a flat key, so the
++  validator was silently skipped and the value was never validated.
++- A value rejected by a `validates <marshmallow.decorators.validates>` validator is
++  no longer left in ``ValidationError.valid_data`` when the field sets ``attribute``.
++- ``class_registry.get_class(name, all=True)`` now returns a list whatever the
++  number of matches. It previously returned the class itself when exactly one was
++  registered, so indexing, ``len`` and iteration raised ``TypeError`` on the common
++  case even though its declared return type is a list.
++- `Schema.Meta.fields <marshmallow.Schema.Meta.fields>` naming a field that is not
++  declared on the schema now raises a `ValueError` naming it, as an unknown ``only``
++  or ``exclude`` name already did. Previously it surfaced as a bare ``KeyError``
++  when the field was selected. Implicit field creation was removed in 4.0, so such
++  a name has nothing to bind to.
++- Registering a schema class again from a module that already registered a class
++  of that name now replaces that module's entry instead of keeping the first one.
++  Previously the bare class name kept resolving to the stale class while the
++  module-qualified path resolved to the new one, so ``fields.Nested("Name")``
++  silently used an outdated schema after a module was re-executed.
++
++Documentation:
++
++- Correct the ``validate`` parameter documentation on
++  `Field <marshmallow.fields.Field>`: since 4.0 a validator must raise a
++  `ValidationError <marshmallow.exceptions.ValidationError>` to reject a value,
++  and its return value is ignored. The old text still described the 3.x
++  behaviour of rejecting a value when the validator returned `False`.
++- Correct the ``truthy`` and ``falsy`` parameter documentation on
++  `Boolean <marshmallow.fields.Boolean>`: they apply to deserialization only,
++  because 4.0 stopped serializing non-boolean values.
++- Remove ``additional`` from the documented `Schema.Meta <marshmallow.Schema.Meta>`
++  options. It has been read by nothing since implicit field creation was removed
++  in 4.0.
++- Remove the ``default`` parameter from the `Url <marshmallow.fields.Url>`
++  docstring. It was renamed to ``dump_default`` in 3.13.
++
++Other changes:
++
++- Remove the ``validator_failed`` default error message from
++  `Field <marshmallow.fields.Field>` and the ``format`` default error messages
++  from the date, time and timedelta fields. No code path could raise any of
++  them: ``validator_failed`` became unreachable in 4.0 and ``format`` in 3.0,
++  when serialization stopped validating.
+ 
+ 4.3.1 (2026-08-08)
+ ------------------
+diff --git a/src/marshmallow/class_registry.py b/src/marshmallow/class_registry.py
+index 6c02f9cd..75696a49 100644
+--- a/src/marshmallow/class_registry.py
++++ b/src/marshmallow/class_registry.py
+@@ -51,15 +51,20 @@ def register(classname: str, cls: SchemaType) -> None:
+     # Full module path to the class
+     # e.g. user.schemas.UserSchema
+     fullpath = f"{module}.{classname}"
+-    # If the class is already registered; need to check if the entries are
+-    # in the same module as cls to avoid having multiple instances of the same
+-    # class in the registry
+-    if classname in _registry and not any(
+-        each.__module__ == module for each in _registry[classname]
+-    ):
+-        _registry[classname].append(cls)
+-    elif classname not in _registry:
++    # Keep at most one entry per (classname, module) pair. A class registering
++    # again from a module already present replaces that entry rather than being
++    # dropped, so a re-executed module does not leave the bare name resolving to
++    # a stale class while the full path resolves to the new one. A class sharing
++    # a name with one from another module is a different class, and both are kept.
++    if classname not in _registry:
+         _registry[classname] = [cls]
++    else:
++        for index, registered in enumerate(_registry[classname]):
++            if registered.__module__ == module:
++                _registry[classname][index] = cls
++                break
++        else:
++            _registry[classname].append(cls)
+ 
+     # Also register the full path
+     if fullpath not in _registry:
+@@ -74,9 +79,7 @@ def get_class(classname: str, *, all: typing.Literal[False] = ...) -> SchemaType
+ 
+ 
+ @typing.overload
+-def get_class(
+-    classname: str, *, all: typing.Literal[True] = ...
+-) -> list[SchemaType]: ...
++def get_class(classname: str, *, all: typing.Literal[True]) -> list[SchemaType]: ...
+ 
+ 
+ def get_class(classname: str, *, all: bool = False) -> list[SchemaType] | SchemaType:  # noqa: A002
+@@ -92,12 +95,12 @@ def get_class(classname: str, *, all: bool = False) -> list[SchemaType] | Schema
+             f"Class with name {classname!r} was not found. You may need "
+             "to import the class."
+         ) from error
++    if all:
++        return classes
+     if len(classes) > 1:
+-        if all:
+-            return _registry[classname]
+         raise RegistryError(
+             f"Multiple classes with name {classname!r} "
+             "were found. Please use the full, "
+             "module-qualified path."
+         )
+-    return _registry[classname][0]
++    return classes[0]
+diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
+index 69e8dbb1..eee2bd8d 100644
+--- a/src/marshmallow/fields.py
++++ b/src/marshmallow/fields.py
+@@ -138,9 +138,9 @@ class Field(typing.Generic[_InternalT]):
+         that are invalid variable names, unsuitable for field names. In most cases,
+         you should use ``data_key`` instead.
+     :param validate: Validator or collection of validators that are called
+-        during deserialization. Validator takes a field's input value as
+-        its only parameter and returns a boolean.
+-        If it returns `False`, an :exc:`ValidationError` is raised.
++        during deserialization. A validator takes a field's input value as its
++        only parameter and raises a :exc:`ValidationError` if the value is
++        invalid. Its return value is ignored.
+     :param pre_load: Callable or collection of callables that are applied to the
+         raw input value before deserialization. Each callable receives the value
+         and returns a transformed value.
+@@ -171,6 +171,9 @@ class Field(typing.Generic[_InternalT]):
+         Use `Raw <marshmallow.fields.Raw>` or another `Field <marshmallow.fields.Field>` subclass instead.
+     .. versionchanged:: 4.0.0
+         Remove ``context`` property.
++    .. versionchanged:: 4.0.0
++        A validator must raise a :exc:`ValidationError` to reject a value.
++        Returning `False` no longer rejects it.
+     .. versionchanged:: 4.3.0
+         Add ``pre_load`` and ``post_load``.
+     """
+@@ -186,7 +189,6 @@ class Field(typing.Generic[_InternalT]):
+     default_error_messages: types.ErrorMessages = {
+         "required": "Missing data for required field.",
+         "null": "Field may not be null.",
+-        "validator_failed": "Invalid value.",
+     }
+ 
+     def __init__(
+@@ -1154,12 +1156,19 @@ class Decimal(Number[decimal.Decimal]):
+ class Boolean(Field[bool]):
+     """A boolean field.
+ 
+-    :param truthy: Values that will (de)serialize to `True`. If an empty
++    :param truthy: Values that will deserialize to `True`. If an empty
+         set, any non-falsy value will deserialize to `True`. If `None`,
+         `marshmallow.fields.Boolean.truthy` will be used.
+-    :param falsy: Values that will (de)serialize to `False`. If `None`,
++    :param falsy: Values that will deserialize to `False`. If `None`,
+         `marshmallow.fields.Boolean.falsy` will be used.
+     :param kwargs: The same keyword arguments that :class:`Field` receives.
++
++    .. note::
++        ``truthy`` and ``falsy`` apply to deserialization only. Serialization
++        passes the value through unchanged.
++
++    .. versionchanged:: 4.0.0
++        No longer serializes non-boolean values.
+     """
+ 
+     #: Default truthy values.
+@@ -1256,7 +1265,6 @@ class _TemporalField(Field[_D], metaclass=abc.ABCMeta):
+     default_error_messages = {
+         "invalid": "Not a valid {obj_type}.",
+         "invalid_awareness": "Not a valid {awareness} {obj_type}.",
+-        "format": '"{input}" cannot be formatted as a {obj_type}.',
+     }
+ 
+     def __init__(
+@@ -1467,10 +1475,7 @@ class Date(_TemporalField[dt.date]):
+     """
+ 
+     #: Default error messages.
+-    default_error_messages = {
+-        "invalid": "Not a valid date.",
+-        "format": '"{input}" cannot be formatted as a date.',
+-    }
++    default_error_messages = {"invalid": "Not a valid date."}
+ 
+     SERIALIZATION_FUNCS = {
+         "iso": dt.date.isoformat,
+@@ -1540,10 +1545,7 @@ class TimeDelta(Field[dt.timedelta]):
+     }
+ 
+     #: Default error messages.
+-    default_error_messages = {
+-        "invalid": "Not a valid period of time.",
+-        "format": "{input!r} cannot be formatted as a timedelta.",
+-    }
++    default_error_messages = {"invalid": "Not a valid period of time."}
+ 
+     def __init__(
+         self,
+@@ -1746,7 +1748,6 @@ class Dict(Mapping[dict]):
+ class Url(String):
+     """An URL field.
+ 
+-    :param default: Default value for the field if the attribute is not set.
+     :param relative: Whether to allow relative URLs.
+     :param absolute: Whether to allow absolute URLs.
+     :param require_tld: Whether to reject non-FQDN hostnames.
+diff --git a/src/marshmallow/schema.py b/src/marshmallow/schema.py
+index 8024dfe1..7049b8c4 100644
+--- a/src/marshmallow/schema.py
++++ b/src/marshmallow/schema.py
+@@ -16,7 +16,6 @@ import uuid
+ from abc import ABCMeta
+ from collections import defaultdict
+ from collections.abc import Mapping, Sequence
+-from itertools import zip_longest
+ 
+ from marshmallow import class_registry, types
+ from marshmallow import fields as ma_fields
+@@ -43,6 +42,60 @@ if typing.TYPE_CHECKING:
+     from marshmallow.fields import Field
+ 
+ 
++def _pair_with_originals(
++    data: typing.Iterable, original_data: typing.Any
++) -> typing.Iterator[tuple[typing.Any, typing.Any]]:
++    """Pair each item with the raw input it came from, best-effort.
++
++    A ``pass_collection`` pre-load hook may change the item count or the shape:
++    filtering drops entries, and unwrapping an envelope leaves a mapping here
++    rather than a collection of items. So originals are paired positionally where
++    there is one and `None` where there is not. Iterating ``data`` rather than the
++    pair is what keeps a processor or a validator from being handed an item that
++    does not exist, and what keeps a mapping's keys from being mistaken for its
++    items. Any collection is paired, not only a registered `Sequence`: a set, a
++    `dict` view and an ORM queryset all reach `dump` as ``obj``.
++    """
++    originals = list(original_data) if is_collection(original_data) else []
++    for index, item in enumerate(data):
++        yield item, (originals[index] if index < len(originals) else None)
++
++
++def _lookup_value(dct: typing.Any, key: str) -> typing.Any:
++    """Read a value that `marshmallow.utils.set_value` wrote under ``key``.
++
++    Mirrors `set_value` and `_remove_value`: a dotted key is a path and only
++    mappings are traversed. Unlike `marshmallow.utils.get_value` this never falls
++    back to attribute access, so a field named after a `dict` method - ``items``,
++    ``keys``, ``values`` and the rest - reads as absent when it is absent, instead
++    of resolving to a bound method.
++    """
++    if not isinstance(dct, Mapping):
++        return missing
++    if "." in key:
++        head, rest = key.split(".", 1)
++        return _lookup_value(dct.get(head, missing), rest)
++    return dct.get(key, missing)
++
++
++def _remove_value(dct: dict[str, typing.Any], key: str) -> None:
++    """Remove a value that `marshmallow.utils.set_value` wrote under ``key``.
++
++    Mirrors `set_value`: a dotted key is a path, and a container left empty by the
++    removal goes with it, so the result matches what the mapping would hold had the
++    value never been written.
++    """
++    if "." in key:
++        head, rest = key.split(".", 1)
++        target = dct.get(head)
++        if isinstance(target, dict):
++            _remove_value(target, rest)
++            if not target:
++                del dct[head]
++    else:
++        dct.pop(key, None)
++
++
+ def _get_fields(attrs) -> list[tuple[str, Field]]:
+     """Get fields from a class
+ 
+@@ -341,13 +394,13 @@ class Schema(metaclass=SchemaMeta):
+                 class MySchema(Schema):
+                     # Not checked by type checkers
+                     class Meta:
+-                        additional = True
++                        fields = True
+ 
+ 
+                 class MySchema2(Schema):
+                     # Type checkers will check attributes
+                     class Meta(Schema.Meta):
+-                        additional = True  # Incompatible types in assignment
++                        fields = True  # Incompatible types in assignment
+ 
+         .. versionremoved:: 3.0.0b7 Remove ``strict``.
+         .. versionadded:: 3.0.0b12 Add `unknown`.
+@@ -359,11 +412,6 @@ class Schema(metaclass=SchemaMeta):
+ 
+         fields: typing.ClassVar[tuple[str, ...] | list[str]]
+         """Fields to include in the (de)serialized result"""
+-        additional: typing.ClassVar[tuple[str, ...] | list[str]]
+-        """Fields to include in addition to the explicitly declared fields.
+-        `additional <marshmallow.Schema.Meta.additional>` and `fields <marshmallow.Schema.Meta.fields>`
+-        are mutually-exclusive options.
+-        """
+         include: typing.ClassVar[dict[str, Field]]
+         """Dictionary of additional fields to include in the schema. It is
+         usually better to define fields as class variables, but you may need to
+@@ -983,13 +1031,20 @@ class Schema(metaclass=SchemaMeta):
+         """Update self.fields, self.load_fields, and self.dump_fields based on schema options.
+         This method is private API.
+         """
++        invalid_fields = self.set_class()
++
+         if self.opts.fields:
+             available_field_names = self.set_class(self.opts.fields)
++            # `fields` may only name declared fields. Implicit field creation was
++            # removed in 4.0, so an undeclared name has nothing to bind to; report
++            # it the same way an unknown `only` or `exclude` name is reported
++            # rather than letting it surface as a KeyError when it is selected.
++            invalid_fields |= available_field_names - self.set_class(
++                self.declared_fields.keys()
++            )
+         else:
+             available_field_names = self.set_class(self.declared_fields.keys())
+ 
+-        invalid_fields = self.set_class()
+-
+         if self.only is not None:
+             # Return only fields specified in only option
+             field_names: typing.AbstractSet[typing.Any] = self.set_class(self.only)
+@@ -1140,36 +1195,37 @@ class Schema(metaclass=SchemaMeta):
+                 )
+                 do_validate = functools.partial(validator, data_key=data_key)
+ 
++                # `_deserialize` wrote this value with `set_value`, so read it back
++                # with the matching accessor: a dotted `attribute` is a path there,
++                # and a plain lookup would miss it and skip the validator in silence.
++                key = field_obj.attribute or field_name
++
+                 if many:
+                     for idx, item in enumerate(data):
+-                        try:
+-                            value = item[field_obj.attribute or field_name]
+-                        except KeyError:
+-                            pass
+-                        else:
+-                            validated_value = self._call_and_store(
+-                                getter_func=do_validate,
+-                                data=value,
+-                                field_name=data_key,
+-                                error_store=error_store,
+-                                index=(idx if self.opts.index_errors else None),
+-                            )
+-                            if validated_value is missing:
+-                                item.pop(field_name, None)
+-                else:
+-                    try:
+-                        value = data[field_obj.attribute or field_name]
+-                    except KeyError:
+-                        pass
+-                    else:
++                        value = _lookup_value(item, key)
++                        if value is missing:
++                            continue
+                         validated_value = self._call_and_store(
+                             getter_func=do_validate,
+                             data=value,
+                             field_name=data_key,
+                             error_store=error_store,
++                            index=(idx if self.opts.index_errors else None),
+                         )
+                         if validated_value is missing:
+-                            data.pop(field_name, None)
++                            _remove_value(item, key)
++                else:
++                    value = _lookup_value(data, key)
++                    if value is missing:
++                        continue
++                    validated_value = self._call_and_store(
++                        getter_func=do_validate,
++                        data=value,
++                        field_name=data_key,
++                        error_store=error_store,
++                    )
++                    if validated_value is missing:
++                        _remove_value(data, key)
+ 
+     def _invoke_schema_validators(
+         self,
+@@ -1193,7 +1249,7 @@ class Schema(metaclass=SchemaMeta):
+ 
+             if many and not pass_collection:
+                 for idx, (item, orig) in enumerate(
+-                    zip(data, original_data, strict=True)
++                    _pair_with_originals(data, original_data)
+                 ):
+                     self._run_validator(
+                         validator,
+@@ -1239,7 +1295,7 @@ class Schema(metaclass=SchemaMeta):
+                 if pass_original:
+                     data = [
+                         processor(item, original, many=many, **kwargs)
+-                        for item, original in zip_longest(data, original_data)
++                        for item, original in _pair_with_originals(data, original_data)
+                     ]
+                 else:
+                     data = [processor(item, many=many, **kwargs) for item in data]
+diff --git a/tests/mypy_test_cases/test_class_registry.py b/tests/mypy_test_cases/test_class_registry.py
+index ef5b9dae..484f37e8 100644
+--- a/tests/mypy_test_cases/test_class_registry.py
++++ b/tests/mypy_test_cases/test_class_registry.py
+@@ -1,4 +1,10 @@
+-from marshmallow import class_registry
++from marshmallow import Schema, class_registry
+ 
+ # Works without passing `all`
+ class_registry.get_class("MySchema")
++
++# `all=False` yields a single class, `all=True` a list of them. These annotations
++# are the assertion: a return type that stopped matching fails type checking here.
++one: type[Schema] = class_registry.get_class("MySchema")
++also_one: type[Schema] = class_registry.get_class("MySchema", all=False)
++several: list[type[Schema]] = class_registry.get_class("MySchema", all=True)
+diff --git a/tests/mypy_test_cases/test_schema.py b/tests/mypy_test_cases/test_schema.py
+index e1363786..26b26d2a 100644
+--- a/tests/mypy_test_cases/test_schema.py
++++ b/tests/mypy_test_cases/test_schema.py
+@@ -11,7 +11,6 @@ class MySchema(Schema):
+ 
+     class Meta(Schema.Meta):
+         fields = ("foo", "bar")
+-        additional = ("baz", "qux")
+         include = {
+             "foo2": String(),
+         }
+diff --git a/tests/test_decorators.py b/tests/test_decorators.py
+index fce7e442..3bb43249 100644
+--- a/tests/test_decorators.py
++++ b/tests/test_decorators.py
+@@ -286,6 +286,222 @@ class TestValidatesDecorator:
+         with pytest.raises(ValidationError):
+             S1(many=True).load([{"s": "foo"}])
+ 
++    def test_validates_with_dotted_attribute(self):
++        """A validator on a field whose ``attribute`` is a path must still run:
++        ``_deserialize`` writes such a value with ``set_value``, so reading it back
++        with a plain lookup misses it and skips the validator in silence.
++        """
++        invoked = []
++
++        class S1(Schema):
++            s = fields.String(attribute="nested.name")
++
++            @validates("s")
++            def validate_string(self, data, **kwargs):
++                invoked.append(data)
++                raise ValidationError("nope")
++
++        with pytest.raises(ValidationError) as excinfo:
++            S1().load({"s": "foo"})
++        assert excinfo.value.messages == {"s": ["nope"]}
++        assert invoked == ["foo"]
++
++        invoked.clear()
++        with pytest.raises(ValidationError) as excinfo:
++            S1(many=True).load([{"s": "foo"}])
++        assert excinfo.value.messages == {0: {"s": ["nope"]}}
++        assert invoked == ["foo"]
++
++    def test_validates_with_dotted_attribute_passing_validator_keeps_the_value(self):
++        class S1(Schema):
++            s = fields.String(attribute="nested.name")
++
++            @validates("s")
++            def validate_string(self, data, **kwargs):
++                return None
++
++        assert S1().load({"s": "foo"}) == {"nested": {"name": "foo"}}
++
++    @pytest.mark.parametrize("attribute", [None, "string_name", "nested.name"])
++    def test_rejected_value_is_absent_from_valid_data(self, attribute):
++        """A value a validator rejected must not appear in ``valid_data``, whatever
++        the field's ``attribute`` is.
++        """
++
++        class S1(Schema):
++            s = fields.String(attribute=attribute)
++
++            @validates("s")
++            def validate_string(self, data, **kwargs):
++                raise ValidationError("nope")
++
++        with pytest.raises(ValidationError) as excinfo:
++            S1().load({"s": "foo"})
++        assert excinfo.value.valid_data == {}
++
++        with pytest.raises(ValidationError) as excinfo:
++            S1(many=True).load([{"s": "foo"}])
++        assert excinfo.value.valid_data == [{}]
++
++    def test_collection_pre_load_changing_item_count_does_not_break_validation(self):
++        """A ``pass_collection`` pre-load may change the item count. Pairing items
++        with the raw input has to tolerate that rather than raising ValueError out
++        of ``load``.
++        """
++
++        class Grow(Schema):
++            a = fields.Integer()
++
++            @pre_load(pass_collection=True)
++            def grow(self, data, **kwargs):
++                return [*list(data), {"a": 99}]
++
++            @validates_schema
++            def check(self, data, **kwargs):
++                return None
++
++        assert Grow(many=True).load([{"a": 1}]) == [{"a": 1}, {"a": 99}]
++
++        class Drop(Schema):
++            a = fields.Integer()
++
++            @pre_load(pass_collection=True)
++            def drop(self, data, **kwargs):
++                return list(data)[:-1]
++
++            @validates_schema
++            def check(self, data, **kwargs):
++                return None
++
++        assert Drop(many=True).load([{"a": 1}, {"a": 2}]) == [{"a": 1}]
++
++    def test_collection_pre_load_unwrapping_an_envelope_passes_no_bogus_original(self):
++        """After an envelope is unwrapped the raw input is a mapping, so there is no
++        per-item original to pass; iterating it would hand the validator its keys.
++        """
++        seen = []
++
++        class Envelope(Schema):
++            a = fields.Integer()
++
++            @pre_load(pass_collection=True)
++            def unwrap(self, data, **kwargs):
++                return data["results"]
++
++            @validates_schema(pass_original=True)
++            def check(self, data, original, **kwargs):
++                seen.append(original)
++
++        assert Envelope(many=True).load({"results": [{"a": 1}, {"a": 2}]}) == [
++            {"a": 1},
++            {"a": 2},
++        ]
++        assert seen == [None, None]
++
++    def test_post_load_pass_original_is_not_called_for_items_that_do_not_exist(self):
++        """A shrinking ``pass_collection`` pre-load used to pad the pairing, calling
++        the processor with ``None`` and leaving a ``None`` in the loaded result.
++        """
++        seen = []
++
++        class Drop(Schema):
++            a = fields.Integer()
++
++            @pre_load(pass_collection=True)
++            def drop(self, data, **kwargs):
++                return list(data)[:-1]
++
++            @post_load(pass_original=True)
++            def tag(self, data, original, **kwargs):
++                seen.append((data, original))
++                return data
++
++        assert Drop(many=True).load([{"a": 1}, {"a": 2}]) == [{"a": 1}]
++        assert seen == [({"a": 1}, {"a": 1})]
++
++    def test_post_dump_pass_original_pairing_is_unchanged(self):
++        class D(Schema):
++            a = fields.Integer()
++
++            @post_dump(pass_original=True)
++            def tag(self, data, original, **kwargs):
++                return {**data, "orig": original}
++
++        assert D(many=True).dump([{"a": 1}, {"a": 2}]) == [
++            {"a": 1, "orig": {"a": 1}},
++            {"a": 2, "orig": {"a": 2}},
++        ]
++        assert D(many=True).dump(({"a": 1},)) == [{"a": 1, "orig": {"a": 1}}]
++
++    @pytest.mark.parametrize(
++        "field_name", [n for n in dir(dict) if not n.startswith("_")]
++    )
++    def test_absent_field_named_after_a_dict_method_is_not_validated(self, field_name):
++        """Looking the value back up must not fall back to attribute access: a field
++        named ``items`` or ``keys`` would otherwise resolve to a bound method of the
++        result mapping and be validated as though it had been supplied.
++        """
++        seen = []
++
++        schema_cls = type(
++            "S",
++            (Schema,),
++            {
++                field_name: fields.Raw(),
++                "check": validates(field_name)(
++                    lambda self, value, data_key: seen.append(value)
++                ),
++            },
++        )
++
++        assert schema_cls().load({}) == {}
++        assert seen == []
++
++    def test_field_named_after_a_dict_method_is_validated_when_supplied(self):
++        seen = []
++
++        class OrderSchema(Schema):
++            items = fields.List(fields.Str())
++
++            @validates("items")
++            def check_items(self, value, data_key):
++                seen.append(value)
++                if len(value) > 3:
++                    raise ValidationError("Too many items.")
++
++        assert OrderSchema().load({"items": ["a"]}) == {"items": ["a"]}
++        assert seen == [["a"]]
++        with pytest.raises(ValidationError):
++            OrderSchema().load({"items": ["a", "b", "c", "d"]})
++
++    def test_post_dump_pass_original_pairs_any_collection(self):
++        """``obj`` reaches ``dump`` as whatever the caller holds - a set, a dict view,
++        an ORM queryset - not only as a registered ``Sequence``.
++        """
++
++        class D(Schema):
++            a = fields.Integer()
++
++            @post_dump(pass_original=True)
++            def tag(self, data, original, **kwargs):
++                return {**data, "orig": original["a"]}
++
++        objs = [{"a": 1}, {"a": 2}]
++        expected = [{"a": 1, "orig": 1}, {"a": 2, "orig": 2}]
++
++        assert D(many=True).dump(objs) == expected
++        assert D(many=True).dump(tuple(objs)) == expected
++        assert D(many=True).dump({1: objs[0], 2: objs[1]}.values()) == expected
++
++        class QuerySet:
++            def __init__(self, items):
++                self._items = items
++
++            def __iter__(self):
++                return iter(self._items)
++
++        assert D(many=True).dump(QuerySet(objs)) == expected
++
+     def test_validates_decorator(self):
+         schema = ValidatesSchema()
+ 
+diff --git a/tests/test_fields.py b/tests/test_fields.py
+index 77d2233d..5a641e26 100644
+--- a/tests/test_fields.py
++++ b/tests/test_fields.py
+@@ -255,7 +255,6 @@ class TestErrorMessages:
+         ("required", "Missing data for required field."),
+         ("null", "Field may not be null."),
+         ("custom", "Custom error message."),
+-        ("validator_failed", "Invalid value."),
+     )
+ 
+     def test_default_error_messages_get_merged_with_parent_error_messages_cstm_msg(
+diff --git a/tests/test_registry.py b/tests/test_registry.py
+index 02307b00..33ce009a 100644
+--- a/tests/test_registry.py
++++ b/tests/test_registry.py
+@@ -1,6 +1,6 @@
+ import pytest
+ 
+-from marshmallow import Schema, class_registry, fields
++from marshmallow import Schema, ValidationError, class_registry, fields
+ from marshmallow.exceptions import RegistryError
+ 
+ 
+@@ -75,14 +75,16 @@ def test_serializer_class_registry_register_same_classname_different_module():
+     # storing for same classname (+0) and different module (+1)
+     assert len(class_registry._registry) == reglen + 2 + 1
+ 
+-    type("MyTestRegSchema", (Schema,), {"__module__": "modB"})
++    mod_b_again = type("MyTestRegSchema", (Schema,), {"__module__": "modB"})
+ 
+     assert "MyTestRegSchema" in class_registry._registry
+     # only the class with matching module has been replaced
+     result = class_registry._registry.get("MyTestRegSchema")
+     assert isinstance(result, list)
+     assert len(result) == 2
++    assert result[1] is mod_b_again
+     assert "modB.MyTestRegSchema" in class_registry._registry
++    assert class_registry._registry["modB.MyTestRegSchema"] == [mod_b_again]
+     # only the class with matching module has been replaced (+0)
+     assert len(class_registry._registry) == reglen + 2 + 1
+ 
+@@ -103,23 +105,64 @@ def test_serializer_class_registry_override_if_same_classname_same_module():
+     # storing for classname and fullpath
+     assert len(class_registry._registry) == reglen + 2
+ 
+-    type("MyTestReg2Schema", (Schema,), {"__module__": "SameModulePath"})
++    override = type("MyTestReg2Schema", (Schema,), {"__module__": "SameModulePath"})
+ 
+     assert "MyTestReg2Schema" in class_registry._registry
+     # overriding same class name and same module
+     result = class_registry._registry.get("MyTestReg2Schema")
+     assert isinstance(result, list)
+     assert len(result) == 1
++    assert result == [override]
+ 
+     assert "SameModulePath.MyTestReg2Schema" in class_registry._registry
+     # overriding same fullpath
+     result = class_registry._registry.get("SameModulePath.MyTestReg2Schema")
+     assert isinstance(result, list)
+     assert len(result) == 1
++    assert result == [override]
+     # overriding for same classname (+0) and different module (+0)
+     assert len(class_registry._registry) == reglen + 2
+ 
+ 
++def test_class_name_and_full_path_agree_after_reregistration():
++    """A module defining a schema twice - a reloaded module, a re-executed
++    notebook cell - must not leave the class name resolving to the stale class
++    while the full path resolves to the new one.
++    """
++    first = type("MyTestReg3Schema", (Schema,), {"__module__": "ReloadedModule"})
++    second = type("MyTestReg3Schema", (Schema,), {"__module__": "ReloadedModule"})
++
++    assert first is not second
++    by_name = class_registry.get_class("MyTestReg3Schema")
++    by_path = class_registry.get_class("ReloadedModule.MyTestReg3Schema")
++    assert by_name is second
++    assert by_path is second
++    assert by_name is by_path
++
++
++def test_nested_by_class_name_resolves_to_the_newest_class():
++    type(
++        "MyTestReg4Schema",
++        (Schema,),
++        {"__module__": "ReloadedModule", "old_field": fields.Integer()},
++    )
++    type(
++        "MyTestReg4Schema",
++        (Schema,),
++        {"__module__": "ReloadedModule", "new_field": fields.Integer()},
++    )
++
++    class Outer(Schema):
++        inner = fields.Nested("MyTestReg4Schema")
++
++    # The nested schema is the newest class, so its field loads and the
++    # replaced class's field is unknown.
++    assert Outer().load({"inner": {"new_field": 1}}) == {"inner": {"new_field": 1}}
++    with pytest.raises(ValidationError) as excinfo:
++        Outer().load({"inner": {"old_field": 1}})
++    assert excinfo.value.messages == {"inner": {"old_field": ["Unknown field."]}}
++
++
+ class A:
+     def __init__(self, _id, b=None):
+         self.id = _id
+@@ -207,9 +250,31 @@ def test_multiple_classes_with_all():
+     from .foo_serializer import FooSerializer as FooSerializer1  # noqa: PLC0415, F401
+ 
+     classes = class_registry.get_class("FooSerializer", all=True)
++    assert isinstance(classes, list)
+     assert len(classes) == 2
+ 
+ 
++def test_single_class_with_all_returns_a_list():
++    """``all=True`` returns a list whatever the number of matches, so a caller
++    written against its declared return type does not break on the common case
++    of a single registered class.
++    """
++    solo = type("MyTestReg5Schema", (Schema,), {"__module__": "SoloModule"})
++
++    classes = class_registry.get_class("MyTestReg5Schema", all=True)
++    assert isinstance(classes, list)
++    assert classes == [solo]
++    assert len(classes) == 1
++    assert classes[0] is solo
++
++
++def test_all_false_is_unchanged_for_a_single_class():
++    solo = type("MyTestReg6Schema", (Schema,), {"__module__": "SoloModule"})
++
++    assert class_registry.get_class("MyTestReg6Schema") is solo
++    assert class_registry.get_class("MyTestReg6Schema", all=False) is solo
++
++
+ def test_can_use_full_module_path_to_class():
+     from .foo_serializer import FooSerializer as FooSerializer1  # noqa: PLC0415, F401
+ 
+diff --git a/tests/test_schema.py b/tests/test_schema.py
+index ff281173..a50964dc 100644
+--- a/tests/test_schema.py
++++ b/tests/test_schema.py
+@@ -1502,6 +1502,45 @@ def test_exclude_invalid_attribute():
+         MySchema(exclude=("bar",))
+ 
+ 
++def test_meta_fields_with_undeclared_field_raises_value_error():
++    """`Meta.fields` may only name declared fields since implicit field creation
++    was removed in 4.0, so an undeclared name is reported the same way an unknown
++    `only` or `exclude` name is rather than surfacing as a KeyError.
++    """
++
++    class MySchema(Schema):
++        foo = fields.Raw()
++
++        class Meta:
++            fields = ("foo", "nope")
++
++    with pytest.raises(ValueError, match="'nope'"):
++        MySchema()
++
++
++def test_meta_fields_undeclared_field_reported_even_when_masked_by_only():
++    class MySchema(Schema):
++        foo = fields.Raw()
++
++        class Meta:
++            fields = ("foo", "nope")
++
++    with pytest.raises(ValueError, match="'nope'"):
++        MySchema(only=("foo",))
++
++
++def test_meta_fields_with_declared_fields_selects_them():
++    class MySchema(Schema):
++        foo = fields.Raw()
++        bar = fields.Raw()
++
++        class Meta:
++            fields = ("foo",)
++
++    assert list(MySchema().fields) == ["foo"]
++    assert MySchema().dump({"foo": 1, "bar": 2}) == {"foo": 1}
++
++
+ def test_only_bounded_by_fields():
+     class MySchema(Schema):
+         class Meta:
