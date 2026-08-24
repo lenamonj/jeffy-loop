@@ -1,0 +1,135 @@
+diff --git a/.gitignore b/.gitignore
+index e28076d..0f3f9fa 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,4 @@
+ /target/
+ /upstream
+ /Cargo.lock
++.claude/jeffy-loop.local.md
+diff --git a/Cargo.toml b/Cargo.toml
+index 764da0f..4243e7e 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -6,7 +6,22 @@ categories = ["value-formatting", "no-std", "no-std::no-alloc"]
+ description = "Fast floating point to string conversion"
+ documentation = "https://docs.rs/ryu"
+ edition = "2021"
+-exclude = ["build.rs", "*.png"]
++# An allowlist, not a denylist: `exclude` admitted every new top-level path by
++# default, so anything added beside the crate shipped to crates.io until someone
++# noticed. Listing what belongs in the artifact means a new file has to be named
++# here to reach consumers. build.rs and the chart PNGs are deliberately absent -
++# the published crate needs neither, which is what the note in build.rs refers to.
++include = [
++    "/.github",
++    "/.gitignore",
++    "/benches",
++    "/examples",
++    "/src",
++    "/tests",
++    "/LICENSE-APACHE",
++    "/LICENSE-BOOST",
++    "/README.md",
++]
+ keywords = ["float"]
+ license = "Apache-2.0 OR BSL-1.0"
+ repository = "https://github.com/dtolnay/ryu"
+diff --git a/src/s2d.rs b/src/s2d.rs
+index 0483229..da14317 100644
+--- a/src/s2d.rs
++++ b/src/s2d.rs
+@@ -23,6 +23,7 @@ pub fn s2d(buffer: &[u8]) -> Result<f64, Error> {
+     let mut dot_index = len;
+     let mut e_index = len;
+     let mut m10 = 0u64;
++    let mut pending_zeros = 0i32;
+     let mut e10 = 0i32;
+     let mut signed_m = false;
+     let mut signed_e = false;
+@@ -45,6 +46,25 @@ pub fn s2d(buffer: &[u8]) -> Result<f64, Error> {
+         if c < b'0' || c > b'9' {
+             break;
+         }
++        // Zeros to the right of the last significant digit carry no
++        // information, so they are held back rather than spent against the
++        // digit budget: they are flushed into m10 only if a non-zero digit
++        // follows, and otherwise become a power of ten in the exponent below.
++        // Counting them here is what made this parser reject decimals its own
++        // formatter produces, whose plain form pads with trailing zeros.
++        if c == b'0' && m10 != 0 {
++            pending_zeros += 1;
++            i += 1;
++            continue;
++        }
++        while pending_zeros != 0 {
++            if m10digits >= 17 {
++                return Err(Error::InputTooLong);
++            }
++            m10 *= 10;
++            m10digits += 1;
++            pending_zeros -= 1;
++        }
+         if m10digits >= 17 {
+             return Err(Error::InputTooLong);
+         }
+@@ -93,6 +113,10 @@ pub fn s2d(buffer: &[u8]) -> Result<f64, Error> {
+     } else {
+         0
+     };
++    // The zeros held back above were counted by the adjustment just made, so
++    // returning them to the exponent restores the value exactly: m10 shrank by
++    // a factor of 10 for each one.
++    e10 += pending_zeros;
+     if m10 == 0 {
+         return Ok(if signed_m { -0.0 } else { 0.0 });
+     }
+diff --git a/src/s2f.rs b/src/s2f.rs
+index ec28e7f..443227e 100644
+--- a/src/s2f.rs
++++ b/src/s2f.rs
+@@ -25,6 +25,7 @@ pub fn s2f(buffer: &[u8]) -> Result<f32, Error> {
+     let mut dot_index = len;
+     let mut e_index = len;
+     let mut m10 = 0u32;
++    let mut pending_zeros = 0i32;
+     let mut e10 = 0i32;
+     let mut signed_m = false;
+     let mut signed_e = false;
+@@ -47,6 +48,25 @@ pub fn s2f(buffer: &[u8]) -> Result<f32, Error> {
+         if c < b'0' || c > b'9' {
+             break;
+         }
++        // Zeros to the right of the last significant digit carry no
++        // information, so they are held back rather than spent against the
++        // digit budget: they are flushed into m10 only if a non-zero digit
++        // follows, and otherwise become a power of ten in the exponent below.
++        // Counting them here is what made this parser reject decimals its own
++        // formatter produces, whose plain form pads with trailing zeros.
++        if c == b'0' && m10 != 0 {
++            pending_zeros += 1;
++            i += 1;
++            continue;
++        }
++        while pending_zeros != 0 {
++            if m10digits >= 9 {
++                return Err(Error::InputTooLong);
++            }
++            m10 *= 10;
++            m10digits += 1;
++            pending_zeros -= 1;
++        }
+         if m10digits >= 9 {
+             return Err(Error::InputTooLong);
+         }
+@@ -95,6 +115,10 @@ pub fn s2f(buffer: &[u8]) -> Result<f32, Error> {
+     } else {
+         0
+     };
++    // The zeros held back above were counted by the adjustment just made, so
++    // returning them to the exponent restores the value exactly: m10 shrank by
++    // a factor of 10 for each one.
++    e10 += pending_zeros;
+     if m10 == 0 {
+         return Ok(if signed_m { -0.0 } else { 0.0 });
+     }

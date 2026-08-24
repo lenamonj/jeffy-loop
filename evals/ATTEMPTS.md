@@ -24,6 +24,7 @@ loss rather than hiding it.
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | Catch2 | 4 | 35 | converged | evaluator countersigned | 1 |
 | Carbon | 4 | 17 | **not converged** | n/a | 1 |
+| cast | 2 | 22 | **not converged** | n/a | 0 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
 | clap | 4 | 31 | converged | evaluator countersigned | 0 |
@@ -43,6 +44,7 @@ loss rather than hiding it.
 | FluentValidation | 1 | 8 | converged | evaluator countersigned | 0 |
 | go-cmp | 2 | 15 | converged | evaluator countersigned | 0 |
 | go-humanize | 2 | 21 | **not converged** | n/a | 2 |
+| go-querystring | 2 | 20 | **not converged** | n/a | 1 |
 | go-uuid | 2 | 20 | converged | evaluator countersigned | 0 |
 | go-yaml | 3 | 29 | converged | evaluator countersigned | 0 |
 | godotenv | 2 | 19 | converged | evaluator countersigned | 0 |
@@ -70,6 +72,7 @@ loss rather than hiding it.
 | RuboCop | 1 | 7 | converged | evaluator countersigned | 0 |
 | rust-semver | 2 | 16 | converged | evaluator countersigned | 1 |
 | rust-url | 3 | 30 | converged | evaluator countersigned | 0 |
+| ryu | 1 | 10 | converged | evaluator countersigned | 0 |
 | shopspring/decimal | 4 | 33 | **not converged** | n/a | 4 |
 | spdlog | 4 | 40 | **not converged** | n/a | 1 |
 | sqlparse | 5 | 47 | converged | evaluator countersigned | 2 |
@@ -96,13 +99,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 38 brownfield convergences:
+The engine tightened over time. Of the 42 brownfield convergences:
 
-- **33** were countersigned by the adversarial evaluator, the current standard.
+- **37** were countersigned by the adversarial evaluator, the current standard.
   Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp` and `godotenv` met
+  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck` and `ryu` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -112,7 +115,7 @@ The engine tightened over time. Of the 38 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 38 as one number
+Every receipt names the standard its own run met. Pooling all 42 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -126,7 +129,7 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 38 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 42 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
 `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
 `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp` and `godotenv`, and each receipt names what it
@@ -1082,3 +1085,55 @@ remain, all in the parse and compose direction, and the final wrap-up names
 which to take first and why. Two Highs are blocked on semantic decisions that
 belong to the upstream maintainer rather than to the loop. No second attempt is
 declared here.
+
+## cast, two runs against the config-casting library under viper
+
+`spf13/cast` is the type-casting library beneath much of Go's configuration
+ecosystem, run as part of the first cohort on engine 1.16.0 against a
+pre-registered budget of two rounds of ten. It did not converge, and the
+record is the opposite of a null result: **15 findings closed - 7 High, 4
+Medium, 4 Low - across a 20-of-20-row sweep**, with a +1,209/-141 diff and
+both evaluator invocations spent on genuine product defects. The Highs are
+one family wearing seven names: unchecked numeric narrowing and silently
+swallowed errors - string-to-integer casts that never range-checked,
+`ToFloat32E(float64(1e40))` returning `(+Inf, nil)` while the same value as
+a string errored, maps with unexpected key types panicking instead of
+erroring. The first gate REJECT filed the sharpest one: `ToDurationE`
+narrows a float64 unchecked, so `+Inf`, `NaN` and `1e30` all return the
+same wrong negative duration **with a nil error**, propagating through
+`ToE[time.Duration]` and the slice casts, while the correct refusal already
+existed two lines away in `ToInt64E`. The terminal second REJECT filed the
+class the run had not finished: ten element-wise map-cast sites that drop
+per-element conversion errors and report success -
+`ToStringMapIntE(map[string]any{"a": "notanint"})` is `0` with a nil error
+- traced to a 54-subtest error-contract suite in which not one subtest
+drives a failing element. Both rejections were about the library, not the
+run's bookkeeping, which is what the cohort's acceptance test asks. The
+ledger at close held six open findings; no third round was granted because
+the budget said two.
+
+## go-querystring, two runs against the URL-encoder with a crash class
+
+`google/go-querystring` encodes Go structs into URL query strings, and its
+cohort story has two threads. The engine thread: its first three launch
+attempts died to host infrastructure - twice to a WSL teardown that killed
+every process, once to the run's own iteration-1 probe allocating 15 GB and
+taking the global OOM killer through the whole campaign cgroup - and the
+published attempt ran under a memory-capped systemd unit built from those
+lessons. The product thread is a single defect class with remarkable reach:
+**cyclic values reach `fmt.Sprint`, which has no cycle detection, and the
+process dies**. The run closed 14 findings across an 8-of-8 sweep
+(+1,032/-15), including the base case (Q001, a self-referential struct
+recursed to death), a `fmt` handoff variant (Q010), and the gate's own
+Q014 (the cycle guard refuses to cross pointers while `valueString` strips
+them, resuming fmt's traversal below the refused pointer). Both REJECTs
+then reproduced further members the run had missed - slice elements holding
+pointers to cyclic values, pointer-to-interface fields whose kind falls
+through the guard's switch - each with working crash reproductions against
+both HEAD and the pre-run tree, plus doc-comment claims the run's own
+battery contradicts. Run 2 ended blocked on the terminal second REJECT;
+the remaining members of the class are the next run's first tasks. One
+more find worth naming: the published Go module zip carried the loop's own
+state files (Q006) - the third packaging channel (crates.io, npm, Go
+modules) the 1.16.0 artifact-channel discipline caught in its first
+cohort.

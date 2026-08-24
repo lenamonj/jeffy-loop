@@ -28,7 +28,7 @@ Three fixes are in other people's code because a maintainer with no stake in thi
 
 A fourth is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
-Behind them: **<!-- count:converged -->41<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **22 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+Behind them: **<!-- count:converged -->42<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **22 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#external-validation-public-open-source-projects)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
 
@@ -185,7 +185,7 @@ Five guarantees. Each one is enforced by the iteration prompt, the state files, 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
-  <img src="media/language-pie-light.png" alt="Pie chart of the 41 converged public targets by language: Python 9 at 22.0 percent, Go 7 at 17.1 percent, Rust 5 at 12.2 percent, JavaScript 4 at 9.8 percent, TypeScript 4 at 9.8 percent, C++ 3 at 7.3 percent, C 2 at 4.9 percent, C# 2 at 4.9 percent, Java 1 at 2.4 percent, Kotlin 1 at 2.4 percent, PHP 1 at 2.4 percent, Ruby 1 at 2.4 percent, Swift 1 at 2.4 percent." width="900">
+  <img src="media/language-pie-light.png" alt="Pie chart of the 42 converged public targets by language: Python 9 at 21.4 percent, Go 7 at 16.7 percent, Rust 6 at 14.3 percent, JavaScript 4 at 9.5 percent, TypeScript 4 at 9.5 percent, C++ 3 at 7.1 percent, C 2 at 4.8 percent, C# 2 at 4.8 percent, Java 1 at 2.4 percent, Kotlin 1 at 2.4 percent, PHP 1 at 2.4 percent, Ruby 1 at 2.4 percent, Swift 1 at 2.4 percent." width="900">
 </picture>
 
 <sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
@@ -194,7 +194,7 @@ Five guarantees. Each one is enforced by the iteration prompt, the state files, 
 
 ## External Validation: Public Open-Source Projects
 
-Testing a tool against its own codebase proves little, so Jeffy was run against widely-used open-source projects with no connection to this repository. <!-- count:converged -->41<!-- /count --> of those runs converged, across <!-- count:languages -->13<!-- /count --> languages. That breadth is evidence of something specific rather than decoration: the engine ships no language-specific analyzer, no ruleset, and no per-ecosystem plugin. It works from what a project already has, its own test suite and its own verify command, so what carries from a Rust CLI to a Ruby linter to a C++ parser is the method itself.
+Testing a tool against its own codebase proves little, so Jeffy was run against widely-used open-source projects with no connection to this repository. <!-- count:converged -->42<!-- /count --> of those runs converged, across <!-- count:languages -->13<!-- /count --> languages. That breadth is evidence of something specific rather than decoration: the engine ships no language-specific analyzer, no ruleset, and no per-ecosystem plugin. It works from what a project already has, its own test suite and its own verify command, so what carries from a Rust CLI to a Ruby linter to a C++ parser is the method itself.
 
 Every run used a local clone, and nothing went upstream without a filed issue or PR. Each was held to the rules current at its date, those rules only tightened, and every receipt names the standard its run met.
 
@@ -244,6 +244,7 @@ A method that always converges is not measuring anything, so the record shows wh
 | [go-cmp](evals/go-cmp/REPORT.md) | 4,672 | Go | 15 | - | the smallest surface in the corpus at 620KB, from the same wave whose 4-file target did not converge: Google's comparison library was gated by CI on Go 1.21 alone, and two genuine grouping bugs in its diff reporter hid from a 4,000-case suite. The whole shipped diff is +31/-13 - on a well-kept codebase the loop's bill is small and precise |
 | [sqlparse](evals/sqlparse/REPORT.md) | 4,009 | Python | 47 | - | the pre-registered budget was five runs and it took five; the loop declined a finding the gate handed it, after running the claim |
 | [rrule](evals/rrule/REPORT.md) | 3,738 | TypeScript | 33 | - | 23 findings, 10 High, in the RFC 5545 library behind much of the JavaScript calendar ecosystem; the reference implementation overruled one of the loop's own High findings and the loop withdrew it |
+| [ryu](evals/ryu/REPORT.md) | 704 | Rust | 10 | - | the float printer under serde_json, converged in one round with a +65/-1 diff: s2f rejected 7,807 strings ryu's own formatter emits, fixed as a class with bit-exact agreement against the standard library - and the run found and closed its own packaging leak, converting the manifest to an include allowlist the gate verified byte-identical against the pre-run crate |
 | [rust-semver](evals/rust-semver/REPORT.md) | 674 | Rust | 16 | - | the version parser under Cargo itself, converged on an empty ledger - and the gate rejected twice first, once on a Medium no instrument could see: `cargo package` would have shipped the loop's own audit ledger inside the published crate tarball, and the packaging probe graded exit status instead of contents |
 | [heck](evals/heck/REPORT.md) | 595 | Rust | 17 | - | the case converter under cargo and serde codegen, graded against the Unicode Character Database itself: seven Mediums closed, and the gate found the headline High - NFD text silently losing its combining marks - that the run's own 149,106-point differential was structurally blind to, because its reference split words on the same predicate. That High is carried blocked on an owner decision, stated on the receipt up front |
 
