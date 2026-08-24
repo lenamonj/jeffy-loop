@@ -105,10 +105,19 @@ exactly, 4,632 code points in both sets.
   `claude -p` on **claude-opus-5 (1M context)**, driven by
   `jeffy-campaign.sh`.
 
-## Nothing was sent upstream
+## Nothing was sent upstream, and the check that settled it
 
 Every finding rests on tests this loop wrote; no existing test was
-deleted, disabled or weakened. Whether any of this goes upstream -
-including the NFD-1 decision itself, which is exactly the kind of finding
-a maintainer would want framed as a question rather than a patch - is a
-separate decision, made one finding at a time.
+deleted, disabled or weakened. Before disclosing anything, the upstream
+tracker was searched - and the two sharpest findings turn out to be
+independent rediscoveries of work already filed there and unmerged since
+March 2024: the Final_Sigma fix is open as
+[PR #56](https://github.com/withoutboats/heck/pull/56) with the same
+route-through-`str::to_lowercase` approach and the same Case_Ignorable
+rationale, and the combining-mark deletion behind `NFD-1` is open as
+[PR #57](https://github.com/withoutboats/heck/pull/57), which resolves
+the table-versus-dependency decision by shipping generated Unicode
+tables. Duplicating either would add noise, so nothing was filed. The
+independent rediscovery is left here as what it is: two blind
+derivations of the same defects, which is evidence the findings are
+real.
