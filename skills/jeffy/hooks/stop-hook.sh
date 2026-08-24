@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.15.2"
+JEFFY_VERSION="1.16.0"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -175,6 +175,62 @@ jeffy_write_metrics() {
       cost_estimate_usd: null}' >> "$metrics_dir/$runid8.jsonl" 2>/dev/null || true
 }
 trap jeffy_write_metrics EXIT
+
+# P1-61: the staleness derivation, defined once because two paths consume the
+# same claim. The declaration has refused stale rows since P0-6, but the gate
+# reads the rows one invocation earlier, and a REJECT means the declaration
+# check never runs - rust-semver burned its round on a row its own closing
+# fix had just outdated. The declaration path maps a hit to a refusal exactly
+# as before; the ordinary re-feed maps it to a named notice so bookkeeping is
+# repaired before an invocation is spent on it. The matching rules are P0-8's:
+# each changed path against each non-blank paths line as a shell glob, where a
+# literal is a glob that matches itself and `*` may cross `/`, because
+# over-matching asks for a re-sweep while under-matching certifies moved code.
+# Sets jsr_stale (first stale row's description, empty when none), jsr_linked,
+# jsr_unlinked, jsr_nopaths.
+jeffy_derive_stale_rows() { # $1 project root
+  jsr_stale=""
+  jsr_unlinked=0
+  jsr_linked=0
+  jsr_nopaths=0
+  while IFS= read -r jsr_row; do
+    [ -n "$jsr_row" ] || continue
+    jsr_c="$(printf '%s' "$jsr_row" | grep -oE 'swept at [0-9a-f]{7,40}' | head -n 1 | awk '{print $3}')"
+    jsr_b="$(printf '%s' "$jsr_row" | grep -oE '\.jeffy/probes/[A-Za-z0-9._-]+' | head -n 1)"
+    if [ -z "$jsr_c" ] || [ -z "$jsr_b" ]; then
+      jsr_unlinked=$((jsr_unlinked + 1))
+      continue
+    fi
+    jsr_linked=$((jsr_linked + 1))
+    jsr_pf="$1/$jsr_b/paths"
+    # A battery with no paths file has no scope to check against; counted and
+    # reported by the caller rather than silently passed (P0-8).
+    [ -f "$jsr_pf" ] || { jsr_nopaths=$((jsr_nopaths + 1)); continue; }
+    git -C "$1" rev-parse --verify --quiet "$jsr_c^{commit}" >/dev/null 2>&1 || continue
+    jsr_pat="$(grep -v '^[[:space:]]*$' "$jsr_pf" 2>/dev/null)"
+    [ -n "$jsr_pat" ] || continue
+    jsr_moved=""
+    while IFS= read -r jsr_chg; do
+      [ -n "$jsr_chg" ] || continue
+      while IFS= read -r jsr_gl; do
+        [ -n "$jsr_gl" ] || continue
+        # shellcheck disable=SC2254  # the pattern is the point
+        case "$jsr_chg" in $jsr_gl) jsr_moved="$jsr_chg"; break ;; esac
+      done <<EOF2
+$jsr_pat
+EOF2
+      [ -n "$jsr_moved" ] && break
+    done <<EOF2
+$(git -C "$1" diff --name-only --relative "$jsr_c" HEAD 2>/dev/null)
+EOF2
+    if [ -n "$jsr_moved" ]; then
+      jsr_stale="$(printf '%s' "$jsr_row" | cut -c1-90) (recorded at $jsr_c; $jsr_moved has changed since)"
+      break
+    fi
+  done <<EOF
+$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[x\]/ { print }' "$1/PLAN.md" 2>/dev/null)
+EOF
+}
 
 # Invocations this run has already spent, derived once because two places
 # need it: the declaration's absolute-bound refusal and the closing
@@ -442,73 +498,23 @@ if [ -n "$promise" ]; then
       # inventory and Oracle class lines did when they shipped, and a check
       # that refused every row written before it existed would refuse the
       # whole corpus.
+      # The derivation itself lives in jeffy_derive_stale_rows near the top
+      # of this file (P1-61), because the ordinary re-feed now runs it too:
+      # the gate consumes the same claim before any declaration exists, so
+      # staleness is said at every checkpoint and refused here.
       if [ -z "$violation" ] && [ -f "$root/PLAN.md" ] \
         && command -v git >/dev/null 2>&1 \
         && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
-        stale_row=""
-        unlinked=0
-        linked=0
-        nopaths=0
-        while IFS= read -r row; do
-          [ -n "$row" ] || continue
-          row_c="$(printf '%s' "$row" | grep -oE 'swept at [0-9a-f]{7,40}' | head -n 1 | awk '{print $3}')"
-          row_b="$(printf '%s' "$row" | grep -oE '\.jeffy/probes/[A-Za-z0-9._-]+' | head -n 1)"
-          if [ -z "$row_c" ] || [ -z "$row_b" ]; then
-            unlinked=$((unlinked + 1))
-            continue
-          fi
-          linked=$((linked + 1))
-          pf="$root/$row_b/paths"
-          # A battery with no paths file has no scope to check against; it
-          # is counted and reported rather than silently passed (P0-8).
-          [ -f "$pf" ] || { nopaths=$((nopaths + 1)); continue; }
-          git -C "$root" rev-parse --verify --quiet "$row_c^{commit}" >/dev/null 2>&1 || continue
-          # The battery's own paths file is the row's scope. A path that
-          # changed since the row was recorded means the sweep certifies code
-          # that is no longer there.
-          # The template says one glob per line, and through 1.14.0 this
-          # compared them as fixed strings (grep -F -x): a literal path
-          # matched and a glob never did, so the gate was inert for 164 of
-          # the corpus's 756 paths files and 27 swept rows sat stale behind
-          # it unseen (P0-8). Each changed path is now matched against each
-          # non-blank line as a shell glob - a literal is a glob that matches
-          # itself, and `*` is allowed to cross `/`, because over-matching
-          # asks for a re-sweep while under-matching certifies moved code.
-          # A blank line would match nothing under case, but is skipped for
-          # the same reason as before: an all-blank file is no scope at all
-          # and the row is passed over rather than refused on a vacuous hit.
-          pat="$(grep -v '^[[:space:]]*$' "$pf" 2>/dev/null)"
-          [ -n "$pat" ] || continue
-          moved=""
-          while IFS= read -r chg; do
-            [ -n "$chg" ] || continue
-            while IFS= read -r gl; do
-              [ -n "$gl" ] || continue
-              # shellcheck disable=SC2254  # the pattern is the point
-              case "$chg" in $gl) moved="$chg"; break ;; esac
-            done <<EOF2
-$pat
-EOF2
-            [ -n "$moved" ] && break
-          done <<EOF2
-$(git -C "$root" diff --name-only --relative "$row_c" HEAD 2>/dev/null)
-EOF2
-          if [ -n "$moved" ]; then
-            stale_row="$(printf '%s' "$row" | cut -c1-90) (recorded at $row_c; $moved has changed since)"
-            break
-          fi
-        done <<EOF
-$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[x\]/ { print }' "$root/PLAN.md" 2>/dev/null)
-EOF
-        if [ -n "$stale_row" ]; then
-          violation="a swept Surface inventory row is stale - $stale_row; re-sweep it and re-record the commit, or flip it back to unswept, then re-declare convergence"
-        elif [ "$linked" -eq 0 ] && [ "$unlinked" -gt 0 ]; then
-          echo "jeffy stop hook: no swept row names the battery that swept it ($unlinked rows), so staleness could not be derived; rows written from 1.14.0 carry it." >&2
-        elif [ "$unlinked" -gt 0 ]; then
-          echo "jeffy stop hook: $unlinked of $((linked + unlinked)) swept rows name no battery, so their staleness could not be derived." >&2
+        jeffy_derive_stale_rows "$root"
+        if [ -n "$jsr_stale" ]; then
+          violation="a swept Surface inventory row is stale - $jsr_stale; re-sweep it and re-record the commit, or flip it back to unswept, then re-declare convergence"
+        elif [ "$jsr_linked" -eq 0 ] && [ "$jsr_unlinked" -gt 0 ]; then
+          echo "jeffy stop hook: no swept row names the battery that swept it ($jsr_unlinked rows), so staleness could not be derived; rows written from 1.14.0 carry it." >&2
+        elif [ "$jsr_unlinked" -gt 0 ]; then
+          echo "jeffy stop hook: $jsr_unlinked of $((jsr_linked + jsr_unlinked)) swept rows name no battery, so their staleness could not be derived." >&2
         fi
-        if [ -z "$stale_row" ] && [ "$nopaths" -gt 0 ]; then
-          echo "jeffy stop hook: $nopaths swept row(s) name a battery that has no paths file, so their staleness could not be derived; a battery declares the paths it covers in .jeffy/probes/<battery>/paths, one glob per line." >&2
+        if [ -z "$jsr_stale" ] && [ "$jsr_nopaths" -gt 0 ]; then
+          echo "jeffy stop hook: $jsr_nopaths swept row(s) name a battery that has no paths file, so their staleness could not be derived; a battery declares the paths it covers in .jeffy/probes/<battery>/paths, one glob per line." >&2
         fi
       fi
       # P1-46: a Declined entry's stated reason is a claim the declaration
@@ -532,6 +538,54 @@ EOF
         ' "$root/BACKLOG.md")"
         if [ -n "$underived" ]; then
           violation="a Declined entry carries no recorded derivation, first: $underived; record the command or measurement that establishes its premise as Derivation: <command> (the priced reason cost: exceeds one iteration needs none), re-run it, then re-declare convergence"
+        fi
+      fi
+      # P1-60: the loop's presence leaks through any channel that derives a
+      # published artifact from the tree, and rust-semver's crate tarball
+      # would have shipped 43 loop paths to every consumer because nothing
+      # graded contents - its packaging probe was liveness-only, exit 0 with
+      # or without the leak. The prompt's rule is channel-level (the first
+      # audit enumerates artifact-producing channels); this check mechanizes
+      # the two cheap instances, cargo and npm, by listing the artifact's
+      # real contents and refusing the declaration when a loop path rides.
+      # A missing tool or an unenumerable package (a workspace virtual
+      # manifest) is reported rather than silently passed - the P0-8 posture
+      # - and a tree with neither manifest is not this check's business.
+      jeffy_pkg_grep='^(\.jeffy/|PLAN\.md$|BACKLOG\.md$|JOURNAL\.md$|JOURNAL-archive\.md$)'
+      if [ -z "$violation" ] && [ -f "$root/Cargo.toml" ]; then
+        # cargo lives in ~/.cargo/bin, which login shells add and the
+        # non-interactive shell this hook runs in does not - both study
+        # hosts prove it - so the standard install location is the
+        # fallback before the check declares the tool missing.
+        jeffy_cargo="$(command -v cargo 2>/dev/null || true)"
+        if [ -z "$jeffy_cargo" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+          jeffy_cargo="$HOME/.cargo/bin/cargo"
+        fi
+        if [ -n "$jeffy_cargo" ]; then
+          if pkg_list="$(cd "$root" && "$jeffy_cargo" package --list --allow-dirty 2>/dev/null)"; then
+            pkg_leak="$(printf '%s\n' "$pkg_list" | grep -E "$jeffy_pkg_grep" | head -n 3 | tr '\n' ' ')"
+            if [ -n "$pkg_leak" ]; then
+              violation="the published crate tarball would carry the loop's own state - cargo package --list includes: $pkg_leak; exclude these paths in Cargo.toml and re-declare convergence"
+            fi
+          else
+            echo "jeffy stop hook: cargo package --list failed (a workspace virtual manifest has no single package), so the crate-contents check could not run." >&2
+          fi
+        else
+          echo "jeffy stop hook: Cargo.toml is present but cargo is not on PATH, so the crate-contents check could not run." >&2
+        fi
+      fi
+      if [ -z "$violation" ] && [ -f "$root/package.json" ]; then
+        if command -v npm >/dev/null 2>&1; then
+          if pkg_list="$(cd "$root" && npm pack --dry-run --json --ignore-scripts 2>/dev/null)"; then
+            pkg_leak="$(printf '%s\n' "$pkg_list" | jq -r '.[0].files[].path' 2>/dev/null | grep -E "$jeffy_pkg_grep" | head -n 3 | tr '\n' ' ')"
+            if [ -n "$pkg_leak" ]; then
+              violation="the published npm package would carry the loop's own state - npm pack --dry-run includes: $pkg_leak; exclude these paths via the package.json files allowlist or .npmignore and re-declare convergence"
+            fi
+          else
+            echo "jeffy stop hook: npm pack --dry-run failed, so the package-contents check could not run." >&2
+          fi
+        else
+          echo "jeffy stop hook: package.json is present but npm is not on PATH, so the package-contents check could not run." >&2
         fi
       fi
       # Oracle declaration: the exit status of the project's own gate is the
@@ -1668,6 +1722,57 @@ if [ "$fp_hash" != "none" ] && [ -z "$stall_exempt" ] && [ -z "$osc_skip" ]; the
   fi
 fi
 
+# P1-61: the same staleness the declaration refuses is derived at every
+# ordinary checkpoint and said out loud, so a run repairs its bookkeeping
+# before any gate invocation is spent on it. A notice, never a refusal:
+# staleness between a fix and its bookkeeping edit is normal mid-run life,
+# and what must not happen is carrying it into an invocation - the gate
+# reads the rows exactly as the declaration does, and a REJECT spent on
+# bookkeeping is an invocation the declaration then lacks (rust-semver run
+# 1 ended blocked on exactly that). Skipped when this turn already carries
+# a violation, which states staleness with its own consequence.
+stale_note=""
+if [ -z "$violation" ] && [ -f "$root/PLAN.md" ] \
+  && command -v git >/dev/null 2>&1 \
+  && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+  jeffy_derive_stale_rows "$root"
+  if [ -n "$jsr_stale" ]; then
+    stale_note="a swept Surface inventory row is stale - $jsr_stale; re-record it at the current content state in this iteration, before any evaluator invocation"
+  fi
+fi
+
+# P0-9: the convergence-readiness predicate has three members - the severity
+# floor, the swept map, and a clean full audit on this run's record - and the
+# 1.15.1 self-run proved the grant and the final-iteration preference each
+# tested a subset: the window was granted over a floor ledger and a swept map
+# while forbidding the audit the sequence still needed, and the run ended
+# unconverged with a five-iteration finish in sight. The predicate's members
+# are derived once here and every consumer below reads the same derivation.
+# Cleanliness (zero High and zero Medium scored) is prose the hook does not
+# parse; what it derives fail-open is existence - no AUDIT entry for this run
+# means no clean audit can possibly be on record, which is the member the
+# self-run was missing. When an entry exists the hook cannot tell clean from
+# scoring, and the notes below say only what is derivable.
+run_has_audit=0
+if [ -n "$runid8" ] && [ -f "$root/JOURNAL.md" ]; then
+  if awk -v tok="| $runid8 |" '
+    { sub(/\r$/, "") }
+    /^## iter / && index($0, tok) {
+      split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (t == "AUDIT") { found = 1; exit }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$root/JOURNAL.md"; then
+    run_has_audit=1
+  fi
+fi
+final_note=""
+if [ "$next" -eq "$max" ] && [ -z "$extension" ] && [ -z "$violation" ] \
+  && [ "$open_hm" = "0" ] && [ "$unswept_rows" = "0" ] \
+  && [ "$run_has_audit" -eq 0 ]; then
+  final_note="the ledger is at the severity floor and the map is swept, but no full audit is on this run's record, and the closing rule needs a clean one from before any extension window because the window never admits an audit; spend this final iteration on the closing full audit rather than a WRAPUP, so the extension can then buy the gate and the declaration"
+fi
+
 # The extension is granted by the same rewrite that advances the counter, so
 # the new budget is on the state file before anything reads it: the iteration
 # suffix, the run-state note, and the next turn's budget test all see max+2.
@@ -1742,11 +1847,20 @@ fi
 if [ -n "$attempt_note" ]; then
   reason="$reason ATTEMPT LIMIT: $attempt_note."
 fi
+if [ -n "$stale_note" ]; then
+  reason="$reason STALE ROWS: $stale_note."
+fi
+if [ -n "$final_note" ]; then
+  reason="$reason FINAL ITERATION: $final_note."
+fi
 if [ -n "$ctx_note" ]; then
   reason="$reason CONTEXT PRESSURE: $ctx_note."
 fi
 if [ -n "$extension" ]; then
-  reason="$reason CLOSING EXTENSION: one-time +2 iterations granted because only the convergence sequence remains. No further extension will be granted."
+  reason="$reason CLOSING EXTENSION: one-time +2 iterations granted because only the convergence sequence remains. No further extension will be granted. The window buys the gate, gate-filed fixes under the one-transaction rule, and the declaration; it never admits an audit."
+  if [ "$run_has_audit" -eq 0 ]; then
+    reason="$reason No AUDIT entry exists on this run's record, so no clean audit can be cited and no declaration is possible inside this window: use it to record an honest journal entry and the run report, and convergence falls to the next run's fresh audit."
+  fi
 fi
 # The run-state note closes the reason, after the evidence the other notes
 # carry: it is the arithmetic, not a finding. Fields the hook could not count

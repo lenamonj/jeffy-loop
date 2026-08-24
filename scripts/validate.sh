@@ -193,6 +193,7 @@ check_markers() {
 }
 check_markers skills/jeffy/references/plan-default.md \
   "## Operating envelope" \
+  "observed failing on" \
   "then unswept or stale Surface inventory rows, then open Medium" \
   "never the mapping of unswept surface" \
   "in-envelope" \
@@ -273,6 +274,13 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Verify gate:" \
   "Severity discipline:" \
   "Backlog discipline:" \
+  "bring the standing claims current in this same iteration" \
+  "land before the re-invocation, never in the checkpoint edit after it" \
+  "spend this final iteration on the closing full audit instead" \
+  "a rationale contradicted by a written line in the state files is void" \
+  "states in one line what distinguishes it" \
+  "artifact-producing channels by command" \
+  "observed failing on" \
   "Stall check:" \
   "the harness-written .claude/jeffy-loop.local.md and .claude/settings.local.json, and no BACKLOG.md item changed state" \
   "no Surface inventory row changed state" \
@@ -2305,6 +2313,119 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook mishandled a pre-1.14.0 swept row carrying no battery reference"
       fi
 
+      # P1-61: the same staleness the declaration refuses is said at every
+      # ordinary checkpoint as a STALE ROWS notice, so a run repairs its
+      # bookkeeping before spending a gate invocation on it - rust-semver's
+      # run 1 ended blocked on a REJECT whose only finding was a row its own
+      # closing fix had just outdated. A notice, never a refusal: the
+      # ordinary re-feed still blocks with the iteration prompt, and the
+      # notice rides the reason. The control proves a fresh row stays
+      # silent, so the notice cannot become ambient noise.
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_write_plan_full none "- [x] core: swept at $hb_c1 via .jeffy/probes/core - probed every entry point"
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALE ROWS:' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'product.txt has changed since' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'before any evaluator invocation' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook names a stale swept row at an ordinary checkpoint (P1-61 notice)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook said nothing about a stale swept row at an ordinary checkpoint"
+      fi
+      rm -f "$hb_state"
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_write_plan_full none "- [x] core: swept at $hb_c2 via .jeffy/probes/core - re-swept after the change"
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALE ROWS:'; then
+        pass "stop hook stays silent about rows that are current (P1-61 control)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook emitted a STALE ROWS notice over a freshly recorded row"
+      fi
+      rm -f "$hb_state"
+
+      # P1-60: the loop leaks through any channel that derives a published
+      # artifact from the tree, and rust-semver's crate tarball would have
+      # shipped 43 loop paths because its packaging probe graded exit status
+      # instead of contents. The hook now lists the artifact's real contents
+      # at the declaration and refuses when a loop path rides. Stub tools
+      # make the check deterministic on hosts with or without real cargo/npm:
+      # the stub answers exactly what the real tool's contract answers, and
+      # what is under test is the hook's grading of that answer.
+      mkdir -p "$hb_tmp/pkgbin"
+      # shellcheck disable=SC2016  # the stub must receive $1 literally
+      printf '#!/bin/bash\nif [ "$1" = "package" ]; then printf "Cargo.toml\\nsrc/lib.rs\\n.jeffy/metrics/x.jsonl\\nPLAN.md\\n"; exit 0; fi\nexit 1\n' > "$hb_tmp/pkgbin/cargo"
+      chmod +x "$hb_tmp/pkgbin/cargo"
+      printf '[package]\nname = "x"\nversion = "0.1.0"\n' > "$hb_proj/Cargo.toml"
+      hb_git add Cargo.toml >/dev/null
+      hb_git commit -q -m cargo-manifest
+      hb_recommit_artifact
+      hb_c3="$(hb_git rev-parse HEAD)"
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c3 - 2026-01-01"
+      hb_write_plan_full none "- [x] core: swept at $hb_c2 via .jeffy/probes/core - re-swept after the change"
+      hb_out="$(PATH="$hb_tmp/pkgbin:$PATH" hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'crate tarball would carry' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'PLAN.md'; then
+        pass "stop hook refuses a declaration whose crate tarball would ship loop state (P1-60)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a declaration over a crate tarball carrying the loop's state"
+      fi
+
+      # shellcheck disable=SC2016  # the stub must receive $1 literally
+      printf '#!/bin/bash\nif [ "$1" = "package" ]; then printf "Cargo.toml\\nsrc/lib.rs\\n"; exit 0; fi\nexit 1\n' > "$hb_tmp/pkgbin/cargo"
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c3 - 2026-01-01"
+      hb_out="$(PATH="$hb_tmp/pkgbin:$PATH" hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook accepts a declaration whose crate tarball excludes the loop (P1-60 control)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused a crate whose tarball is clean"
+      fi
+
+      # The npm channel, graded from npm pack's JSON contract.
+      # Staging is targeted, never add -A: the sandbox keeps its state files
+      # deliberately untracked, and an add -A here once swept BACKLOG.md into
+      # tracking, which made every later fixture write read as a dirty
+      # tracked change and broke the hygiene scenarios downstream.
+      hb_git rm -q Cargo.toml >/dev/null 2>&1
+      printf '#!/bin/bash\nprintf "[{\\"files\\":[{\\"path\\":\\"package.json\\"},{\\"path\\":\\"BACKLOG.md\\"}]}]\\n"\n' > "$hb_tmp/pkgbin/npm"
+      chmod +x "$hb_tmp/pkgbin/npm"
+      printf '{"name":"x","version":"0.1.0"}\n' > "$hb_proj/package.json"
+      hb_git add package.json >/dev/null
+      hb_git commit -q -m npm-manifest
+      hb_recommit_artifact
+      hb_c4="$(hb_git rev-parse HEAD)"
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c4 - 2026-01-01"
+      hb_out="$(PATH="$hb_tmp/pkgbin:$PATH" hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'npm package would carry' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'BACKLOG.md'; then
+        pass "stop hook refuses a declaration whose npm package would ship loop state (P1-60)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a declaration over an npm package carrying the loop's state"
+      fi
+      # The manifest is tracked, so its removal is committed - a bare rm
+      # leaves the shared sandbox dirty and the hygiene scenarios that
+      # re-enter it later flag this cleanup instead of their own fixture,
+      # which is exactly what happened on this check's first green run.
+      hb_git rm -q package.json >/dev/null 2>&1
+      hb_git commit -q -m cleanup-manifests
+      hb_recommit_artifact
+      rm -f "$hb_tmp/pkgbin/cargo" "$hb_tmp/pkgbin/npm"
+      rm -f "$hb_state"
+
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
       skip "converged-hash git scenarios (git not on PATH)"
@@ -4021,6 +4142,72 @@ if command -v jq >/dev/null 2>&1; then
       printf '%s\n' "$hb_out"
       fault "stop hook granted a second closing extension"
     fi
+
+    # P0-9: the grant tested the severity floor and the swept map and never
+    # the third closing precondition - a clean full audit on this run's
+    # record - so the 1.15.1 self-run was granted a window whose one legal
+    # move was missing and ended unconverged with iterations unused. What
+    # the hook can derive fail-open is existence: no AUDIT entry for this
+    # run means no clean audit can possibly be on record. The re-feed into
+    # the final iteration then names the closing audit as the only legal
+    # spend, and a window granted without one says plainly that no
+    # declaration is possible inside it. Controls prove an on-record audit
+    # silences both, so neither note can become ambient noise.
+    hb_write_journal 1 3
+    hb_write_backlog_counts 0 0 0
+    hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
+    hb_write_state sess-1 2 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'FINAL ITERATION:' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'closing full audit rather than a WRAPUP'; then
+      pass "stop hook tells the final iteration to audit when the audit is the missing closing precondition (P0-9)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook fed the final iteration nothing about the audit its closing sequence still needs"
+    fi
+    rm -f "$hb_state"
+
+    hb_write_journal_entries \
+      '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Task: full audit; zero High and zero Medium in-envelope.'
+    hb_write_state sess-1 2 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'FINAL ITERATION:'; then
+      pass "stop hook leaves the final iteration alone when an audit is on this run's record (P0-9 control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook nagged a run whose audit precondition is already met"
+    fi
+    rm -f "$hb_state"
+
+    hb_write_journal 3 3
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CLOSING EXTENSION' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no declaration is possible inside this window'; then
+      pass "stop hook says a granted window admits no declaration when no audit is on record (P0-9)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook granted a window without saying its declaration is unreachable"
+    fi
+    rm -f "$hb_state"
+
+    hb_write_journal_entries \
+      '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Task: full audit; zero High and zero Medium in-envelope.'
+    hb_write_state sess-1 3 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CLOSING EXTENSION' \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no declaration is possible inside this window'; then
+      pass "stop hook grants the window without the warning when an audit is on record (P0-9 control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook warned about a missing audit that is on the record"
+    fi
+    rm -f "$hb_state"
+    hb_write_journal 3 3
 
     # The conditions: blocking open work or an unswept row means the run is
     # not in its convergence sequence, and the budget is the budget. The
