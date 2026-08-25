@@ -33,6 +33,7 @@ loss rather than hiding it.
 | claude-agent-sdk-python (attempt 2) | 3 | 30 | converged | evaluator countersigned | 1 |
 | claude-code-action (attempt 1) | 3 | 30 | **not converged** | n/a | 0 |
 | claude-code-action (attempt 2) | 3 | 30 | converged | evaluator countersigned | 0 |
+| classnames | 3 | 32 | **not converged** | n/a | 2 |
 | click | 5 | 42 | **not converged** | n/a | 0 |
 | cobra | 4 | 32 | converged | evaluator countersigned | 0 |
 | commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
@@ -1246,3 +1247,30 @@ gate-as-auditor shape: on a small, mature, heavily tested surface the
 adversarial evaluator out-found the audit three invocations running,
 and the budget ended one Medium pair short of the floor. No REJECT
 reason was engine-derivable; every one names a line in `src/`.
+
+## classnames, four rejections on one class the engine could have caught
+
+`JedWatson/classnames` (17,785 stars), the conditional class-string
+helper under most of React's component libraries, ran in the 2026-08-25
+acceptance cohort for engine 1.17.0 against a pre-registered three
+rounds of ten and spent all 32 iterations without converging: **12 of
+12 rows swept, 21 findings closed - 1 High, 10 Medium, 10 Low** -
++373/-67 across 19 files, with 2 Medium and 4 Low still open at close.
+The High was real and closed in round 1: all three entry points threw
+`TypeError` on an object whose `toString` is absent or not callable,
+fixed as a class. The gate was invoked four times and rejected four
+times, and every rejection carried the same class - a battery README
+recording a measurement its own recorded procedure contradicts:
+"Seven checks" that redden 10 of 22, "five reject lines" that produce
+14, a count that "rose by three" when it rose by two, a
+"4 of 19 before CN-013" where the battery held 18 checks at that
+commit. The run closed CN-018, CN-020 and CN-023 against the class one
+instance at a time and asserted completeness over the set it had
+grepped for, and the fourth gate found two more (CN-029, CN-030) spelled
+in words the grep never matched. Nothing in the shipped code stands in
+the way of a declaration; the two open Mediums are both instrument
+prose. This is the pre-registered acceptance failure for 1.17.0:
+the REJECT reason is engine-derivable, because a rule that says
+"re-run every recorded measurement" was left to enumerate the set from
+a pattern invented at audit time instead of from the tree. The fix is
+filed as P1-65 and this run is its evidence.
