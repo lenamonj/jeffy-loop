@@ -1,0 +1,1 @@
+expect 2 :: bash skills/jeffy/hooks/lib/check-claims.sh /no/such/directory >/dev/null 2>&1; echo $?
