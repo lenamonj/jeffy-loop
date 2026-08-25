@@ -21,7 +21,13 @@
 # instruments while a runaway RSS walks straight past it. Where no user
 # manager is reachable the wrapper degrades to the wall ceiling alone and
 # says so on stderr, because a probe that can be bounded in one dimension is
-# still better observed than unbounded in both.
+# still better observed than unbounded in both. The wall ceiling degrades the
+# same way: timeout(1) is GNU coreutils, a BSD userland ships it as gtimeout
+# when coreutils is installed and not at all otherwise, and a wrapper that
+# cannot find one runs the probe anyway and says the ceiling is off. Exiting
+# 127 because the enforcement tool is absent would turn every probe on that
+# host into a failure of the probe, which is the one thing this wrapper exists
+# to prevent.
 set -u
 
 if [ "$#" -lt 1 ]; then
@@ -33,6 +39,20 @@ mem_mb="${JEFFY_PROBE_MEM_MB:-4096}"
 wall_s="${JEFFY_PROBE_TIMEOUT_S:-600}"
 case "$mem_mb" in *[!0-9]*|'') echo "run-probe.sh: JEFFY_PROBE_MEM_MB must be a whole number of MB, got '$mem_mb'" >&2; exit 2 ;; esac
 case "$wall_s" in *[!0-9]*|'') echo "run-probe.sh: JEFFY_PROBE_TIMEOUT_S must be a whole number of seconds, got '$wall_s'" >&2; exit 2 ;; esac
+
+# The wall ceiling needs a tool to enforce it. GNU coreutils names it timeout;
+# a BSD userland with coreutils installed names it gtimeout; a stock macOS host
+# has neither. Resolve it once, and where there is none run the probe with no
+# time bound rather than report the host's missing tool as the probe's exit.
+tmo=()
+if command -v timeout >/dev/null 2>&1; then
+  tmo=(timeout "${wall_s}s")
+elif command -v gtimeout >/dev/null 2>&1; then
+  tmo=(gtimeout "${wall_s}s")
+else
+  echo "run-probe.sh: no timeout(1) or gtimeout(1) on PATH, wall ceiling unavailable; running the probe with no time bound." >&2
+  wall_s=0
+fi
 
 # Capability is proven by running a no-op scope, not by asking the manager's
 # mood: is-system-running exits nonzero on a merely degraded manager (one
@@ -47,15 +67,19 @@ fi
 if [ "$have_scope" -eq 1 ]; then
   systemd-run --user --scope --quiet \
     -p "MemoryMax=${mem_mb}M" -p MemorySwapMax=0 \
-    timeout "${wall_s}s" "$@"
+    ${tmo[@]+"${tmo[@]}"} "$@"
   rc=$?
 else
-  echo "run-probe.sh: no user manager reachable, memory ceiling unavailable; running under the ${wall_s}s wall ceiling alone." >&2
-  timeout "${wall_s}s" "$@"
+  if [ "$wall_s" -ne 0 ]; then
+    echo "run-probe.sh: no user manager reachable, memory ceiling unavailable; running under the ${wall_s}s wall ceiling alone." >&2
+  else
+    echo "run-probe.sh: no user manager reachable either; running the probe under no ceiling at all." >&2
+  fi
+  ${tmo[@]+"${tmo[@]}"} "$@"
   rc=$?
 fi
 
-if [ "$rc" -eq 124 ]; then
+if [ "$rc" -eq 124 ] && [ "$wall_s" -ne 0 ]; then
   echo "run-probe.sh: probe exceeded the ${wall_s}s wall ceiling and was ended; a probe that cannot finish in bounded time is an instrument finding about the probe." >&2
 elif [ "$rc" -eq 137 ] && [ "$have_scope" -eq 1 ]; then
   echo "run-probe.sh: probe was killed under the ${mem_mb}MB memory ceiling (SIGKILL); a probe that exhausts bounded memory is an instrument finding about the probe, and the run continues." >&2

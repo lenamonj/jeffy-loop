@@ -357,6 +357,9 @@ check_markers skills/jeffy/hooks/lib/quiet-verify.sh \
 check_markers skills/jeffy/hooks/lib/check-claims.sh \
   "expect <value> :: <command>" \
   "MISMATCH"
+check_markers skills/jeffy/hooks/lib/run-probe.sh \
+  "gtimeout" \
+  "wall ceiling unavailable"
 # The launch-time lint is the whole malformed-Verify-command class caught at
 # zero iteration cost: the hook's parser runs only on the convergence branch,
 # so without this check a line written at launch waits a whole run to fire.
@@ -6454,6 +6457,37 @@ if command -v jq >/dev/null 2>&1; then
     fi
     rm -rf "$hb_proj/.jeffy/probes/cc"
     hb_git add -A >/dev/null; hb_git commit -qm cc >/dev/null
+
+    # ---------------------------------------------------------------------
+    # 1.18.1: the wall ceiling degrades where its tool is absent. timeout(1)
+    # is GNU coreutils; a stock macOS host ships none, and the 1.17.0 wrapper
+    # returned that host's missing tool as the probe's own exit, 127. Nothing
+    # had executed a command through the wrapper until 1.18.0's claims
+    # fixture did, and it failed on every macOS run since the wrapper shipped.
+    # ---------------------------------------------------------------------
+    hb_rp="skills/jeffy/hooks/lib/run-probe.sh"
+    hb_nopath="$hb_tmp/nopath"; mkdir -p "$hb_nopath"
+    # An empty PATH is the portable way to make timeout(1) absent on a host
+    # that has it: everything the wrapper itself needs is a bash builtin.
+    hb_rp_out="$(PATH="$hb_nopath" "$BASH" "$hb_rp" echo 7 2>"$hb_tmp/rp.err")"; hb_rp_rc=$?
+    if [ "$hb_rp_rc" -eq 0 ] && [ "$hb_rp_out" = "7" ] \
+      && grep -qF 'wall ceiling unavailable' "$hb_tmp/rp.err"; then
+      pass "run-probe.sh runs the probe and says so when no timeout(1) is on PATH, instead of exiting 127"
+    else
+      printf 'rc=%s out=[%s]\n' "$hb_rp_rc" "$hb_rp_out"; cat "$hb_tmp/rp.err"
+      fault "run-probe.sh reported the host's missing timeout(1) as the probe's own exit"
+    fi
+    if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+      JEFFY_PROBE_TIMEOUT_S=1 "$BASH" "$hb_rp" sleep 5 >/dev/null 2>"$hb_tmp/rp2.err"; hb_rp_rc=$?
+      if [ "$hb_rp_rc" -eq 124 ] && grep -qF 'exceeded the 1s wall ceiling' "$hb_tmp/rp2.err"; then
+        pass "run-probe.sh still ends a probe at the wall ceiling where timeout(1) exists (control)"
+      else
+        printf 'rc=%s\n' "$hb_rp_rc"; cat "$hb_tmp/rp2.err"
+        fault "run-probe.sh's wall ceiling stopped enforcing on a host that has timeout(1)"
+      fi
+    else
+      skip "run-probe.sh wall-ceiling control (no timeout(1) or gtimeout(1) on this host)"
+    fi
 
     rm -rf "$hb_tmp"
   fi
