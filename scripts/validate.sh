@@ -630,37 +630,64 @@ fi
 #    Free-prose superlatives stay with the process rule; this is the half a
 #    grep can hold.
 ord_bad=""
+# The class rule this check is held to: an extractor accounts for every member
+# of its source and faults on what it cannot classify, because a member it
+# drops is a claim nobody compared. Three sites here used to drop silently and
+# all three now report. First, the source: the per-language counts come from
+# column 5 of the receipts table, so a table reshape that moves the Iters cell
+# leaves this loop with nothing to iterate and the check published agreement
+# it never tested - reproduced by inserting one column, which took the read
+# from 50 rows to 0 while a false "first Rust target" claim in the tree still
+# passed. Second and third, the two ordinal vocabularies: an ordinal outside
+# the case arms matched the locator and then fell through, so "sixth Go
+# target" was invisible to a check that had already found it.
+ord_words='first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth'
+ord_num() { # ordinal word (lowercased) -> number, 0 when unclassifiable
+  case "$1" in
+    first) echo 1 ;; second) echo 2 ;; third) echo 3 ;; fourth) echo 4 ;;
+    fifth) echo 5 ;; sixth) echo 6 ;; seventh) echo 7 ;; eighth) echo 8 ;;
+    ninth) echo 9 ;; tenth) echo 10 ;; eleventh) echo 11 ;; twelfth) echo 12 ;;
+    thirteenth) echo 13 ;; fourteenth) echo 14 ;; fifteenth) echo 15 ;;
+    sixteenth) echo 16 ;; seventeenth) echo 17 ;; eighteenth) echo 18 ;;
+    nineteenth) echo 19 ;; twentieth) echo 20 ;; *) echo 0 ;;
+  esac
+}
+ord_counts="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 } }' README.md | sort | uniq -c | awk '{print $1, $2}')"
+if [ -z "$ord_counts" ]; then
+  ord_bad="the receipts table yielded no converged row this check could read, so no ordinal was compared against anything; the extractor takes the language from column 4 and the iteration count from column 5, and a table reshape blinds it while this check goes on reporting agreement; "
+fi
 while read -r pl_cnt pl_lang; do
   [ -n "$pl_lang" ] || continue
-  pl_hits="$(grep -rhoiE "(first|second|third|fourth|fifth) $pl_lang target" README.md evals/*/REPORT.md 2>/dev/null | sort -u)"
+  pl_hits="$(grep -rhoiE "($ord_words) $pl_lang target" README.md evals/*/REPORT.md 2>/dev/null | sort -u)"
   [ -n "$pl_hits" ] || continue
   while IFS= read -r pl_h; do
     [ -n "$pl_h" ] || continue
-    case "$(printf '%s' "$pl_h" | awk '{print tolower($1)}')" in
-      first)  [ "$pl_cnt" -ne 1 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); " ;;
-      second) [ "$pl_cnt" -lt 2 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); " ;;
-      third)  [ "$pl_cnt" -lt 3 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); " ;;
-      fourth) [ "$pl_cnt" -lt 4 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); " ;;
-      fifth)  [ "$pl_cnt" -lt 5 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); " ;;
-    esac
+    pl_w="$(printf '%s' "$pl_h" | awk '{print tolower($1)}')"
+    pl_n="$(ord_num "$pl_w")"
+    if [ "$pl_n" -eq 0 ]; then
+      ord_bad="$ord_bad'$pl_h' carries an ordinal this check located but cannot classify; widen ord_num or narrow the locator, never leave the pair disagreeing; "
+    elif [ "$pl_n" -eq 1 ]; then
+      [ "$pl_cnt" -ne 1 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); "
+    else
+      [ "$pl_cnt" -lt "$pl_n" ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); "
+    fi
   done <<ORDHITS
 $pl_hits
 ORDHITS
 done <<ORDCNT
-$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 } }' README.md | sort | uniq -c | awk '{print $1, $2}')
+$ord_counts
 ORDCNT
-nth_langs="$(grep -rhoiE 'the (tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth) language' README.md evals/*/REPORT.md 2>/dev/null | awk '{print tolower($2)}' | sort)"
+nth_langs="$(grep -rhoiE "the ($ord_words) language" README.md evals/*/REPORT.md 2>/dev/null | awk '{print tolower($2)}' | sort)"
 if [ -n "$nth_langs" ]; then
   # No duplicate test: a receipt and its README row legitimately restate
   # the same ordinal, and the two are indistinguishable from a real
   # conflict without per-language attribution the phrase does not carry.
   nth_max=0
   while IFS= read -r nw; do
-    case "$nw" in
-      tenth) nn=10 ;; eleventh) nn=11 ;; twelfth) nn=12 ;; thirteenth) nn=13 ;;
-      fourteenth) nn=14 ;; fifteenth) nn=15 ;; sixteenth) nn=16 ;; seventeenth) nn=17 ;;
-      eighteenth) nn=18 ;; nineteenth) nn=19 ;; twentieth) nn=20 ;; *) nn=0 ;;
-    esac
+    nn="$(ord_num "$nw")"
+    if [ "$nn" -eq 0 ]; then
+      ord_bad="${ord_bad}an Nth-language claim ('$nw') was located but cannot be classified; "
+    fi
     [ "$nn" -gt "$nth_max" ] && nth_max=$nn
   done <<NTH
 $(printf '%s\n' "$nth_langs" | sort -u)
