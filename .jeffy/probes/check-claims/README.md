@@ -18,8 +18,9 @@ status; a battery carrying no claims file checking nothing; and an absent
 project root refused at exit 2, which is deliberately distinct from the 1 that
 means a claim failed, so a caller can tell a broken invocation from a finding.
 
-check-claims.sh exits 2 on an unusable project root, and the claims line beside
-this file measures that rather than restating it.
+Two measurements, and the claims file beside this one carries both rather than
+restating them: check-claims.sh exits 2 on an unusable project root, and the
+seven table-driven cases are counted out of run.sh rather than spelled in a word.
 
 Observed failing: driven by mutation before it was trusted. Removing the
 malformed-line arm so an unrecognised line is skipped instead of erroring makes

@@ -21,7 +21,7 @@ e=$(mktemp)
 # end differently, or the parameter does nothing and that is a finding.
 JEFFY_PROBE_TIMEOUT_S=1 bash "$P" sleep 5 >/dev/null 2>"$e"; ck "wall ceiling kills" 124 $?
 cktext "wall ceiling names itself" "exceeded the 1s wall ceiling" "$e"
-JEFFY_PROBE_TIMEOUT_S=10 bash "$P" sleep 1 >/dev/null 2>"$e"; ck "wall ceiling admits" 0 $?
+JEFFY_PROBE_TIMEOUT_S=10 bash "$P" sleep 5 >/dev/null 2>"$e"; ck "wall ceiling admits" 0 $?
 
 # Memory ceiling, only where a user scope is reachable. Where it is not, the
 # wrapper degrades by contract and the battery says so rather than passing

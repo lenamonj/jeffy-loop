@@ -67,5 +67,5 @@ bash "$CC" /no/such/directory >/dev/null 2>"$e"
 if [ "$?" != 2 ]; then echo "FAIL an absent project root is refused at 2"; fails=$((fails + 1)); fi
 
 rm -rf "$d" "$o" "$e"
-[ "$fails" -eq 0 ] && echo "check-claims battery ok: 8 cases" || echo "check-claims battery: $fails failure(s)"
+[ "$fails" -eq 0 ] && echo "check-claims battery ok: 7 table-driven cases plus the usage case" || echo "check-claims battery: $fails failure(s)"
 [ "$fails" -eq 0 ]
