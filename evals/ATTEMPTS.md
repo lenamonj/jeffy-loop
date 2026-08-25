@@ -40,6 +40,7 @@ loss rather than hiding it.
 | decimal.js | 4 | 41 | **not converged** | n/a | 1 |
 | diff-so-fancy | 3 | 30 | **not converged** | n/a | 2 |
 | eemeli/yaml | 5 | 50 | **not converged** | n/a | 0 |
+| faker | 3 | 30 | **not converged** | n/a | 0 |
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
 | FluentValidation | 1 | 8 | converged | evaluator countersigned | 0 |
 | go-cmp | 2 | 15 | converged | evaluator countersigned | 0 |
@@ -67,6 +68,7 @@ loss rather than hiding it.
 | node-semver | 4 | 30 | **not converged** | n/a | 0 |
 | path-to-regexp | 3 | 27 | converged | evaluator countersigned | 1 |
 | PHP-Parser | 3 | 29 | converged | evaluator countersigned | 0 |
+| phpdotenv | 1 | 10 | converged | evaluator countersigned | 0 |
 | PyPortfolioOpt | 6 | 58 | converged | evaluator countersigned | 1 |
 | python-dotenv | 8 | 73 | converged | evaluator countersigned | 1 |
 | quantstats | 4 | 40 | converged | evaluator countersigned | 0 |
@@ -89,6 +91,7 @@ loss rather than hiding it.
 | underscore | 2 | 20 | converged | evaluator countersigned | 0 |
 | validator | 4 | 31 | converged | evaluator countersigned | 1 |
 | validator.js | 2 | 20 | **not converged** | n/a | 0 |
+| vavr | 2 | 13 | converged | evaluator countersigned | 0 |
 | yfinance | 1 | 9 | converged | evaluator countersigned | 0 |
 | zod | 4 | 39 | converged | evaluator countersigned | 0 |
 | zstd | 6 | 54 | **not converged** | n/a | 1 |
@@ -105,13 +108,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 46 brownfield convergences:
+The engine tightened over time. Of the 48 brownfield convergences:
 
-- **41** were countersigned by the adversarial evaluator, the current standard.
+- **43** were countersigned by the adversarial evaluator, the current standard.
   Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow`, `more-itertools`, `underscore` and `js-uuid` met
+  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow`, `more-itertools`, `underscore`, `js-uuid`, `phpdotenv` and `vavr` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -121,7 +124,7 @@ The engine tightened over time. Of the 46 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 46 as one number
+Every receipt names the standard its own run met. Pooling all 48 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -1191,3 +1194,25 @@ carried item is product; no REJECT reasons exist to classify. Under the
 2026-08-24 width lesson (underscore, same wave, got 3x10 for the same
 row count and converged inside it), validator.js is the corpus's
 cleanest case for a pre-registered attempt 2 at three rounds.
+
+## faker, thirty iterations against the widest surface the corpus has staged
+
+`faker-ruby/faker` (11,934 stars) ran in the 2026-08-25 diverse-language
+wave against a pre-registered three rounds of ten - the loose budget its
+width demanded - and spent all thirty iterations without the gate ever
+becoming legally due: **26 of 32 rows swept, 10 findings closed - 8
+High, 2 Medium** - +291/-60 across 23 files, with 14 Medium and 2 Low
+still open at close. The Highs justify the run on their own: an
+eval-based hash navigation in `Faker::Json` replaced with real
+traversal; ten generator methods reaching Ruby's own PRNG through a bare
+`Array#sample`, so their output ignored `Faker::Config.random` and the
+same seed gave different sequences run to run - determinism being the
+one contract a seeded data generator has; `hex_color` quantising the hue
+wheel to six colors; opera methods concatenating two sampled titles
+instead of choosing one; a locale fallback returning templates verbatim
+instead of generating from them. The shape is the corpus's known
+wide-surface pattern (Humanizer 32 rows, clap 35): hundreds of generator
+classes mean the audit keeps finding real product defects faster than
+the sweep can retire rows, and the severity floor stays out of reach at
+any budget a night allows. No REJECT reasons exist to classify - the
+gate was never invoked.

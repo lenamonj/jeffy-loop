@@ -1,0 +1,370 @@
+diff --git a/.gitattributes b/.gitattributes
+index bf9b56b..034b941 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -13,3 +13,14 @@
+ /README.md export-ignore
+ /UPGRADING.md export-ignore
+ /vendor-bin export-ignore
++
++# The jeffy loop's own state files and working directories. These are the
++# project's memory between runs, not part of the library, and the composer
++# dist archive is built from this file: without these lines every checkpoint
++# ships them to every consumer of the package.
++/PLAN.md export-ignore
++/BACKLOG.md export-ignore
++/JOURNAL.md export-ignore
++/JOURNAL-archive.md export-ignore
++/.jeffy export-ignore
++/.claude export-ignore
+diff --git a/.gitignore b/.gitignore
+index 22d275d..26542a3 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -4,3 +4,4 @@ phpstan.neon
+ phpstan.tests.neon
+ phpunit.xml
+ vendor
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index 26b57a9..d59fa70 100644
+--- a/README.md
++++ b/README.md
+@@ -207,9 +207,10 @@ MESSAGE="Hello
+ World"
+ ```
+ 
+-A double-quoted value left unterminated at the end of the file is currently
+-discarded silently, along with any lines that follow it. A line consisting of
+-just a variable name with no equals sign will clear that variable from the
++A double-quoted value left unterminated at the end of the file is a parse
++error: it raises `InvalidFileException` naming the missing closing quote, just
++as an unterminated single-quoted value does. A line consisting of just a
++variable name with no equals sign will clear that variable from the
+ environment when loading in mutable mode.
+ 
+ 
+diff --git a/src/Parser/Lines.php b/src/Parser/Lines.php
+index de290c5..fbc20d2 100644
+--- a/src/Parser/Lines.php
++++ b/src/Parser/Lines.php
+@@ -23,7 +23,10 @@ final class Lines
+     /**
+      * Process the array of lines of environment variables.
+      *
+-     * This will produce an array of raw entries, one per variable.
++     * This will produce an array of raw entries, one per variable. A multiline
++     * value whose closing quote never arrives is emitted as a final raw entry
++     * rather than dropped, so that the entry parser reports the missing
++     * closing quote instead of the variable silently disappearing.
+      *
+      * @param string[] $lines
+      *
+@@ -43,6 +46,10 @@ final class Lines
+             }
+         }
+ 
++        if ($multiline) {
++            $output[] = \implode("\n", $multilineBuffer);
++        }
++
+         return $output;
+     }
+ 
+@@ -80,15 +87,21 @@ final class Lines
+     /**
+      * Determine if the given line can be the start of a multiline variable.
+      *
++     * Only a double-quoted value may span lines, so the opening quote has to
++     * be the first character of the value: we look at the first equals sign
++     * on the line and nowhere else. Searching the whole line for an ="
++     * sequence would also match one occurring inside a single-quoted value,
++     * which is literal text and cannot open anything.
++     *
+      * @param string $line
+      *
+      * @return bool
+      */
+     private static function looksLikeMultilineStart(string $line)
+     {
+-        $pos = \strpos($line, '="');
++        $pos = \strpos($line, '=');
+ 
+-        if ($pos === false) {
++        if ($pos === false || !isset($line[$pos + 1]) || $line[$pos + 1] !== '"') {
+             return false;
+         }
+ 
+@@ -102,7 +115,14 @@ final class Lines
+     }
+ 
+     /**
+-     * Determine if the given line can be the start of a multiline variable.
++     * Determine if the given line closes a multiline variable.
++     *
++     * Escaped backslashes are dropped first, so that what remains before a
++     * quote tells us whether that quote is escaped. The quote is then matched
++     * on a negative lookbehind rather than on a preceding character class,
++     * because a class has to consume a character and so cannot see a quote at
++     * the very start of a line - which is exactly where the closing quote of
++     * a multiline value sits whenever anything follows it on that line.
+      *
+      * @param string $line
+      * @param bool   $started
+@@ -111,11 +131,7 @@ final class Lines
+      */
+     private static function looksLikeMultilineStop(string $line, bool $started)
+     {
+-        if ($line === '"') {
+-            return true;
+-        }
+-
+-        return Regex::occurrences('/(?=([^\\\\]"))/', \str_replace('\\\\', '', $line))->map(static function (int $count) use ($started) {
++        return Regex::occurrences('/(?<!\\\\)"/', \str_replace('\\\\', '', $line))->map(static function (int $count) use ($started) {
+             return $started ? $count > 1 : $count >= 1;
+         })->success()->getOrElse(false);
+     }
+diff --git a/tests/Dotenv/DotenvTest.php b/tests/Dotenv/DotenvTest.php
+index 99494bc..ad62179 100644
+--- a/tests/Dotenv/DotenvTest.php
++++ b/tests/Dotenv/DotenvTest.php
+@@ -406,6 +406,30 @@ final class DotenvTest extends TestCase
+         self::assertSame($output, [7 => '1', 'FOO' => 'b', 123 => 'x']);
+     }
+ 
++    public function testDotenvParseMultilineClosedWithTrailingContent()
++    {
++        self::assertSame(
++            ['FOO' => "one\n", 'BAR' => 'baz', 'BAZ' => 'qux'],
++            Dotenv::parse("FOO=\"one\n\" # done\nBAR=baz\nBAZ=qux")
++        );
++        self::assertSame(
++            ['FOO' => "one\n", 'BAR' => 'baz'],
++            Dotenv::parse("FOO=\"one\n\" \nBAR=baz")
++        );
++    }
++
++    public function testDotenvParseQuotedValueContainingEqualsQuote()
++    {
++        self::assertSame(
++            ['FOO' => 'a="b', 'BAR' => 'baz'],
++            Dotenv::parse("FOO='a=\"b'\nBAR=baz")
++        );
++        self::assertSame(
++            ['FOO' => 'a="b', 'BAR' => 'baz'],
++            Dotenv::parse("FOO=a=\"b\nBAR=baz")
++        );
++    }
++
+     public function testDotenvParseStripsUtf8ByteOrderMark()
+     {
+         self::assertSame(['KEY' => '1'], Dotenv::parse("\xEF\xBB\xBFKEY=1"));
+diff --git a/tests/Dotenv/Parser/LinesTest.php b/tests/Dotenv/Parser/LinesTest.php
+index 261029a..4bc1dc6 100644
+--- a/tests/Dotenv/Parser/LinesTest.php
++++ b/tests/Dotenv/Parser/LinesTest.php
+@@ -50,4 +50,73 @@ final class LinesTest extends TestCase
+ 
+         self::assertSame($expected, Lines::process($result->success()->get()));
+     }
++
++    public function testProcessUnterminatedMultiline()
++    {
++        self::assertSame(
++            ["FOO=\"bar\nAPP_ENV=prod"],
++            Lines::process(['FOO="bar', 'APP_ENV=prod'])
++        );
++    }
++
++    public function testProcessUnterminatedMultilineAtEndOfInput()
++    {
++        self::assertSame(['FOO="bar'], Lines::process(['FOO="bar']));
++    }
++
++    public function testProcessClosingQuoteFollowedByComment()
++    {
++        self::assertSame(
++            ["FOO=\"one\n\" # done", 'BAR=baz'],
++            Lines::process(['FOO="one', '" # done', 'BAR=baz'])
++        );
++    }
++
++    public function testProcessClosingQuoteFollowedByWhitespace()
++    {
++        self::assertSame(
++            ["FOO=\"one\n\" ", 'BAR=baz'],
++            Lines::process(['FOO="one', '" ', 'BAR=baz'])
++        );
++    }
++
++    public function testProcessClosingQuoteAloneOnItsLine()
++    {
++        self::assertSame(
++            ["FOO=\"one\n\"", 'BAR=baz'],
++            Lines::process(['FOO="one', '"', 'BAR=baz'])
++        );
++    }
++
++    public function testProcessSingleQuotedValueContainingEqualsQuote()
++    {
++        self::assertSame(
++            ["FOO='a=\"b'", 'BAR=baz'],
++            Lines::process(["FOO='a=\"b'", 'BAR=baz'])
++        );
++    }
++
++    public function testProcessUnquotedValueContainingEqualsQuote()
++    {
++        self::assertSame(
++            ['FOO=a="b', 'BAR=baz'],
++            Lines::process(['FOO=a="b', 'BAR=baz'])
++        );
++    }
++
++    public function testProcessExportedMultilineStillStarts()
++    {
++        self::assertSame(
++            ["export FOO=\"one\ntwo\""],
++            Lines::process(['export FOO="one', 'two"'])
++        );
++    }
++
++    public function testProcessTerminatedMultilineIsUnaffected()
++    {
++        self::assertSame(
++            ["FOO=\"bar\nbaz\"", 'APP_ENV=prod'],
++            Lines::process(['FOO="bar', 'baz"', 'APP_ENV=prod'])
++        );
++    }
+ }
+diff --git a/tests/Dotenv/Parser/ParserTest.php b/tests/Dotenv/Parser/ParserTest.php
+index 4616574..ce5bb4d 100644
+--- a/tests/Dotenv/Parser/ParserTest.php
++++ b/tests/Dotenv/Parser/ParserTest.php
+@@ -72,6 +72,14 @@ final class ParserTest extends TestCase
+         (new Parser())->parse("\xC3=1");
+     }
+ 
++    public function testParseUnterminatedMultiline()
++    {
++        $this->expectException(InvalidFileException::class);
++        $this->expectExceptionMessage('Failed to parse dotenv file. Encountered a missing closing quote at ["bar].');
++
++        (new Parser())->parse("FOO=\"bar\nAPP_ENV=prod");
++    }
++
+     /**
+      * @param \Dotenv\Parser\Entry $entry
+      * @param string               $name
+diff --git a/tests/Dotenv/Repository/Adapter/ReplacingWriterTest.php b/tests/Dotenv/Repository/Adapter/ReplacingWriterTest.php
+new file mode 100644
+index 0000000..421c5a9
+--- /dev/null
++++ b/tests/Dotenv/Repository/Adapter/ReplacingWriterTest.php
+@@ -0,0 +1,106 @@
++<?php
++
++declare(strict_types=1);
++
++namespace Dotenv\Tests\Repository\Adapter;
++
++use Dotenv\Repository\Adapter\ArrayAdapter;
++use Dotenv\Repository\Adapter\ReplacingWriter;
++use Dotenv\Repository\RepositoryBuilder;
++use PHPUnit\Framework\TestCase;
++
++final class ReplacingWriterTest extends TestCase
++{
++    public function testWriteToUndefinedVariableIsANoop()
++    {
++        $inner = self::createAdapter();
++        $writer = new ReplacingWriter($inner, $inner);
++
++        self::assertTrue($writer->write('CONST_TEST', 'foo'));
++        self::assertFalse($inner->read('CONST_TEST')->isDefined());
++    }
++
++    public function testWriteToDefinedVariableReplaces()
++    {
++        $inner = self::createAdapter();
++        $inner->write('CONST_TEST', 'original');
++        $writer = new ReplacingWriter($inner, $inner);
++
++        self::assertTrue($writer->write('CONST_TEST', 'replaced'));
++        self::assertSame('replaced', $inner->read('CONST_TEST')->get());
++    }
++
++    public function testVariableSeenOnceRemainsWritableAfterExternalDelete()
++    {
++        $inner = self::createAdapter();
++        $inner->write('CONST_TEST', 'original');
++        $writer = new ReplacingWriter($inner, $inner);
++
++        self::assertTrue($writer->write('CONST_TEST', 'replaced'));
++
++        $inner->delete('CONST_TEST');
++
++        self::assertTrue($writer->write('CONST_TEST', 'again'));
++        self::assertSame('again', $inner->read('CONST_TEST')->get());
++    }
++
++    public function testDeleteOfUndefinedVariableIsANoop()
++    {
++        $inner = self::createAdapter();
++        $writer = new ReplacingWriter($inner, $inner);
++
++        self::assertTrue($writer->delete('CONST_TEST'));
++        self::assertFalse($inner->read('CONST_TEST')->isDefined());
++    }
++
++    public function testDeleteOfDefinedVariableRemovesIt()
++    {
++        $inner = self::createAdapter();
++        $inner->write('CONST_TEST', 'original');
++        $writer = new ReplacingWriter($inner, $inner);
++
++        self::assertTrue($writer->delete('CONST_TEST'));
++        self::assertFalse($inner->read('CONST_TEST')->isDefined());
++    }
++
++    public function testReaderAndWriterMayBeDistinct()
++    {
++        $reader = self::createAdapter();
++        $inner = self::createAdapter();
++        $writer = new ReplacingWriter($inner, $reader);
++
++        self::assertTrue($writer->write('CONST_TEST', 'ignored'));
++        self::assertFalse($inner->read('CONST_TEST')->isDefined());
++
++        $reader->write('CONST_TEST', 'now defined');
++
++        self::assertTrue($writer->write('CONST_TEST', 'written'));
++        self::assertSame('written', $inner->read('CONST_TEST')->get());
++        self::assertSame('now defined', $reader->read('CONST_TEST')->get());
++    }
++
++    public function testComposedIntoARepositoryOnlyReplacesExistingVariables()
++    {
++        $adapter = self::createAdapter();
++        $adapter->write('CONST_TEST', 'original');
++
++        $repository = RepositoryBuilder::createWithNoAdapters()
++            ->addReader($adapter)
++            ->addWriter(new ReplacingWriter($adapter, $adapter))
++            ->make();
++
++        self::assertTrue($repository->set('CONST_TEST', 'replaced'));
++        self::assertSame('replaced', $repository->get('CONST_TEST'));
++
++        self::assertTrue($repository->set('CONST_OTHER', 'ignored'));
++        self::assertNull($repository->get('CONST_OTHER'));
++    }
++
++    /**
++     * @return \Dotenv\Repository\Adapter\AdapterInterface
++     */
++    private static function createAdapter()
++    {
++        return ArrayAdapter::create()->get();
++    }
++}

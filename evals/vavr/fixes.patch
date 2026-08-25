@@ -1,0 +1,60 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 000000000..5304d34b9
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,11 @@
++# Development bookkeeping written by the improvement loop. These files belong to
++# the working repository, not to a release: `git archive` is what produces the
++# Source code assets GitHub attaches to a tag, and shipping a plan, a backlog and
++# a journal inside a release archive is misleading documentation. Directory
++# patterns use the bare name; a trailing slash is documented as pointless in an
++# attributes file.
++PLAN.md export-ignore
++BACKLOG.md export-ignore
++JOURNAL.md export-ignore
++JOURNAL-archive.md export-ignore
++.jeffy export-ignore
+diff --git a/vavr/src/main/java/io/vavr/collection/BitSet.java b/vavr/src/main/java/io/vavr/collection/BitSet.java
+index 2028b8d9e..741876f7a 100644
+--- a/vavr/src/main/java/io/vavr/collection/BitSet.java
++++ b/vavr/src/main/java/io/vavr/collection/BitSet.java
+@@ -899,7 +899,11 @@ interface BitSetModule {
+ 
+         private void unsetElement(long[] words, int element) {
+             final int index = element >> ADDRESS_BITS_PER_WORD;
+-            words[index] &= ~(1L << element);
++            // An element past the last word cannot be set, so there is nothing to clear.
++            // Callers size `words` from the receiver, not from the element being removed.
++            if (index < words.length) {
++                words[index] &= ~(1L << element);
++            }
+         }
+ 
+         long[] shrink(long[] elements) {
+@@ -1150,7 +1154,12 @@ interface BitSetModule {
+                     return this;
+                 } else {
+                     final long[] copy = copyExpand(getWordsNum());
+-                    source.forEach(element -> unsetElement(copy, element));
++                    source.forEach(element -> {
++                        if (element < 0) {
++                            throw new IllegalArgumentException("bitset element must be >= 0");
++                        }
++                        unsetElement(copy, element);
++                    });
+                     return fromBitMaskNoCopy(shrink(copy));
+                 }
+             }
+diff --git a/vavr/src/main/java/io/vavr/collection/Iterator.java b/vavr/src/main/java/io/vavr/collection/Iterator.java
+index 6fc0e173d..16b6fcead 100644
+--- a/vavr/src/main/java/io/vavr/collection/Iterator.java
++++ b/vavr/src/main/java/io/vavr/collection/Iterator.java
+@@ -130,7 +130,6 @@ public interface Iterator<T extends @Nullable Object> extends java.util.Iterator
+      * @param iterator the iterator to narrow
+      * @param <T>      the element type
+      * @return the same iterator, viewed as {@code Iterator<T>}
+-     * @throws NullPointerException if {@code iterator} is {@code null}
+      */
+     @SuppressWarnings("unchecked")
+     static <T extends @Nullable Object> Iterator<T> narrow(Iterator<? extends T> iterator) {
