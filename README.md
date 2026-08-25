@@ -20,13 +20,14 @@ Run `/jeffy 10` and walk away. Jeffy maps your project's whole public surface, a
 
 ## The receipts
 
-Three fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes:
+Four fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Three are patches this loop wrote, merged as written; the fourth is a finding a maintainer found convincing enough to fix himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
+- **[jsoncpp](https://github.com/open-source-parsers/jsoncpp/pull/1709) - merged.** The build the project documents for handling secrets had never compiled on MSVC, and the memory it promises to wipe was only partly wiped. Merged 2026-08-20.
 - **[chalk](https://github.com/chalk/chalk/pull/687) - fixed upstream.** The maintainer reproduced the finding, then wrote and merged his own fix, shipped in v6.0.0.
 
-A fourth is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
+A fifth is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
 Behind them: **<!-- count:converged -->48<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **23 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
@@ -206,11 +207,11 @@ A method that always converges is not measuring anything, so the record shows wh
 |:---|---:|:---|---:|:---|:---|
 | [bat](evals/bat/REPORT.md) | 59,915 | Rust | 10 | **[FIX MERGED](https://github.com/sharkdp/bat/pull/3862)** | a just-merged security flag did nothing when piped; caught before it ever shipped |
 | [fasthttp](evals/fasthttp/REPORT.md) | 23,422 | Go | 58 | **[FIX MERGED](https://github.com/valyala/fasthttp/pull/2343)** | 31 findings in a tagged release; a Content-Length no parser should accept became a wrong number |
+| [jsoncpp](evals/jsoncpp/REPORT.md) | 8,876 | C++ | 10 | **[FIX MERGED](https://github.com/open-source-parsers/jsoncpp/pull/1709)** | the build the project documents for handling secrets had never compiled on MSVC, and the wipe it promises covered only part of the block; the evaluator caught the fix being half done before it went upstream |
 | [chalk](evals/chalk/REPORT.md) | 23,288 | JavaScript | 8 | **[FIXED UPSTREAM](https://github.com/chalk/chalk/pull/687)** | the control: one Medium found - the maintainer wrote and merged the fix himself, shipped in chalk v6.0.0 |
 | [dayjs](evals/dayjs/REPORT.md) | 48,657 | JavaScript | 74 | [PR open](https://github.com/iamkun/dayjs/pull/3167) | 45 findings, 10 High, in a 63M-downloads-a-week library |
 | [yfinance](evals/yfinance/REPORT.md) | 24,837 | Python | 9 | [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | closed a High that upstream's own failing test was advertising |
 | [PHP-Parser](evals/php-parser/REPORT.md) | 17,450 | PHP | 29 | [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | the tenth language; told nothing, it found its project's largest oracle by itself, then proved one of the suite's own test classes passes without executing the code it names |
-| [jsoncpp](evals/jsoncpp/REPORT.md) | 8,876 | C++ | 10 | [PR open](https://github.com/open-source-parsers/jsoncpp/pull/1709) | the documented secure-memory build never compiled on MSVC; the evaluator caught the fix being half done |
 | [python-dotenv](evals/python-dotenv/REPORT.md) | 8,830 | Python | 73 | [PR open](https://github.com/theskumar/python-dotenv/pull/678) | the grind: 8 runs, 48 findings, seven audits that each filed something before the eighth came back empty; suite 220 to 511 |
 | [PyPortfolioOpt](evals/pyportfolioopt/REPORT.md) | 5,905 | Python | 58 | [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | CI-red baseline to 356 passing; the evaluator rejected five convergence attempts |
 | [go-yaml](evals/go-yaml/REPORT.md) | 2,217 | Go | 29 | [PR open](https://github.com/goccy/go-yaml/pull/915) *(not a loop finding)* | 20 findings, 6 High, including a regression the run introduced and the gate caught; the vendored conformance corpus never ran, and scores identically before and after |
@@ -255,6 +256,8 @@ A method that always converges is not measuring anything, so the record shows wh
 | [heck](evals/heck/REPORT.md) | 595 | Rust | 17 | - | the case converter under cargo and serde codegen, graded against the Unicode Character Database itself: seven Mediums closed, and the gate found the headline High - NFD text silently losing its combining marks - that the run's own 149,106-point differential was structurally blind to, because its reference split words on the same predicate. That High is carried blocked on an owner decision, stated on the receipt up front |
 
 Disclosure is deliberate and selective. Filing a machine-generated issue costs a maintainer real attention, so these findings go upstream only where the defect is severe and the project takes outside contributions; where nothing was filed, the receipt says so and why.
+
+Of the 16 rows that went upstream in some form, **four have been answered by the people who own the code**: bat, fasthttp and jsoncpp merged the loop's patch as written, and chalk's maintainer reproduced the finding and wrote his own fix. Those four are the strongest evidence on this page, because a merge is the one outcome this project cannot award itself. Everything else here - the convergence declarations, the evaluator verdicts, the sweep counts - is a standard this repository set and this repository checked, and it is worth exactly what you think a self-administered exam is worth. A maintainer merging a patch into a library with tens of thousands of dependants is a different kind of evidence, and it is the kind this table is built to accumulate. The rest are still open and are published here either way, because a pull request nobody has answered is part of the record too.
 
 **What is not in the table above is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md):** every target ever started, the runs each one cost, which of three convergence standards it met, and the one public target that was abandoned without a receipt. Convergence here is per-run and a blocked run gets relaunched, so run counts are published with the wins attached rather than a bare success rate. Targets from here on carry a pre-registered run budget committed before their first iteration.
 

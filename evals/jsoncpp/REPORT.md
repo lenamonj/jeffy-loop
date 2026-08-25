@@ -55,7 +55,7 @@ Two things follow. The gate works, and it works precisely where self-assessment 
 
 **Status**: the work lives in this eval's `fixes.patch` (+299/-77 across 11 files, of which shipped code is 5 files +41/-40, applies to pristine `60de77f`) and `journal.md` (all ten entries of the single run, as written).
 
-**Upstream**: filed as [open-source-parsers/jsoncpp#1709](https://github.com/open-source-parsers/jsoncpp/pull/1709), 4 files, +32/-31, carrying JC-1 and JC-7 together with the `CZString` move-assignment fix, and closing [#1399](https://github.com/open-source-parsers/jsoncpp/issues/1399), open since March 2022. That issue reported both the portability problem and, in its own words, that "the unit tests won't build" - which is JC-7 exactly, four years before this run found it.
+**Upstream**: **MERGED 2026-08-20** as [open-source-parsers/jsoncpp#1709](https://github.com/open-source-parsers/jsoncpp/pull/1709) - the patch went in as written, 4 files, +32/-31, carrying JC-1 and JC-7 together with the `CZString` move-assignment fix, and closing [#1399](https://github.com/open-source-parsers/jsoncpp/issues/1399), open since March 2022. That issue reported both the portability problem and, in its own words, that "the unit tests won't build" - which is JC-7 exactly, four years before this run found it.
 
 Two things were settled by experiment while preparing the PR rather than by reading the journal, and both changed what got submitted.
 
