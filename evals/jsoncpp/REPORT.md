@@ -4,7 +4,7 @@
 
 **This is a full `/jeffy` loop run that reached machine-checked convergence, in a single run of ten iterations.** **7 findings filed and closed (2 High, 2 Medium, 3 Low)** across a diff of 11 files, +299/-77, of which the shipped-code change is **5 files, +41/-40**. Converged at `5664f81ea214380e7c116181dd370c89d031b555` on 2026-07-30: empty ledger, all **16 surface-inventory rows swept**, the verify command re-run fresh for this receipt at 3/3 suites green, and the adversarial evaluator's PASS on record.
 
-This is the first C++ target and the fifth language in the set.
+This run opened C++ in the corpus, on 2026-07-30, and C++ was the fifth language in the set.
 
 ## The headline finding, reproduced independently for this receipt
 

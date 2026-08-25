@@ -656,27 +656,44 @@ ord_counts="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]
 if [ -z "$ord_counts" ]; then
   ord_bad="the receipts table yielded no converged row this check could read, so no ordinal was compared against anything; the extractor takes the language from column 4 and the iteration count from column 5, and a table reshape blinds it while this check goes on reporting agreement; "
 fi
-while read -r pl_cnt pl_lang; do
-  [ -n "$pl_lang" ] || continue
-  pl_hits="$(grep -rhoiE "($ord_words) $pl_lang target" README.md evals/*/REPORT.md 2>/dev/null | sort -u)"
-  [ -n "$pl_hits" ] || continue
-  while IFS= read -r pl_h; do
-    [ -n "$pl_h" ] || continue
-    pl_w="$(printf '%s' "$pl_h" | awk '{print tolower($1)}')"
-    pl_n="$(ord_num "$pl_w")"
-    if [ "$pl_n" -eq 0 ]; then
-      ord_bad="$ord_bad'$pl_h' carries an ordinal this check located but cannot classify; widen ord_num or narrow the locator, never leave the pair disagreeing; "
-    elif [ "$pl_n" -eq 1 ]; then
-      [ "$pl_cnt" -ne 1 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); "
-    else
-      [ "$pl_cnt" -lt "$pl_n" ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); "
-    fi
-  done <<ORDHITS
-$pl_hits
-ORDHITS
-done <<ORDCNT
+# T1, the class boundary: a value read out of a document is never
+# interpolated into a pattern. It was, here - the language name went straight
+# into an ERE - and two of the corpus's thirteen languages carry a
+# metacharacter, so `(first|second) C++ target` matched nothing while the
+# fixed-string search returned the claim. The check then published agreement
+# over a receipt that contradicted the table. The loop is inverted rather
+# than the value escaped: one pass with a pattern this check authored
+# captures every ordinal claim, and the language it captured is compared to
+# the table's languages as a string. Nothing derived reaches a regex.
+ord_claims="$(grep -rhoiE "($ord_words) [^[:space:]]+ target" README.md evals/*/REPORT.md 2>/dev/null | sort -u)"
+while IFS= read -r pl_h; do
+  [ -n "$pl_h" ] || continue
+  pl_w="$(printf '%s' "$pl_h" | awk '{print tolower($1)}')"
+  pl_lang="$(printf '%s' "$pl_h" | awk '{print $2}')"
+  pl_n="$(ord_num "$pl_w")"
+  if [ "$pl_n" -eq 0 ]; then
+    ord_bad="$ord_bad'$pl_h' carries an ordinal this check located but cannot classify; widen ord_num or narrow the locator, never leave the pair disagreeing; "
+    continue
+  fi
+  # Fixed-string lookup, never a match: the table's language is compared to
+  # the claim's as text, so C++ and C# are ordinary members here.
+  pl_cnt=""
+  while read -r oc_n oc_l; do
+    [ -n "$oc_l" ] || continue
+    [ "$(printf '%s' "$oc_l" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$pl_lang" | tr '[:upper:]' '[:lower:]')" ] && pl_cnt="$oc_n"
+  done <<ORDCNT
 $ord_counts
 ORDCNT
+  if [ -z "$pl_cnt" ]; then
+    ord_bad="$ord_bad'$pl_h' names a language the receipts table has no converged row for, so the ordinal was located and never compared; "
+  elif [ "$pl_n" -eq 1 ]; then
+    [ "$pl_cnt" -ne 1 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); "
+  else
+    [ "$pl_cnt" -lt "$pl_n" ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); "
+  fi
+done <<ORDHITS
+$ord_claims
+ORDHITS
 nth_langs="$(grep -rhoiE "the ($ord_words) language" README.md evals/*/REPORT.md 2>/dev/null | awk '{print tolower($2)}' | sort)"
 if [ -n "$nth_langs" ]; then
   # No duplicate test: a receipt and its README row legitimately restate
