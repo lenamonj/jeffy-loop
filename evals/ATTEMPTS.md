@@ -54,6 +54,7 @@ loss rather than hiding it.
 | Humanizer | 4 | 32 | **not converged** | n/a | 0 |
 | image-rs (attempt 1) | 2 | 10 | **not converged** | n/a | 2 |
 | image-rs (attempt 2) | 3 | 30 | **not converged** | n/a | 0 |
+| js-uuid | 2 | 20 | converged | evaluator countersigned | 0 |
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
 | lz4 | 2 | 15 | converged | evaluator countersigned | 0 |
 | magic_enum | 2 | 19 | converged | evaluator countersigned | 0 |
@@ -85,7 +86,9 @@ loss rather than hiding it.
 | tenacity | 2 | 20 | **not converged** | n/a | 2 |
 | testify | 4 | 40 | **not converged** | n/a | 2 |
 | thor | 2 | 20 | **not converged** | n/a | 0 |
+| underscore | 2 | 20 | converged | evaluator countersigned | 0 |
 | validator | 4 | 31 | converged | evaluator countersigned | 1 |
+| validator.js | 2 | 20 | **not converged** | n/a | 0 |
 | yfinance | 1 | 9 | converged | evaluator countersigned | 0 |
 | zod | 4 | 39 | converged | evaluator countersigned | 0 |
 | zstd | 6 | 54 | **not converged** | n/a | 1 |
@@ -102,13 +105,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 44 brownfield convergences:
+The engine tightened over time. Of the 46 brownfield convergences:
 
-- **39** were countersigned by the adversarial evaluator, the current standard.
+- **41** were countersigned by the adversarial evaluator, the current standard.
   Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow` and `more-itertools` met
+  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow`, `more-itertools`, `underscore` and `js-uuid` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -118,7 +121,7 @@ The engine tightened over time. Of the 44 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 44 as one number
+Every receipt names the standard its own run met. Pooling all 46 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -132,7 +135,7 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 44 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 46 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
 `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
 `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp` and `godotenv`, and each receipt names what it
@@ -1167,3 +1170,24 @@ reasons across the four verdicts, eight are product or instrument
 defects; one - a PLAN.md sentence naming a carried finding that exists
 nowhere on the ledger - follows from the state files alone and is
 recorded against P1-63's claim-currency class.
+
+## validator.js, two runs in which the gate was never legally due
+
+`validatorjs/validator.js` (23,739 stars) ran in the 2026-08-24/25
+JavaScript wave against a pre-registered two rounds of ten, and its record
+is a study in gate reachability on a wide surface: **12 findings closed -
+4 High, 8 Medium - across a 24-of-24-row sweep**, +537/-31, with **zero
+evaluator invocations**, because the ledger never reached the severity
+floor that makes the gate due. The Highs are worth the run by themselves:
+`isURL` terminated the authority on `/` alone, so a backslash before
+`@` made `host_whitelist` and `host_blacklist` judge the wrong host -
+a security-relevant bypass in the string-validation library half the npm
+ecosystem screens input with; `isRFC3339` accepted days that do not
+exist; `toDate` rolled 2020-02-30 into March; `isTaxID` for de-AT and
+fr-BE stripped every symbol before validating, so hand-crafted
+punctuation passed. The ledger at close holds 3 Medium and 2 Low with
+acceptance lines. The classification is uniform: every finding and every
+carried item is product; no REJECT reasons exist to classify. Under the
+2026-08-24 width lesson (underscore, same wave, got 3x10 for the same
+row count and converged inside it), validator.js is the corpus's
+cleanest case for a pre-registered attempt 2 at three rounds.

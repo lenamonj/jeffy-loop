@@ -1,0 +1,1730 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 86e65e5..00089d3 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -21,7 +21,7 @@ jobs:
+       - run: npm ci
+       - run: npm run lint
+       - run: npm run docs:diff
+-      - run: npm exec publint --strict
++      - run: npm exec publint -- --strict
+ 
+   test:
+     runs-on: ubuntu-latest
+diff --git a/.gitignore b/.gitignore
+index ca306c9..31b89a9 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,3 +7,4 @@ local.log
+ logs/
+ node_modules/
+ examples/**/package-lock.json
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index 06edfaa..7ff9373 100644
+--- a/README.md
++++ b/README.md
+@@ -165,14 +165,14 @@ Create an RFC version 1 (timestamp) UUID
+ | [`options`] | `Object` with one or more of the following properties: |
+ | [`options.node = (random)` ] | RFC "node" field as an `Array[6]` of byte values (per 4.1.6) |
+ | [`options.clockseq = (random)`] | RFC "clock sequence" as a `Number` between 0 - 0x3fff |
+-| [`options.msecs = (current time)`] | RFC "timestamp" field (`Number` of milliseconds, unix epoch) |
+-| [`options.nsecs = 0`] | RFC "timestamp" field (`Number` of nanoseconds to add to `msecs`, should be 0-10,000) |
++| [`options.msecs = (current time)`] | RFC "timestamp" field (`Number` of milliseconds, unix epoch, -12219292800000 - 103072857660683) |
++| [`options.nsecs = 0`] | RFC "timestamp" field (`Number` of nanoseconds to add to `msecs`, 0 - 9999) |
+ | [`options.random = (random)`] | `Array` of 16 random bytes (0-255) used to generate other fields, above |
+ | [`options.rng`] | Alternative to `options.random`, a `Function` that returns an `Array` of 16 random bytes (0-255) |
+ | [`buffer`] | `Uint8Array` or `Uint8Array` subtype (e.g. Node.js `Buffer`). If provided, binary UUID is written into the array, starting at `offset` |
+ | [`offset` = 0] | `Number` Index to start writing UUID bytes in `buffer` |
+ | _returns_ | UUID `String` if no `buffer` is specified, otherwise returns `buffer` |
+-| _throws_ | `Error` if more than 10M UUIDs/sec are requested |
++| _throws_ | `Error` if `options.random` or `options.rng()` supplies fewer than 16 bytes, or `options.node` fewer than 6; `RangeError` if `buffer` is too small or `offset` is out of range, or if `options.msecs`, `options.nsecs` or `options.clockseq` is not an integer within the range documented above |
+ 
+ Example:
+ 
+@@ -200,6 +200,12 @@ uuidv1(options); // ⇨ '710b962e-041c-11e1-9234-0123456789ab'
+ 
+ Convert a UUID from version 1 to version 6
+ 
++|           |                                                             |
++| --------- | ----------------------------------------------------------- |
++| `uuid`    | `String \| Uint8Array` A version 1 UUID                     |
++| _returns_ | The version 6 UUID, as the same type as the `uuid` argument |
++| _throws_  | `TypeError` if `uuid` is not a version 1 UUID               |
++
+ ```javascript
+ import { v1ToV6 } from 'uuid';
+ 
+@@ -310,7 +316,7 @@ This method takes the same arguments as uuid.v1().
+ ```javascript
+ import { v6 as uuidv6 } from 'uuid';
+ 
+-uuidv6(); // ⇨ '1efc7d35-7fd0-6000-841d-504d2167fc5b'
++uuidv6(); // ⇨ '1efc7d35-7fd0-6000-841d-514d2167fc5b'
+ ```
+ 
+ Example using `options`:
+@@ -331,6 +337,12 @@ uuidv6(options); // ⇨ '1e1041c7-10b9-662e-9234-0123456789ab'
+ 
+ Convert a UUID from version 6 to version 1
+ 
++|           |                                                             |
++| --------- | ----------------------------------------------------------- |
++| `uuid`    | `String \| Uint8Array` A version 6 UUID                     |
++| _returns_ | The version 1 UUID, as the same type as the `uuid` argument |
++| _throws_  | `TypeError` if `uuid` is not a version 6 UUID               |
++
+ ```javascript
+ import { v6ToV1 } from 'uuid';
+ 
+@@ -344,13 +356,14 @@ Create an RFC version 7 (random) UUID
+ |  |  |
+ | --- | --- |
+ | [`options`] | `Object` with one or more of the following properties: |
+-| [`options.msecs = (current time)`] | RFC "timestamp" field (`Number` of milliseconds, unix epoch) |
++| [`options.msecs = (current time)`] | RFC "timestamp" field (`Number` of milliseconds, unix epoch, 0 - 281474976710655) |
+ | [`options.random = (random)`] | `Array` of 16 random bytes (0-255) used to generate other fields, above |
+ | [`options.rng`] | Alternative to `options.random`, a `Function` that returns an `Array` of 16 random bytes (0-255) |
+-| [`options.seq = (random)`] | 32-bit sequence `Number` between 0 - 0xffffffff. This may be provided to help ensure uniqueness for UUIDs generated within the same millisecond time interval. Default = random value. |
++| [`options.seq = (random)`] | 32-bit sequence `Number` between 0 - 0xffffffff, or the equivalent signed value (-0x80000000 - -1) that JS bitwise arithmetic produces. This may be provided to help ensure uniqueness for UUIDs generated within the same millisecond time interval. Default = random value. |
+ | [`buffer`] | `Uint8Array` or `Uint8Array` subtype (e.g. Node.js `Buffer`). If provided, binary UUID is written into the array, starting at `offset` |
+ | [`offset` = 0] | `Number` Index to start writing UUID bytes in `buffer` |
+ | _returns_ | UUID `String` if no `buffer` is specified, otherwise returns `buffer` |
++| _throws_ | `Error` if `options.random` or `options.rng()` supplies fewer than 16 bytes; `RangeError` if `buffer` is too small or `offset` is out of range, or if `options.msecs` or `options.seq` is not an integer within the range documented above |
+ 
+ Example:
+ 
+@@ -446,11 +459,11 @@ Usage:
+   uuid v3 <name> <namespace uuid>
+   uuid v4
+   uuid v5 <name> <namespace uuid>
++  uuid v6
+   uuid v7
+   uuid --help
+ 
+-Note: <namespace uuid> may be "URL" or "DNS" to use the corresponding UUIDs
+-defined by RFC9562
++Note: <namespace uuid> may be "URL" or "DNS" to use the corresponding UUIDs defined by RFC9562
+ ```
+ 
+ ## `options` Handling for Timestamp UUIDs
+diff --git a/README_js.md b/README_js.md
+index bf65355..a6b445e 100644
+--- a/README_js.md
++++ b/README_js.md
+@@ -194,14 +194,14 @@ Create an RFC version 1 (timestamp) UUID
+ | [`options`] | `Object` with one or more of the following properties: |
+ | [`options.node = (random)` ] | RFC "node" field as an `Array[6]` of byte values (per 4.1.6) |
+ | [`options.clockseq = (random)`] | RFC "clock sequence" as a `Number` between 0 - 0x3fff |
+-| [`options.msecs = (current time)`] | RFC "timestamp" field (`Number` of milliseconds, unix epoch) |
+-| [`options.nsecs = 0`] | RFC "timestamp" field (`Number` of nanoseconds to add to `msecs`, should be 0-10,000) |
++| [`options.msecs = (current time)`] | RFC "timestamp" field (`Number` of milliseconds, unix epoch, -12219292800000 - 103072857660683) |
++| [`options.nsecs = 0`] | RFC "timestamp" field (`Number` of nanoseconds to add to `msecs`, 0 - 9999) |
+ | [`options.random = (random)`] | `Array` of 16 random bytes (0-255) used to generate other fields, above |
+ | [`options.rng`] | Alternative to `options.random`, a `Function` that returns an `Array` of 16 random bytes (0-255) |
+ | [`buffer`] | `Uint8Array` or `Uint8Array` subtype (e.g. Node.js `Buffer`). If provided, binary UUID is written into the array, starting at `offset` |
+ | [`offset` = 0] | `Number` Index to start writing UUID bytes in `buffer` |
+ | _returns_ | UUID `String` if no `buffer` is specified, otherwise returns `buffer` |
+-| _throws_ | `Error` if more than 10M UUIDs/sec are requested |
++| _throws_ | `Error` if `options.random` or `options.rng()` supplies fewer than 16 bytes, or `options.node` fewer than 6; `RangeError` if `buffer` is too small or `offset` is out of range, or if `options.msecs`, `options.nsecs` or `options.clockseq` is not an integer within the range documented above |
+ 
+ Example:
+ 
+@@ -229,6 +229,12 @@ uuidv1(options); // RESULT
+ 
+ Convert a UUID from version 1 to version 6
+ 
++|  |  |
++| --- | --- |
++| `uuid` | `String \| Uint8Array` A version 1 UUID |
++| _returns_ | The version 6 UUID, as the same type as the `uuid` argument |
++| _throws_ | `TypeError` if `uuid` is not a version 1 UUID |
++
+ ```javascript --run
+ import { v1ToV6 } from 'uuid';
+ 
+@@ -360,6 +366,12 @@ uuidv6(options); // RESULT
+ 
+ Convert a UUID from version 6 to version 1
+ 
++|  |  |
++| --- | --- |
++| `uuid` | `String \| Uint8Array` A version 6 UUID |
++| _returns_ | The version 1 UUID, as the same type as the `uuid` argument |
++| _throws_ | `TypeError` if `uuid` is not a version 6 UUID |
++
+ ```javascript --run
+ import { v6ToV1 } from 'uuid';
+ 
+@@ -373,13 +385,14 @@ Create an RFC version 7 (random) UUID
+ |  |  |
+ | --- | --- |
+ | [`options`] | `Object` with one or more of the following properties: |
+-| [`options.msecs = (current time)`] | RFC "timestamp" field (`Number` of milliseconds, unix epoch) |
++| [`options.msecs = (current time)`] | RFC "timestamp" field (`Number` of milliseconds, unix epoch, 0 - 281474976710655) |
+ | [`options.random = (random)`] | `Array` of 16 random bytes (0-255) used to generate other fields, above |
+ | [`options.rng`] | Alternative to `options.random`, a `Function` that returns an `Array` of 16 random bytes (0-255) |
+-| [`options.seq = (random)`] | 32-bit sequence `Number` between 0 - 0xffffffff. This may be provided to help ensure uniqueness for UUIDs generated within the same millisecond time interval. Default = random value. |
++| [`options.seq = (random)`] | 32-bit sequence `Number` between 0 - 0xffffffff, or the equivalent signed value (-0x80000000 - -1) that JS bitwise arithmetic produces. This may be provided to help ensure uniqueness for UUIDs generated within the same millisecond time interval. Default = random value. |
+ | [`buffer`] | `Uint8Array` or `Uint8Array` subtype (e.g. Node.js `Buffer`). If provided, binary UUID is written into the array, starting at `offset` |
+ | [`offset` = 0] | `Number` Index to start writing UUID bytes in `buffer` |
+ | _returns_ | UUID `String` if no `buffer` is specified, otherwise returns `buffer` |
++| _throws_ | `Error` if `options.random` or `options.rng()` supplies fewer than 16 bytes; `RangeError` if `buffer` is too small or `offset` is out of range, or if `options.msecs` or `options.seq` is not an integer within the range documented above |
+ 
+ Example:
+ 
+@@ -475,11 +488,11 @@ Usage:
+   uuid v3 <name> <namespace uuid>
+   uuid v4
+   uuid v5 <name> <namespace uuid>
++  uuid v6
+   uuid v7
+   uuid --help
+ 
+-Note: <namespace uuid> may be "URL" or "DNS" to use the corresponding UUIDs
+-defined by RFC9562
++Note: <namespace uuid> may be "URL" or "DNS" to use the corresponding UUIDs defined by RFC9562
+ ```
+ 
+ ## `options` Handling for Timestamp UUIDs
+diff --git a/package-lock.json b/package-lock.json
+index 3a0939a..5d9de7b 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -19,7 +19,7 @@
+         "@biomejs/biome": "2.4.10",
+         "@commitlint/cli": "20.5.0",
+         "@commitlint/config-conventional": "20.5.0",
+-        "bundlewatch": "0.4.1",
++        "bundlewatch": "0.4.2",
+         "commander": "14.0.3",
+         "globals": "17.4.0",
+         "jest": "30.3.0",
+@@ -33,16 +33,19 @@
+         "runmd": "2.1.1",
+         "standard-version": "9.5.0",
+         "typescript": "5.4.3"
++      },
++      "engines": {
++        "node": ">=20"
+       }
+     },
+     "node_modules/@babel/code-frame": {
+-      "version": "7.29.0",
+-      "resolved": "https://registry.npmjs.org/@babel/code-frame/-/code-frame-7.29.0.tgz",
+-      "integrity": "sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/code-frame/-/code-frame-7.29.7.tgz",
++      "integrity": "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/helper-validator-identifier": "^7.28.5",
++        "@babel/helper-validator-identifier": "^7.29.7",
+         "js-tokens": "^4.0.0",
+         "picocolors": "^1.1.1"
+       },
+@@ -51,9 +54,9 @@
+       }
+     },
+     "node_modules/@babel/compat-data": {
+-      "version": "7.29.0",
+-      "resolved": "https://registry.npmjs.org/@babel/compat-data/-/compat-data-7.29.0.tgz",
+-      "integrity": "sha512-T1NCJqT/j9+cn8fvkt7jtwbLBfLC/1y1c7NtCeXFRgzGTsafi68MRv8yzkYSapBnFA6L3U2VSc02ciDzoAJhJg==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/compat-data/-/compat-data-7.29.7.tgz",
++      "integrity": "sha512-locTkQyKvwIEgBzVrn8693ebc97F2U8ZHjbXwDXJ5Fn2TCpNwTlKcaKLkdHop5c/icOFE7qt7Q9JC5hnKNa6Gg==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+@@ -61,21 +64,21 @@
+       }
+     },
+     "node_modules/@babel/core": {
+-      "version": "7.29.0",
+-      "resolved": "https://registry.npmjs.org/@babel/core/-/core-7.29.0.tgz",
+-      "integrity": "sha512-CGOfOJqWjg2qW/Mb6zNsDm+u5vFQ8DxXfbM09z69p5Z6+mE1ikP2jUXw+j42Pf1XTYED2Rni5f95npYeuwMDQA==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/core/-/core-7.29.7.tgz",
++      "integrity": "sha512-RgHBCvtjbOK2gXSNBNIkNoEc9qoVEtau3hj8gEqKQuL3HZAibKarWFEI3Lfm6EYKkLalOh8eSrj9b+ch9H/VBA==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/code-frame": "^7.29.0",
+-        "@babel/generator": "^7.29.0",
+-        "@babel/helper-compilation-targets": "^7.28.6",
+-        "@babel/helper-module-transforms": "^7.28.6",
+-        "@babel/helpers": "^7.28.6",
+-        "@babel/parser": "^7.29.0",
+-        "@babel/template": "^7.28.6",
+-        "@babel/traverse": "^7.29.0",
+-        "@babel/types": "^7.29.0",
++        "@babel/code-frame": "^7.29.7",
++        "@babel/generator": "^7.29.7",
++        "@babel/helper-compilation-targets": "^7.29.7",
++        "@babel/helper-module-transforms": "^7.29.7",
++        "@babel/helpers": "^7.29.7",
++        "@babel/parser": "^7.29.7",
++        "@babel/template": "^7.29.7",
++        "@babel/traverse": "^7.29.7",
++        "@babel/types": "^7.29.7",
+         "@jridgewell/remapping": "^2.3.5",
+         "convert-source-map": "^2.0.0",
+         "debug": "^4.1.0",
+@@ -102,14 +105,14 @@
+       }
+     },
+     "node_modules/@babel/generator": {
+-      "version": "7.29.1",
+-      "resolved": "https://registry.npmjs.org/@babel/generator/-/generator-7.29.1.tgz",
+-      "integrity": "sha512-qsaF+9Qcm2Qv8SRIMMscAvG4O3lJ0F1GuMo5HR/Bp02LopNgnZBC/EkbevHFeGs4ls/oPz9v+Bsmzbkbe+0dUw==",
++      "version": "7.29.8",
++      "resolved": "https://registry.npmjs.org/@babel/generator/-/generator-7.29.8.tgz",
++      "integrity": "sha512-gZbepsdh3WDtgZKWL+vTPh71LSBrm/Y4/QDZBVCcYfmeTEEuoOYwlSy+G1StfJg+/Zy550u/3TATbm7qDbbMtg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/parser": "^7.29.0",
+-        "@babel/types": "^7.29.0",
++        "@babel/parser": "^7.29.8",
++        "@babel/types": "^7.29.8",
+         "@jridgewell/gen-mapping": "^0.3.12",
+         "@jridgewell/trace-mapping": "^0.3.28",
+         "jsesc": "^3.0.2"
+@@ -119,14 +122,14 @@
+       }
+     },
+     "node_modules/@babel/helper-compilation-targets": {
+-      "version": "7.28.6",
+-      "resolved": "https://registry.npmjs.org/@babel/helper-compilation-targets/-/helper-compilation-targets-7.28.6.tgz",
+-      "integrity": "sha512-JYtls3hqi15fcx5GaSNL7SCTJ2MNmjrkHXg4FSpOA/grxK8KwyZ5bubHsCq8FXCkua6xhuaaBit+3b7+VZRfcA==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-compilation-targets/-/helper-compilation-targets-7.29.7.tgz",
++      "integrity": "sha512-wem6WaBj4NaVYVdNhLPPVacES6ZJ+KBBfSkTMD3YZxbP3rm3Di85tJU5ljaUNhaOynt+Aj0xruhYuzQBt8n71g==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/compat-data": "^7.28.6",
+-        "@babel/helper-validator-option": "^7.27.1",
++        "@babel/compat-data": "^7.29.7",
++        "@babel/helper-validator-option": "^7.29.7",
+         "browserslist": "^4.24.0",
+         "lru-cache": "^5.1.1",
+         "semver": "^6.3.1"
+@@ -146,9 +149,9 @@
+       }
+     },
+     "node_modules/@babel/helper-globals": {
+-      "version": "7.28.0",
+-      "resolved": "https://registry.npmjs.org/@babel/helper-globals/-/helper-globals-7.28.0.tgz",
+-      "integrity": "sha512-+W6cISkXFa1jXsDEdYA8HeevQT/FULhxzR99pxphltZcVaugps53THCeiWA8SguxxpSp3gKPiuYfSWopkLQ4hw==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-globals/-/helper-globals-7.29.7.tgz",
++      "integrity": "sha512-3nQVUAtvkKH9zahfWgw96Jc/uFOmjACE1kQz82E2lqWmHBgjzbNlsC22nuQTfahmWeQtTq5nQ/4Nnd2A1wj4zA==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+@@ -156,29 +159,29 @@
+       }
+     },
+     "node_modules/@babel/helper-module-imports": {
+-      "version": "7.28.6",
+-      "resolved": "https://registry.npmjs.org/@babel/helper-module-imports/-/helper-module-imports-7.28.6.tgz",
+-      "integrity": "sha512-l5XkZK7r7wa9LucGw9LwZyyCUscb4x37JWTPz7swwFE/0FMQAGpiWUZn8u9DzkSBWEcK25jmvubfpw2dnAMdbw==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-module-imports/-/helper-module-imports-7.29.7.tgz",
++      "integrity": "sha512-ejHwrQQYcm9xnTivShn2IDOlIzInN34AXskvq9QicvCtEzq1Vzclu/tKF8Jq1Cg8JG2GL6/EmjgsCT7lXepE3g==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/traverse": "^7.28.6",
+-        "@babel/types": "^7.28.6"
++        "@babel/traverse": "^7.29.7",
++        "@babel/types": "^7.29.7"
+       },
+       "engines": {
+         "node": ">=6.9.0"
+       }
+     },
+     "node_modules/@babel/helper-module-transforms": {
+-      "version": "7.28.6",
+-      "resolved": "https://registry.npmjs.org/@babel/helper-module-transforms/-/helper-module-transforms-7.28.6.tgz",
+-      "integrity": "sha512-67oXFAYr2cDLDVGLXTEABjdBJZ6drElUSI7WKp70NrpyISso3plG9SAGEF6y7zbha/wOzUByWWTJvEDVNIUGcA==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-module-transforms/-/helper-module-transforms-7.29.7.tgz",
++      "integrity": "sha512-UPUVSyXbOh627KiCIGQSgwWzGeBKLkaJ9PJEdrngIwMSzxLR4jS4+f1f1jb7VzBbg8nFLaYotvVPFCTqdrmTAg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/helper-module-imports": "^7.28.6",
+-        "@babel/helper-validator-identifier": "^7.28.5",
+-        "@babel/traverse": "^7.28.6"
++        "@babel/helper-module-imports": "^7.29.7",
++        "@babel/helper-validator-identifier": "^7.29.7",
++        "@babel/traverse": "^7.29.7"
+       },
+       "engines": {
+         "node": ">=6.9.0"
+@@ -198,9 +201,9 @@
+       }
+     },
+     "node_modules/@babel/helper-string-parser": {
+-      "version": "7.27.1",
+-      "resolved": "https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-7.27.1.tgz",
+-      "integrity": "sha512-qMlSxKbpRlAridDExk92nSobyDdpPijUq2DW6oDnUqd0iOGxmQjyqhMIihI9+zv4LPyZdRje2cavWPbCbWm3eA==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-7.29.7.tgz",
++      "integrity": "sha512-Pb5ijPrZ89GDH8223L4UP8i6QApWxs04RbPQJTeWDV0/keR2E36MeKnyr6LYmUUvqRRI+Iv87SuF1W6ErINzYw==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+@@ -208,9 +211,9 @@
+       }
+     },
+     "node_modules/@babel/helper-validator-identifier": {
+-      "version": "7.28.5",
+-      "resolved": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.28.5.tgz",
+-      "integrity": "sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.29.7.tgz",
++      "integrity": "sha512-qehxGkRj55h/ff8EMaJ+cYhyaKlHIxqYDn682wQD7RNp9UujOQsHog2uS0r2vzr4pW+sXf90NeeayjcNaX3fFg==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+@@ -218,9 +221,9 @@
+       }
+     },
+     "node_modules/@babel/helper-validator-option": {
+-      "version": "7.27.1",
+-      "resolved": "https://registry.npmjs.org/@babel/helper-validator-option/-/helper-validator-option-7.27.1.tgz",
+-      "integrity": "sha512-YvjJow9FxbhFFKDSuFnVCe2WxXk1zWc22fFePVNEaWJEu8IrZVlda6N0uHwzZrUM1il7NC9Mlp4MaJYbYd9JSg==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helper-validator-option/-/helper-validator-option-7.29.7.tgz",
++      "integrity": "sha512-N9ZErrD+yW5geCDtBqnOoxmR8+tNKiGuxKlDpuJxfsqpa2dFcexaziGAE/qoHLiDDreVNMupxGmSoNlyvsA3gw==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+@@ -228,27 +231,27 @@
+       }
+     },
+     "node_modules/@babel/helpers": {
+-      "version": "7.29.2",
+-      "resolved": "https://registry.npmjs.org/@babel/helpers/-/helpers-7.29.2.tgz",
+-      "integrity": "sha512-HoGuUs4sCZNezVEKdVcwqmZN8GoHirLUcLaYVNBK2J0DadGtdcqgr3BCbvH8+XUo4NGjNl3VOtSjEKNzqfFgKw==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/helpers/-/helpers-7.29.7.tgz",
++      "integrity": "sha512-1k2lAGRMfHTcwuNYcCNUmaUffmQv8KWMfh2iJUUeRlwlwH4FdNG7mfPI10NPfLHJFThE4Tyr4mv7kTNZOiPuBg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/template": "^7.28.6",
+-        "@babel/types": "^7.29.0"
++        "@babel/template": "^7.29.7",
++        "@babel/types": "^7.29.7"
+       },
+       "engines": {
+         "node": ">=6.9.0"
+       }
+     },
+     "node_modules/@babel/parser": {
+-      "version": "7.29.2",
+-      "resolved": "https://registry.npmjs.org/@babel/parser/-/parser-7.29.2.tgz",
+-      "integrity": "sha512-4GgRzy/+fsBa72/RZVJmGKPmZu9Byn8o4MoLpmNe1m8ZfYnz5emHLQz3U4gLud6Zwl0RZIcgiLD7Uq7ySFuDLA==",
++      "version": "7.29.8",
++      "resolved": "https://registry.npmjs.org/@babel/parser/-/parser-7.29.8.tgz",
++      "integrity": "sha512-E8lTAYNB1KW+FH+VGJuZM1ioAx2E6oVlvQFRrf5P8ZZmsiJXYAD9vTFV7yyEURNzgh1dFqMZuO6tUwcARbqFCA==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/types": "^7.29.0"
++        "@babel/types": "^7.29.8"
+       },
+       "bin": {
+         "parser": "bin/babel-parser.js"
+@@ -497,33 +500,33 @@
+       }
+     },
+     "node_modules/@babel/template": {
+-      "version": "7.28.6",
+-      "resolved": "https://registry.npmjs.org/@babel/template/-/template-7.28.6.tgz",
+-      "integrity": "sha512-YA6Ma2KsCdGb+WC6UpBVFJGXL58MDA6oyONbjyF/+5sBgxY/dwkhLogbMT2GXXyU84/IhRw/2D1Os1B/giz+BQ==",
++      "version": "7.29.7",
++      "resolved": "https://registry.npmjs.org/@babel/template/-/template-7.29.7.tgz",
++      "integrity": "sha512-puq+Gf35oI24FeN11LkoUQFqv9uwNeWpxXZi/Ji3rRIoKAzKnxRaZ+Gkj0vKS9ZCiTESfng1N9LyOyXvo+m+Gg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/code-frame": "^7.28.6",
+-        "@babel/parser": "^7.28.6",
+-        "@babel/types": "^7.28.6"
++        "@babel/code-frame": "^7.29.7",
++        "@babel/parser": "^7.29.7",
++        "@babel/types": "^7.29.7"
+       },
+       "engines": {
+         "node": ">=6.9.0"
+       }
+     },
+     "node_modules/@babel/traverse": {
+-      "version": "7.29.0",
+-      "resolved": "https://registry.npmjs.org/@babel/traverse/-/traverse-7.29.0.tgz",
+-      "integrity": "sha512-4HPiQr0X7+waHfyXPZpWPfWL/J7dcN1mx9gL6WdQVMbPnF3+ZhSMs8tCxN7oHddJE9fhNE7+lxdnlyemKfJRuA==",
++      "version": "7.29.8",
++      "resolved": "https://registry.npmjs.org/@babel/traverse/-/traverse-7.29.8.tgz",
++      "integrity": "sha512-I5z7H3bf/41ktsNVLtpN0wAa336HkqIHQ5BuPLEhTkt1jVSyZpeNKIzTgEWmlxjdg81R0IgUCcaE+Ok3NvrfZg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/code-frame": "^7.29.0",
+-        "@babel/generator": "^7.29.0",
+-        "@babel/helper-globals": "^7.28.0",
+-        "@babel/parser": "^7.29.0",
+-        "@babel/template": "^7.28.6",
+-        "@babel/types": "^7.29.0",
++        "@babel/code-frame": "^7.29.7",
++        "@babel/generator": "^7.29.8",
++        "@babel/helper-globals": "^7.29.7",
++        "@babel/parser": "^7.29.8",
++        "@babel/template": "^7.29.7",
++        "@babel/types": "^7.29.8",
+         "debug": "^4.3.1"
+       },
+       "engines": {
+@@ -531,14 +534,14 @@
+       }
+     },
+     "node_modules/@babel/types": {
+-      "version": "7.29.0",
+-      "resolved": "https://registry.npmjs.org/@babel/types/-/types-7.29.0.tgz",
+-      "integrity": "sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A==",
++      "version": "7.29.8",
++      "resolved": "https://registry.npmjs.org/@babel/types/-/types-7.29.8.tgz",
++      "integrity": "sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "@babel/helper-string-parser": "^7.27.1",
+-        "@babel/helper-validator-identifier": "^7.28.5"
++        "@babel/helper-string-parser": "^7.29.7",
++        "@babel/helper-validator-identifier": "^7.29.7"
+       },
+       "engines": {
+         "node": ">=6.9.0"
+@@ -1260,16 +1263,16 @@
+       }
+     },
+     "node_modules/@google-automations/git-file-utils/node_modules/brace-expansion": {
+-      "version": "5.0.7",
+-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
+-      "integrity": "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
++      "version": "5.0.9",
++      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz",
++      "integrity": "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "balanced-match": "^4.0.2"
+       },
+       "engines": {
+-        "node": "18 || 20 || >=22"
++        "node": "20 || >=22"
+       }
+     },
+     "node_modules/@google-automations/git-file-utils/node_modules/minimatch": {
+@@ -1503,9 +1506,9 @@
+       }
+     },
+     "node_modules/@istanbuljs/load-nyc-config/node_modules/js-yaml": {
+-      "version": "3.15.0",
+-      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-3.15.0.tgz",
+-      "integrity": "sha512-ttBQIIQPDeLjpPOohtUdXuXUVoA2uIB6fEH9HyJ7234s5mBJ5wTx20njxplLZQgLaOfpmPQA7X2t5AX6tIPbog==",
++      "version": "3.15.1",
++      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-3.15.1.tgz",
++      "integrity": "sha512-S99WuO3HlhO3XN41EtYUNl9zzXjoJx7QvmipxsJVxtCBT0YHEFy+iOJhjSvrmV12nYhWpZaM8lPHkJm0yUMbag==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -1788,9 +1791,9 @@
+       }
+     },
+     "node_modules/@jest/reporters/node_modules/brace-expansion": {
+-      "version": "2.1.1",
+-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.1.tgz",
+-      "integrity": "sha512-WR1cURNjuvBLMZBMbqM0UoE+WAfdUcEV1ccD8PVBVOI+Z3ND4+SZbN8RsfT2bMuG1qwz5RFvPukSZm5fF2D5eA==",
++      "version": "2.1.4",
++      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.4.tgz",
++      "integrity": "sha512-hGfVzPxthbf3+2yjg/RBs60cB0FhqBS/zvdV/4wn4/BmN0bNMMHPc4V/BbFieqf1TKAGGAHnY4eSjajCl0f2Xg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -2688,16 +2691,16 @@
+       }
+     },
+     "node_modules/@typescript-eslint/typescript-estree/node_modules/brace-expansion": {
+-      "version": "5.0.7",
+-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
+-      "integrity": "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
++      "version": "5.0.9",
++      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz",
++      "integrity": "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "balanced-match": "^4.0.2"
+       },
+       "engines": {
+-        "node": "18 || 20 || >=22"
++        "node": "20 || >=22"
+       }
+     },
+     "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch": {
+@@ -3392,9 +3395,9 @@
+       }
+     },
+     "node_modules/axios": {
+-      "version": "0.30.3",
+-      "resolved": "https://registry.npmjs.org/axios/-/axios-0.30.3.tgz",
+-      "integrity": "sha512-5/tmEb6TmE/ax3mdXBc/Mi6YdPGxQsv+0p5YlciXWt3PHIn0VamqCXhRMtScnwY3lbgSXLneOuXAKUhgmSRpwg==",
++      "version": "0.31.1",
++      "resolved": "https://registry.npmjs.org/axios/-/axios-0.31.1.tgz",
++      "integrity": "sha512-Ef8DUZSZQP6igY48mjGaoEjwhely97lserep0IFJifBH4YdKvwH5eMLniy3kig2HQoBNR8EkZpDjowxwTJcmbg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -3510,9 +3513,9 @@
+       "license": "MIT"
+     },
+     "node_modules/baseline-browser-mapping": {
+-      "version": "2.10.23",
+-      "resolved": "https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.10.23.tgz",
+-      "integrity": "sha512-xwVXGqevyKPsiuQdLj+dZMVjidjJV508TBqexND5HrF89cGdCYCJFB3qhcxRHSeMctdCfbR1jrxBajhDy7o29g==",
++      "version": "2.11.19",
++      "resolved": "https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.11.19.tgz",
++      "integrity": "sha512-Grytf1xOxOEMTGRwx6rLGKkTabd4vMg3VrKdj/7joCmV0qgh4QwMMO6xh34YEXQqirAuUdgQGa5orJQQ+69RBw==",
+       "dev": true,
+       "license": "Apache-2.0",
+       "bin": {
+@@ -3537,9 +3540,9 @@
+       "license": "ISC"
+     },
+     "node_modules/brace-expansion": {
+-      "version": "1.1.15",
+-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.15.tgz",
+-      "integrity": "sha512-EwOCDEex4quD37XhqM3omwtMoJjr//isUZz1JopUNWms+4Z2ViyM/k1YIRePpoVNnQhENnxtFjLaxNHrT7xIUg==",
++      "version": "1.1.18",
++      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.18.tgz",
++      "integrity": "sha512-Edep/X9fGqVNmzKBVsDYIOtD+z1tuezV70LBjdCst9Tqu76lsnvRiZ6oTic1n+/BIwX6QDGAO94PN4N2SADvtw==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -3548,9 +3551,9 @@
+       }
+     },
+     "node_modules/browserslist": {
+-      "version": "4.28.2",
+-      "resolved": "https://registry.npmjs.org/browserslist/-/browserslist-4.28.2.tgz",
+-      "integrity": "sha512-48xSriZYYg+8qXna9kwqjIVzuQxi+KYWp2+5nCYnYKPTr0LvD89Jqk2Or5ogxz0NUMfIjhh2lIUX/LyX9B4oIg==",
++      "version": "4.28.8",
++      "resolved": "https://registry.npmjs.org/browserslist/-/browserslist-4.28.8.tgz",
++      "integrity": "sha512-V2NpofLblG64mfOtSgDhOJESZEGogzDMBv/q+W6oc4LXWP/q75eOXoOaaOu1EOadB9U4Bwx/e0yzbvwKH8zalA==",
+       "dev": true,
+       "funding": [
+         {
+@@ -3568,11 +3571,11 @@
+       ],
+       "license": "MIT",
+       "dependencies": {
+-        "baseline-browser-mapping": "^2.10.12",
+-        "caniuse-lite": "^1.0.30001782",
+-        "electron-to-chromium": "^1.5.328",
+-        "node-releases": "^2.0.36",
+-        "update-browserslist-db": "^1.2.3"
++        "baseline-browser-mapping": "^2.11.12",
++        "caniuse-lite": "^1.0.30001809",
++        "electron-to-chromium": "^1.5.402",
++        "node-releases": "^2.0.53",
++        "update-browserslist-db": "^1.3.0"
+       },
+       "bin": {
+         "browserslist": "cli.js"
+@@ -3599,13 +3602,13 @@
+       "license": "MIT"
+     },
+     "node_modules/bundlewatch": {
+-      "version": "0.4.1",
+-      "resolved": "https://registry.npmjs.org/bundlewatch/-/bundlewatch-0.4.1.tgz",
+-      "integrity": "sha512-SIobIhMX8DhoGiNlZ+IqicXRBkp7NQTKGEoZP82Tu8FQhoykbTdTQlL4zYT7n6swjH9wahJ9RTefz0Xwva5FXA==",
++      "version": "0.4.2",
++      "resolved": "https://registry.npmjs.org/bundlewatch/-/bundlewatch-0.4.2.tgz",
++      "integrity": "sha512-67hWKEbLZyokB07wF4TFJ8X1TL/bcZWipbTQBAf9wwcc4fHe31vFk8m2CMwByMZa5DcK4ZzeRIn6Ldt8Q9f9aw==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+-        "axios": "^0.30.0",
++        "axios": "^0.31.1",
+         "bytes": "^3.1.1",
+         "chalk": "^4.0.0",
+         "ci-env": "^1.17.0",
+@@ -3732,9 +3735,9 @@
+       }
+     },
+     "node_modules/caniuse-lite": {
+-      "version": "1.0.30001791",
+-      "resolved": "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001791.tgz",
+-      "integrity": "sha512-yk0l/YSrOnFZk3UROpDLQD9+kC1l4meK/wed583AXrzoarMGJcbRi2Q4RaUYbKxYAsZ8sWmaSa/DsLmdBeI1vQ==",
++      "version": "1.0.30001810",
++      "resolved": "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001810.tgz",
++      "integrity": "sha512-TITQPUkaz+aVk5GL6NhOdwk1aEaNTSDPsGFWrTuhKGtjTF70jL/Oht2W4c6rXUe5fu7Ie19VIahAXHIIiWWNeg==",
+       "dev": true,
+       "funding": [
+         {
+@@ -5013,18 +5016,6 @@
+         "node": ">=10"
+       }
+     },
+-    "node_modules/conventional-commits-filter": {
+-      "version": "5.0.0",
+-      "resolved": "https://registry.npmjs.org/conventional-commits-filter/-/conventional-commits-filter-5.0.0.tgz",
+-      "integrity": "sha512-tQMagCOC59EVgNZcC5zl7XqO30Wki9i9J3acbUvkaosCT6JX3EeFwJD7Qqp4MCikRnzS18WXV3BLIQ66ytu6+Q==",
+-      "dev": true,
+-      "license": "MIT",
+-      "optional": true,
+-      "peer": true,
+-      "engines": {
+-        "node": ">=18"
+-      }
+-    },
+     "node_modules/conventional-commits-parser": {
+       "version": "6.4.0",
+       "resolved": "https://registry.npmjs.org/conventional-commits-parser/-/conventional-commits-parser-6.4.0.tgz",
+@@ -5763,9 +5754,9 @@
+       "license": "MIT"
+     },
+     "node_modules/electron-to-chromium": {
+-      "version": "1.5.344",
+-      "resolved": "https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.344.tgz",
+-      "integrity": "sha512-4MxfbmNDm+KPh066EZy+eUnkcDPcZ35wNmOWzFuh/ijvHsve6kbLTLURy88uCNK5FbpN+yk2nQY6BYh1GEt+wg==",
++      "version": "1.5.413",
++      "resolved": "https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.413.tgz",
++      "integrity": "sha512-F1XPKvt7HVfly5WND90ec16nFsdr4g5x/cVUP3EqjeyXynupabGDqpMa84wwvuYGDnldXLBz6DLXyZXWO9TPvw==",
+       "dev": true,
+       "license": "ISC"
+     },
+@@ -6470,9 +6461,9 @@
+       "peer": true
+     },
+     "node_modules/fast-uri": {
+-      "version": "3.1.0",
+-      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.0.tgz",
+-      "integrity": "sha512-iPeeDKJSWf4IEOasVVrknXpaBV0IApz/gp7S2bb7Z4Lljbl2MGJRqInZiUrQwV16cpzw/D3S5j5Julj/gT52AA==",
++      "version": "3.1.6",
++      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz",
++      "integrity": "sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==",
+       "dev": true,
+       "funding": [
+         {
+@@ -6662,17 +6653,17 @@
+       }
+     },
+     "node_modules/form-data": {
+-      "version": "4.0.5",
+-      "resolved": "https://registry.npmjs.org/form-data/-/form-data-4.0.5.tgz",
+-      "integrity": "sha512-8RipRLol37bNs2bhoV67fiTEvdTrbMUYcFTiy3+wuuOnUog2QBHCZWXDRijWQfAkhBj2Uf5UnVaiWwA5vdd82w==",
++      "version": "4.0.6",
++      "resolved": "https://registry.npmjs.org/form-data/-/form-data-4.0.6.tgz",
++      "integrity": "sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "asynckit": "^0.4.0",
+         "combined-stream": "^1.0.8",
+         "es-set-tostringtag": "^2.1.0",
+-        "hasown": "^2.0.2",
+-        "mime-types": "^2.1.12"
++        "hasown": "^2.0.4",
++        "mime-types": "^2.1.35"
+       },
+       "engines": {
+         "node": ">= 6"
+@@ -7496,9 +7487,9 @@
+       }
+     },
+     "node_modules/hasown": {
+-      "version": "2.0.3",
+-      "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.3.tgz",
+-      "integrity": "sha512-ej4AhfhfL2Q2zpMmLo7U1Uv9+PyhIZpgQLGT1F9miIGmiCJIoCgSmczFdrc97mWT4kVY72KA+WnnhJ5pghSvSg==",
++      "version": "2.0.4",
++      "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.4.tgz",
++      "integrity": "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -8446,9 +8437,9 @@
+       }
+     },
+     "node_modules/jest-config/node_modules/brace-expansion": {
+-      "version": "2.1.1",
+-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.1.tgz",
+-      "integrity": "sha512-WR1cURNjuvBLMZBMbqM0UoE+WAfdUcEV1ccD8PVBVOI+Z3ND4+SZbN8RsfT2bMuG1qwz5RFvPukSZm5fF2D5eA==",
++      "version": "2.1.4",
++      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.4.tgz",
++      "integrity": "sha512-hGfVzPxthbf3+2yjg/RBs60cB0FhqBS/zvdV/4wn4/BmN0bNMMHPc4V/BbFieqf1TKAGGAHnY4eSjajCl0f2Xg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -8780,9 +8771,9 @@
+       }
+     },
+     "node_modules/jest-runtime/node_modules/brace-expansion": {
+-      "version": "2.1.1",
+-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.1.tgz",
+-      "integrity": "sha512-WR1cURNjuvBLMZBMbqM0UoE+WAfdUcEV1ccD8PVBVOI+Z3ND4+SZbN8RsfT2bMuG1qwz5RFvPukSZm5fF2D5eA==",
++      "version": "2.1.4",
++      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.4.tgz",
++      "integrity": "sha512-hGfVzPxthbf3+2yjg/RBs60cB0FhqBS/zvdV/4wn4/BmN0bNMMHPc4V/BbFieqf1TKAGGAHnY4eSjajCl0f2Xg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -8980,9 +8971,9 @@
+       "license": "MIT"
+     },
+     "node_modules/js-yaml": {
+-      "version": "4.3.0",
+-      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.0.tgz",
+-      "integrity": "sha512-1td788aAnnZ5qs7V2QIRl1owjtYpbKt749Y3xauqQgwIIGF/xXWz1wMTEBx5O3LK3lXLVuqXPdPxj2BoFHaW9Q==",
++      "version": "4.3.1",
++      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.1.tgz",
++      "integrity": "sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==",
+       "dev": true,
+       "funding": [
+         {
+@@ -10028,11 +10019,14 @@
+       "license": "MIT"
+     },
+     "node_modules/node-releases": {
+-      "version": "2.0.38",
+-      "resolved": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.38.tgz",
+-      "integrity": "sha512-3qT/88Y3FbH/Kx4szpQQ4HzUbVrHPKTLVpVocKiLfoYvw9XSGOX2FmD2d6DrXbVYyAQTF2HeF6My8jmzx7/CRw==",
++      "version": "2.0.53",
++      "resolved": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.53.tgz",
++      "integrity": "sha512-D9UOmYG3UH1V+ENW56t5QXBwJw1YEY18ruVeus89Rw+SyIgjPkCO84bRzO3uNIYosJbNwiabWVn48o3uJLjxFQ==",
+       "dev": true,
+-      "license": "MIT"
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
+     },
+     "node_modules/normalize-package-data": {
+       "version": "2.5.0",
+@@ -11487,9 +11481,9 @@
+       }
+     },
+     "node_modules/shell-quote": {
+-      "version": "1.8.3",
+-      "resolved": "https://registry.npmjs.org/shell-quote/-/shell-quote-1.8.3.tgz",
+-      "integrity": "sha512-ObmnIF4hXNg1BqhnHmgbDETF8dLPCggZWBjkQfhZpbszZnYur5DUljTcCHii5LC3J5E0yeO/1LIMyH+UvHQgyw==",
++      "version": "1.10.0",
++      "resolved": "https://registry.npmjs.org/shell-quote/-/shell-quote-1.10.0.tgz",
++      "integrity": "sha512-w1aiOKwKuRgtwAReIIj89puqg+I7GvX4IbLrvmhXbzQsj1+Zwi4VO3+fa6ZF91TWSjIxoEkKnMeHcLEODK5ZXA==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+@@ -12810,9 +12804,9 @@
+       }
+     },
+     "node_modules/update-browserslist-db": {
+-      "version": "1.2.3",
+-      "resolved": "https://registry.npmjs.org/update-browserslist-db/-/update-browserslist-db-1.2.3.tgz",
+-      "integrity": "sha512-Js0m9cx+qOgDxo0eMiFGEueWztz+d4+M3rGlmKPT+T4IS/jP4ylw3Nwpu6cpTTP8R1MAC1kF4VbdLt3ARf209w==",
++      "version": "1.3.1",
++      "resolved": "https://registry.npmjs.org/update-browserslist-db/-/update-browserslist-db-1.3.1.tgz",
++      "integrity": "sha512-ZZ61DsRsOnakl74HAmp3oSN4aXUmEWXf+i/yv0h7tIBfICc3VdrFErQKUUKPgu3AMsTUMbcongALEN4l6GSUrQ==",
+       "dev": true,
+       "funding": [
+         {
+diff --git a/package.json b/package.json
+index b571536..3c73cb4 100644
+--- a/package.json
++++ b/package.json
+@@ -39,11 +39,14 @@
+     "dist-node",
+     "!**/test"
+   ],
++  "engines": {
++    "node": ">=20"
++  },
+   "devDependencies": {
+     "@biomejs/biome": "2.4.10",
+     "@commitlint/cli": "20.5.0",
+     "@commitlint/config-conventional": "20.5.0",
+-    "bundlewatch": "0.4.1",
++    "bundlewatch": "0.4.2",
+     "commander": "14.0.3",
+     "globals": "17.4.0",
+     "jest": "30.3.0",
+@@ -70,7 +73,7 @@
+     "build": "./scripts/build.sh",
+     "build:watch": "tsc --watch -p tsconfig.json",
+     "bundlewatch": "npm run pretest:browser && bundlewatch --config bundlewatch.config.json",
+-    "docs:diff": "npm run docs && git diff README.md",
++    "docs:diff": "npm run docs && git diff --exit-code HEAD -- README.md",
+     "docs": "npm run build && npx runmd --output=README.md README_js.md",
+     "biome:check": "biome check .",
+     "biome:fix": "biome check --write .",
+@@ -99,7 +102,7 @@
+   },
+   "repository": {
+     "type": "git",
+-    "url": "https://github.com/uuidjs/uuid.git"
++    "url": "git+https://github.com/uuidjs/uuid.git"
+   },
+   "lint-staged": {
+     "*": [
+diff --git a/src/checkOption.ts b/src/checkOption.ts
+new file mode 100644
+index 0000000..a18fcb3
+--- /dev/null
++++ b/src/checkOption.ts
+@@ -0,0 +1,22 @@
++/**
++ * Reject an out-of-domain option value.
++ *
++ * The generators write these numbers into fixed-width fields, so a value
++ * outside the documented domain is silently truncated or wrapped rather than
++ * refused: `v1({ clockseq: 0x4000 })` used to return a string this package's
++ * own `validate()` rejects, and `v7({ msecs: 2 ** 48 })` returned the same
++ * UUID as `msecs: 0`.  Options are hand-authored by the application author, so
++ * a wrong value is worth a message that names it.
++ */
++export default function checkIntegerOption(
++  name: string,
++  value: number,
++  min: number,
++  max: number,
++) {
++  if (!Number.isInteger(value) || value < min || value > max) {
++    throw new RangeError(
++      `options.${name} must be an integer between ${min} and ${max}, but got ${value}`,
++    );
++  }
++}
+diff --git a/src/test/uuid-bin.test.ts b/src/test/uuid-bin.test.ts
+new file mode 100644
+index 0000000..6f8b5a5
+--- /dev/null
++++ b/src/test/uuid-bin.test.ts
+@@ -0,0 +1,99 @@
++import * as assert from 'node:assert/strict';
++import { execFileSync } from 'node:child_process';
++import { describe, test } from 'node:test';
++import { fileURLToPath } from 'node:url';
++
++const BIN = fileURLToPath(new URL('../bin/uuid', import.meta.url));
++
++function run(args: string[]) {
++  try {
++    const stdout = execFileSync(process.execPath, [BIN, ...args], {
++      encoding: 'utf8',
++      stdio: ['ignore', 'pipe', 'pipe'],
++    });
++    return { code: 0, stdout, stderr: '' };
++  } catch (err) {
++    const e = err as { status?: number; stdout?: string; stderr?: string };
++    return {
++      code: e.status ?? -1,
++      stdout: e.stdout ?? '',
++      stderr: e.stderr ?? '',
++    };
++  }
++}
++
++describe('uuid-bin', () => {
++  test('--help lists every implemented subcommand on stdout', () => {
++    const { code, stdout } = run(['--help']);
++    assert.equal(code, 0);
++    const commands = stdout
++      .split('\n')
++      .map((l) => l.trim())
++      .filter((l) => l.startsWith('uuid'));
++    assert.deepEqual(commands, [
++      'uuid',
++      'uuid v1',
++      'uuid v3 <name> <namespace uuid>',
++      'uuid v4',
++      'uuid v5 <name> <namespace uuid>',
++      'uuid v6',
++      'uuid v7',
++      'uuid --help',
++    ]);
++  });
++
++  test('deterministic subcommands match the published vectors', () => {
++    assert.equal(
++      run(['v3', 'hello.example.com', 'DNS']).stdout.trim(),
++      '9125a8dc-52ee-365b-a5aa-81b0b3681cf6',
++    );
++    assert.equal(
++      run(['v5', 'hello.example.com', 'DNS']).stdout.trim(),
++      'fdda765f-fc57-5604-a269-52a7df8164ec',
++    );
++    // A literal namespace UUID resolves to the same thing as the DNS alias.
++    assert.equal(
++      run([
++        'v5',
++        'hello.example.com',
++        '6ba7b810-9dad-11d1-80b4-00c04fd430c8',
++      ]).stdout.trim(),
++      run(['v5', 'hello.example.com', 'DNS']).stdout.trim(),
++    );
++  });
++
++  // Every argument error the CLI can produce, enumerated by provoking one at
++  // each step rather than by reading the source.  All of these used to abort
++  // with a Node stack trace.
++  const ARG_ERRORS: [string[], string][] = [
++    [['v3'], 'v3 requires a <name> argument'],
++    [['v3', 'name'], 'v3 requires a <namespace uuid> argument'],
++    [['v5'], 'v5 requires a <name> argument'],
++    [['v5', 'name'], 'v5 requires a <namespace uuid> argument'],
++    [['v3', 'name', 'nope'], 'v3 namespace must be a UUID, "DNS", or "URL"'],
++    [['v5', 'name', 'nope'], 'v5 namespace must be a UUID, "DNS", or "URL"'],
++  ];
++
++  ARG_ERRORS.forEach(([args, message]) => {
++    test(`uuid ${args.join(' ')} explains itself`, () => {
++      const { code, stdout, stderr } = run(args);
++      assert.equal(code, 1);
++      assert.ok(
++        stderr.includes(message),
++        `stderr should name the problem: ${stderr}`,
++      );
++      assert.ok(
++        stderr.includes('Usage:'),
++        'stderr should carry the usage block',
++      );
++      assert.doesNotMatch(stderr, /node:internal|at ModuleJob|ERR_ASSERTION/);
++      assert.equal(stdout, '', 'nothing is written to stdout on failure');
++    });
++  });
++
++  test('an unknown version prints usage and exits 1', () => {
++    const { code, stdout } = run(['v9']);
++    assert.equal(code, 1);
++    assert.ok(stdout.includes('Usage:'));
++  });
++});
+diff --git a/src/test/v1.test.ts b/src/test/v1.test.ts
+index d275b3c..a90563a 100644
+--- a/src/test/v1.test.ts
++++ b/src/test/v1.test.ts
+@@ -268,4 +268,48 @@ describe('v1', () => {
+     assert.throws(() => v1({}, buf30, -1), RangeError);
+     assert.throws(() => v1({}, buf30, 15), RangeError);
+   });
++
++  // Each of these fields is written into a fixed-width slot, so an unchecked
++  // value is silently truncated: `clockseq: 0x4000` used to produce a string
++  // that validate() rejects, and an out-of-range `msecs` a timestamp that
++  // never existed.
++  test('throws RangeError for out-of-range option values', () => {
++    const MSECS_MIN = -12219292800000;
++    const MSECS_MAX = 103072857660683;
++    for (const options of [
++      { msecs: MSECS_MAX + 1 },
++      { msecs: MSECS_MIN - 1 },
++      { msecs: 1.5 },
++      { msecs: Number.NaN },
++      { nsecs: 10000 },
++      { nsecs: -1 },
++      { clockseq: 0x4000 },
++      { clockseq: -1 },
++    ]) {
++      assert.throws(
++        () => v1(options),
++        RangeError,
++        `v1(${JSON.stringify(options)})`,
++      );
++    }
++    assert.throws(() => v1({ node: new Uint8Array(5) }), Error);
++  });
++
++  test('accepts the boundaries of every documented option range', () => {
++    for (const options of [
++      { msecs: -12219292800000 },
++      { msecs: 103072857660683 },
++      { msecs: 0, nsecs: 0 },
++      { msecs: 0, nsecs: 9999 },
++      { msecs: 0, clockseq: 0 },
++      { msecs: 0, clockseq: 0x3fff },
++      { msecs: 0, node: Uint8Array.of(1, 2, 3, 4, 5, 6) },
++    ]) {
++      assert.equal(
++        parse(v1(options) as string).length,
++        16,
++        `v1(${JSON.stringify(options)})`,
++      );
++    }
++  });
+ });
+diff --git a/src/test/v35.test.ts b/src/test/v35.test.ts
+index 8a90cdb..5002827 100644
+--- a/src/test/v35.test.ts
++++ b/src/test/v35.test.ts
+@@ -1,5 +1,7 @@
+ import * as assert from 'node:assert/strict';
++import { execFileSync } from 'node:child_process';
+ import { describe, test } from 'node:test';
++import { fileURLToPath } from 'node:url';
+ import md5 from '../md5.js';
+ import sha1 from '../sha1.js';
+ import v3 from '../v3.js';
+@@ -285,6 +287,55 @@ describe('v35', () => {
+     assert.throws(() => v5('hello.example.com', v5.DNS, buf30, 15), RangeError);
+   });
+ 
++  test('stringToBytes encodes UTF-8', () => {
++    assert.deepEqual(stringToBytes(''), new Uint8Array(0));
++    assert.deepEqual(stringToBytes('abc'), Uint8Array.of(0x61, 0x62, 0x63));
++    // 2-, 3- and 4-byte sequences
++    assert.deepEqual(stringToBytes('\u00e9'), Uint8Array.of(0xc3, 0xa9));
++    assert.deepEqual(stringToBytes('\u20ac'), Uint8Array.of(0xe2, 0x82, 0xac));
++    assert.deepEqual(
++      stringToBytes('\u{1f600}'),
++      Uint8Array.of(0xf0, 0x9f, 0x98, 0x80),
++    );
++  });
++
++  test('stringToBytes replaces unpaired surrogates instead of throwing', () => {
++    // `encodeURIComponent()` threw URIError here, so v3()/v5() rejected names
++    // that are legal JS strings - e.g. an astral pair cut in half by slice().
++    const replacement = Uint8Array.of(0xef, 0xbf, 0xbd);
++    assert.deepEqual(stringToBytes('\ud800'), replacement);
++    assert.deepEqual(stringToBytes('\udfff'), replacement);
++    assert.deepEqual(
++      stringToBytes('a\ud800b'),
++      Uint8Array.of(0x61, ...replacement, 0x62),
++    );
++    // ...and a half-sliced astral pair reaches the public entry points.
++    const half = '\u{1f600}\u{1f601}'.slice(0, 3);
++    assert.strictEqual(v5(half, v5.DNS), v5('\u{1f600}\ufffd', v5.DNS));
++    assert.strictEqual(v3(half, v3.DNS), v3('\u{1f600}\ufffd', v3.DNS));
++  });
++
++  // This module is evaluated on import, so a dependency on a global that some
++  // supported environment lacks breaks `import 'uuid'` outright rather than
++  // just v3()/v5().  A jsdom test realm has no `TextEncoder`, and the project's
++  // own examples/node-jest/jsdom.test.js is where that first showed up.
++  test('the package imports and hashes with no TextEncoder global', () => {
++    const dist = fileURLToPath(new URL('../index.js', import.meta.url));
++    const out = execFileSync(
++      process.execPath,
++      [
++        '--input-type=module',
++        '-e',
++        `delete globalThis.TextEncoder;
++         if (typeof TextEncoder !== 'undefined') throw new Error('global still present');
++         const u = await import(${JSON.stringify(dist)});
++         process.stdout.write(u.v5('www.example.com', u.v5.DNS));`,
++      ],
++      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
++    );
++    assert.equal(out, '2ed6657d-e927-568b-95e1-2665a8aea6a2');
++  });
++
+   test('v3/v5 constants', () => {
+     assert.strictEqual(v3.DNS, '6ba7b810-9dad-11d1-80b4-00c04fd430c8');
+     assert.strictEqual(v3.URL, '6ba7b811-9dad-11d1-80b4-00c04fd430c8');
+diff --git a/src/test/v6.test.ts b/src/test/v6.test.ts
+index 41f7b65..5a4350a 100644
+--- a/src/test/v6.test.ts
++++ b/src/test/v6.test.ts
+@@ -117,4 +117,32 @@ describe('v6', () => {
+     const id = v6ToV1(V6_ID);
+     assert.equal(id, V1_ID);
+   });
++
++  // The field reordering is only meaningful for the layout it names, so a UUID
++  // of another version has to be refused rather than reshaped into a
++  // v6-or-v1-shaped value with no meaning.  Both converters, both overloads.
++  test('converters reject UUIDs of the wrong version', () => {
++    const V4_ID = '0f5abcd1-c194-47f3-905b-2df7263a084b';
++    const V7_ID = '01a0361c-2c3d-71da-adb7-436424a49322';
++
++    assert.throws(() => v1ToV6(V4_ID), {
++      name: 'TypeError',
++      message: 'v1ToV6() requires a v1 UUID, but got a v4 UUID',
++    });
++    assert.throws(() => v1ToV6(V7_ID), /requires a v1 UUID/);
++    assert.throws(() => v1ToV6(V6_ID), /requires a v1 UUID/);
++    assert.throws(() => v1ToV6(parse(V4_ID)), /requires a v1 UUID/);
++
++    assert.throws(() => v6ToV1(V4_ID), {
++      name: 'TypeError',
++      message: 'v6ToV1() requires a v6 UUID, but got a v4 UUID',
++    });
++    assert.throws(() => v6ToV1(V7_ID), /requires a v6 UUID/);
++    assert.throws(() => v6ToV1(V1_ID), /requires a v6 UUID/);
++    assert.throws(() => v6ToV1(parse(V1_ID)), /requires a v6 UUID/);
++
++    // A byte array that is not 16 bytes long was silently reshaped too.
++    assert.throws(() => v1ToV6(new Uint8Array(10)), /must be 16 bytes/);
++    assert.throws(() => v6ToV1(new Uint8Array(10)), /must be 16 bytes/);
++  });
+ });
+diff --git a/src/test/v7.test.ts b/src/test/v7.test.ts
+index ac66caa..c9b1c36 100644
+--- a/src/test/v7.test.ts
++++ b/src/test/v7.test.ts
+@@ -333,4 +333,43 @@ describe('v7', () => {
+     const uuidWithDefaultSeq = v7({ random: rnds, msecs: RFC_MSECS });
+     assert.strictEqual(uuidWithDefaultSeq, uuidWithExplicitSeq);
+   });
++
++  // `msecs` is a 48-bit field and `seq` a 32-bit one, so an unchecked value
++  // wraps rather than fails: `msecs: 2 ** 48` used to return the same UUID as
++  // `msecs: 0`.
++  test('throws RangeError for out-of-range option values', () => {
++    for (const options of [
++      { msecs: 2 ** 48 },
++      { msecs: -1 },
++      { msecs: 1.5 },
++      { msecs: Number.NaN },
++      { seq: 0x100000000 },
++      { seq: -0x80000001 },
++      { seq: 1.5 },
++    ]) {
++      assert.throws(
++        () => v7(options),
++        RangeError,
++        `v7(${JSON.stringify(options)})`,
++      );
++    }
++  });
++
++  // RFC 9562's own `seq` vector is written `(hi << 20) | lo`, which JS
++  // evaluates as a *signed* 32-bit number, so both spellings of the same 32
++  // bits have to be accepted and have to agree.
++  test('accepts either spelling of a 32-bit seq', () => {
++    const rnds = new Uint8Array(16).fill(0x22);
++    assert.equal(
++      v7({ msecs: RFC_MSECS, seq: RFC_SEQ, random: rnds }),
++      v7({ msecs: RFC_MSECS, seq: RFC_SEQ >>> 0, random: rnds }),
++    );
++    for (const seq of [0, -0x80000000, 0xffffffff]) {
++      assert.equal(
++        typeof v7({ msecs: RFC_MSECS, seq, random: rnds }),
++        'string',
++        `v7({seq: ${seq}})`,
++      );
++    }
++  });
+ });
+diff --git a/src/types.ts b/src/types.ts
+index b0eb125..3daa7c5 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -7,7 +7,6 @@ export type Version1Options = {
+   rng?: () => Uint8Array;
+   msecs?: number;
+   nsecs?: number;
+-  _v6?: boolean; // Internal use only!
+ };
+ 
+ export type Version4Options = {
+diff --git a/src/uuid-bin.ts b/src/uuid-bin.ts
+index eb4d8c6..9e270d1 100644
+--- a/src/uuid-bin.ts
++++ b/src/uuid-bin.ts
+@@ -1,25 +1,35 @@
+-import * as assert from 'node:assert/strict';
+-
+ import v1 from './v1.js';
+ import v3 from './v3.js';
+ import v4 from './v4.js';
+ import v5 from './v5.js';
+ import v6 from './v6.js';
+ import v7 from './v7.js';
++import validate from './validate.js';
++
++const USAGE = [
++  'Usage:',
++  '  uuid',
++  '  uuid v1',
++  '  uuid v3 <name> <namespace uuid>',
++  '  uuid v4',
++  '  uuid v5 <name> <namespace uuid>',
++  '  uuid v6',
++  '  uuid v7',
++  '  uuid --help',
++  '',
++  'Note: <namespace uuid> may be "URL" or "DNS" to use the corresponding UUIDs defined by RFC9562',
++].join('\n');
+ 
+ function usage() {
+-  console.log('Usage:');
+-  console.log('  uuid');
+-  console.log('  uuid v1');
+-  console.log('  uuid v3 <name> <namespace uuid>');
+-  console.log('  uuid v4');
+-  console.log('  uuid v5 <name> <namespace uuid>');
+-  console.log('  uuid v6');
+-  console.log('  uuid v7');
+-  console.log('  uuid --help');
+-  console.log(
+-    '\nNote: <namespace uuid> may be "URL" or "DNS" to use the corresponding UUIDs defined by RFC9562',
+-  );
++  console.log(USAGE);
++}
++
++// Every argument error routes through here, so a mistake at the shell gets a
++// sentence naming it plus the usage block, never a Node stack trace.
++function fail(message: string): never {
++  console.error(`uuid: ${message}\n`);
++  console.error(USAGE);
++  process.exit(1);
+ }
+ 
+ const args = process.argv.slice(2);
+@@ -31,52 +41,54 @@ if (args.indexOf('--help') >= 0) {
+ 
+ const version = args.shift() || 'v4';
+ 
++// v3 and v5 take the same two arguments and reject them the same way.
++function nameBased(
++  label: string,
++  generate: (name: string, namespace: string) => string,
++  namespaces: { DNS: string; URL: string },
++) {
++  const name = args.shift();
++  const namespace = args.shift();
++
++  if (name == null) {
++    fail(`${label} requires a <name> argument`);
++  }
++  if (namespace == null) {
++    fail(`${label} requires a <namespace uuid> argument`);
++  }
++
++  const resolved =
++    namespace === 'URL'
++      ? namespaces.URL
++      : namespace === 'DNS'
++        ? namespaces.DNS
++        : namespace;
++
++  if (!validate(resolved)) {
++    fail(
++      `${label} namespace must be a UUID, "DNS", or "URL", but got "${namespace}"`,
++    );
++  }
++
++  console.log(generate(name, resolved));
++}
++
+ switch (version) {
+   case 'v1':
+     console.log(v1());
+     break;
+ 
+-  case 'v3': {
+-    const name = args.shift();
+-    let namespace = args.shift();
+-
+-    assert.ok(name != null, 'v3 name not specified');
+-    assert.ok(namespace != null, 'v3 namespace not specified');
+-
+-    if (namespace === 'URL') {
+-      namespace = v3.URL;
+-    }
+-
+-    if (namespace === 'DNS') {
+-      namespace = v3.DNS;
+-    }
+-
+-    console.log(v3(name, namespace));
++  case 'v3':
++    nameBased('v3', v3, v3);
+     break;
+-  }
+ 
+   case 'v4':
+     console.log(v4());
+     break;
+ 
+-  case 'v5': {
+-    const name = args.shift();
+-    let namespace = args.shift();
+-
+-    assert.ok(name != null, 'v5 name not specified');
+-    assert.ok(namespace != null, 'v5 namespace not specified');
+-
+-    if (namespace === 'URL') {
+-      namespace = v5.URL;
+-    }
+-
+-    if (namespace === 'DNS') {
+-      namespace = v5.DNS;
+-    }
+-
+-    console.log(v5(name, namespace));
++  case 'v5':
++    nameBased('v5', v5, v5);
+     break;
+-  }
+ 
+   case 'v6':
+     console.log(v6());
+diff --git a/src/v1.ts b/src/v1.ts
+index 821c6ea..4cb8d48 100644
+--- a/src/v1.ts
++++ b/src/v1.ts
+@@ -1,3 +1,4 @@
++import checkIntegerOption from './checkOption.js';
+ import rng from './rng.js';
+ import { unsafeStringify } from './stringify.js';
+ import type { UUIDTypes, Version1Options } from './types.js';
+@@ -24,6 +25,16 @@ type V1State = {
+ 
+ const _state: V1State = {};
+ 
++// Offset from the Gregorian epoch (1582-10-15) to the unix epoch, in ms.
++const GREGORIAN_OFFSET_MS = 12219292800000;
++
++// The RFC 9562 timestamp is 60 bits of 100ns intervals since the Gregorian
++// epoch, so `msecs` is representable only where `(msecs + offset) * 10000`
++// plus the largest `nsecs` still fits.  https://www.rfc-editor.org/rfc/rfc9562.html#section-5.1-1
++const V1_MSECS_MIN = -GREGORIAN_OFFSET_MS;
++const V1_MSECS_MAX =
++  Math.floor((2 ** 60 - 1 - 9999) / 10000) - GREGORIAN_OFFSET_MS;
++
+ function v1(
+   options?: Version1Options,
+   buf?: undefined,
+@@ -39,20 +50,42 @@ function v1<TBuf extends Uint8Array = Uint8Array>(
+   buf?: TBuf,
+   offset?: number,
+ ): UUIDTypes<TBuf> {
+-  let bytes: Uint8Array;
++  const bytes = generateV1Bytes(options, false, buf, offset);
++
++  return buf ?? unsafeStringify(bytes);
++}
+ 
+-  // Extract _v6 flag from options, clearing options if appropriate
+-  const isV6 = options?._v6 ?? false;
++// (Private!)  Do not use.  This is v1's generator, exported so that v6() can
++// ask for the per-UUID `clock_seq` and `node` randomization RFC 9562 5.6
++// requires without passing a magic option through v1's public signature.  It
++// is not reachable through the package's `exports` map and may change without
++// notice.
++export function generateV1Bytes(
++  options: Version1Options | undefined,
++  isV6: boolean,
++  buf?: Uint8Array,
++  offset?: number,
++): Uint8Array {
+   if (options) {
+-    const optionsKeys = Object.keys(options);
+-    if (optionsKeys.length === 1 && optionsKeys[0] === '_v6') {
+-      options = undefined;
++    // Check the caller's values here, where they enter, rather than in
++    // v1Bytes(): the internal-state path below supplies its own already-masked
++    // `clockseq` and its own `msecs`/`nsecs`, and must not be range-checked
++    // against the documented option domains.
++    if (options.msecs !== undefined) {
++      checkIntegerOption('msecs', options.msecs, V1_MSECS_MIN, V1_MSECS_MAX);
++    }
++    if (options.nsecs !== undefined) {
++      checkIntegerOption('nsecs', options.nsecs, 0, 9999);
++    }
++    if (options.clockseq !== undefined) {
++      checkIntegerOption('clockseq', options.clockseq, 0, 0x3fff);
++    }
++    if (options.node !== undefined && options.node.length < 6) {
++      throw new Error('options.node length must be >= 6');
+     }
+-  }
+ 
+-  if (options) {
+     // With options: Make UUID independent of internal state
+-    bytes = v1Bytes(
++    return v1Bytes(
+       options.random ?? options.rng?.() ?? rng(),
+       options.msecs,
+       options.nsecs,
+@@ -61,31 +94,25 @@ function v1<TBuf extends Uint8Array = Uint8Array>(
+       buf,
+       offset,
+     );
+-  } else {
+-    // Without options: Make UUID from internal state
+-    const now = Date.now();
+-    const rnds = rng();
++  }
+ 
+-    updateV1State(_state, now, rnds);
++  // Without options: Make UUID from internal state
++  const now = Date.now();
++  const rnds = rng();
+ 
+-    // Geenerate UUID.  Note that v6 uses random values for `clockseq` and
+-    // `node`.
+-    //
+-    // https://www.rfc-editor.org/rfc/rfc9562.html#section-5.6-4
+-    bytes = v1Bytes(
+-      rnds,
+-      _state.msecs,
+-      _state.nsecs,
+-      // v6 UUIDs get random `clockseq` and `node` for every UUID
+-      // https://www.rfc-editor.org/rfc/rfc9562.html#section-5.6-4
+-      isV6 ? undefined : _state.clockseq,
+-      isV6 ? undefined : _state.node,
+-      buf,
+-      offset,
+-    );
+-  }
++  updateV1State(_state, now, rnds);
+ 
+-  return buf ?? unsafeStringify(bytes);
++  return v1Bytes(
++    rnds,
++    _state.msecs,
++    _state.nsecs,
++    // v6 UUIDs get random `clockseq` and `node` for every UUID
++    // https://www.rfc-editor.org/rfc/rfc9562.html#section-5.6-4
++    isV6 ? undefined : _state.clockseq,
++    isV6 ? undefined : _state.node,
++    buf,
++    offset,
++  );
+ }
+ 
+ // (Private!)  Do not use.  This method is only exported for testing purposes
+@@ -180,7 +207,7 @@ function v1Bytes(
+ 
+   // Offset to Gregorian epoch
+   // https://www.rfc-editor.org/rfc/rfc9562.html#section-5.1-1
+-  msecs += 12219292800000;
++  msecs += GREGORIAN_OFFSET_MS;
+ 
+   // The timestamp is `msecs * 10000 + nsecs`, which needs more precision than a
+   // JS number has, so it is computed as a 32-bit low half and a 28-bit high
+diff --git a/src/v1ToV6.ts b/src/v1ToV6.ts
+index 700dda1..962fb39 100644
+--- a/src/v1ToV6.ts
++++ b/src/v1ToV6.ts
+@@ -8,6 +8,10 @@ import type { NonSharedArrayBuffer, UUIDTypes } from './types.js';
+  * @param {string|Uint8Array} uuid - The v1 UUID to convert to v6
+  * @returns {string|Uint8Array} The v6 UUID as the same type as the `uuid` arg
+  * (string or Uint8Array)
++ * @throws {TypeError} If `uuid` is not a 16-byte v1 UUID.  The field
++ * reordering below is only meaningful for a v1 timestamp layout, so a UUID of
++ * another version would otherwise come back as a v6-shaped value with no
++ * meaning at all.
+  */
+ export default function v1ToV6(uuid: string): string;
+ export default function v1ToV6(uuid: Uint8Array): NonSharedArrayBuffer;
+@@ -16,6 +20,14 @@ export default function v1ToV6(
+ ): UUIDTypes<NonSharedArrayBuffer> {
+   const v1Bytes = typeof uuid === 'string' ? parse(uuid) : uuid;
+ 
++  if (v1Bytes.length !== 16) {
++    throw TypeError('UUID must be 16 bytes');
++  }
++  const version = v1Bytes[6] >> 4;
++  if (version !== 1) {
++    throw TypeError(`v1ToV6() requires a v1 UUID, but got a v${version} UUID`);
++  }
++
+   const v6Bytes = _v1ToV6(v1Bytes);
+ 
+   return typeof uuid === 'string' ? unsafeStringify(v6Bytes) : v6Bytes;
+diff --git a/src/v35.ts b/src/v35.ts
+index bb33633..f84396c 100644
+--- a/src/v35.ts
++++ b/src/v35.ts
+@@ -2,17 +2,61 @@ import parse from './parse.js';
+ import { unsafeStringify } from './stringify.js';
+ import type { UUIDTypes } from './types.js';
+ 
++/**
++ * UTF-8 encode `str`, substituting U+FFFD for unpaired surrogates, per
++ * https://encoding.spec.whatwg.org/#utf-8-encoder
++ *
++ * Note: this is deliberately hand-rolled rather than `TextEncoder`.  Two
++ * environments constrain it:
++ * - `encodeURIComponent()` throws URIError on an unpaired surrogate, so the
++ *   older `unescape(encodeURIComponent(str))` idiom made v3()/v5() reject
++ *   names that are perfectly legal JS strings (an astral pair cut in half by
++ *   `slice()`, say).
++ * - `TextEncoder` is not a global everywhere this build runs - a jsdom test
++ *   realm is the common case - and this module is evaluated on import, so
++ *   reaching for it breaks `import 'uuid'` outright rather than just v3()/v5().
++ */
+ export function stringToBytes(str: string) {
+-  // TODO: Use TextEncoder (see https://stackoverflow.com/a/48762658/109538)
+-  str = unescape(encodeURIComponent(str));
++  const bytes: number[] = [];
+ 
+-  const bytes = new Uint8Array(str.length);
++  for (let i = 0; i < str.length; i++) {
++    let cp = str.charCodeAt(i);
+ 
+-  for (let i = 0; i < str.length; ++i) {
+-    bytes[i] = str.charCodeAt(i);
++    // Combine a well-formed surrogate pair into its code point.
++    if (cp >= 0xd800 && cp <= 0xdbff && i + 1 < str.length) {
++      const low = str.charCodeAt(i + 1);
++      if (low >= 0xdc00 && low <= 0xdfff) {
++        cp = 0x10000 + ((cp - 0xd800) << 10) + (low - 0xdc00);
++        i++;
++      }
++    }
++
++    // Anything still in the surrogate range is unpaired.
++    if (cp >= 0xd800 && cp <= 0xdfff) {
++      cp = 0xfffd;
++    }
++
++    if (cp < 0x80) {
++      bytes.push(cp);
++    } else if (cp < 0x800) {
++      bytes.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
++    } else if (cp < 0x10000) {
++      bytes.push(
++        0xe0 | (cp >> 12),
++        0x80 | ((cp >> 6) & 0x3f),
++        0x80 | (cp & 0x3f),
++      );
++    } else {
++      bytes.push(
++        0xf0 | (cp >> 18),
++        0x80 | ((cp >> 12) & 0x3f),
++        0x80 | ((cp >> 6) & 0x3f),
++        0x80 | (cp & 0x3f),
++      );
++    }
+   }
+ 
+-  return bytes;
++  return new Uint8Array(bytes);
+ }
+ 
+ export const DNS = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+@@ -33,11 +77,7 @@ export default function v35<TBuf extends Uint8Array = Uint8Array>(
+   const namespaceBytes: Uint8Array =
+     typeof namespace === 'string' ? parse(namespace) : namespace;
+ 
+-  if (typeof namespace === 'string') {
+-    namespace = parse(namespace);
+-  }
+-
+-  if (namespace?.length !== 16) {
++  if (namespaceBytes?.length !== 16) {
+     throw TypeError(
+       'Namespace must be array-like (16 iterable integer values, 0-255)',
+     );
+diff --git a/src/v6.ts b/src/v6.ts
+index b20bc05..fc8c92c 100644
+--- a/src/v6.ts
++++ b/src/v6.ts
+@@ -1,6 +1,6 @@
+ import { unsafeStringify } from './stringify.js';
+ import type { UUIDTypes, Version6Options } from './types.js';
+-import v1 from './v1.js';
++import { generateV1Bytes } from './v1.js';
+ import v1ToV6 from './v1ToV6.js';
+ 
+ function v6(
+@@ -18,16 +18,20 @@ function v6<TBuf extends Uint8Array = Uint8Array>(
+   buf?: TBuf,
+   offset?: number,
+ ): UUIDTypes<TBuf> {
+-  options ??= {};
+   offset ??= 0;
+ 
+   // v6 is v1 with different field layout, so we start with a v1 UUID, albeit
+   // with slightly different behavior around how the clock_seq and node fields
+-  // are randomized, which is why we call v1 with _v6: true.
+-  let bytes = v1({ ...options, _v6: true }, new Uint8Array(16));
+-
+-  // Reorder the fields to v6 layout.
+-  bytes = v1ToV6(bytes);
++  // are randomized, which is what the isV6 argument selects.  An options
++  // object with no keys means the caller supplied none, so v6() and v6({})
++  // both generate from v1's internal state.
++  const bytes = v1ToV6(
++    generateV1Bytes(
++      options && Object.keys(options).length > 0 ? options : undefined,
++      true,
++      new Uint8Array(16),
++    ),
++  );
+ 
+   // Return as a byte array if requested
+   if (buf) {
+diff --git a/src/v6ToV1.ts b/src/v6ToV1.ts
+index 86c6d59..a103529 100644
+--- a/src/v6ToV1.ts
++++ b/src/v6ToV1.ts
+@@ -5,15 +5,27 @@ import type { UUIDTypes } from './types.js';
+ /**
+  * Convert a v6 UUID to a v1 UUID
+  *
+- * @param {string|Uint8Array} uuid - The v6 UUID to convert to v6
++ * @param {string|Uint8Array} uuid - The v6 UUID to convert to v1
+  * @returns {string|Uint8Array} The v1 UUID as the same type as the `uuid` arg
+  * (string or Uint8Array)
++ * @throws {TypeError} If `uuid` is not a 16-byte v6 UUID.  The field
++ * reordering below is only meaningful for a v6 timestamp layout, so a UUID of
++ * another version would otherwise come back as a v1-shaped value with no
++ * meaning at all.
+  */
+ export default function v6ToV1(uuid: string): string;
+ export default function v6ToV1(uuid: Uint8Array): Uint8Array;
+ export default function v6ToV1(uuid: UUIDTypes): UUIDTypes {
+   const v6Bytes = typeof uuid === 'string' ? parse(uuid) : uuid;
+ 
++  if (v6Bytes.length !== 16) {
++    throw TypeError('UUID must be 16 bytes');
++  }
++  const version = v6Bytes[6] >> 4;
++  if (version !== 6) {
++    throw TypeError(`v6ToV1() requires a v6 UUID, but got a v${version} UUID`);
++  }
++
+   const v1Bytes = _v6ToV1(v6Bytes);
+ 
+   return typeof uuid === 'string' ? unsafeStringify(v1Bytes) : v1Bytes;
+diff --git a/src/v7.ts b/src/v7.ts
+index 3363e8c..3bb010f 100644
+--- a/src/v7.ts
++++ b/src/v7.ts
+@@ -1,3 +1,4 @@
++import checkIntegerOption from './checkOption.js';
+ import rng from './rng.js';
+ import { unsafeStringify } from './stringify.js';
+ import type { UUIDTypes, Version7Options } from './types.js';
+@@ -27,6 +28,21 @@ function v7<TBuf extends Uint8Array = Uint8Array>(
+   let bytes: Uint8Array;
+ 
+   if (options) {
++    // Check the caller's values here, where they enter: updateV7State()'s own
++    // `seq` is a signed 32-bit counter that legitimately goes negative on its
++    // second half-cycle, so the internal-state path below must not be checked
++    // against the documented option domain.
++    if (options.msecs !== undefined) {
++      checkIntegerOption('msecs', options.msecs, 0, 2 ** 48 - 1);
++    }
++    if (options.seq !== undefined) {
++      // `seq` is a 32-bit field, and JS bitwise arithmetic yields a *signed*
++      // 32-bit number - `(hi << 20) | lo` is how RFC 9562's own vector is
++      // written - so both spellings of the same 32 bits are accepted.
++      // v7Bytes() reads `seq` with `>>>`, which treats them identically.
++      checkIntegerOption('seq', options.seq, -0x80000000, 0xffffffff);
++    }
++
+     // With options: Make UUID independent of internal state
+     bytes = v7Bytes(
+       options.random ?? options.rng?.() ?? rng(),
