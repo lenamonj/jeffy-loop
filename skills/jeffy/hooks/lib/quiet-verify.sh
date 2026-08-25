@@ -217,6 +217,19 @@ qv_main() {
     qv_summary="$(grep -E "$qv_pattern" "$qv_out" 2>/dev/null | tail -n 1)"
   fi
   rm -f "$qv_out"
+  # P1-66: the total on the summary line is a measurement this wrapper took,
+  # so it is recorded where the hook reads it. The first integer on the
+  # matched line is the count (`# pass 1064`, `422 passed in 0.46s`,
+  # `verify totals: 39 passed`); a project whose summary carries no integer
+  # records none and the cell check stays silent. Under .jeffy/metrics/ so
+  # every guard that already excuses telemetry excuses this.
+  if [ -n "$qv_summary" ] && command -v jq >/dev/null 2>&1; then
+    qv_count="$(printf '%s' "$qv_summary" | grep -oE '[0-9]+' | head -n 1)"
+    if [ -n "$qv_count" ] && mkdir -p "$qv_root/.jeffy/metrics" 2>/dev/null; then
+      jq -n --arg c "$qv_count" --arg s "$qv_summary" --arg h "$(git -C "$qv_root" rev-parse HEAD 2>/dev/null)" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{count: ($c | tonumber), summary: $s, head: $h, ts: $t}' > "$qv_root/.jeffy/metrics/verify-last.json" 2>/dev/null || true
+    fi
+  fi
   if [ -n "$qv_summary" ]; then
     echo "verify: green (${qv_secs}s, oracle=$qv_oracle, $qv_summary)" >&2
   else

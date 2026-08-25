@@ -277,7 +277,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Backlog discipline:" \
   "bring the standing claims current in this same iteration" \
   "the currency set is that form itself, never a fixed list" \
-  "every count a battery README states against the procedure it records" \
+  "run skills/jeffy/hooks/lib/check-claims.sh and resolve every MISMATCH" \
   "enumerated by: <command>" \
   "each through the installed run-probe.sh" \
   "land before the re-invocation, never in the checkpoint edit after it" \
@@ -344,7 +344,19 @@ check_markers skills/jeffy/hooks/stop-hook.sh \
   "CLOSING EXTENSION" \
   "CORRECTIVE" \
   "JEFFY_VERSION" \
-  "refilled inside the closing extension"
+  "refilled inside the closing extension" \
+  "VERIFY COUNT" \
+  "jeffy_declaration_certified" \
+  "jeffy_claims_form_violation"
+check_markers skills/jeffy/references/plan-default.md \
+  "Verify count:"
+check_markers skills/jeffy/references/backlog-default.md \
+  "certifies nothing and the next run audits rather than ratchets"
+check_markers skills/jeffy/hooks/lib/quiet-verify.sh \
+  "verify-last.json"
+check_markers skills/jeffy/hooks/lib/check-claims.sh \
+  "expect <value> :: <command>" \
+  "MISMATCH"
 # The launch-time lint is the whole malformed-Verify-command class caught at
 # zero iteration cost: the hook's parser runs only on the convergence branch,
 # so without this check a line written at launch waits a whole run to fire.
@@ -6310,6 +6322,138 @@ if command -v jq >/dev/null 2>&1; then
       printf '%s\n' "$hb_err"
       fault "stop hook's inventory signal failed open and disarmed the stall gate entirely"
     fi
+
+
+    # ---------------------------------------------------------------------
+    # 1.18.0: a number the engine derives is never typed, and a declaration's
+    # verdict is readable from the tree.
+    #
+    # These fixtures build their own git project rather than inheriting
+    # whatever the preceding blocks left in hb_proj: two of the three
+    # mechanisms only run inside a work tree, and a fixture that silently
+    # skipped the check it exists to prove would pass while proving nothing.
+    # ---------------------------------------------------------------------
+    hb_proj="$hb_tmp/proj1180"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+    mkdir -p "$hb_proj/.claude"
+    hb_git() { git -C "$hb_proj" -c user.email=jeffy@test -c user.name=jeffy -c core.autocrlf=false "$@"; }
+    hb_git init -q -b main
+    hb_write_plan none
+    hb_write_journal 1 3
+    printf 'v1\n' > "$hb_proj/product.txt"
+    hb_write_evaluator_artifact
+    hb_git add -A >/dev/null
+    hb_git commit -qm base1180
+    hb_c1="$(hb_git rev-parse HEAD)"
+
+    # P1-66. The wrapper records the total its own green line reports, and a
+    # Verify count cell that disagrees is named at the checkpoint and refused
+    # at the declaration. qs spent a whole evaluator invocation on 1045 typed
+    # against 1064 graded; the cost of the same mistake here is one line.
+    hb_vc_dir="$hb_proj/.jeffy/metrics"
+    mkdir -p "$hb_vc_dir"
+    hb_write_plan_oracle 'echo "# pass 12"' 'unit tests' 'test host' > /dev/null 2>&1 || true
+    printf '# Plan\n\n## Verify command\nCommand: echo "# pass 12"\nOracle class: unit tests\nEnvironment fingerprint: test host\nVerify summary pattern: # pass [0-9]+\nVerify count: 10\n\n## Surface inventory\n' > "$hb_proj/PLAN.md"
+    printf '{"count": 12, "summary": "# pass 12", "head": "x", "ts": "t"}\n' > "$hb_vc_dir/verify-last.json"
+    hb_write_state sess-1 1 3
+    hb_write_backlog ''
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'VERIFY COUNT:' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'states 10' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'reported 12'; then
+      pass "stop hook names a Verify count that disagrees with the wrapper's last green total (P1-66 notice)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook said nothing about a Verify count that disagrees with the measured total"
+    fi
+    rm -f "$hb_state"
+
+    printf '# Plan\n\n## Verify command\nCommand: echo "# pass 12"\nOracle class: unit tests\nEnvironment fingerprint: test host\nVerify summary pattern: # pass [0-9]+\nVerify count: 12\n\n## Surface inventory\n' > "$hb_proj/PLAN.md"
+    hb_write_state sess-1 1 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'VERIFY COUNT:'; then
+      pass "stop hook stays silent when the Verify count equals the measured total (P1-66 control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook emitted a VERIFY COUNT notice over an accurate cell"
+    fi
+    rm -f "$hb_state"
+
+    # The absent cell is the pre-1.18.0 shape and every published tree carries
+    # it; a form that refused there would refuse the whole corpus.
+    printf '# Plan\n\n## Verify command\nCommand: echo "# pass 12"\nOracle class: unit tests\nEnvironment fingerprint: test host\n\n## Surface inventory\n' > "$hb_proj/PLAN.md"
+    hb_write_state sess-1 1 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'VERIFY COUNT:'; then
+      pass "stop hook says nothing about a Verify count no PLAN.md declares (P1-66 legacy control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook emitted a VERIFY COUNT notice on a PLAN.md carrying no such cell"
+    fi
+    rm -f "$hb_state"
+    rm -rf "$hb_vc_dir"
+
+    # P1-65. A battery this run wrote, or whose README it edited, carries a
+    # claims file whose lines are executable measurements. classnames drew
+    # four gate REJECTs on README counts its own procedures contradicted,
+    # three of them spelled in words the audit's grep never matched.
+    hb_write_plan none
+    mkdir -p "$hb_proj/.jeffy/probes/newbat"
+    printf 'this battery reddens 7 of 22 checks\n' > "$hb_proj/.jeffy/probes/newbat/README.md"
+    hb_write_evaluator_artifact
+    hb_git add -A >/dev/null; hb_git commit -qm claims1
+    hb_write_journal 1 3
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+    hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF 'carries no claims file'; then
+      pass "stop hook refuses a declaration where a battery written this run records no claims (P1-65)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a declaration over a battery this run wrote with no claims file"
+    fi
+    rm -f "$hb_state"
+
+    printf 'expect 7 of 22\n' > "$hb_proj/.jeffy/probes/newbat/claims"
+    hb_git add -A >/dev/null; hb_git commit -qm claims3
+    hb_write_journal 1 3
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+    hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF 'which is neither'; then
+      pass "stop hook refuses a claims file whose line is not a measurement (P1-65 form)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a malformed claims line"
+    fi
+    rm -f "$hb_state"
+    rm -rf "$hb_proj/.jeffy/probes/newbat"
+    hb_git add -A >/dev/null; hb_git commit -qm claims4 >/dev/null
+
+    # check-claims.sh itself: a claim that no longer reproduces is a MISMATCH
+    # and a nonzero exit, and one that does is a MATCH. The discriminating
+    # sabotage: the same battery, one wrong expected value.
+    mkdir -p "$hb_proj/.jeffy/probes/cc"
+    printf 'expect 7 :: echo 7\n' > "$hb_proj/.jeffy/probes/cc/claims"
+    if bash skills/jeffy/hooks/lib/check-claims.sh "$hb_proj" >"$hb_tmp/cc.txt" 2>&1 \
+      && grep -q '^MATCH cc: 7$' "$hb_tmp/cc.txt"; then
+      pass "check-claims.sh reports a reproducing measurement as MATCH and exits 0"
+    else
+      cat "$hb_tmp/cc.txt"
+      fault "check-claims.sh mishandled a claim that reproduces"
+    fi
+    printf 'expect 5 :: echo 7\n' > "$hb_proj/.jeffy/probes/cc/claims"
+    if ! bash skills/jeffy/hooks/lib/check-claims.sh "$hb_proj" >"$hb_tmp/cc.txt" 2>&1 \
+      && grep -q '^MISMATCH cc: expected 5 got 7$' "$hb_tmp/cc.txt"; then
+      pass "check-claims.sh reports a measurement that no longer reproduces as MISMATCH and exits nonzero"
+    else
+      cat "$hb_tmp/cc.txt"
+      fault "check-claims.sh did not catch a claim whose command disagrees with its recorded value"
+    fi
+    rm -rf "$hb_proj/.jeffy/probes/cc"
+    hb_git add -A >/dev/null; hb_git commit -qm cc >/dev/null
 
     rm -rf "$hb_tmp"
   fi

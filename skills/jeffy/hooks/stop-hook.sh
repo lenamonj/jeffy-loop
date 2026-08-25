@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.17.0"
+JEFFY_VERSION="1.18.0"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -147,6 +147,13 @@ fi
 # the early exits fire long before the fingerprint and sweep numbers exist
 # and `set -u` inside a trap would abort the hook rather than the write.
 jeffy_metrics_written=0
+# P2-41: the verdict on a declaration is written here, on the hook's own
+# metrics line, because a Converged line is appended by the declarer and
+# stands whether or not this hook accepts it (qs, 2026-08-25: gate PASS,
+# line appended, declaration refused on the packaging channel, and every
+# outside reader called the tree converged). decl_seen is raised on the
+# promise path; the verdict is read off `violation` at exit.
+decl_seen=0
 # shellcheck disable=SC2317  # reached through the EXIT trap installed below
 jeffy_write_metrics() {
   [ "$jeffy_metrics_written" = 0 ] || return 0
@@ -164,6 +171,8 @@ jeffy_write_metrics() {
     --argjson stall "${new_stall:-0}" --argjson osc "${new_osc:-0}" \
     --argjson overrun "${new_overrun:-0}" \
     --arg wall "${wall_elapsed:-}" --arg ctx "${ctx_growth:-}" \
+    --arg decl_hash "${conv_hash:-}" --arg decl_reason "${violation:-}" \
+    --arg decl_verdict "$( [ "${decl_seen:-0}" = 1 ] && { [ -z "${violation:-}" ] && echo accepted || echo refused; } )" \
     '{run_token: $run, iteration: $iter, budget: $budget, task: $task,
       content_tree_hash: $tree, changed_paths: $changed,
       rows_unswept: (if $rows_unswept == "" then null else ($rows_unswept | tonumber) end),
@@ -172,7 +181,10 @@ jeffy_write_metrics() {
       oscillation_strike: $osc, overrun_strike: $overrun,
       wall_elapsed_s: (if $wall == "" then null else ($wall | tonumber) end),
       context_growth: (if $ctx == "" then null else (($ctx | tonumber) / 10) end),
-      cost_estimate_usd: null}' >> "$metrics_dir/$runid8.jsonl" 2>/dev/null || true
+      cost_estimate_usd: null,
+      declaration: (if $decl_verdict == "" then null else
+        {hash: (if $decl_hash == "" then null else $decl_hash end), verdict: $decl_verdict,
+         reason: (if $decl_reason == "" then null else $decl_reason end)} end)}' >> "$metrics_dir/$runid8.jsonl" 2>/dev/null || true
 }
 trap jeffy_write_metrics EXIT
 
@@ -188,6 +200,139 @@ trap jeffy_write_metrics EXIT
 # over-matching asks for a re-sweep while under-matching certifies moved code.
 # Sets jsr_stale (first stale row's description, empty when none), jsr_linked,
 # jsr_unlinked, jsr_nopaths.
+# P2-41: a Converged line certifies a tree only when this hook accepted the
+# declaration that appended it. A line is appended by the declaring iteration
+# and stands whether or not this hook accepts it - it is never edited - so on
+# its own it records a claim, not a verdict (qs, 2026-08-25: gate PASS, line
+# appended, declaration refused on the packaging channel, run closed blocked,
+# and every outside reader called the tree converged).
+#
+# The record is this hook's own metrics line. Trees that predate the field
+# fall back to the journal's closing entry, which is the same authority the
+# evaluator check reads: an accepted declaration ENDS the run, so the last
+# entry a run leaves behind is its converged one. A refused declaration is
+# always followed by more work - the corrective entry saying so at minimum -
+# and the last entry then carries done, blocked or audit. Rotation and
+# salvage entries are bookkeeping and are skipped here exactly as they are
+# there - by type as well as by status, because `records` closed with a
+# SALVAGE entry whose status is `done`.
+#
+# What the fallback cannot tell apart, stated rather than papered over: a
+# legacy run that declared, was accepted, and then kept working in the same
+# run (`dayjs`, iteration 3 of 12, under an engine that allowed it) reads
+# here as not certified, because a refused declaration followed by more work
+# wears the same shape. The cost is one real audit instead of a ratchet,
+# never a false certification, and from 1.18.0 the metrics record answers
+# exactly while the shape itself cannot recur: an accepted declaration
+# deletes the state file and ends the run.
+#
+# The fallback reads only entries written before this run: a ratchet's own
+# closing entry is itself typed converged, so a fallback that read the last
+# entry of all would certify every ratchet by its own say-so and check
+# nothing. Entries carrying this run's id are skipped, and the question asked
+# is what the previous run left behind.
+#
+# It deliberately does not key on the hash. The declaring entry's Checkpoint
+# field names that iteration's checkpoint, and the commit the Converged line
+# finally rides is often a later bookkeeping commit, so three published
+# convergences (cobra, more-itertools, phpdotenv) carry no entry naming their
+# certified hash at all. The hash is checked for reachability and for the
+# nothing-but-state rule elsewhere in this file; what is asked here is only
+# whether the declaration that produced it was accepted.
+jeffy_declaration_certified() { # $1 project root, $2 converged hash, $3 this run's id prefix
+  [ -n "$2" ] || return 1
+  if [ -d "$1/.jeffy/metrics" ] && command -v jq >/dev/null 2>&1; then
+    if cat "$1"/.jeffy/metrics/*.jsonl 2>/dev/null \
+      | jq -r 'select(.declaration != null) | select(.declaration.verdict == "accepted") | (.declaration.hash // "")' 2>/dev/null \
+      | grep -qix -- "$2"; then
+      return 0
+    fi
+    # An explicit refused record for this very hash is the verdict itself,
+    # and no older evidence certifies over it.
+    if cat "$1"/.jeffy/metrics/*.jsonl 2>/dev/null \
+      | jq -r 'select(.declaration != null) | (.declaration.hash // "")' 2>/dev/null \
+      | grep -qix -- "$2"; then
+      return 1
+    fi
+  fi
+  jdc_last="$(cat "$1/JOURNAL-archive.md" "$1/JOURNAL.md" 2>/dev/null | awk -v me="${3:-}" '
+    { sub(/\r$/, "") }
+    /^## iter [0-9]+\/[0-9]+ \| / {
+      n = split($0, f, / \| /); st = f[n]; run = f[2]; ty = f[n - 1]
+      sub(/[ \t]+$/, "", st); sub(/^[ \t]+/, "", run); sub(/[ \t]+$/, "", run)
+      sub(/^[ \t]+/, "", ty); sub(/[ \t]+$/, "", ty)
+      if (st == "rotation" || st == "salvage") next
+      if (ty == "ROTATION" || ty == "SALVAGE") next
+      if (me != "" && index(run, me) == 1) next
+      last = st
+    }
+    END { print last }')"
+  # Absence is not evidence. A tree whose journal holds no entry from any
+  # earlier run - rotated away, or a ratchet run first in its own journal -
+  # says nothing about how the declaration went, and this hook abstains
+  # wherever its evidence is missing rather than refusing (the same rule the
+  # oracle, staleness and base_head checks follow). What is refused is
+  # positive evidence: an earlier run whose last word was not converged.
+  [ -n "$jdc_last" ] || return 0
+  [ "$jdc_last" = "converged" ]
+}
+
+# P1-66: the Verify count cell. quiet-verify.sh records the total the summary
+# line reports on every green run; the cell in PLAN.md may only equal it.
+# Sets vc_note to the disagreement, empty when none or when either side is
+# absent (an absent cell is the pre-1.18.0 shape and is said, not refused).
+vc_note=""
+jeffy_plan_field() { # $1 project root, $2 label - Verify-section scoped
+  awk -v lbl="$2" '
+    { sub(/\r$/, "") }
+    $0 == "## Verify command" { take = 1; next }
+    /^## / { take = 0 }
+    take && index($0, lbl ":") == 1 { v = substr($0, length(lbl) + 2); sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v); print v; exit }
+  ' "$1/PLAN.md" 2>/dev/null
+}
+jeffy_verify_count_note() { # $1 project root
+  vc_note=""
+  [ -f "$1/PLAN.md" ] || return 0
+  vc_cell="$(jeffy_plan_field "$1" 'Verify count')"
+  case "$vc_cell" in '' | '<'*'>') return 0 ;; esac
+  vc_cellnum="$(printf '%s' "$vc_cell" | grep -oE '[0-9]+' | head -n 1)"
+  [ -n "$vc_cellnum" ] || { vc_note="PLAN.md's Verify count line reads '$vc_cell', which carries no number; it holds the total the wrapper's green summary reports"; return 0; }
+  [ -f "$1/.jeffy/metrics/verify-last.json" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  vc_last="$(jq -r '.count // empty' "$1/.jeffy/metrics/verify-last.json" 2>/dev/null)"
+  vc_sum="$(jq -r '.summary // empty' "$1/.jeffy/metrics/verify-last.json" 2>/dev/null)"
+  [ -n "$vc_last" ] || return 0
+  if [ "$vc_last" != "$vc_cellnum" ]; then
+    vc_note="PLAN.md's Verify count states $vc_cellnum; the last green verify reported $vc_last (\"$vc_sum\"); the cell holds the wrapper's total, never a typed one - update it"
+  fi
+}
+
+# P1-65: a battery this run wrote or whose README it edited carries a claims
+# file, and every line of it is `none` or `expect <value> :: <command>`. Form
+# only - the hook never executes a model-authored command (P1-50); the
+# claims are executed by lib/check-claims.sh, which the audit and the gate
+# call. Batteries untouched since base_head are exempt, as every form this
+# hook has added refuses only what it postdates. Prints the first violation.
+jeffy_claims_form_violation() { # $1 project root, $2 base commit
+  [ -n "$2" ] || return 0
+  git -C "$1" rev-parse --verify --quiet "$2^{commit}" >/dev/null 2>&1 || return 0
+  while IFS= read -r jcf_readme; do
+    [ -n "$jcf_readme" ] || continue
+    jcf_dir="${jcf_readme%/README.md}"
+    if [ ! -f "$1/$jcf_dir/claims" ]; then
+      printf '%s' "the battery $jcf_dir was written or its README edited this run and carries no claims file; every measurement its README states is a line 'expect <value> :: <command>' in $jcf_dir/claims, or the file holds the single line 'none'"
+      return 0
+    fi
+    jcf_bad="$(grep -vE '^[[:space:]]*$|^none$|^expect .+ :: .+$' "$1/$jcf_dir/claims" 2>/dev/null | head -n 1)"
+    if [ -n "$jcf_bad" ]; then
+      printf '%s' "the claims file $jcf_dir/claims carries the line '$(printf '%s' "$jcf_bad" | cut -c1-80)', which is neither 'none' nor 'expect <value> :: <command>'"
+      return 0
+    fi
+  done <<EOF
+$(git -C "$1" diff --name-only --relative "$2" HEAD -- '.jeffy/probes/*/README.md' 2>/dev/null; git -C "$1" ls-files --others --exclude-standard -- '.jeffy/probes/*/README.md' 2>/dev/null)
+EOF
+}
+
 jeffy_derive_stale_rows() { # $1 project root
   jsr_stale=""
   jsr_unlinked=0
@@ -343,6 +488,7 @@ if [ -n "$promise" ]; then
   fi
   case "$last" in
     *"<promise>"*"$promise"*"</promise>"*)
+      decl_seen=1
       # Machine-checked converged stop: the promise alone does not end the
       # run; the closing claims must verify. A missing ledger is an
       # infrastructure defect and fails open; a discipline violation falls
@@ -670,6 +816,18 @@ if [ -n "$promise" ]; then
           violation="the Environment fingerprint line in PLAN.md's Verify command section is unfilled; name the platform, the toolchain versions, and every test target this platform excludes, enumerated by a command rather than asserted - a run once converged over 29 iterations while a build-tagged conformance corpus its command could not reach never ran at all - then re-declare"
         fi
       fi
+      # P1-66 / P1-65 on the declaration path: a Verify count cell that
+      # disagrees with the wrapper's last green total, or a battery this run
+      # touched without a claims file, is refused here - the same checks the
+      # ordinary checkpoint says as notices, so nothing here is news.
+      if [ -z "$violation" ]; then
+        jeffy_verify_count_note "$root"
+        [ -n "$vc_note" ] && violation="$vc_note"
+      fi
+      if [ -z "$violation" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        cf_v="$(jeffy_claims_form_violation "$root" "$(fm base_head)")"
+        [ -n "$cf_v" ] && violation="$cf_v"
+      fi
       # Evaluator check: the adversarial gate is where the audits' misses were
       # found, and six of thirteen corpus convergences recorded no verdict at
       # all. The closing entry of this run is what must carry it - an earlier
@@ -827,6 +985,8 @@ if [ -n "$promise" ]; then
                 echo "jeffy stop hook: the loop state carries no resolvable base_head; skipping the ratchet's own check." >&2
               elif ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_base" 2>/dev/null; then
                 violation="the closing entry is typed RATCHET but the Converged hash $conv_hash is not an ancestor of the commit this run started on; a ratchet re-declares a tree an earlier run certified and never invokes the evaluator, so work committed during this run has to converge the ordinary way, through a fresh audit and the gate"
+              elif ! jeffy_declaration_certified "$root" "$conv_hash" "$runid8"; then
+                violation="the Converged hash $conv_hash was declared, but nothing records that the Stop hook accepted that declaration - no accepted declaration in .jeffy/metrics/, and the last entry an earlier run left in the journal is not a converged one - so what that line records is a declaration this hook refused, and it certifies nothing; audit and gate this run rather than ratchet over it"
               fi
               ;;
             missing)
@@ -1908,6 +2068,13 @@ if [ -n "$attempt_note" ]; then
 fi
 if [ -n "$stale_note" ]; then
   reason="$reason STALE ROWS: $stale_note."
+fi
+# P1-66: said at every checkpoint, refused at the declaration - the qs shape
+# (a gate invocation spent on 1045 typed against 1064 graded) is caught the
+# iteration the total changed, while the fix is one line and costs no gate.
+if [ -n "$root" ]; then jeffy_verify_count_note "$root"; fi
+if [ -n "$vc_note" ]; then
+  reason="$reason VERIFY COUNT: $vc_note."
 fi
 if [ -n "$final_note" ]; then
   reason="$reason FINAL ITERATION: $final_note."
