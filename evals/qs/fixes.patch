@@ -1,0 +1,624 @@
+diff --git a/.editorconfig b/.editorconfig
+index dd5a8d8..eb7b013 100644
+--- a/.editorconfig
++++ b/.editorconfig
+@@ -39,6 +39,12 @@ indent_style = off
+ indent = off
+ max_line_length = off
+ 
++[.jeffy/metrics/**]
++indent_size = off
++indent_style = off
++indent = off
++max_line_length = off
++
+ [.nycrc]
+ indent_style = tab
+ 
+diff --git a/.gitignore b/.gitignore
+index c073c60..5285b72 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -16,3 +16,4 @@ coverage/
+ .nyc_output/
+ 
+ .npmignore
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index e3a839f..505db54 100644
+--- a/README.md
++++ b/README.md
+@@ -178,11 +178,14 @@ assert.deepEqual(withDots, { a: { b: 'c' } });
+ ```
+ 
+ Option `decodeDotInKeys` can be used to decode dots in keys
+-Note: it implies `allowDots`, so `parse` will error if you set `decodeDotInKeys` to `true`, and `allowDots` to `false`.
++Note: setting `decodeDotInKeys` to `true` turns `allowDots` on unless you say otherwise; passing `allowDots: false` alongside it is accepted and keeps dots from splitting keys.
+ 
+ ```javascript
+ var withDots = qs.parse('name%252Eobj.first=John&name%252Eobj.last=Doe', { decodeDotInKeys: true });
+ assert.deepEqual(withDots, { 'name.obj': { first: 'John', last: 'Doe' }});
++
++var withoutSplitting = qs.parse('name%252Eobj.first=John', { decodeDotInKeys: true, allowDots: false });
++assert.deepEqual(withoutSplitting, { 'name.obj.first': 'John' });
+ ```
+ 
+ Option `allowEmptyArrays` can be used to allow empty array values in an object
+@@ -248,6 +251,15 @@ assert.deepEqual(detectedAsIso8859_1, { a: '☺' });
+ 
+ It also works when the charset has been detected in `charsetSentinel` mode.
+ 
++The option substitutes characters and nothing else, so it never changes the shape of a value. A `comma` value stays an array:
++
++```javascript
++assert.deepEqual(
++    qs.parse('a=x,%26%239786%3B,z', { comma: true, charset: 'iso-8859-1', interpretNumericEntities: true }),
++    { a: ['x', '☺', 'z'] }
++);
++```
++
+ ### Parsing Arrays
+ 
+ **qs** can also parse arrays using a similar `[]` notation:
+@@ -341,6 +353,27 @@ assert.deepEqual(qs.parse('a[b]=c&a=d'), { a: [{ b: 'c' }, 'd'] });
+ assert.deepEqual(qs.parse('a=d&a[b]=c'), { a: ['d', { b: 'c' }] });
+ ```
+ 
++Repeating the plain value, or splitting it with `comma`, does not change that: the plain values are still plain values, so they are still wrapped alongside the object.
++
++```javascript
++assert.deepEqual(qs.parse('a[b]=c&a=d&a=e'), { a: [{ b: 'c' }, 'd', 'e'] });
++assert.deepEqual(qs.parse('a[b]=c&a=1,2', { comma: true }), { a: [{ b: 'c' }, '1', '2'] });
++```
++
++Array notation is a different thing from a repeated plain value, and it keeps the mixed-notation merge shown above rather than being wrapped:
++
++```javascript
++assert.deepEqual(qs.parse('a[]=b&a[b]=c'), { a: { 0: 'b', b: 'c' } });
++assert.deepEqual(qs.parse('a[0]=b&a[1]=c&a[b]=d'), { a: { 0: 'b', 1: 'c', b: 'd' } });
++```
++
++Once array notation has pushed the collection past `arrayLimit` it is an object of indices rather than an array, and a following plain value is appended at the next index rather than wrapped, however many times the key repeats:
++
++```javascript
++assert.deepEqual(qs.parse('a[25]=x&a=d'), { a: { 25: 'x', 26: 'd' } });
++assert.deepEqual(qs.parse('a[25]=x&a=d&a=e'), { a: { 25: 'x', 26: 'd', 27: 'e' } });
++```
++
+ To restore the legacy behavior (where the primitive is used as a key with value `true`), set `strictMerge` to `false`:
+ 
+ ```javascript
+@@ -508,11 +541,18 @@ qs.stringify({ a: { b: { c: 'd', e: 'f' } } }, { allowDots: true });
+ ```
+ 
+ You may encode the dot notation in the keys of object with option `encodeDotInKeys` by setting it to `true`:
+-Note: it implies `allowDots`, so `stringify` will error if you set `decodeDotInKeys` to `true`, and `allowDots` to `false`.
++Note: setting `encodeDotInKeys` to `true` turns `allowDots` on unless you say otherwise; passing `allowDots: false` alongside it is accepted and keeps bracket notation.
+ Caveat: when `encodeValuesOnly` is `true` as well as `encodeDotInKeys`, only dots in keys and nothing else will be encoded.
+ ```javascript
+-qs.stringify({ "name.obj": { "first": "John", "last": "Doe" } }, { allowDots: true, encodeDotInKeys: true })
+-// 'name%252Eobj.first=John&name%252Eobj.last=Doe'
++assert.equal(
++    qs.stringify({ "name.obj": { "first": "John", "last": "Doe" } }, { allowDots: true, encodeDotInKeys: true }),
++    'name%252Eobj.first=John&name%252Eobj.last=Doe'
++);
++
++assert.equal(
++    qs.stringify({ "name.obj": { "first": "John" } }, { encodeDotInKeys: true, allowDots: false }),
++    'name%252Eobj%5Bfirst%5D=John'
++);
+ ```
+ 
+ You may allow empty array values by setting the `allowEmptyArrays` option to `true`:
+diff --git a/component.json b/component.json
+index 268d5b4..e0b2e67 100644
+--- a/component.json
++++ b/component.json
+@@ -2,11 +2,12 @@
+     "name": "qs",
+     "repository": "ljharb/qs",
+     "description": "query-string parser / stringifier with nesting support",
+-    "version": "6.13.1",
++    "version": "6.15.3",
+     "keywords": ["querystring", "query", "parser"],
+     "main": "lib/index.js",
+     "scripts": [
+         "lib/index.js",
++        "lib/formats.js",
+         "lib/parse.js",
+         "lib/stringify.js",
+         "lib/utils.js"
+diff --git a/lib/parse.js b/lib/parse.js
+index 0ccb70c..f04c325 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -136,7 +136,11 @@ var parseValues = function parseQueryStringValues(str, options) {
+         }
+ 
+         if (val && options.interpretNumericEntities && charset === 'iso-8859-1') {
+-            val = interpretNumericEntities(String(val));
++            // Element-wise: with `comma` the value is already an array here, and
++            // stringifying it would join the elements back into one string.
++            val = utils.maybeMap(val, function (entityVal) {
++                return interpretNumericEntities(String(entityVal));
++            });
+         }
+ 
+         if (part.indexOf('[]=') > -1) {
+@@ -215,7 +219,15 @@ var parseObject = function (chain, val, options, valuesParsed) {
+                 obj[index] = leaf;
+                 utils.markOverflow(obj, index);
+             } else if (decodedRoot !== '__proto__') {
+-                obj[decodedRoot] = leaf;
++                // Mark only the value leaf itself - the first pass of this loop,
++                // where `leaf` is still the parsed value rather than a wrapper
++                // this loop built. An array here came from combined duplicates or
++                // a comma split, so it is a plain value in a scalar key position;
++                // an array built by a later pass came from array notation and
++                // must stay a mixed-notation merge.
++                obj[decodedRoot] = i === chain.length - 1 && isArray(leaf)
++                    ? utils.markScalarList(leaf)
++                    : leaf;
+             }
+         }
+ 
+@@ -394,21 +406,29 @@ module.exports = function (str, opts) {
+         return options.plainObjects ? { __proto__: null } : {};
+     }
+ 
+-    var tempObj = typeof str === 'string' ? parseValues(str, options) : str;
+-    var obj = options.plainObjects ? { __proto__: null } : {};
+-
+-    // Iterate over the keys and setup the new object
++    // The parse-scoped marks belong to this call alone; see lib/utils.js. The
++    // finally is what makes that true for the throwing options too -
++    // throwOnLimitExceeded and strictDepth both leave through an exception.
++    var previousParseScope = utils.enterParseScope();
++    try {
++        var tempObj = typeof str === 'string' ? parseValues(str, options) : str;
++        var obj = options.plainObjects ? { __proto__: null } : {};
++
++        // Iterate over the keys and setup the new object
++
++        var keys = Object.keys(tempObj);
++        for (var i = 0; i < keys.length; ++i) {
++            var key = keys[i];
++            var newObj = parseKeys(key, tempObj[key], options, typeof str === 'string');
++            obj = utils.merge(obj, newObj, options);
++        }
+ 
+-    var keys = Object.keys(tempObj);
+-    for (var i = 0; i < keys.length; ++i) {
+-        var key = keys[i];
+-        var newObj = parseKeys(key, tempObj[key], options, typeof str === 'string');
+-        obj = utils.merge(obj, newObj, options);
+-    }
++        if (options.allowSparse === true) {
++            return obj;
++        }
+ 
+-    if (options.allowSparse === true) {
+-        return obj;
++        return utils.compact(obj);
++    } finally {
++        utils.exitParseScope(previousParseScope);
+     }
+-
+-    return utils.compact(obj);
+ };
+diff --git a/lib/utils.js b/lib/utils.js
+index 6fce590..2ed8745 100644
+--- a/lib/utils.js
++++ b/lib/utils.js
+@@ -7,9 +7,51 @@ var defineProperty = require('es-define-property');
+ var has = Object.prototype.hasOwnProperty;
+ var isArray = Array.isArray;
+ 
+-// Track objects created from arrayLimit overflow using side-channel
+-// Stores the current max numeric index for O(1) lookup
++// Two side channels carry what an array's own shape cannot say.
++//
++// overflowChannel: objects created from arrayLimit overflow, storing the
++// current max numeric index for O(1) lookup.
++//
++// scalarListChannel: arrays that sit in a scalar key position - the combined
++// duplicates of `a=d&a=e`, or a comma-split value - as opposed to arrays built
++// by array notation (`a[]=`, `a[0]=`). Both are ordinary arrays by the time
++// `merge` sees them, and `strictMerge` has to tell them apart: a scalar-position
++// array conflicting with an object is the "plain value and object" case the
++// option wraps, while an array-notation array conflicting with an object is the
++// documented mixed-notation merge. `parseObject` is what marks them, because it
++// is the only place that still knows which key segment produced the leaf.
++//
++// Both are swapped for fresh channels per `parse` call rather than kept for the
++// life of the process: `side-channel` only reaches for a WeakMap when the engine
++// has one, and falls back to a strong-referencing list otherwise, so on the
++// engines `engines` declares (node 0.6 - 0.10, CI-tested by
++// .github/workflows/node-aught.yml) a process-lifetime channel retains every
++// object an overflowing parse ever marked. `parse` brackets its body with
++// enterParseScope/exitParseScope; direct `utils` callers share the module's own
++// channels exactly as before.
+ var overflowChannel = getSideChannel();
++var scalarListChannel = getSideChannel();
++
++var enterParseScope = function enterParseScope() {
++    var previous = { overflow: overflowChannel, scalarList: scalarListChannel };
++    overflowChannel = getSideChannel();
++    scalarListChannel = getSideChannel();
++    return previous;
++};
++
++var exitParseScope = function exitParseScope(previous) {
++    overflowChannel = previous.overflow;
++    scalarListChannel = previous.scalarList;
++};
++
++var markScalarList = function markScalarList(arr) {
++    scalarListChannel.set(arr, true);
++    return arr;
++};
++
++var isScalarList = function isScalarList(obj) {
++    return isArray(obj) && scalarListChannel.has(obj);
++};
+ 
+ var markOverflow = function markOverflow(obj, maxIndex) {
+     overflowChannel.set(obj, maxIndex);
+@@ -80,6 +122,20 @@ var setProperty = function setProperty(obj, key, value) {
+     }
+ };
+ 
++// `strictMerge`'s wrap is still an array as far as `throwOnLimitExceeded` is
++// concerned: README documents that option as throwing "whenever a limit is
++// exceeded", and a caller that asked to be told is told wherever the elements
++// came from. The non-throwing shape is deliberately left alone - the wrap marks
++// that two values conflicted rather than carrying arrayLimit-governed elements,
++// so converting it to an overflow object would change what every existing
++// caller receives.
++var checkWrapLimit = function checkWrapLimit(wrapped, options) {
++    if (options.throwOnLimitExceeded && typeof options.arrayLimit === 'number' && wrapped.length > options.arrayLimit) {
++        throw new RangeError('Array limit exceeded. Only ' + options.arrayLimit + ' element' + (options.arrayLimit === 1 ? '' : 's') + ' allowed in an array.');
++    }
++    return wrapped;
++};
++
+ var merge = function merge(target, source, options) {
+     /* eslint no-param-reassign: 0 */
+     if (!source) {
+@@ -103,7 +159,7 @@ var merge = function merge(target, source, options) {
+                 target[newIndex] = source;
+                 setMaxIndex(target, newIndex);
+             } else if (options && options.strictMerge) {
+-                return [target, source];
++                return checkWrapLimit([target, source], options);
+             } else if (
+                 (options && (options.plainObjects || options.allowPrototypes))
+                 || !has.call(Object.prototype, source)
+@@ -140,6 +196,36 @@ var merge = function merge(target, source, options) {
+         return combined;
+     }
+ 
++    // An overflow object absorbs plain values at its next numeric index, and it
++    // has to do that whether the key was repeated once or many times. A single
++    // repeat arrives as a primitive and takes the branch above; two or more are
++    // combined into a scalar list first, and without this they fell through to
++    // the wrap (with `strictMerge`) or to the generic key merge (without it),
++    // so the shape a caller received turned on the repetition count. The limit
++    // is not consulted here for the same reason the primitive branch does not:
++    // the target is already past it and is already an object.
++    if (isOverflow(target) && isScalarList(source)) {
++        for (var s = 0; s < source.length; s++) {
++            var appendIndex = getMaxIndex(target) + 1;
++            target[appendIndex] = source[s];
++            setMaxIndex(target, appendIndex);
++        }
++        return target;
++    }
++
++    // `strictMerge` wraps a plain value conflicting with an object. The plain
++    // value arrives as an array when duplicates were combined (`a=d&a=e`) or a
++    // comma value was split, and only the scalar-list mark tells that apart from
++    // array notation, which stays a mixed-notation object merge.
++    if (options && options.strictMerge) {
++        if (!isArray(target) && isScalarList(source)) {
++            return checkWrapLimit([target].concat(source), options);
++        }
++        if (isScalarList(target) && !isArray(source)) {
++            return checkWrapLimit(target.concat([source]), options);
++        }
++    }
++
+     var mergeTarget = target;
+     if (isArray(target) && !isArray(source)) {
+         mergeTarget = arrayToObject(target, options);
+@@ -372,10 +458,14 @@ module.exports = {
+     compact: compact,
+     decode: decode,
+     encode: encode,
++    enterParseScope: enterParseScope,
++    exitParseScope: exitParseScope,
+     isBuffer: isBuffer,
+     isOverflow: isOverflow,
+     isRegExp: isRegExp,
++    isScalarList: isScalarList,
+     markOverflow: markOverflow,
++    markScalarList: markScalarList,
+     maybeMap: maybeMap,
+     merge: merge
+ };
+diff --git a/package.json b/package.json
+index 1657d93..6798610 100644
+--- a/package.json
++++ b/package.json
+@@ -11,6 +11,20 @@
+         "url": "https://github.com/sponsors/ljharb"
+     },
+     "main": "lib/index.js",
++    "files": [
++        "lib",
++        "dist",
++        "test",
++        "CHANGELOG.md",
++        "LICENSE.md",
++        "README.md",
++        ".editorconfig",
++        ".nycrc",
++        "eslint.config.mjs",
++        ".github/FUNDING.yml",
++        ".github/SECURITY.md",
++        ".github/THREAT_MODEL.md"
++    ],
+     "sideEffects": false,
+     "contributors": [
+         {
+@@ -89,7 +103,12 @@
+             "component.json",
+             ".github/workflows",
+             "logos",
+-            "tea.yaml"
++            "tea.yaml",
++            "PLAN.md",
++            "BACKLOG.md",
++            "JOURNAL.md",
++            "JOURNAL-archive.md",
++            ".jeffy"
+         ]
+     }
+ }
+diff --git a/test/parse.js b/test/parse.js
+index 17f30b6..c5050a6 100644
+--- a/test/parse.js
++++ b/test/parse.js
+@@ -115,6 +115,15 @@ test('parse()', function (t) {
+             { 'name.obj.subobject': { 'first.godly.name': 'John', last: 'Doe' } },
+             'with allowDots true and decodeDotInKeys true'
+         );
++        st.doesNotThrow(
++            function () { qs.parse('name%252Eobj.first=John', { decodeDotInKeys: true, allowDots: false }); },
++            'decodeDotInKeys true with an explicit allowDots false is accepted, not an error'
++        );
++        st.deepEqual(
++            qs.parse('name%252Eobj.first=John', { decodeDotInKeys: true, allowDots: false }),
++            { 'name.obj.first': 'John' },
++            'and the explicit allowDots false keeps the dot from splitting the key'
++        );
+         st.deepEqual(
+             qs.parse('name%252Eobj.first=John&name%252Eobj.last=Doe'),
+             { 'name%2Eobj.first': 'John', 'name%2Eobj.last': 'Doe' },
+@@ -959,6 +968,70 @@ test('parse()', function (t) {
+             'plainObjects preserved in array wrapping'
+         );
+ 
++        st.deepEqual(
++            qs.parse('a[b]=c&a=d&a=e'),
++            { a: [{ b: 'c' }, 'd', 'e'] },
++            'object then duplicated primitives produces array'
++        );
++
++        st.deepEqual(
++            qs.parse('a=d&a=e&a[b]=c'),
++            { a: ['d', 'e', { b: 'c' }] },
++            'duplicated primitives then object produces array'
++        );
++
++        st.deepEqual(
++            qs.parse('a[b][c]=1&a[b]=2&a[b]=3'),
++            { a: { b: [{ c: '1' }, '2', '3'] } },
++            'wraps a nested conflict with duplicated primitives'
++        );
++
++        st.deepEqual(
++            qs.parse('a[b]=c&a=1,2', { comma: true }),
++            { a: [{ b: 'c' }, '1', '2'] },
++            'a comma-split value is a plain value for wrapping'
++        );
++
++        st.notDeepEqual(
++            qs.parse('a[b]=c&a=d&a=e'),
++            qs.parse('a[b]=c&a=d&a=e', { strictMerge: false }),
++            'strictMerge is not inert when the primitives are duplicated'
++        );
++
++        st.end();
++    });
++
++    t.test('strictMerge leaves array notation as a mixed-notation merge', function (st) {
++        st.deepEqual(
++            qs.parse('a[0]=b&a[b]=c'),
++            { a: { 0: 'b', b: 'c' } },
++            'indexed notation then object merges into an object'
++        );
++
++        st.deepEqual(
++            qs.parse('a[b]=c&a[0]=d'),
++            { a: { 0: 'd', b: 'c' } },
++            'object then indexed notation merges into an object'
++        );
++
++        st.deepEqual(
++            qs.parse('a[]=b&a[b]=c'),
++            { a: { 0: 'b', b: 'c' } },
++            'bracket notation then object merges into an object'
++        );
++
++        st.deepEqual(
++            qs.parse('a[0]=b&a[1]=c&a[b]=d'),
++            { a: { 0: 'b', 1: 'c', b: 'd' } },
++            'two indices then object merges into an object'
++        );
++
++        st.deepEqual(
++            qs.parse('a=d&a=e'),
++            { a: ['d', 'e'] },
++            'duplicated primitives with no object conflict stay a plain array'
++        );
++
+         st.end();
+     });
+ 
+@@ -1191,7 +1264,41 @@ test('parse()', function (t) {
+     t.test('interpretNumericEntities with comma:true and iso charset does not crash', function (st) {
+         st.deepEqual(
+             qs.parse('b&a[]=1,' + urlEncodedNumSmiley, { comma: true, charset: 'iso-8859-1', interpretNumericEntities: true }),
+-            { b: '', a: ['1,☺'] }
++            { b: '', a: [['1', '☺']] }
++        );
++
++        st.end();
++    });
++
++    t.test('interpretNumericEntities substitutes characters without changing the shape', function (st) {
++        st.deepEqual(
++            qs.parse('a=1,' + urlEncodedNumSmiley, { comma: true, charset: 'iso-8859-1', interpretNumericEntities: true }),
++            { a: ['1', '☺'] },
++            'a comma value stays an array'
++        );
++
++        st.deepEqual(
++            qs.parse('a=x,' + urlEncodedNumSmiley + ',z', { comma: true, charset: 'iso-8859-1', interpretNumericEntities: true }),
++            { a: ['x', '☺', 'z'] },
++            'every element is interpreted, not just the one carrying an entity'
++        );
++
++        st.deepEqual(
++            qs.parse('a=1,2', { comma: true, charset: 'iso-8859-1', interpretNumericEntities: true }),
++            qs.parse('a=1,2', { comma: true, charset: 'iso-8859-1' }),
++            'a comma value with no entity in it is shaped exactly as it is without the option'
++        );
++
++        st.deepEqual(
++            qs.parse('a[]=1,2', { comma: true, charset: 'iso-8859-1', interpretNumericEntities: true }),
++            qs.parse('a[]=1,2', { comma: true, charset: 'iso-8859-1' }),
++            'the same holds for bracket notation'
++        );
++
++        st.deepEqual(
++            qs.parse('a=1,2,3,4', { comma: true, charset: 'iso-8859-1', interpretNumericEntities: true, arrayLimit: 2 }),
++            { a: { 0: '1', 1: '2', 2: '3', 3: '4' } },
++            'an oversized comma value still overflows to an object'
+         );
+ 
+         st.end();
+@@ -1463,6 +1570,40 @@ test('parse()', function (t) {
+             sst.end();
+         });
+ 
++        st.test('enforces arrayLimit on the strictMerge wrap, at every site that builds one', function (sst) {
++            sst['throws'](
++                function () { qs.parse('a[b]=c&a=d', { arrayLimit: 1, throwOnLimitExceeded: true }); },
++                new RangeError('Array limit exceeded. Only 1 element allowed in an array.'),
++                'an object wrapped with a following plain value'
++            );
++
++            sst['throws'](
++                function () { qs.parse('a[b]=c&a=1,2', { comma: true, arrayLimit: 2, throwOnLimitExceeded: true }); },
++                new RangeError('Array limit exceeded. Only 2 elements allowed in an array.'),
++                'an object wrapped with a comma-split scalar list'
++            );
++
++            sst['throws'](
++                function () { qs.parse('a=d&a=e&a[b]=c', { arrayLimit: 2, throwOnLimitExceeded: true }); },
++                new RangeError('Array limit exceeded. Only 2 elements allowed in an array.'),
++                'a combined scalar list wrapped with a following object'
++            );
++
++            sst.deepEqual(
++                qs.parse('a[b]=c&a=d', { arrayLimit: 5, throwOnLimitExceeded: true }),
++                { a: [{ b: 'c' }, 'd'] },
++                'a wrap within the limit is unaffected'
++            );
++
++            sst.deepEqual(
++                qs.parse('a[b]=c&a=1,2', { comma: true, arrayLimit: 2 }),
++                { a: [{ b: 'c' }, '1', '2'] },
++                'without throwOnLimitExceeded the wrap keeps its shape'
++            );
++
++            sst.end();
++        });
++
+         st.test('does not throw when cumulative comma combine stays within arrayLimit', function (sst) {
+             var result = qs.parse('a=1,2,3&a=4', { comma: true, arrayLimit: 5, throwOnLimitExceeded: true });
+             sst.deepEqual(result, { a: ['1', '2', '3', '4'] }, 'combined array within limit is preserved');
+@@ -1905,6 +2046,40 @@ test('mixed array and object notation', function (t) {
+         st.end();
+     });
+ 
++    t.test('an overflow object absorbs plain values the same way however often the key repeats', function (st) {
++        st.deepEqual(
++            qs.parse('a[25]=x&a=d'),
++            { a: { 25: 'x', 26: 'd' } },
++            'one plain value appends at the next index'
++        );
++
++        st.deepEqual(
++            qs.parse('a[25]=x&a=d&a=e'),
++            { a: { 25: 'x', 26: 'd', 27: 'e' } },
++            'two plain values append at the next two indices, differing only in how many are carried'
++        );
++
++        st.deepEqual(
++            qs.parse('a[25]=x&a=1,2', { comma: true }),
++            { a: { 25: 'x', 26: '1', 27: '2' } },
++            'a comma-split value lands the same way a repeated key does'
++        );
++
++        st.deepEqual(
++            qs.parse('a[25]=x&a=d&a=e', { strictMerge: false }),
++            { a: { 25: 'x', 26: 'd', 27: 'e' } },
++            'and the same holds with strictMerge off'
++        );
++
++        st.deepEqual(
++            qs.parse('a[b]=c&a=d&a=e'),
++            { a: [{ b: 'c' }, 'd', 'e'] },
++            'a non-overflow object still takes the documented strictMerge wrap'
++        );
++
++        st.end();
++    });
++
+     t.test('uses existing array length for currentArrayLength when parsing object input with bracket keys', function (st) {
+         var input = {};
+         var arr = ['x', 'y'];
+diff --git a/test/stringify.js b/test/stringify.js
+index 1990e57..75e1243 100644
+--- a/test/stringify.js
++++ b/test/stringify.js
+@@ -133,6 +133,16 @@ test('stringify()', function (t) {
+             'with allowDots true and encodeDotInKeys true'
+         );
+ 
++        st.doesNotThrow(
++            function () { qs.stringify({ 'name.obj': { first: 'John' } }, { encodeDotInKeys: true, allowDots: false }); },
++            'encodeDotInKeys true with an explicit allowDots false is accepted, not an error'
++        );
++        st.equal(
++            qs.stringify({ 'name.obj': { first: 'John' } }, { encodeDotInKeys: true, allowDots: false }),
++            'name%252Eobj%5Bfirst%5D=John',
++            'and the explicit allowDots false keeps bracket notation'
++        );
++
+         st.end();
+     });
+ 

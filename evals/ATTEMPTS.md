@@ -74,6 +74,7 @@ loss rather than hiding it.
 | phpdotenv | 1 | 10 | converged | evaluator countersigned | 0 |
 | PyPortfolioOpt | 6 | 58 | converged | evaluator countersigned | 1 |
 | python-dotenv | 8 | 73 | converged | evaluator countersigned | 1 |
+| qs | 2 | 18 | converged | evaluator countersigned | 1 |
 | quantstats | 4 | 40 | converged | evaluator countersigned | 0 |
 | records | 1 | 7 | converged | pre-evaluator | 0 |
 | rrule | 4 | 33 | converged | evaluator countersigned | 0 |
@@ -111,13 +112,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 49 brownfield convergences:
+The engine tightened over time. Of the 50 brownfield convergences:
 
-- **44** were countersigned by the adversarial evaluator, the current standard.
+- **45** were countersigned by the adversarial evaluator, the current standard.
   Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow`, `more-itertools`, `underscore`, `js-uuid`, `phpdotenv`, `vavr` and `itoa` met
+  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow`, `more-itertools`, `underscore`, `js-uuid`, `phpdotenv`, `vavr`, `itoa` and `qs` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -127,7 +128,7 @@ The engine tightened over time. Of the 49 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 49 as one number
+Every receipt names the standard its own run met. Pooling all 50 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
