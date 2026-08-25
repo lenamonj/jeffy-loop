@@ -53,6 +53,8 @@ loss rather than hiding it.
 | gson | 1 | 2 | converged | evaluator countersigned | 0 |
 | heck | 2 | 17 | converged | evaluator countersigned | 0 |
 | Humanizer | 4 | 32 | **not converged** | n/a | 0 |
+| itoa | 2 | 16 | converged | evaluator countersigned | 1 |
+| itsdangerous | 3 | 31 | **not converged** | n/a | 0 |
 | image-rs (attempt 1) | 2 | 10 | **not converged** | n/a | 2 |
 | image-rs (attempt 2) | 3 | 30 | **not converged** | n/a | 0 |
 | js-uuid | 2 | 20 | converged | evaluator countersigned | 0 |
@@ -108,13 +110,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 48 brownfield convergences:
+The engine tightened over time. Of the 49 brownfield convergences:
 
-- **43** were countersigned by the adversarial evaluator, the current standard.
+- **44** were countersigned by the adversarial evaluator, the current standard.
   Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow`, `more-itertools`, `underscore`, `js-uuid`, `phpdotenv` and `vavr` met
+  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow`, `more-itertools`, `underscore`, `js-uuid`, `phpdotenv`, `vavr` and `itoa` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -124,7 +126,7 @@ The engine tightened over time. Of the 48 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 48 as one number
+Every receipt names the standard its own run met. Pooling all 49 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -1216,3 +1218,31 @@ classes mean the audit keeps finding real product defects faster than
 the sweep can retire rows, and the severity floor stays out of reach at
 any budget a night allows. No REJECT reasons exist to classify - the
 gate was never invoked.
+
+## itsdangerous, three gate rejections that each filed a real defect
+
+`pallets/itsdangerous` (3,126 stars), the signing library under Flask's
+sessions, ran in the 2026-08-25 acceptance cohort for engine 1.17.0
+against a pre-registered three rounds of ten and spent all 31
+iterations without converging: **15 of 15 rows swept, 22 findings closed
+- 3 High, 11 Medium, 8 Low** - +950/-55 across 21 files, with 2 Medium
+still open at close. Two of the Highs are the loop's own: signed tokens
+were not canonical, so one valid token could be rewritten into
+unboundedly many distinct strings that all still verified, and
+`loads_unsafe`, documented as never failing, raised `BadPayload` on a
+genuinely signed payload. The gate was invoked three times and rejected
+three times, and each rejection was a product defect the run had missed
+rather than a bookkeeping fault: a `str` token carrying an unencodable
+code point escaped as `UnicodeEncodeError` instead of `BadData` at every
+public entry point; the documented `serializer` override on
+`URLSafeSerializer.load_payload` was silently inert, because the mixin
+forwarded `*args, **kwargs` that could not carry it; and, at the final
+invocation, `Serializer.load` forwarded `salt` positionally into the
+`max_age` slot of the timed subclasses, so the third High (ID-022) was
+closed as gate salvage on the last budgeted iteration and its sibling
+ID-024 - the timed classes' file form accepting neither `max_age` nor
+`return_timestamp` - is what remains open. The pattern is the corpus's
+gate-as-auditor shape: on a small, mature, heavily tested surface the
+adversarial evaluator out-found the audit three invocations running,
+and the budget ended one Medium pair short of the floor. No REJECT
+reason was engine-derivable; every one names a line in `src/`.

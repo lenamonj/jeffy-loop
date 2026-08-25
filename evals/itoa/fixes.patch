@@ -1,0 +1,519 @@
+diff --git a/.gitignore b/.gitignore
+index e9e2199..c18c2dc 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,3 @@
+ /target/
+ /Cargo.lock
++.claude/jeffy-loop.local.md
+diff --git a/Cargo.toml b/Cargo.toml
+index d8bd99a..fb54a98 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -6,7 +6,14 @@ categories = ["value-formatting", "no-std", "no-std::no-alloc"]
+ description = "Fast integer primitive to string conversion"
+ documentation = "https://docs.rs/itoa"
+ edition = "2021"
+-exclude = ["*.png"]
++exclude = [
++    "*.png",
++    "/.jeffy",
++    "/BACKLOG.md",
++    "/JOURNAL-archive.md",
++    "/JOURNAL.md",
++    "/PLAN.md",
++]
+ keywords = ["integer"]
+ license = "MIT OR Apache-2.0"
+ repository = "https://github.com/dtolnay/itoa"
+diff --git a/src/lib.rs b/src/lib.rs
+index 74cd9b4..c4e1525 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -138,6 +138,21 @@ macro_rules! impl_Integer {
+             assert!($Signed::MIN < 0, "need signed");
+             assert!($Unsigned::MIN == 0, "need unsigned");
+             assert!($Signed::BITS == $Unsigned::BITS, "need counterparts");
++            // Buffer::format casts its byte array to I::Buffer and writes
++            // through the result, so every impl's buffer has to fit. Nothing
++            // else states this: the trait declares `type Buffer: 'static` with
++            // no size bound, and the cast is a raw pointer cast that no
++            // mismatch would stop.
++            assert!(
++                mem::size_of::<<$Unsigned as private::Sealed>::Buffer>()
++                    <= mem::size_of::<Buffer>(),
++                "buffer too small for this impl",
++            );
++            assert!(
++                mem::size_of::<<$Signed as private::Sealed>::Buffer>()
++                    <= mem::size_of::<Buffer>(),
++                "buffer too small for this impl",
++            );
+         };
+ 
+         impl Integer for $Unsigned {
+@@ -166,14 +181,40 @@ macro_rules! impl_Integer {
+             #[inline]
+             #[cfg_attr(feature = "no-panic", no_panic)]
+             fn write(self, buf: &mut Self::Buffer) -> &str {
+-                let mut offset = Self::MAX_STR_LEN - $Unsigned::MAX_STR_LEN;
+-                offset += Unsigned::fmt(
+-                    self.unsigned_abs(),
+-                    (&mut buf[offset..]).try_into().unwrap(),
+-                );
++                // The digits occupy the tail of the buffer, and the sign, when
++                // there is one, the byte immediately before them.
++                const SIGN_LEN: usize =
++                    <$Signed as Integer>::MAX_STR_LEN - <$Unsigned as Integer>::MAX_STR_LEN;
++
++                // Reaching that tail as `buf[SIGN_LEN..].try_into().unwrap()`
++                // yields the same reference, but by way of a range bounds check
++                // and a fallible array conversion. Both are infallible here and
++                // the optimizer usually folds them away, but for i32 and i64 it
++                // does not, and the panicking paths that survive are enough to
++                // fail a `no-panic` build. Buffer::format reaches its own buffer
++                // by exactly this cast for the same reason.
++                //
++                // SAFETY: SIGN_LEN + $Unsigned::MAX_STR_LEN is
++                // $Signed::MAX_STR_LEN by construction, so the whole unsigned
++                // buffer lies within this one, and MaybeUninit<u8> is 1-aligned.
++                let digits = unsafe {
++                    &mut *buf
++                        .as_mut_ptr()
++                        .add(SIGN_LEN)
++                        .cast::<<$Unsigned as private::Sealed>::Buffer>()
++                };
++
++                let mut offset = SIGN_LEN + Unsigned::fmt(self.unsigned_abs(), digits);
+                 if self < 0 {
+                     offset -= 1;
+-                    buf[offset].write(b'-');
++                    // SAFETY: `offset` is $Signed::MAX_STR_LEN less the number
++                    // of digits written, and no negative value's magnitude has
++                    // more than $Signed::MAX_STR_LEN - 1 digits - MIN has
++                    // exactly that many, which is the tightest case there is -
++                    // so `offset` was at least 1 before this decrement, and is
++                    // 0 after it at MIN. test_sign_byte_room pins that for
++                    // every supported type.
++                    unsafe { buf.get_unchecked_mut(offset) }.write(b'-');
+                 }
+                 // SAFETY: Starting from `offset`, all elements of the slice have been set.
+                 unsafe { slice_buffer_to_str(buf, offset) }
+@@ -190,6 +231,14 @@ impl_Integer!(i128, u128);
+ 
+ macro_rules! impl_Integer_size {
+     ($t:ty as $primitive:ident #[cfg(target_pointer_width = $width:literal)]) => {
++        #[cfg(target_pointer_width = $width)]
++        const _: () = {
++            assert!(
++                mem::size_of::<<$t as private::Sealed>::Buffer>() <= mem::size_of::<Buffer>(),
++                "buffer too small for this impl",
++            );
++        };
++
+         #[cfg(target_pointer_width = $width)]
+         impl Integer for $t {
+             const MAX_STR_LEN: usize = <$primitive as Integer>::MAX_STR_LEN;
+@@ -252,6 +301,27 @@ unsafe fn slice_buffer_to_str(buf: &[MaybeUninit<u8>], offset: usize) -> &str {
+     unsafe { str::from_utf8_unchecked(&*(written as *const [MaybeUninit<u8>] as *const [u8])) }
+ }
+ 
++/// `core::hint::assert_unchecked`, which this crate's MSRV predates.
++///
++/// libcore's own copy of the formatting loop below carries these assertions at
++/// every place the offset moves. Without them the bounds checks on `buf` survive
++/// optimization, which leaves a panicking path in a function the `no-panic`
++/// feature promises has none: with the calls below made inert, a release build
++/// of a downstream crate fails to link for six of the twelve integer types this
++/// crate supports.
++///
++/// # Safety
++///
++/// `cond` must be true.
++#[inline]
++#[cfg_attr(feature = "no-panic", no_panic)]
++unsafe fn assert_unchecked(cond: bool) {
++    if !cond {
++        // SAFETY: the caller guarantees `cond`.
++        unsafe { hint::unreachable_unchecked() };
++    }
++}
++
+ trait Unsigned: Integer {
+     fn fmt(self, buf: &mut Self::Buffer) -> usize;
+ }
+@@ -274,6 +344,13 @@ macro_rules! impl_Unsigned {
+                             .try_into()
+                             .expect("branch is not hit for types that cannot fit 999 (u8)")
+                 {
++                    // SAFETY: MAX_STR_LEN leaves room for every decimal this
++                    // type can produce, and the loop condition guarantees at
++                    // least four more are still to be written.
++                    unsafe {
++                        assert_unchecked(offset >= 4);
++                        assert_unchecked(offset <= buf.len());
++                    }
+                     offset -= 4;
+ 
+                     // pull two pairs
+@@ -297,6 +374,13 @@ macro_rules! impl_Unsigned {
+ 
+                 // Format per two digits from the lookup table.
+                 if remain > 9 {
++                    // SAFETY: the branch guarantees two more decimals remain,
++                    // and the loop above only ever left a multiple of four
++                    // written, so at least two bytes are free.
++                    unsafe {
++                        assert_unchecked(offset >= 2);
++                        assert_unchecked(offset <= buf.len());
++                    }
+                     offset -= 2;
+ 
+                     let (last, pair) = divmod100(remain as u32);
+@@ -311,6 +395,12 @@ macro_rules! impl_Unsigned {
+ 
+                 // Format the last remaining digit, if any.
+                 if remain != 0 || self == 0 {
++                    // SAFETY: the branch guarantees one more decimal remains,
++                    // so at least one byte is free.
++                    unsafe {
++                        assert_unchecked(offset >= 1);
++                        assert_unchecked(offset <= buf.len());
++                    }
+                     offset -= 1;
+ 
+                     // Either the compiler sees that remain < 10, or it prevents
+@@ -363,6 +453,13 @@ impl Unsigned for u128 {
+ 
+         // Format per four digits from the lookup table.
+         while remain > 999 {
++            // SAFETY: offset starts at 39, 23 or 7 and the branches above
++            // leave at least as many bytes free as `remain` has decimals; the
++            // loop condition guarantees four more are still to be written.
++            unsafe {
++                assert_unchecked(offset >= 4);
++                assert_unchecked(offset <= buf.len());
++            }
+             offset -= 4;
+ 
+             // pull two pairs
+@@ -379,6 +476,11 @@ impl Unsigned for u128 {
+ 
+         // Format per two digits from the lookup table.
+         if remain > 9 {
++            // SAFETY: the branch guarantees two more decimals remain.
++            unsafe {
++                assert_unchecked(offset >= 2);
++                assert_unchecked(offset <= buf.len());
++            }
+             offset -= 2;
+ 
+             let (last, pair) = divmod100(remain as u32);
+@@ -391,6 +493,11 @@ impl Unsigned for u128 {
+ 
+         // Format the last remaining digit, if any.
+         if remain != 0 {
++            // SAFETY: the branch guarantees one more decimal remains.
++            unsafe {
++                assert_unchecked(offset >= 1);
++                assert_unchecked(offset <= buf.len());
++            }
+             offset -= 1;
+ 
+             // Either the compiler sees that remain < 10, or it prevents
+diff --git a/tests/test.rs b/tests/test.rs
+index c4f0617..43f478c 100644
+--- a/tests/test.rs
++++ b/tests/test.rs
+@@ -1,4 +1,11 @@
+-#![allow(non_snake_case)]
++#![allow(
++    clippy::cast_lossless,
++    clippy::cast_possible_truncation,
++    clippy::cast_possible_wrap,
++    clippy::cast_sign_loss,
++    clippy::unreadable_literal,
++    non_snake_case
++)]
+ 
+ macro_rules! test {
+     ($($name:ident($value:expr, $expected:expr))*) => {
+@@ -26,6 +33,198 @@ test! {
+     test_u128_max(u128::MAX, "340282366920938463463374607431768211455")
+     test_i128_min(i128::MIN, "-170141183460469231731687303715884105728")
+     test_i128_max(i128::MAX, "170141183460469231731687303715884105727")
++
++    test_u8_0(0u8, "0")
++    test_u8_max(u8::MAX, "255")
++    test_i8_min(i8::MIN, "-128")
++    test_i8_max(i8::MAX, "127")
++    test_u16_max(u16::MAX, "65535")
++    test_u32_max(u32::MAX, "4294967295")
++    test_i32_min(i32::MIN, "-2147483648")
++    test_i32_max(i32::MAX, "2147483647")
++    test_i64_max(i64::MAX, "9223372036854775807")
++
++    // Minus one is the only negative whose magnitude is a single digit, so it
++    // is the one value where an off-by-one in the sign offset stays invisible.
++    test_i32_neg_1(-1i32, "-1")
++    test_i64_neg_1(-1i64, "-1")
++
++    // An exact multiple of one hundred leaves a zero remainder in divmod100,
++    // which is where its reciprocal constant is least forgiving.
++    test_u32_100(100u32, "100")
++    test_u32_1000(1000u32, "1000")
++    test_u64_100000(100000u64, "100000")
++
++    // The two constants the u128 formatter branches on.
++    test_u128_1e16(10000000000000000u128, "10000000000000000")
++    test_u128_1e16_minus_1(9999999999999999u128, "9999999999999999")
++    test_u128_1e32(100000000000000000000000000000000u128, "100000000000000000000000000000000")
++    test_u128_1e32_minus_1(99999999999999999999999999999999u128, "99999999999999999999999999999999")
++}
++
++// The cases above are hand-written known answers. The tests below compare
++// against the standard library's own rendering instead, which is the
++// independent reference this crate exists to reproduce faster, and they cover
++// the widths and value classes a fixed list cannot reach.
++//
++// Miri runs this suite in CI and is orders of magnitude slower than a native
++// run, so the exhaustive sweeps shrink to a stride under it rather than being
++// skipped: the same code paths are still exercised, just at fewer points.
++const fn stride() -> usize {
++    if cfg!(miri) {
++        1021 // prime, so the sampled residues do not align with any decade
++    } else {
++        1
++    }
++}
++
++#[test]
++fn test_exhaustive_16_bit() {
++    let mut buffer = itoa::Buffer::new();
++    for v in (u16::MIN..=u16::MAX).step_by(stride()) {
++        assert_eq!(buffer.format(v), v.to_string());
++    }
++    for v in (i16::MIN..=i16::MAX).step_by(stride()) {
++        assert_eq!(buffer.format(v), v.to_string());
++    }
++}
++
++#[test]
++fn test_exhaustive_8_bit() {
++    let mut buffer = itoa::Buffer::new();
++    for v in u8::MIN..=u8::MAX {
++        assert_eq!(buffer.format(v), v.to_string());
++    }
++    for v in i8::MIN..=i8::MAX {
++        assert_eq!(buffer.format(v), v.to_string());
++    }
++}
++
++/// Every entry of the two-digit lookup table, and both halves of the
++/// four-digit path. Values from 100 to 9999 send every pair from 00 to 99
++/// through divmod100 as a remainder, and every value from 1000 up sends a pair
++/// through as a quotient as well.
++#[test]
++fn test_every_decimal_pair() {
++    let mut buffer = itoa::Buffer::new();
++    for v in (0..=9999u32).step_by(stride()) {
++        assert_eq!(buffer.format(v), v.to_string());
++    }
++    for v in (-9999..=0i32).step_by(stride()) {
++        assert_eq!(buffer.format(v), v.to_string());
++    }
++}
++
++/// Every decade boundary of every width, on both sides of zero. This is where
++/// the digit-count branches switch and where the sign offset moves.
++#[test]
++fn test_decade_boundaries() {
++    let mut buffer = itoa::Buffer::new();
++    for e in 0..39u32 {
++        let Some(p) = 10u128.checked_pow(e) else {
++            break;
++        };
++        for delta in -2i128..=2 {
++            let Some(c) = (p as i128).checked_add(delta) else {
++                continue;
++            };
++            if c >= 0 {
++                let u = c as u128;
++                assert_eq!(buffer.format(u), u.to_string());
++                if u <= u64::MAX as u128 {
++                    assert_eq!(buffer.format(u as u64), (u as u64).to_string());
++                }
++                if u <= u32::MAX as u128 {
++                    assert_eq!(buffer.format(u as u32), (u as u32).to_string());
++                }
++                if u <= usize::MAX as u128 {
++                    assert_eq!(buffer.format(u as usize), (u as usize).to_string());
++                }
++            }
++            assert_eq!(buffer.format(c), c.to_string());
++            let n = c.wrapping_neg();
++            assert_eq!(buffer.format(n), n.to_string());
++            if c >= i64::MIN as i128 && c <= i64::MAX as i128 {
++                assert_eq!(buffer.format(c as i64), (c as i64).to_string());
++            }
++            if c >= i32::MIN as i128 && c <= i32::MAX as i128 {
++                assert_eq!(buffer.format(c as i32), (c as i32).to_string());
++            }
++            if c >= isize::MIN as i128 && c <= isize::MAX as i128 {
++                assert_eq!(buffer.format(c as isize), (c as isize).to_string());
++            }
++        }
++    }
++}
++
++/// The 128-bit formatter divides by 1e16 twice using a reciprocal multiply, so
++/// its constants are exercised only near those two boundaries and at the top
++/// of the range.
++#[test]
++fn test_u128_division_boundaries() {
++    let mut buffer = itoa::Buffer::new();
++    let span = if cfg!(miri) { 8 } else { 2000 };
++    for base in [
++        10u128.pow(16),
++        10u128.pow(32),
++        u128::MAX,
++        i128::MAX as u128,
++    ] {
++        for d in 0..span {
++            let hi = base.wrapping_add(d);
++            let lo = base.wrapping_sub(d);
++            assert_eq!(buffer.format(hi), hi.to_string());
++            assert_eq!(buffer.format(lo), lo.to_string());
++        }
++    }
++    // Exact multiples of 1e16 leave a zero remainder, which the 16-digit
++    // encoder has to zero-pad rather than shorten.
++    for m in 1..=34u128 {
++        let v = m * 10u128.pow(16);
++        assert_eq!(buffer.format(v), v.to_string());
++    }
++    for k in 0..128u32 {
++        let v = 1u128 << k;
++        assert_eq!(buffer.format(v), v.to_string());
++        assert_eq!(buffer.format(v - 1), (v - 1).to_string());
++    }
++}
++
++/// usize and isize forward to the primitive of the host's pointer width. A
++/// forwarding impl wired to a narrower type truncates, and truncation stays
++/// invisible until a value exceeds that narrower type.
++#[test]
++fn test_pointer_sized_forwarding() {
++    let mut buffer = itoa::Buffer::new();
++    assert_eq!(buffer.format(usize::MAX), usize::MAX.to_string());
++    assert_eq!(buffer.format(usize::MIN), usize::MIN.to_string());
++    assert_eq!(buffer.format(isize::MAX), isize::MAX.to_string());
++    assert_eq!(buffer.format(isize::MIN), isize::MIN.to_string());
++
++    let mut v: usize = 1;
++    loop {
++        assert_eq!(buffer.format(v), v.to_string());
++        assert_eq!(buffer.format(v as isize), (v as isize).to_string());
++        match v.checked_mul(10) {
++            Some(next) => v = next,
++            None => break,
++        }
++    }
++}
++
++/// A buffer is reused across calls and the returned string is a slice into it,
++/// so a short value written after a long one must not carry the long one's
++/// tail.
++#[test]
++fn test_buffer_reuse_leaves_no_tail() {
++    let mut buffer = itoa::Buffer::new();
++    assert_eq!(buffer.format(u128::MAX), u128::MAX.to_string());
++    for v in [0u128, 7, 42, 999, 1000, 1, 10, 10000000000000000] {
++        assert_eq!(buffer.format(v), v.to_string());
++    }
++    assert_eq!(buffer.format(i128::MIN), i128::MIN.to_string());
++    assert_eq!(buffer.format(0u8), "0");
++    assert_eq!(buffer.format(-1i8), "-1");
+ }
+ 
+ #[test]
+@@ -42,4 +241,79 @@ fn test_max_str_len() {
+     assert_eq!(u64::MAX_STR_LEN, 20);
+     assert_eq!(i128::MAX_STR_LEN, 40);
+     assert_eq!(u128::MAX_STR_LEN, 39);
++
++    // Every constant must be exactly the widest real output, not merely an
++    // upper bound: too large only wastes buffer, too small is an
++    // out-of-bounds write, and only the extremes of the type tell them apart.
++    let mut buffer = itoa::Buffer::new();
++    macro_rules! tight {
++        ($T:ty) => {
++            assert_eq!(
++                <$T>::MAX_STR_LEN,
++                buffer
++                    .format(<$T>::MAX)
++                    .len()
++                    .max(buffer.format(<$T>::MIN).len()),
++            );
++        };
++    }
++    tight!(u8);
++    tight!(i8);
++    tight!(u16);
++    tight!(i16);
++    tight!(u32);
++    tight!(i32);
++    tight!(u64);
++    tight!(i64);
++    tight!(u128);
++    tight!(i128);
++    tight!(usize);
++    tight!(isize);
++}
++
++/// The sign byte's room, enumerated rather than asserted. The signed `write`
++/// puts the digits at the tail of the buffer and the sign in the byte before
++/// them, which is in bounds only while no magnitude of the type reaches
++/// `MAX_STR_LEN` digits. `MIN` is the tightest case and it is exactly one digit
++/// short, so the sign gets exactly one byte and never less. The unsigned types
++/// are the other half of the same statement: their widest value fills the
++/// buffer completely, because they have no sign to leave room for.
++#[test]
++fn test_sign_byte_room() {
++    use itoa::Integer as _;
++
++    macro_rules! signed {
++        ($($t:ident)*) => {$({
++            let digits = $t::MIN.unsigned_abs().to_string().len();
++            // clippy::int_plus_one: `digits < MAX_STR_LEN` is the same bound
++            // as `digits <= MAX_STR_LEN - 1`, and it cannot underflow.
++            assert!(
++                digits < $t::MAX_STR_LEN,
++                "{}: |MIN| has {} digits and MAX_STR_LEN is {}, leaving the sign no byte",
++                stringify!($t), digits, $t::MAX_STR_LEN,
++            );
++            assert_eq!(
++                digits, $t::MAX_STR_LEN - 1,
++                "{}: MIN should be the tightest case, one digit short of the buffer",
++                stringify!($t),
++            );
++            let mut buffer = itoa::Buffer::new();
++            assert_eq!(buffer.format($t::MIN).len(), $t::MAX_STR_LEN);
++        })*};
++    }
++
++    macro_rules! unsigned {
++        ($($t:ident)*) => {$({
++            let digits = $t::MAX.to_string().len();
++            assert_eq!(
++                digits, $t::MAX_STR_LEN,
++                "{}: MAX should fill the buffer exactly", stringify!($t),
++            );
++            let mut buffer = itoa::Buffer::new();
++            assert_eq!(buffer.format($t::MAX).len(), $t::MAX_STR_LEN);
++        })*};
++    }
++
++    signed!(i8 i16 i32 i64 i128 isize);
++    unsigned!(u8 u16 u32 u64 u128 usize);
+ }
