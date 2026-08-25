@@ -34,7 +34,7 @@ trap 'rm -rf ${rt_tmp:+"$rt_tmp"} ${pr_tmp:+"$pr_tmp"} ${hb_tmp:+"$hb_tmp"}' EXI
 
 # 1. The shell entry points parse cleanly. Parser stderr is shown on failure
 #    so the [FAIL] names the offending line.
-for sh_src in install.sh skills/jeffy/hooks/stop-hook.sh; do
+for sh_src in install.sh skills/jeffy/hooks/stop-hook.sh skills/jeffy/hooks/lib/run-probe.sh; do
   if bash_err="$(bash -n "$sh_src" 2>&1)"; then
     pass "$sh_src parses (bash -n)"
   else
@@ -83,7 +83,8 @@ for required in skills/jeffy/SKILL.md skills/cancel-jeffy/SKILL.md \
   skills/jeffy/references/backlog-default.md \
   skills/jeffy/references/journal-default.md \
   skills/jeffy/references/iteration-prompt.txt \
-  skills/jeffy/hooks/stop-hook.sh; do
+  skills/jeffy/hooks/stop-hook.sh \
+  skills/jeffy/hooks/lib/run-probe.sh; do
   if [ -f "$required" ]; then
     pass "referenced path exists: $required"
   else
@@ -275,6 +276,10 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "Severity discipline:" \
   "Backlog discipline:" \
   "bring the standing claims current in this same iteration" \
+  "the currency set is that form itself, never a fixed list" \
+  "every count a battery README states against the procedure it records" \
+  "enumerated by: <command>" \
+  "each through the installed run-probe.sh" \
   "land before the re-invocation, never in the checkpoint edit after it" \
   "spend this final iteration on the closing full audit instead" \
   "a rationale contradicted by a written line in the state files is void" \
@@ -351,6 +356,7 @@ check_markers skills/jeffy/hooks/stop-hook.sh \
 # command-substitution line in the launch heredoc and must not expand here.
 # shellcheck disable=SC2016
 check_markers skills/jeffy/SKILL.md \
+  "\`--max-time <duration>\` sets \`max_wall_clock_seconds\`" \
   "Verify command lint:" \
   "nor an unfilled \`<...>\` placeholder" \
   "a pager or truncator" \
@@ -593,6 +599,63 @@ elif [ "$claim_langs" != "$tbl_langs" ]; then
   fault "README claims $claim_langs languages but the converged rows span $tbl_langs"
 else
   pass "README counts are derived from the eval table ($tbl_conv converged of $receipts, $tbl_langs languages)"
+fi
+
+# N. Corpus-position claims are queries over the receipts table (P2-39): a
+#    pre-registration and two receipts once claimed the corpus's first PHP,
+#    Java and Ruby targets from session belief while the table held all
+#    three languages, caught only because the pie alt text is derived by
+#    script and disagreed with the prose beside it. Checkable subset, and
+#    deliberately strict: a per-language ordinal ("first <Language> target",
+#    "second <Language> target") in README.md or any receipt must match the
+#    converged rows' count for that language - "first" demands exactly one,
+#    so the durable wording for a historical first is the dated or
+#    "after <name>" form that stays true when the second lands. The "Nth
+#    language" claims must be distinct and within the language count.
+#    Free-prose superlatives stay with the process rule; this is the half a
+#    grep can hold.
+ord_bad=""
+while read -r pl_cnt pl_lang; do
+  [ -n "$pl_lang" ] || continue
+  pl_hits="$(grep -rhoiE "(first|second|third|fourth|fifth) $pl_lang target" README.md evals/*/REPORT.md 2>/dev/null | sort -u)"
+  [ -n "$pl_hits" ] || continue
+  while IFS= read -r pl_h; do
+    [ -n "$pl_h" ] || continue
+    case "$(printf '%s' "$pl_h" | awk '{print tolower($1)}')" in
+      first)  [ "$pl_cnt" -ne 1 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); " ;;
+      second) [ "$pl_cnt" -lt 2 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); " ;;
+      third)  [ "$pl_cnt" -lt 3 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); " ;;
+      fourth) [ "$pl_cnt" -lt 4 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); " ;;
+      fifth)  [ "$pl_cnt" -lt 5 ] && ord_bad="$ord_bad'$pl_h' vs $pl_cnt $pl_lang row(s); " ;;
+    esac
+  done <<ORDHITS
+$pl_hits
+ORDHITS
+done <<ORDCNT
+$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 } }' README.md | sort | uniq -c | awk '{print $1, $2}')
+ORDCNT
+nth_langs="$(grep -rhoiE 'the (tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth) language' README.md evals/*/REPORT.md 2>/dev/null | awk '{print tolower($2)}' | sort)"
+if [ -n "$nth_langs" ]; then
+  # No duplicate test: a receipt and its README row legitimately restate
+  # the same ordinal, and the two are indistinguishable from a real
+  # conflict without per-language attribution the phrase does not carry.
+  nth_max=0
+  while IFS= read -r nw; do
+    case "$nw" in
+      tenth) nn=10 ;; eleventh) nn=11 ;; twelfth) nn=12 ;; thirteenth) nn=13 ;;
+      fourteenth) nn=14 ;; fifteenth) nn=15 ;; sixteenth) nn=16 ;; seventeenth) nn=17 ;;
+      eighteenth) nn=18 ;; nineteenth) nn=19 ;; twentieth) nn=20 ;; *) nn=0 ;;
+    esac
+    [ "$nn" -gt "$nth_max" ] && nth_max=$nn
+  done <<NTH
+$(printf '%s\n' "$nth_langs" | sort -u)
+NTH
+  [ "$nth_max" -gt "$tbl_langs" ] && ord_bad="${ord_bad}an Nth-language claim ($nth_max) exceeds the derived language count ($tbl_langs); "
+fi
+if [ -n "$ord_bad" ]; then
+  fault "corpus-position claim contradicts the receipts table: $ord_bad(P2-39: position claims are derived from the table at writing time, never recalled)"
+else
+  pass "corpus-position ordinals agree with the receipts table (P2-39)"
 fi
 
 # L/M. Enumerations the product text asserts about the engine's own behaviour,
@@ -1686,8 +1749,20 @@ if command -v jq >/dev/null 2>&1; then
       jq -n --arg sid "$1" --arg lam "$2" --arg tr "$3" \
         '{session_id: $sid, last_assistant_message: $lam, transcript_path: $tr, hook_event_name: "Stop"}' \
         > "$hb_tmp/stdin.json"
-      CLAUDE_PROJECT_DIR="$hb_proj" bash "$hb_hook" < "$hb_tmp/stdin.json"
+      # Stderr is captured to its own file and then passed through, so a
+      # caller's own 2> redirect still sees everything while every accept
+      # assertion can also ask whether the hook ended the run by a ceiling -
+      # an accept path that checks only empty stdout and a deleted state file
+      # cannot tell "accepted" from "ended early", which is P2-34's defect.
+      CLAUDE_PROJECT_DIR="$hb_proj" bash "$hb_hook" < "$hb_tmp/stdin.json" 2>"$hb_tmp/hb_err_cap.txt"
+      hb_rc=$?
+      cat "$hb_tmp/hb_err_cap.txt" >&2
+      return "$hb_rc"
     }
+    # True when the last hb_run did not end the run by a ceiling or guard:
+    # the hook says "ending the run" on every such path, and an accept that
+    # rode one of those is not the acceptance the fixture claims.
+    hb_end_clean() { ! grep -q 'ending the run' "$hb_tmp/hb_err_cap.txt" 2>/dev/null; }
 
     hb_write_evaluator_artifact
     hb_write_state sess-1 1 3
@@ -1769,7 +1844,7 @@ if command -v jq >/dev/null 2>&1; then
 
     hb_write_state sess-1 3 3
     hb_out="$(hb_run sess-1 'still working' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook ends the run at budget exhaustion (state deleted, stop allowed)"
     else
       fault "stop hook did not end the run at budget exhaustion"
@@ -1779,7 +1854,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_backlog ''
     hb_write_plan none
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook honors the completion promise from last_assistant_message"
     else
       fault "stop hook missed the completion promise in last_assistant_message"
@@ -1792,7 +1867,7 @@ if command -v jq >/dev/null 2>&1; then
       jq -cn '{type: "assistant", message: {content: [{type: "text", text: "done <promise>JEFFY CONVERGED</promise>"}]}}'
     } > "$hb_tr"
     hb_out="$(hb_run sess-1 '' "$hb_tr")"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook honors the completion promise via the transcript fallback"
     else
       fault "stop hook missed the completion promise in the transcript fallback"
@@ -1819,7 +1894,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_state sess-1 1 3
     hb_write_backlog ''
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook accepts the promise once Now, Next, and Later are empty"
     else
       fault "stop hook rejected a legitimate convergence promise"
@@ -1864,6 +1939,7 @@ if command -v jq >/dev/null 2>&1; then
     # this branch at its declaration.
     hb_write_state sess-1 1 3
     hb_write_backlog '- [ ] X9 (Low): a bare severity, no class field. Acceptance: fixed.'
+    hb_write_journal_entries '## iter 1/3 | sess-1-000000 | 2026-01-01 | T1 | done:::Verification: Evaluator: PASS - ok. Carried: X9.'
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
     if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
       && grep -q 'carried Low' "$hb_tmp/hb_err.txt" \
@@ -1876,6 +1952,7 @@ if command -v jq >/dev/null 2>&1; then
 
     hb_write_state sess-1 1 3
     hb_write_backlog '- [ ] X9 (Low, docs, documentation): imprecise sentence. Acceptance: rewritten.'
+    hb_write_journal_entries '## iter 1/3 | sess-1-000000 | 2026-01-01 | T1 | done:::Verification: Evaluator: PASS - ok. Carried: X9.'
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
     if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
       && grep -q 'carried Low' "$hb_tmp/hb_err.txt" \
@@ -1885,6 +1962,7 @@ if command -v jq >/dev/null 2>&1; then
       printf '%s\n' "$hb_out"
       fault "stop hook refused a declaration blocked only by a Low, or accepted it without naming the carried finding"
     fi
+    hb_write_journal 1 3
 
     hb_write_state sess-1 1 3
     hb_write_backlog '- [ ] X9 (Medium, runtime, correctness): wrong value returned. Acceptance: fixed.'
@@ -1945,7 +2023,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_state sess-1 1 3
     printf '# Plan\n\n## Surface inventory\n\n- [x] core: swept at abc1234 - all entry points probed\n- [x] plots: swept at abc1234 - all 20 functions probed\n\n## Verify command\nCommand: none\n' > "$hb_proj/PLAN.md"
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook accepts the promise once every Surface inventory row is swept"
     else
       printf '%s\n' "$hb_out"
@@ -1994,7 +2072,7 @@ if command -v jq >/dev/null 2>&1; then
       printf '\n## Converged\n'
     } > "$hb_proj/BACKLOG.md"
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook accepts a declaration whose Declined entries carry a Derivation or the priced policy reason"
     else
       printf '%s\n' "$hb_out"
@@ -2062,7 +2140,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_plan_oracle none 'conformance corpus, 402 cases, run by go test ./...' \
       'linux, go 1.22.5; excludes yaml_test_suite_test.go (build-tagged !windows), per go list -f' "$hb_p10_row"
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook accepts a declaration whose Verify command declares its oracle class and exclusions"
     else
       printf '%s\n' "$hb_out"
@@ -2147,7 +2225,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_state sess-1 1 3
     hb_write_backlog '' 'Converged: 1111111111111111111111111111111111111111 - 2026-01-01'
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook skips the converged-hash check outside a git repository"
     else
       fault "stop hook applied the converged-hash check to a non-git project"
@@ -2170,7 +2248,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_state sess-1 1 3
       hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts the promise when the Converged line certifies HEAD"
       else
         fault "stop hook rejected a Converged line naming HEAD"
@@ -2201,7 +2279,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_state sess-1 1 3
       hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts state-file-only commits after the Converged hash"
       else
         fault "stop hook rejected a tree where only loop state changed since the Converged hash"
@@ -2252,7 +2330,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
       hb_write_plan_full none "- [x] core: swept at $hb_c2 via .jeffy/probes/core - re-swept after the change"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a swept row re-recorded at a commit its battery paths have not moved past"
       else
         printf '%s\n' "$hb_out"
@@ -2281,7 +2359,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_state sess-1 1 3
       hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a row whose glob paths cover nothing that moved (P0-8 control)"
       else
         printf '%s\n' "$hb_out"
@@ -2385,7 +2463,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_state sess-1 1 3
       hb_write_backlog '' "Converged: $hb_c3 - 2026-01-01"
       hb_out="$(PATH="$hb_tmp/pkgbin:$PATH" hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a declaration whose crate tarball excludes the loop (P1-60 control)"
       else
         printf '%s\n' "$hb_out"
@@ -2438,11 +2516,27 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_backlog ''
     hb_write_plan 'exit 0'
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook accepts the promise when the Verify command is green"
     else
       fault "stop hook rejected a convergence promise with a green Verify command"
     fi
+    # P2-34: a bare JEFFY CONVERGED without promise tags is conversation, not
+    # a declaration - the prompt says the tagged form is the declaration and
+    # is never written in any other context - and no fixture ever sent one,
+    # so the parse that distinguishes them was pinned by nothing.
+    hb_write_state sess-1 1 3
+    hb_write_journal 1 3
+    hb_out="$(hb_run sess-1 'the run will end with JEFFY CONVERGED once the gate passes' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Do the jeffy iteration now.' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook re-feeds an untagged JEFFY CONVERGED as an ordinary turn (P2-34)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook treated untagged promise text as a declaration or failed to re-feed"
+    fi
+    rm -f "$hb_state"
     # P2-30: an entry carrying both verdicts reads as the REJECT. A PASS
     # that quotes an earlier rejection verbatim is the model's to reword;
     # a REJECT that also contains the eleven characters of a PASS must not
@@ -2457,6 +2551,65 @@ if command -v jq >/dev/null 2>&1; then
       printf '%s\n' "$hb_out"
       fault "stop hook let a PASS substring outrank a REJECT in the same closing entry"
     fi
+    hb_write_journal 1 3
+
+    # P1-63 (form half): a Settled-class line settled as fixed with no
+    # recorded command cannot be re-checked by anyone - ryu's gate lost an
+    # invocation to a Settled count its own enumeration contradicted. The
+    # hook refuses the form that makes re-checking impossible; the corpus
+    # records enumerations in free shapes, so a backticked command or an
+    # enumerated-by phrase both satisfy it (the widened predicate came from
+    # replaying the strict one over 58 trees and tripping 42 that were fine).
+    hb_write_state sess-1 1 3
+    hb_write_plan 'exit 0'
+    printf '# Backlog\n\n## Now\n\n## Next\n\n## Later\n\n## Settled classes\n\n- Unchecked casts across the parser: fixed class-complete at iteration 4.\n\n## Converged\n\n' > "$hb_proj/BACKLOG.md"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'records no enumeration' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Unchecked casts'; then
+      pass "stop hook refuses a declaration over a fixed Settled-class line with no enumeration (P1-63)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a declaration over an unre-checkable Settled-class line"
+    fi
+    hb_write_state sess-1 1 3
+    # shellcheck disable=SC2016  # the backticked command is fixture data
+    printf '# Backlog\n\n## Now\n\n## Next\n\n## Later\n\n## Settled classes\n\n- Unchecked casts across the parser: fixed class-complete, enumerated by: `grep -rn "as any" src/` -> 0 sites.\n\n## Converged\n\n' > "$hb_proj/BACKLOG.md"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+      pass "stop hook accepts a declaration whose Settled-class lines record their enumerations (P1-63 control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused a Settled-class line that records its enumeration"
+    fi
+
+    # P1-63 (reference half): the closing entry's carried list is the
+    # structured home of the present-tense carried claim, and a run lost a
+    # gate invocation to prose naming a carried finding no ledger held. The
+    # hook verifies the structured direction: every open carried Low's ID
+    # appears in this run's closing entry.
+    hb_write_state sess-1 1 3
+    hb_write_backlog '- [ ] L-9 (Low, runtime, correctness): trailing space kept. Acceptance: true.'
+    hb_write_journal 1 3
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'never names it' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'L-9'; then
+      pass "stop hook refuses a declaration whose closing entry omits a carried Low (P1-63)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a declaration whose closing entry names no carried Low"
+    fi
+    hb_write_state sess-1 1 3
+    hb_write_journal_entries '## iter 1/3 | sess-1-000000 | 2026-01-01 | T1 | done:::Verification: Evaluator: PASS - clean sweep. Carried: L-9, accurately Low.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+      pass "stop hook accepts a declaration whose closing entry names each carried Low (P1-63 control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused a closing entry that names its carried Low"
+    fi
+    hb_write_backlog ''
     hb_write_journal 1 3
 
     hb_write_state sess-1 1 3
@@ -2538,7 +2691,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_backlog ''
     hb_write_plan none
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook skips the verify check when the Verify command is none"
     else
       fault "stop hook ran a Verify command declared none"
@@ -2555,7 +2708,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_backlog ''
     hb_write_plan_templated 'exit 0'
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook parses the template-shaped Verify section (Command: line, not prose)"
     else
       printf '%s\n' "$hb_out"
@@ -2579,7 +2732,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_backlog ''
     hb_write_plan_templated none
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook skips a template-shaped Verify command declared none"
     else
       fault "stop hook ran a template-shaped Verify command declared none"
@@ -3555,7 +3708,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_subgit commit -q -m 'jeffy: iter 2/9' >/dev/null 2>&1
       hb_write_state sess-1 2 9
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a declaration in a project below the repository root (state files are still state files)"
       else
         printf '%s\n' "$hb_out"
@@ -3612,7 +3765,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_state sess-1 1 3
     rm -f "$hb_tmp/prompt.txt"
     hb_out="$(hb_run sess-1 'still working' '' 2>/dev/null)"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook ends the loop when the prompt file is missing (state deleted, stop allowed)"
     else
       fault "stop hook mishandled a missing prompt file"
@@ -3651,7 +3804,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_plan_full none "$hb_p1_row"
       hb_write_backlog '' "- Converged: $hb_p1_c1 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a Converged line written as a markdown list item"
       else
         printf '%s\n' "$hb_out"
@@ -3661,7 +3814,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_state sess-1 1 3
       hb_write_backlog '' '- Converged: `'"$hb_p1_c1"'` - 2026-01-01'
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a Converged line whose hash is wrapped in backticks"
       else
         printf '%s\n' "$hb_out"
@@ -3674,7 +3827,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_state sess-1 1 3
       hb_write_backlog '' "* Converged: $hb_p1_c1 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a Converged line written with a star list marker"
       else
         printf '%s\n' "$hb_out"
@@ -3684,7 +3837,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_state sess-1 1 3
       hb_write_backlog '' '* Converged: `'"$hb_p1_c1"'` - 2026-01-01'
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a Converged line carrying both a list marker and a backticked hash"
       else
         printf '%s\n' "$hb_out"
@@ -3702,7 +3855,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_plan_full '`echo ok`' "$hb_p1_row"
       hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook strips wrapping backticks from the Command line and runs the command"
       else
         printf '%s\n' "$hb_out"
@@ -3788,7 +3941,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_plan_full "test -n 'ok (419 tests)'" "$hb_p1_row"
       hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook still runs a Command line whose parentheses are quoted"
       else
         printf '%s\n' "$hb_out"
@@ -3803,7 +3956,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_plan_full '`echo ok` ' "$hb_p1_row"
       hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook trims whitespace around the Command payload before stripping backticks"
       else
         printf '%s\n' "$hb_out"
@@ -4123,7 +4276,7 @@ if command -v jq >/dev/null 2>&1; then
       '## iter 3/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - three.'
     hb_write_state sess-1 3 3
     hb_out="$(hb_run sess-1 'still working' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook withholds the closing extension from a run past every invocation cap"
     else
       printf '%s\n' "$hb_out"
@@ -4136,7 +4289,7 @@ if command -v jq >/dev/null 2>&1; then
     # one, so the escape cannot be taken twice.
     hb_write_state_extra sess-1 3 3 'extension_granted: 1'
     hb_out="$(hb_run sess-1 'still working' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook ends the run at budget exhaustion when the closing extension was already granted"
     else
       printf '%s\n' "$hb_out"
@@ -4217,7 +4370,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_backlog_counts 1 0 0
     hb_write_state sess-1 3 3
     hb_out="$(hb_run sess-1 'still working' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook ends the run at budget exhaustion while a task with no parseable severity is open (fails closed, no extension)"
     else
       printf '%s\n' "$hb_out"
@@ -4258,7 +4411,7 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
     hb_write_state sess-1 3 3
     hb_out="$(hb_run sess-1 'still working' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook still withholds the closing extension past an open Medium"
     else
       printf '%s\n' "$hb_out"
@@ -4366,7 +4519,7 @@ if command -v jq >/dev/null 2>&1; then
       '- [ ] plots: unswept'
     hb_write_state sess-1 3 3
     hb_out="$(hb_run sess-1 'still working' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook ends the run at budget exhaustion while the Surface inventory lists an unswept row (no extension)"
     else
       printf '%s\n' "$hb_out"
@@ -4392,7 +4545,7 @@ if command -v jq >/dev/null 2>&1; then
       printf 'Jeffy loop state.\n'
     } > "$hb_state"
     hb_out="$(hb_run sess-1 'still working' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "stop hook ends the run at budget exhaustion on a state file whose frontmatter never closes (no extension)"
     else
       printf '%s\n' "$hb_out"
@@ -4585,7 +4738,7 @@ if command -v jq >/dev/null 2>&1; then
         '## iter 2/3 | sess-1-000000 | 2026-01-01 | T2 | converged:::Verification: Evaluator: PASS - ok'
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a declaration whose closing entry records Evaluator: PASS"
       else
         printf '%s\n' "$hb_out"
@@ -4621,7 +4774,7 @@ if command -v jq >/dev/null 2>&1; then
         '## iter 2/3 | sess-1-000000 | 2026-01-01 | RATCHET | converged:::Task: re-declared an unchanged tree.'
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook exempts a RATCHET closing entry from the evaluator requirement"
       else
         printf '%s\n' "$hb_out"
@@ -4639,7 +4792,7 @@ if command -v jq >/dev/null 2>&1; then
         '## iter 2/3 | sess-1-000000 | 2026-01-01 | ROTATION | rotation:::Task: moved 40 entries to JOURNAL-archive.md.'
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a declaration whose ROTATION entry lands after the closing entry's verdict"
       else
         printf '%s\n' "$hb_out"
@@ -4871,7 +5024,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_p2_pass_journal
       hb_p2_fixture
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a PASS backed by this run's committed evaluator artifact"
       else
         printf '%s\n' "$hb_out"
@@ -4980,7 +5133,7 @@ if command -v jq >/dev/null 2>&1; then
       fi
       hb_recommit_artifact
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts the same declaration once the gate is re-invoked in the declaring iteration"
       else
         printf '%s\n' "$hb_out"
@@ -5079,7 +5232,7 @@ if command -v jq >/dev/null 2>&1; then
       }
       hb_p2_ord_fixture_keep_journal
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook still accepts a declaration after two REJECTs and a PASS (the cap-3 path stays open)"
       else
         printf '%s\n' "$hb_out"
@@ -5141,7 +5294,7 @@ if command -v jq >/dev/null 2>&1; then
         '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
       hb_p2_ord_fixture_keep_journal
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook counts gate verdicts, not task entries that cite the rejection that filed them"
       else
         printf '%s\n' "$hb_out"
@@ -5254,7 +5407,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_write_backlog '' "Converged: $hb_p2_base - 2026-01-01"
       hb_write_state_base 1 3 "$hb_p2_base"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a genuine ratchet whose Converged hash predates the run"
       else
         printf '%s\n' "$hb_out"
@@ -5329,7 +5482,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_git commit -q -m probes-and-state
       hb_write_state sess-1 1 3
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a commit after the Converged hash touching only .jeffy probes and state files"
       else
         printf '%s\n' "$hb_out"
@@ -5350,7 +5503,7 @@ if command -v jq >/dev/null 2>&1; then
       hb_git commit -q -m harness-files >/dev/null 2>&1
       hb_write_state sess-1 1 3
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts a commit after the Converged hash touching the harness's own files under .claude/"
       else
         printf '%s\n' "$hb_out"
@@ -5468,7 +5621,7 @@ if command -v jq >/dev/null 2>&1; then
         "Converged: $hb_p15_orphan - 2026-01-01" \
         "Converged: $hb_p15_new - 2026-01-02 (repoints $hb_p15_orphan, tree unchanged)"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook accepts an appended repoint whose trees match and whose predecessor still stands"
       else
         printf '%s\n' "$hb_out"
@@ -6079,15 +6232,27 @@ if command -v jq >/dev/null 2>&1; then
       fault "a time ceiling preempted the closing extension, killing a run at its finish line"
     fi
 
-    # And never a converged promise: that branch returns before the ceilings.
+    # And never a VALID converged promise: acceptance exits inside the
+    # promise case, before the ceilings. The word valid is load-bearing and
+    # this fixture is the proof: its first shipped shape inherited a journal
+    # from the extension scenarios, the promise fell through on that
+    # violation, the ceiling ate the run before the violation could re-feed,
+    # and state-deleted-plus-empty-stdout read as acceptance for two
+    # releases - the exact indistinguishability P2-34 names. The fixture now
+    # stages a genuinely valid convergence and asserts the run did not end
+    # by a ceiling.
     hb_write_state sess-1 3 10
     hb_state_addkey "run_started_at: $((hb_now - 999999))"
     hb_state_addkey 'max_wall_clock_seconds: 60'
+    hb_write_backlog ''
+    hb_write_journal 3 10
+    hb_write_plan 'exit 0'
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
       pass "a valid converged promise is unaffected by a blown wall-clock ceiling"
     else
       printf '%s\n' "$hb_out"
+      cat "$hb_tmp/hb_err_cap.txt" 2>/dev/null
       fault "a time ceiling disturbed a valid convergence"
     fi
 

@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.16.0"
+JEFFY_VERSION="1.17.0"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -540,6 +540,35 @@ if [ -n "$promise" ]; then
           violation="a Declined entry carries no recorded derivation, first: $underived; record the command or measurement that establishes its premise as Derivation: <command> (the priced reason cost: exceeds one iteration needs none), re-run it, then re-declare convergence"
         fi
       fi
+      # P1-63 (form half): a Settled-class line settled as fixed is a standing
+      # claim - "this idiom is closed everywhere" - and the enumeration that
+      # once established it is the only way anyone re-checks it. A gate lost
+      # an invocation to a Settled line stating "exactly two sites" while its
+      # own recorded command returned four. The execution half (re-running
+      # the enumeration) belongs to the run and the gate, because this hook
+      # never executes model-authored commands; what the hook can refuse is
+      # the form that makes re-checking impossible: a fixed-class line that
+      # records no command at all. The corpus replay that shipped this check
+      # found 42 of 58 trees record their enumeration in free forms - a
+      # backticked command mid-sentence, "Enumerated by" capitalized - so the
+      # test is the mechanism (some recorded command on the line: a backtick,
+      # an enumerated-by phrase, or a Derivation), never one token's
+      # spelling; the canonical enumerated by: <command> form is what the
+      # prompt teaches for new lines. Declined-style settlements need none -
+      # a decline is policy, and the Declined section's own check covers a
+      # declined premise.
+      if [ -z "$violation" ] && [ -f "$root/BACKLOG.md" ] \
+        && grep -q '^## Settled classes' "$root/BACKLOG.md"; then
+        unenumerated="$(awk '
+          { sub(/\r$/, "") }
+          /^## Settled classes$/ { take = 1; next }
+          /^## / { take = 0 }
+          take && /^- / && !/[Ee]numerated by/ && !/Derivation:/ && !/[Dd]eclined/ && !/`/ { print substr($0, 1, 120); exit }
+        ' "$root/BACKLOG.md")"
+        if [ -n "$unenumerated" ]; then
+          violation="a Settled-class line settled as fixed records no enumeration, first: $unenumerated; record the command that lists every site of the class on the line as enumerated by: <command> (a declined settlement instead states declined with its reason), run it, then re-declare convergence"
+        fi
+      fi
       # P1-60: the loop's presence leaks through any channel that derives a
       # published artifact from the tree, and rust-semver's crate tarball
       # would have shipped 43 loop paths to every consumer because nothing
@@ -931,6 +960,36 @@ if [ -n "$promise" ]; then
               fi
             fi
           fi
+        fi
+      fi
+      # P1-63 (reference half): a present-tense carried claim and the ledger
+      # must agree, and the structured home of that claim is the closing
+      # entry's carried list, which the closing rule has always required and
+      # nothing verified - a run lost a gate invocation to prose naming a
+      # carried finding that existed on no ledger. Free prose is not
+      # grep-checkable (the corpus replay that shipped this check found every
+      # prose match was a historical mention - "FUT-001, since fixed"), so
+      # prose stays with the run and the gate; what the hook verifies is the
+      # structured direction: every open carried Low's ID appears in this
+      # run's closing entry. Fails closed with the missing ID named, and the
+      # remedy is the sentence the closing rule already mandates.
+      if [ -z "$violation" ] && [ -n "$open_carried" ] && [ -f "$root/JOURNAL.md" ]; then
+        closing_body="$(awk -v tok="| $runid8 |" '
+          { sub(/\r$/, "") }
+          /^## iter / {
+            split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+            if (index($0, tok) && t != "ROTATION" && t != "SALVAGE") { body = ""; take = 1 } else { take = 0 }
+            next
+          }
+          take { body = body "\n" $0 }
+          END { print body }
+        ' "$root/JOURNAL.md")"
+        unnamed="$(printf '%s\n' "$open_carried" | awk '{ print $4 }' | while IFS= read -r cid; do
+          [ -n "$cid" ] || continue
+          printf '%s' "$closing_body" | grep -q -- "$cid" || { printf '%s' "$cid"; break; }
+        done)"
+        if [ -n "$unnamed" ]; then
+          violation="the ledger carries the open Low $unnamed but this run's closing entry never names it; the closing rule lists each carried Low by ID with one line, so name every open Low in the declaring entry, then re-declare convergence"
         fi
       fi
       if [ -z "$violation" ]; then

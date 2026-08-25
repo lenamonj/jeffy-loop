@@ -20,7 +20,7 @@ Items needing a user decision before any work, one plain line each, never a chec
 
 ## Settled classes
 
-One line per class: the idiom or defect class, the surface it applies to, and how it was settled - fixed class-complete with its enumerating check, or declined with the reason. Audits must not file findings inside a settled class unless its implementing code changed after settlement.
+One line per class: the idiom or defect class, the surface it applies to, and how it was settled - fixed class-complete, or declined with the reason. A class settled as fixed records its enumerating command on the same line, written as `enumerated by: <command>`, and any count or extent the line states is the shape that command returns today - the line is a standing claim, the command is its derivation, and the declaring iteration re-runs every one exactly as it re-runs Declined Derivations. A fixed-class line carrying no enumeration cannot be re-checked and the hook refuses a declaration standing on it; a line whose enumeration no longer returns what the line states is stale, and the class reopens before any declaration. Audits must not file findings inside a settled class unless its implementing code changed after settlement.
 
 ## Declined
 

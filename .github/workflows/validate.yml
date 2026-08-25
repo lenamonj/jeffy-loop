@@ -12,6 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Ensure shellcheck is present
+        # The lint must not silently vanish with a runner-image change: the
+        # validator skips cleanly when the tool is absent, and a skip here
+        # means the lint never runs anywhere before a release (P2-34).
+        run: command -v shellcheck || sudo apt-get install -y shellcheck
       - name: Run repo validator
         run: bash scripts/validate.sh
   validate-windows:
