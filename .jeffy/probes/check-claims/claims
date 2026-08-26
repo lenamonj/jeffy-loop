@@ -1,3 +1,3 @@
 expect 2 :: bash skills/jeffy/hooks/lib/check-claims.sh /no/such/directory >/dev/null 2>&1; echo $?
-expect 7 :: grep -c '^ck "' .jeffy/probes/check-claims/run.sh
+expect 8 :: grep -c '^ck "' .jeffy/probes/check-claims/run.sh
 expect none :: n=0; for f in .jeffy/probes/*/README.md; do [ -f "$f" ] && n=$((n+1)); done; if [ "$n" -eq 0 ]; then echo "no battery README read"; else h="$(awk '{ sub(/\r$/, ""); l = tolower($0) } match(l, /(^|[^a-z0-9-])(both|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|[0-9]+)( +[a-z-]+){0,2} +(cases?|claims?|measurements?|figures?|assertions?)([^a-z0-9-]|$)/) { printf "%s: %s\n", FILENAME, substr($0, RSTART, RLENGTH) }' .jeffy/probes/*/README.md)"; [ -z "$h" ] && echo none || printf '%s\n' "$h"; fi

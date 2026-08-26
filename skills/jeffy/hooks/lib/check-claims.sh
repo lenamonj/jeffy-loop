@@ -15,7 +15,13 @@
 # Output:  one line per claim - MATCH <battery>: <value>
 #                               MISMATCH <battery>: expected <value> got <last stdout line>
 #                               ERROR <battery>: exit <rc> (<command>)
-#          then `claims: <n> checked, <m> mismatched, <e> errored` on stderr.
+#          then `claims: <n> checked, <m> mismatched, <e> errored, <s> skipped`
+#          on stderr. Checked counts the rows this run compared or tried to and
+#          errored on, so checked = matched + mismatched + errored; a skipped
+#          row is disjoint from it, and the two together are every row read. A
+#          skipped row counted as checked made the one line the declaration and
+#          the gate are told to quote read identically on a host that compared
+#          every row and on one that could derive none of them. (AA2)
 # Exit:    0 when every claim matches, 1 on any MISMATCH or ERROR, 2 on usage.
 #
 # Each command runs from the project root under run-probe.sh's ceiling, so a
@@ -45,7 +51,7 @@ else
 "
 fi
 
-checked=0; mism=0; err=0
+checked=0; mism=0; err=0; skipped=0
 while IFS= read -r d; do
   [ -n "$d" ] || continue
   bat="${d##*/}"
@@ -92,7 +98,6 @@ if [ -f "$plan" ]; then
     | sed -n "/^[[:space:]]*done <<'\{0,1\}COUNTS'\{0,1\}[[:space:]]*$/,/^COUNTS[[:space:]]*$/p" \
     | grep -vE "^[[:space:]]*done <<|^COUNTS[[:space:]]*$")"
 fi
-skipped=0
 while IFS= read -r line || [ -n "$line" ]; do
   [ -n "$line" ] || continue
   case "$line" in
@@ -100,16 +105,20 @@ while IFS= read -r line || [ -n "$line" ]; do
     *) echo "ERROR PLAN: malformed Stated counts row '$line' (label|stated|command)"; err=$((err + 1)); continue ;;
   esac
   lbl="${line%%|*}"; rest="${line#*|}"; want="${rest%%|*}"; cmd="${rest#*|}"
-  checked=$((checked + 1))
   got="$(cd "$root" && bash "$probe" bash -c "$cmd" 2>/dev/null)"
   rc=$?
   if [ "$rc" -ne 0 ]; then
-    echo "ERROR PLAN:$lbl: exit $rc ($cmd)"; err=$((err + 1)); continue
+    echo "ERROR PLAN:$lbl: exit $rc ($cmd)"; err=$((err + 1)); checked=$((checked + 1)); continue
   fi
   got="$(printf '%s\n' "$got" | sed '/^[[:space:]]*$/d' | tail -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   case "$got" in
+    # The row ran and was never compared, so it is skipped and not checked.
+    # Counting it as checked is what AA2 closed: the summary then reported the
+    # same total on a host that derived every count and on one that derived
+    # none, which is precisely the difference a reader needs from that line.
     unavailable:*) echo "SKIP PLAN:$lbl: $got"; skipped=$((skipped + 1)); continue ;;
   esac
+  checked=$((checked + 1))
   if [ "$got" = "$want" ]; then
     echo "MATCH PLAN:$lbl: $want"
   else
@@ -119,5 +128,5 @@ done <<EOF3
 $rows
 EOF3
 
-echo "claims: $checked checked, $mism mismatched, $err errored" >&2
+echo "claims: $checked checked, $mism mismatched, $err errored, $skipped skipped" >&2
 [ "$mism" -eq 0 ] && [ "$err" -eq 0 ]
