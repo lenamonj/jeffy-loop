@@ -17,11 +17,20 @@ cktext() { # cktext <label> <needle> <file>
 }
 e=$(mktemp)
 
-# Wall ceiling. The same probe under two values of JEFFY_PROBE_TIMEOUT_S must
-# end differently, or the parameter does nothing and that is a finding.
-JEFFY_PROBE_TIMEOUT_S=1 bash "$P" sleep 5 >/dev/null 2>"$e"; ck "wall ceiling kills" 124 $?
-cktext "wall ceiling names itself" "exceeded the 1s wall ceiling" "$e"
-JEFFY_PROBE_TIMEOUT_S=10 bash "$P" sleep 5 >/dev/null 2>"$e"; ck "wall ceiling admits" 0 $?
+# Wall ceiling, only where a tool can enforce it. The same probe under two
+# values of JEFFY_PROBE_TIMEOUT_S must end differently, or the parameter does
+# nothing and that is a finding. Where neither timeout(1) nor gtimeout(1) is on
+# PATH the wrapper degrades by contract, exactly as it does for memory, and what
+# is asserted there is that it says so - a silent degradation is the failure.
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  JEFFY_PROBE_TIMEOUT_S=1 bash "$P" sleep 5 >/dev/null 2>"$e"; ck "wall ceiling kills" 124 $?
+  cktext "wall ceiling names itself" "exceeded the 1s wall ceiling" "$e"
+  JEFFY_PROBE_TIMEOUT_S=10 bash "$P" sleep 5 >/dev/null 2>"$e"; ck "wall ceiling admits" 0 $?
+else
+  bash "$P" true >/dev/null 2>"$e"
+  cktext "wall degradation is announced" "wall ceiling unavailable" "$e"
+  echo "note: no timeout(1) or gtimeout(1) reachable, wall ceiling not exercised on this host"
+fi
 
 # Memory ceiling, only where a user scope is reachable. Where it is not, the
 # wrapper degrades by contract and the battery says so rather than passing
@@ -32,6 +41,8 @@ if command -v systemd-run >/dev/null 2>&1 && systemd-run --user --scope --quiet 
   cktext "memory ceiling names itself" "killed under the 64MB memory ceiling" "$e"
   JEFFY_PROBE_MEM_MB=1024 bash "$P" bash -c "$a" >/dev/null 2>"$e"; ck "memory ceiling admits" 0 $?
 else
+  bash "$P" true >/dev/null 2>"$e"
+  cktext "memory degradation is announced" "no user manager reachable" "$e"
   echo "note: no user scope reachable, memory ceiling not exercised on this host"
 fi
 
@@ -47,10 +58,18 @@ cktext "nonzero exit names the ceilings" "probe exited 3 under ceilings" "$e"
 bash "$P" true >/dev/null 2>"$e"; ck "clean probe passes" 0 $?
 
 # The defaults the README states, measured from the wrapper rather than read.
+# The wall half of the pair is what the wrapper resolved rather than a constant:
+# with no timeout tool it sets the wall ceiling to 0 and reports 0s, so a fixed
+# expectation here would fail on exactly the hosts the wrapper degrades for.
 bash "$P" bash -c 'exit 3' >/dev/null 2>"$e"
 d="$(sed -n 's/.*under ceilings \(.*\)\./\1/p' "$e")"
-if [ "$d" != "4096MB / 600s" ]; then
-  echo "FAIL default ceilings: expected '4096MB / 600s', got '$d'"; fails=$((fails + 1))
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  want="4096MB / 600s"
+else
+  want="4096MB / 0s"
+fi
+if [ "$d" != "$want" ]; then
+  echo "FAIL default ceilings: expected '$want', got '$d'"; fails=$((fails + 1))
 fi
 rm -f "$e"
 [ "$fails" -eq 0 ] && echo "run-probe battery ok: default ceilings $d" || echo "run-probe battery: $fails failure(s)"
