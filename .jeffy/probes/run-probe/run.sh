@@ -36,10 +36,15 @@ fi
 # wrapper degrades by contract and the battery says so rather than passing
 # silently over a dimension it never tested.
 if command -v systemd-run >/dev/null 2>&1 && systemd-run --user --scope --quiet true >/dev/null 2>&1; then
-  a='python3 -c "b=bytearray(320*1024*1024); b[::4096]=b\"x\"*(len(b)//4096); print(len(b))"'
-  JEFFY_PROBE_MEM_MB=64 bash "$P" bash -c "$a" >/dev/null 2>"$e"; ck "memory ceiling kills" 137 $?
+  # The allocator is dd rather than an interpreter: the loop requires neither
+  # systemd-run nor python3, and guarding one while depending on the other is
+  # the defect Z1 closed. dd reads one 320MB block from /dev/zero, which needs
+  # the whole buffer resident, and its size is written in plain bytes because
+  # the M multiplier is not POSIX.
+  a=(dd if=/dev/zero of=/dev/null bs=320000000 count=1)
+  JEFFY_PROBE_MEM_MB=64 bash "$P" "${a[@]}" >/dev/null 2>"$e"; ck "memory ceiling kills" 137 $?
   cktext "memory ceiling names itself" "killed under the 64MB memory ceiling" "$e"
-  JEFFY_PROBE_MEM_MB=1024 bash "$P" bash -c "$a" >/dev/null 2>"$e"; ck "memory ceiling admits" 0 $?
+  JEFFY_PROBE_MEM_MB=1024 bash "$P" "${a[@]}" >/dev/null 2>"$e"; ck "memory ceiling admits" 0 $?
 else
   bash "$P" true >/dev/null 2>"$e"
   cktext "memory degradation is announced" "no user manager reachable" "$e"

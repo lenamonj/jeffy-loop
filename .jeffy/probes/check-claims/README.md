@@ -35,7 +35,12 @@ followed, within a couple of words, by a noun naming this population - and expec
 to find none, so a total reintroduced into any battery README is reported by the
 very instrument this battery pins, at every gate and every declaration. Ordinals
 are outside it by construction: an ordinal names a position and never a
-population. It over-matches on purpose, which is why the sibling README says each
+population. It is written as POSIX awk with explicit boundary classes rather than
+as a grep carrying the GNU word-boundary extension, which was Z1: on a userland
+whose engine does not implement that extension the pattern cannot match, and the
+direction it fails in is silence. What awk's match reports is the first site on a
+line rather than every site, which is complete for the property being checked,
+since the property is that no site exists and a line carrying two still reports. It over-matches on purpose, which is why the sibling README says each
 case rather than counting them; a false positive costs one rewording, a false
 negative ships the class again. It was driven on the totals this file carried and
 on the ones the sibling carried before them, each reported, and on an ordinal

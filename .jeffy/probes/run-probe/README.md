@@ -13,7 +13,12 @@ is not exercised at all and what is asserted instead is the wrapper's own notice
 which is the whole of the paragraph on host dependence further down.
 The negative sides are here too, because a ceiling that silently accepts a typo
 is a ceiling that is off: a non-numeric value for either parameter is refused at
-exit 2 before the probe runs.
+exit 2 before the probe runs. The allocator is dd reading one block from
+/dev/zero, sized in plain bytes: it was an interpreter until Z1, and an
+instrument that guards one tool the loop does not require while depending on
+another is guarded in name only. On a host carrying a user scope but no
+interpreter the old form reported that the ceiling did not bind, which is a
+mismatch the gate is instructed to reject on.
 
 The wrapper's default ceilings are 4096MB and 600s, and the battery measures the
 pair out of the wrapper's own diagnostic rather than reading it from this file -
