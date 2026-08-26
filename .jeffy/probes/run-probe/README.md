@@ -23,26 +23,36 @@ tool to enforce one.
 Every figure stated above is carried by a line in the claims file beside this one
 and executed by check-claims.sh, and the enumeration is written out here so a
 figure added to the prose without a line beside it is visible rather than covered
-by a universal. Six figures against six claims lines: the 0 of the wall-ceiling
-admit run, the 0 of the memory-ceiling admit run, the exit 2 of a refused ceiling,
-and three that are recorded as verdicts rather than as numbers - defaults-ok,
-wall-ok and mem-ok - for the reason below.
+by a universal. No total is written here, and that is the rule the check-claims
+README beside this one records rather than a stylistic choice: a total is a
+population no command returns, and one written here would be the very thing this
+paragraph asserts every figure escapes. What is written is each figure against the
+claims line that carries it - the 0 of the wall-ceiling admit run, the 0 of the
+memory-ceiling admit run, the exit 2 of a refused ceiling, and the ones recorded as
+verdicts rather than as numbers, defaults-ok, wall-ok and mem-ok, for the reason
+below. Every integer and number word in this file resolves to one of four
+things, which X3 checked by extracting them all: a claims value, a value inside a
+claims command, an input to a mutation the Observed failing record names, or the
+sweep bar's own count of how many values a parameter is exercised at. Nothing here
+counts this battery's claims.
 
-Three of those six were host-dependent expected values until V2, and a claims file
-that records one blocks convergence on the hosts the wrapper exists to degrade for.
+The wall kill, the memory kill and the defaults pair were host-dependent expected
+values until V2, and a claims file that records one blocks convergence on the hosts
+the wrapper exists to degrade for. They are named rather than counted here for the
+same reason no total is: a count of claims is a figure no claims line carries.
 On a host with no timeout(1) or gtimeout(1) the same sleep 5 exits 0 and not 124,
 on a host with no reachable user manager the same allocation exits 0 and not 137,
 and the wrapper then reports its defaults as 4096MB / 0s and not 4096MB / 600s,
 because it sets the wall ceiling to 0 when it cannot enforce one. check-claims.sh
-would report MISMATCH for all three, and the evaluator gate is instructed to treat
-a MISMATCH as a REJECT reason. Each of those three now asserts the whole contract
+would report MISMATCH for each of them, and the evaluator gate is instructed to treat
+a MISMATCH as a REJECT reason. Each now asserts the whole contract
 rather than one host's half of it: where the ceiling can be enforced it must bind,
 and where it cannot the wrapper must say so, which is the same guard run.sh applies
 to the dimension it cannot exercise. The token is the answer either way, and the
 mismatch text carries the real exit status or the missing notice, so nothing is
 laundered into a pass. Driven on both shapes rather than reasoned about: on a PATH
 carrying no timeout(1), and on one carrying neither timeout(1) nor systemd-run, all
-six claims match; and with the wrapper's degradation notices removed, the wall and
+every claim matches; and with the wrapper's degradation notices removed, the wall and
 memory verdicts each mismatch naming the notice that went missing.
 
 Where no systemd user scope is reachable the memory dimension is not exercised,
