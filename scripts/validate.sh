@@ -147,20 +147,26 @@ if command -v shellcheck >/dev/null 2>&1; then
   # editing one to satisfy a lint here would break the receipt's claim. An
   # empty derivation is reported as a skip rather than passed over, because a
   # lint that ran over nothing is not a clean lint. (S1)
+  # Read NUL-delimited into an array rather than splitting a string on
+  # whitespace: a tracked script whose name carries a space or a glob
+  # character would otherwise reach shellcheck as two paths that do not
+  # exist, or as whatever the glob happened to match. That is the same
+  # idiom the evaluator-artifact walk already uses, and bringing this site
+  # into line with it is what AC1 closed. `read -d ''` and `+=` are bash
+  # 3.2 constructs, so this does not raise the interpreter floor the way
+  # mapfile would. (AC1)
+  sc_files=()
   if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-    sc_files="$(git ls-files '*.sh' | grep -v '^evals/')"
-  else
-    sc_files=""
+    while IFS= read -r -d '' sc_f; do
+      case "$sc_f" in evals/*) continue ;; esac
+      sc_files+=("$sc_f")
+    done < <(git ls-files -z '*.sh')
   fi
-  sc_n="$(printf '%s' "$sc_files" | grep -c . || true)"
-  if [ -z "$sc_files" ]; then
+  sc_n="${#sc_files[@]}"
+  if [ "$sc_n" -eq 0 ]; then
     skip "shellcheck lint (not a git checkout, so the file list cannot be derived)"
   else
-    # The list is split on purpose, and the directive sits in front of a whole
-    # compound command rather than an elif branch, because shellcheck refuses
-    # a directive on a branch (SC1123) - the same hoisting the Lessons record.
-    # shellcheck disable=SC2086
-    if shellcheck -x $sc_files; then
+    if shellcheck -x "${sc_files[@]}"; then
       pass "shell scripts lint clean (shellcheck, $sc_n files derived from the tree)"
     else
       fault "shellcheck reported issues (see output above)"
@@ -6720,27 +6726,36 @@ fi
 #    leave stderr empty. That is the half a static check cannot see and the
 #    only half a user ever does, and no scenario in this suite read that stream
 #    before - the lifecycle block forwards it and never asserts on it. (AA1)
+# The file list is read NUL-delimited into an array and the name list line by
+# line, because a detector that walks a split container silently skips the
+# member it mis-splits - and a file this check never scans is exactly the
+# unguarded site it exists to report, arriving as silence. (AC1)
+s_files=()
 if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-  s_files="$(git ls-files '*.sh' | grep -v '^evals/')"
-else
-  s_files=""
+  while IFS= read -r -d '' s_f; do
+    case "$s_f" in evals/*) continue ;; esac
+    s_files+=("$s_f")
+  done < <(git ls-files -z '*.sh')
 fi
-if [ -z "$s_files" ]; then
+if [ "${#s_files[@]}" -eq 0 ]; then
   skip "awk -v regex-position check (not a git checkout, so the file list cannot be derived)"
 else
   s_hits=""; s_names_n=0
-  for s_f in $s_files; do
+  for s_f in "${s_files[@]}"; do
     s_names="$(grep -oE -- '-v [A-Za-z_][A-Za-z0-9_]*=' "$s_f" | sed 's/^-v //; s/=$//' | sort -u)"
     [ -n "$s_names" ] || continue
-    for s_v in $s_names; do
+    while IFS= read -r s_v; do
+      [ -n "$s_v" ] || continue
       s_names_n=$((s_names_n + 1))
       if grep -nE "[!]?~[[:space:]]*$s_v([^A-Za-z0-9_]|\$)|(sub|gsub)\([[:space:]]*${s_v}[,)]|match\([^,]*,[[:space:]]*${s_v}[,)]|split\([^,]*,[^,]*,[[:space:]]*${s_v}[,)]" "$s_f" >/dev/null; then
         s_hits="$s_hits $s_f:$s_v"
       fi
-    done
+    done <<EOF_S
+$s_names
+EOF_S
   done
   if [ "$s_names_n" -eq 0 ]; then
-    fault "the awk -v name extraction found no names at all across $(printf '%s' "$s_files" | grep -c .) shell scripts; the detector is reading nothing and would pass over any regex passed through -v"
+    fault "the awk -v name extraction found no names at all across ${#s_files[@]} shell scripts; the detector is reading nothing and would pass over any regex passed through -v"
   elif [ -n "$s_hits" ]; then
     fault "a regular expression reaches awk through -v, where awk strips its escapes and the same string read by grep -E keeps them:$s_hits - pass it through the environment and read it with ENVIRON"
   else
