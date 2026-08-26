@@ -6695,6 +6695,97 @@ else
   skip "stop hook behavior checks (jq not on PATH)"
 fi
 
+# S. A value handed to awk through -v is escape-processed by awk itself, so a
+#    regular expression must never travel that way: a backslash-escaped dot
+#    arrives as a plain dot and the pattern silently widens, while the same
+#    string read by grep -E keeps its escapes. That is one definition with two
+#    meanings, which is exactly what the comment above JEFFY_LOOP_MEMORY_RE
+#    forbids, and gawk announced the difference on stderr at every single turn
+#    end for as long as the variable had existed. Two assertions, because the
+#    class and its one observable symptom fail independently of each other.
+#    Statically, over every tracked shell script: a name assigned with -v and
+#    then used in a regex position - either side of ~, or the pattern argument
+#    of sub, gsub, match or split - is reported. The -v names are read from the
+#    file rather than listed here, so a site added later is covered without
+#    editing this check, and the extraction is asserted non-empty because a
+#    detector that found no names at all would pass over everything in silence.
+#    The name reaches an ERE here, which this project treats as a defect where
+#    the value comes from a document; this one is bounded by the pattern that
+#    captured it, [A-Za-z_][A-Za-z0-9_]*, so it carries no metacharacter by
+#    construction. Behaviourally: an ordinary re-feed of the shipped hook must
+#    leave stderr empty. That is the half a static check cannot see and the
+#    only half a user ever does, and no scenario in this suite read that stream
+#    before - the lifecycle block forwards it and never asserts on it. (AA1)
+s_vok=1
+if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+  s_files="$(git ls-files '*.sh' | grep -v '^evals/')"
+else
+  s_files=""
+fi
+if [ -z "$s_files" ]; then
+  skip "awk -v regex-position check (not a git checkout, so the file list cannot be derived)"
+else
+  s_hits=""; s_names_n=0
+  for s_f in $s_files; do
+    s_names="$(grep -oE -- '-v [A-Za-z_][A-Za-z0-9_]*=' "$s_f" | sed 's/^-v //; s/=$//' | sort -u)"
+    [ -n "$s_names" ] || continue
+    for s_v in $s_names; do
+      s_names_n=$((s_names_n + 1))
+      if grep -nE "[!]?~[[:space:]]*$s_v([^A-Za-z0-9_]|\$)|(sub|gsub)\([[:space:]]*${s_v}[,)]|match\([^,]*,[[:space:]]*${s_v}[,)]|split\([^,]*,[^,]*,[[:space:]]*${s_v}[,)]" "$s_f" >/dev/null; then
+        s_hits="$s_hits $s_f:$s_v"
+      fi
+    done
+  done
+  if [ "$s_names_n" -eq 0 ]; then
+    fault "the awk -v name extraction found no names at all across $(printf '%s' "$s_files" | grep -c .) shell scripts; the detector is reading nothing and would pass over any regex passed through -v"
+    s_vok=0
+  elif [ -n "$s_hits" ]; then
+    fault "a regular expression reaches awk through -v, where awk strips its escapes and the same string read by grep -E keeps them:$s_hits - pass it through the environment and read it with ENVIRON"
+    s_vok=0
+  fi
+  if [ "$s_vok" -eq 1 ]; then
+    if ! command -v jq >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
+      skip "stop hook stderr silence on an ordinary re-feed (needs jq and git)"
+    else
+      s_tmp="$(mktemp -d)" || s_tmp=""
+      if [ -z "$s_tmp" ]; then
+        fault "awk -v regex-position check could not create its sandbox (mktemp failed)"
+      else
+        s_hook="$PWD/skills/jeffy/hooks/stop-hook.sh"
+        s_proj="$s_tmp/proj"
+        mkdir -p "$s_proj/.claude"
+        printf 'Do the jeffy iteration now.' > "$s_tmp/prompt.txt"
+        printf '# Plan\n\n## Verify command\nCommand: none\n' > "$s_proj/PLAN.md"
+        printf '# Backlog\n\n## Now\n- [ ] A1 (Low, docs): x. Acceptance: y.\n\n## Next\n\n## Later\n' > "$s_proj/BACKLOG.md"
+        printf '# Journal\n\n## iter 1/5 | SESSAAAA-120000 | 2026-01-01 | A1 | done\n' > "$s_proj/JOURNAL.md"
+        printf 'code\n' > "$s_proj/src.txt"
+        git -C "$s_proj" init -q >/dev/null 2>&1
+        git -C "$s_proj" -c user.email=v@v -c user.name=v add -A >/dev/null 2>&1
+        git -C "$s_proj" -c user.email=v@v -c user.name=v commit -qm base >/dev/null 2>&1
+        {
+          printf -- '---\n'
+          printf 'session_id: SESSAAAA-1111-2222-3333-444444444444\n'
+          printf 'iteration: 1\nmax_iterations: 5\n'
+          printf 'prompt_path: %s\n' "$s_tmp/prompt.txt"
+          printf 'focus:\ncompletion_promise: JEFFY CONVERGED\n'
+          printf 'started_at: 2026-01-01T12:00:00Z\n'
+          printf -- '---\nJeffy loop state.\n'
+        } > "$s_proj/.claude/jeffy-loop.local.md"
+        printf '{"session_id":"SESSAAAA-1111-2222-3333-444444444444"}' > "$s_tmp/stdin.json"
+        CLAUDE_PROJECT_DIR="$s_proj" bash "$s_hook" < "$s_tmp/stdin.json" >"$s_tmp/out.json" 2>"$s_tmp/err.txt"
+        if [ -s "$s_tmp/err.txt" ]; then
+          fault "the stop hook wrote to stderr on an ordinary re-feed: $(tr '\n' ' ' < "$s_tmp/err.txt")"
+        elif ! jq -e '.decision == "block"' "$s_tmp/out.json" >/dev/null 2>&1; then
+          fault "the stop hook did not re-feed the control fixture, so its silent stderr proves nothing"
+        else
+          pass "no regex reaches awk through -v ($s_names_n -v names read from the tree), and the hook re-feeds an ordinary iteration with stderr silent (AA1)"
+        fi
+        rm -rf "$s_tmp"
+      fi
+    fi
+  fi
+fi
+
 # K. The check count the README publishes is derived from this run, never
 #    transcribed. Two README claims carry a derivation: the converged and
 #    language totals against the eval table (check J), and this count. Those
