@@ -56,6 +56,11 @@ Verify output budget: <optional; lines of failing output the wrapper prints, def
 Verify summary pattern: <optional; regex matching the one result line worth quoting, e.g. [0-9]+ (passed|OK)>
 Verify count: <optional; the total the summary line reports, filled by the first audit from a real run and kept equal to the wrapper's last green total - never a typed number. The wrapper reads the FIRST integer on the line its summary pattern matched, so leave this empty where that integer is not the total, and the check stays silent rather than nagging>
 
+Stated counts: a count this file or BACKLOG.md states in prose is written as `returns <count>` and carries a row `label|<count>|<command>` in the table below, which `skills/jeffy/hooks/lib/check-claims.sh` executes beside the battery claims; a stated count the table does not carry refuses the declaration, and a number word above fifty or any compound is refused as unvalued rather than passed. Inventory rows and the Declined and Settled classes sections are outside this rule, because their counts are the evidence of some other instrument. `returns 0` is read as an exit status, never as a count. A row whose command prints `unavailable:<why>` is skipped on that host, not faulted. A file with no table, or a table with no rows yet, states no counts this way: the first row arms the check, and the first audit is where the rows are written.
+
+  done <<'COUNTS'
+COUNTS
+
 ## Method
 Audit the project against every applicable dimension and score each by its highest finding severity: High, Medium, Low, or None. Skip dimensions that do not apply and record why. Every audit consults the Surface inventory first and sweeps unswept or stale rows before re-probing swept ones; an audit never wanders. When replenishing with a partial audit, target the dimensions least recently scored and the inventory rows least recently swept.
 

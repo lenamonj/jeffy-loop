@@ -360,6 +360,14 @@ check_markers skills/jeffy/hooks/lib/check-claims.sh \
 check_markers skills/jeffy/hooks/lib/run-probe.sh \
   "gtimeout" \
   "wall ceiling unavailable"
+check_markers skills/jeffy/hooks/stop-hook.sh \
+  "jeffy_stated_counts_violation"
+check_markers skills/jeffy/hooks/lib/check-claims.sh \
+  "PLAN:"
+check_markers skills/jeffy/references/plan-default.md \
+  "returns <count>"
+check_markers skills/jeffy/references/iteration-prompt.txt \
+  "Stated counts table"
 # The launch-time lint is the whole malformed-Verify-command class caught at
 # zero iteration cost: the hook's parser runs only on the convergence branch,
 # so without this check a line written at launch waits a whole run to fire.
@@ -6559,6 +6567,127 @@ if command -v jq >/dev/null 2>&1; then
     else
       skip "run-probe.sh wall-ceiling control (no timeout(1) or gtimeout(1) on this host)"
     fi
+
+    # ---------------------------------------------------------------------
+    # 1.18.2 (P1-67): a count a governance document states is an executable
+    # claim. Four consecutive self-run gate REJECTs were one class - a count
+    # stated in PLAN.md prose beside the command that derives it, stale, with
+    # nothing executing that command. The mechanism is the run's own: a
+    # COUNTS table `label|stated|command` that check-claims.sh executes as a
+    # second source, prose that states a count only as `returns <count>`, and
+    # a hook that refuses a declaration over a stated count the table does
+    # not carry. A PLAN.md with no table is the pre-1.18.2 shape, passed in
+    # silence.
+    # ---------------------------------------------------------------------
+    hb_cc="skills/jeffy/hooks/lib/check-claims.sh"
+    hb_write_counts_plan() { # $1 prose line, $2... table rows (label|stated|command)
+      {
+        printf '# Plan\n\n## Verify command\nCommand: none\n\n## Method\n\n%s\n\n' "$1"
+        shift
+        if [ "$#" -gt 0 ]; then
+          printf "  done <<'COUNTS'\n"
+          for hb_row in "$@"; do printf '%s\n' "$hb_row"; done
+          printf 'COUNTS\n'
+        fi
+      } > "$hb_proj/PLAN.md"
+    }
+    # F1: the tool. "seven skill paths" while the command returns eight was a
+    # gate REJECT; here the same row is a MISMATCH and a nonzero exit.
+    hb_write_counts_plan 'It returns 7 paths today.' 'skill-paths|7|echo 8'
+    if ! bash "$hb_cc" "$hb_proj" >"$hb_tmp/cc.txt" 2>&1 \
+      && grep -q '^MISMATCH PLAN:skill-paths: expected 7 got 8$' "$hb_tmp/cc.txt"; then
+      pass "check-claims.sh reports a PLAN.md stated count its own command contradicts as MISMATCH and exits nonzero (P1-67)"
+    else
+      cat "$hb_tmp/cc.txt"
+      fault "check-claims.sh did not read PLAN.md's Stated counts table, or passed a count its command contradicts"
+    fi
+    hb_write_counts_plan 'It returns 8 paths today.' 'skill-paths|8|echo 8' 'pdf-pages|32|echo unavailable:python3'
+    if bash "$hb_cc" "$hb_proj" >"$hb_tmp/cc.txt" 2>&1 \
+      && grep -q '^MATCH PLAN:skill-paths: 8$' "$hb_tmp/cc.txt" \
+      && grep -q '^SKIP PLAN:pdf-pages: unavailable:python3$' "$hb_tmp/cc.txt"; then
+      pass "check-claims.sh reports an agreeing PLAN.md row as MATCH and an unavailable-on-this-host row as SKIP, exit 0 (P1-67 control)"
+    else
+      cat "$hb_tmp/cc.txt"
+      fault "check-claims.sh mishandled an agreeing or host-unavailable Stated counts row"
+    fi
+    # F2: the hook, declaration path. Prose states 48, the table derives 53.
+    hb_write_counts_plan 'It returns 48 mechanisms today, re-derived by running it.' 'mechanisms|53|echo 53'
+    hb_write_evaluator_artifact
+    hb_git add -A >/dev/null; hb_git commit -qm counts1
+    hb_write_journal 1 3
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+    hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "returns 48"; then
+      pass "stop hook refuses a declaration over a stated count the Stated counts table does not carry (P1-67)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a declaration over 'returns 48' while the table carries only 53"
+    fi
+    rm -f "$hb_state"
+    hb_write_counts_plan 'It returns 53 mechanisms today, re-derived by running it.' 'mechanisms|53|echo 53'
+    hb_write_evaluator_artifact
+    hb_git add -A >/dev/null; hb_git commit -qm counts2
+    hb_write_journal 1 3
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+    hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ ! -f "$hb_state" ] && ! printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "returns"; then
+      pass "stop hook accepts a declaration whose every stated count the table carries (P1-67 control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused a declaration over a stated count the table does carry"
+    fi
+    rm -f "$hb_state"
+    # Legacy: no table at all is the pre-1.18.2 shape; prose is not read.
+    hb_write_counts_plan 'It returns 9 things and nobody tabled it.'
+    hb_write_evaluator_artifact
+    hb_git add -A >/dev/null; hb_git commit -qm counts3
+    hb_write_journal 1 3
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+    hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ ! -f "$hb_state" ] && ! printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "returns"; then
+      pass "stop hook says nothing about stated counts in a PLAN.md that carries no table (P1-67 legacy control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook read prose counts on a PLAN.md with no Stated counts table"
+    fi
+    rm -f "$hb_state"
+    # F3: a number word the locator recognises but cannot value is refused
+    # by name, never passed in silence - the class X1 closed at fifty.
+    hb_write_counts_plan 'It returns sixty sites, which this table cannot value.' 'sites|60|echo 60'
+    hb_write_evaluator_artifact
+    hb_git add -A >/dev/null; hb_git commit -qm counts4
+    hb_write_journal 1 3
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+    hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "returns sixty"; then
+      pass "stop hook refuses a stated count written as a number word it cannot value, by name (P1-67, X1's class)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook passed 'returns sixty' in silence"
+    fi
+    rm -f "$hb_state"
+    # Zero is an exit status in prose ("the wrapper returns 0 on success"),
+    # never a population; the self-run's own locator skipped it and the first
+    # port of that locator did not, which the corpus replay caught on the
+    # self-run's own board. Silent, with a table present, is the contract.
+    hb_write_counts_plan 'On success the wrapper returns 0 and prints nothing.' 'mechanisms|53|echo 53'
+    hb_write_evaluator_artifact
+    hb_git add -A >/dev/null; hb_git commit -qm counts5
+    hb_write_journal 1 3
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+    hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ ! -f "$hb_state" ] && ! printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "returns"; then
+      pass "stop hook reads 'returns 0' as an exit status, not a stated count (P1-67 control, caught by the corpus replay)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused a declaration over 'returns 0', an exit status the table has no reason to carry"
+    fi
+    rm -f "$hb_state"
 
     rm -rf "$hb_tmp"
   fi

@@ -77,5 +77,47 @@ done <<EOF2
 $dirs
 EOF2
 
+# Second source (1.18.2, P1-67): PLAN.md's Stated counts table. Every count a
+# governance document states in prose is a row `label|stated|command` inside
+# the COUNTS heredoc, and the row is executed here exactly like a claims line.
+# A command answering `unavailable:<why>` is a SKIP, not a mismatch: the count
+# is held to the hosts the project supports, and a host that cannot derive it
+# says so rather than faulting. Four consecutive self-run gate REJECTs were
+# counts stated beside the command that contradicted them; this is the
+# instrument that reads the command instead of the sentence.
+plan="$root/PLAN.md"
+rows=""
+if [ -f "$plan" ]; then
+  rows="$(tr -d '\r' < "$plan" \
+    | sed -n "/^[[:space:]]*done <<'\{0,1\}COUNTS'\{0,1\}[[:space:]]*$/,/^COUNTS[[:space:]]*$/p" \
+    | grep -vE "^[[:space:]]*done <<|^COUNTS[[:space:]]*$")"
+fi
+skipped=0
+while IFS= read -r line || [ -n "$line" ]; do
+  [ -n "$line" ] || continue
+  case "$line" in
+    [a-z]*'|'*'|'*) ;;
+    *) echo "ERROR PLAN: malformed Stated counts row '$line' (label|stated|command)"; err=$((err + 1)); continue ;;
+  esac
+  lbl="${line%%|*}"; rest="${line#*|}"; want="${rest%%|*}"; cmd="${rest#*|}"
+  checked=$((checked + 1))
+  got="$(cd "$root" && bash "$probe" bash -c "$cmd" 2>/dev/null)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "ERROR PLAN:$lbl: exit $rc ($cmd)"; err=$((err + 1)); continue
+  fi
+  got="$(printf '%s\n' "$got" | sed '/^[[:space:]]*$/d' | tail -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  case "$got" in
+    unavailable:*) echo "SKIP PLAN:$lbl: $got"; skipped=$((skipped + 1)); continue ;;
+  esac
+  if [ "$got" = "$want" ]; then
+    echo "MATCH PLAN:$lbl: $want"
+  else
+    echo "MISMATCH PLAN:$lbl: expected $want got $got"; mism=$((mism + 1))
+  fi
+done <<EOF3
+$rows
+EOF3
+
 echo "claims: $checked checked, $mism mismatched, $err errored" >&2
 [ "$mism" -eq 0 ] && [ "$err" -eq 0 ]

@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.18.1"
+JEFFY_VERSION="1.18.2"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -331,6 +331,76 @@ jeffy_claims_form_violation() { # $1 project root, $2 base commit
   done <<EOF
 $(git -C "$1" diff --name-only --relative "$2" HEAD -- '.jeffy/probes/*/README.md' 2>/dev/null; git -C "$1" ls-files --others --exclude-standard -- '.jeffy/probes/*/README.md' 2>/dev/null)
 EOF
+}
+
+# 1.18.2 (P1-67): a count a governance document states is an executable
+# claim. PLAN.md carries a Stated counts table - rows `label|stated|command`
+# inside a COUNTS heredoc, executed by hooks/lib/check-claims.sh - and prose
+# in PLAN.md or BACKLOG.md states a count only as `returns <count>`. This
+# helper DERIVES, never executes: it reads the table's stated values and every
+# `returns <token>` outside inventory rows, the Declined and Settled classes
+# sections and the table itself, and names the first stated count the table
+# does not carry. A number word it recognises but cannot value (sixty and up,
+# any compound) is named too, never passed: the list that stops short is the
+# one that fails silently. A PLAN.md with no table is the pre-1.18.2 shape and
+# is passed in silence, the same rule the Verify count cell follows.
+jeffy_stated_counts_violation() { # $1 project root
+  jscv_plan="$1/PLAN.md"
+  [ -f "$jscv_plan" ] || return 0
+  jscv_tbl="$(tr -d '\r' < "$jscv_plan" \
+    | sed -n "/^[[:space:]]*done <<'\{0,1\}COUNTS'\{0,1\}[[:space:]]*$/,/^COUNTS[[:space:]]*$/p" \
+    | sed -n 's/^[a-z][a-z0-9-]*|\([0-9][0-9]*\)|.*/\1/p' | sort -u)"
+  [ -n "$jscv_tbl" ] || return 0
+  jscv_w='one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty'
+  jscv_wx='sixty|seventy|eighty|ninety|hundred|thousand|million|billion'
+  for jscv_f in PLAN.md BACKLOG.md; do
+    [ -f "$1/$jscv_f" ] || continue
+    jscv_vals="$(tr -d '\r' < "$1/$jscv_f" | awk '
+        /^[[:space:]]*done <<'"'"'?COUNTS'"'"'?[[:space:]]*$/ { t = 1; next }
+        /^COUNTS[[:space:]]*$/ { t = 0; next }
+        t { next }
+        /^- \[[ x~]\]/ { next }
+        /^## (Declined|Settled classes)$/ { z = 1; next }
+        /^## / { z = 0 }
+        z { next }
+        { print }' \
+      | grep -oE 'returns [A-Za-z0-9][A-Za-z0-9-]*' | sed 's/^returns //' | sort -u)"
+    [ -n "$jscv_vals" ] || continue
+    while IFS= read -r jscv_v; do
+      [ -n "$jscv_v" ] || continue
+      jscv_h="${jscv_v%%-*}"
+      if printf '%s' "$jscv_wx" | tr '|' '\n' | grep -qx -- "$jscv_h"; then
+        printf '%s' "$jscv_f states 'returns $jscv_v', a number word this check recognises but cannot value; write the count in digits as returns <count> and carry it as a row of the Stated counts table (P1-67)"
+        return 0
+      fi
+      case "$jscv_v" in
+        *-*) if printf '%s' "$jscv_w" | tr '|' '\n' | grep -qx -- "$jscv_h"; then
+               printf '%s' "$jscv_f states 'returns $jscv_v', a compound number word this check cannot value; write the count in digits as returns <count> and carry it as a row of the Stated counts table (P1-67)"
+               return 0
+             fi ;;
+      esac
+      case "$jscv_v" in
+        one) jscv_n=1 ;; two) jscv_n=2 ;; three) jscv_n=3 ;; four) jscv_n=4 ;; five) jscv_n=5 ;;
+        six) jscv_n=6 ;; seven) jscv_n=7 ;; eight) jscv_n=8 ;; nine) jscv_n=9 ;; ten) jscv_n=10 ;;
+        eleven) jscv_n=11 ;; twelve) jscv_n=12 ;; thirteen) jscv_n=13 ;; fourteen) jscv_n=14 ;;
+        fifteen) jscv_n=15 ;; sixteen) jscv_n=16 ;; seventeen) jscv_n=17 ;; eighteen) jscv_n=18 ;;
+        nineteen) jscv_n=19 ;; twenty) jscv_n=20 ;; thirty) jscv_n=30 ;; forty) jscv_n=40 ;; fifty) jscv_n=50 ;;
+        *[!0-9]*) continue ;;
+        *) jscv_n="$jscv_v" ;;
+      esac
+      # Zero is an exit status in prose, never a population: the self-run's
+      # own locator skipped it, and the corpus replay caught this port not
+      # doing so on that run's own board.
+      [ "$jscv_n" = 0 ] && continue
+      if ! printf '%s\n' "$jscv_tbl" | grep -qx -- "$jscv_n"; then
+        printf '%s' "$jscv_f states 'returns $jscv_v' and PLAN.md's Stated counts table carries no row deriving $jscv_n; a count a governance document states is written as returns <count> and joins the COUNTS table in the commit that states it, and skills/jeffy/hooks/lib/check-claims.sh executes that row (P1-67)"
+        return 0
+      fi
+    done <<EOF
+$jscv_vals
+EOF
+  done
+  return 0
 }
 
 jeffy_derive_stale_rows() { # $1 project root
@@ -827,6 +897,13 @@ if [ -n "$promise" ]; then
       if [ -z "$violation" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         cf_v="$(jeffy_claims_form_violation "$root" "$(fm base_head)")"
         [ -n "$cf_v" ] && violation="$cf_v"
+      fi
+      # P1-67 on the declaration path: a count PLAN.md or BACKLOG.md states
+      # that the Stated counts table does not carry. Derived from the text,
+      # never executed here; check-claims.sh is what runs the rows.
+      if [ -z "$violation" ]; then
+        sc_v="$(jeffy_stated_counts_violation "$root")"
+        [ -n "$sc_v" ] && violation="$sc_v"
       fi
       # Evaluator check: the adversarial gate is where the audits' misses were
       # found, and six of thirteen corpus convergences recorded no verdict at
