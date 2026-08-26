@@ -2,10 +2,12 @@
 
 Pins the verdicts of `skills/jeffy/hooks/lib/check-claims.sh`, the instrument
 that re-runs a project's recorded measurements and says which no longer
-reproduce. Eight cases, each asserting the exact stdout verdict line, the exact
-summary counts on stderr and the exit status together - not one of the three,
-because this instrument fails by reporting the wrong count as easily as by
-reporting the wrong verdict.
+reproduce. Every case asserts the exact stdout verdict line, the exact summary
+counts on stderr and the exit status together - not one of the three, because this
+instrument fails by reporting the wrong count as easily as by reporting the wrong
+verdict. No case total is spelled here: the table-driven cases are counted out of
+run.sh by the claims line beside this file, and the usage case is pinned by the
+other one, so the two measurements carry the population between them.
 
 What is pinned, in the order the cases run: a claim that reproduces; a claim
 that no longer reproduces, which must be named with both the expected and the
@@ -20,7 +22,12 @@ means a claim failed, so a caller can tell a broken invocation from a finding.
 
 Two measurements, and the claims file beside this one carries both rather than
 restating them: check-claims.sh exits 2 on an unusable project root, and the
-seven table-driven cases are counted out of run.sh rather than spelled in a word.
+table-driven cases are counted out of run.sh. Neither is asserted as a total here:
+the exit status appears above only as the digit its own claims line expects, and
+the case count appears only inside the `expected 7 got a` fault string quoted from
+a driven mutation below, which is that same claims line's value coming back out of
+the instrument. A total written here as a total is one no command returns, and that
+is exactly how this README came to assert one that was wrong for two runs.
 
 Observed failing: driven by mutation before it was trusted. Removing the
 malformed-line arm so an unrecognised line is skipped instead of erroring makes

@@ -15,8 +15,12 @@ exit 2 before the probe runs.
 The wrapper's default ceilings are 4096MB / 600s, and the battery measures that
 pair out of the wrapper's own diagnostic rather than reading it from this file.
 Every figure stated above is carried by a line in the claims file beside this one
-and executed by check-claims.sh: the 124 and the 0 of the two wall-ceiling runs,
-the 137 of the memory kill, the exit 2 of a refused ceiling, and the defaults.
+and executed by check-claims.sh, and the enumeration is written out here so a
+figure added to the prose without a line beside it is visible rather than covered
+by a universal: the 124 and the 0 of the two wall-ceiling runs, the 137 and the 0
+of the two memory-ceiling runs, the exit 2 of a refused ceiling, and the defaults.
+That is six figures against six claims lines. The memory-admit 0 was the one this
+sentence asserted and the claims file did not carry, which is what V1 closed.
 
 Where no systemd user scope is reachable the memory dimension is not exercised,
 and the battery says so on stdout instead of passing over it in silence.

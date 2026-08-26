@@ -2,4 +2,5 @@ expect 4096MB / 600s :: bash skills/jeffy/hooks/lib/run-probe.sh bash -c 'exit 3
 expect 124 :: JEFFY_PROBE_TIMEOUT_S=1 bash skills/jeffy/hooks/lib/run-probe.sh sleep 5 >/dev/null 2>&1; echo $?
 expect 0 :: JEFFY_PROBE_TIMEOUT_S=10 bash skills/jeffy/hooks/lib/run-probe.sh sleep 5 >/dev/null 2>&1; echo $?
 expect 137 :: JEFFY_PROBE_MEM_MB=64 bash skills/jeffy/hooks/lib/run-probe.sh bash -c 'python3 -c "b=bytearray(320*1024*1024); b[::4096]=b\"x\"*(len(b)//4096); print(len(b))"' >/dev/null 2>&1; echo $?
+expect 0 :: JEFFY_PROBE_MEM_MB=1024 bash skills/jeffy/hooks/lib/run-probe.sh bash -c 'python3 -c "b=bytearray(320*1024*1024); b[::4096]=b\"x\"*(len(b)//4096); print(len(b))"' >/dev/null 2>&1; echo $?
 expect 2 :: JEFFY_PROBE_TIMEOUT_S=abc bash skills/jeffy/hooks/lib/run-probe.sh true >/dev/null 2>&1; echo $?
