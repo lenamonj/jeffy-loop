@@ -1,0 +1,1108 @@
+diff --git a/.gitignore b/.gitignore
+index 7ab546c..555fd6f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -157,3 +157,4 @@ cython_debug/
+ 
+ # hatch-vcs
+ src/*/_version.py
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index d7da92f..03f0169 100644
+--- a/README.md
++++ b/README.md
+@@ -27,6 +27,7 @@ size or throughput. It is localized to:
+ - German
+ - Greek
+ - Hebrew
++- Hungarian
+ - Indonesian
+ - Italian
+ - Japanese
+@@ -42,6 +43,7 @@ size or throughput. It is localized to:
+ - Slovenian
+ - Spanish
+ - Swedish
++- Traditional Chinese
+ - Turkish
+ - Ukrainian
+ - Uzbek
+diff --git a/pyproject.toml b/pyproject.toml
+index b277739..27112a7 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -54,6 +54,18 @@ version.source = "vcs"
+ version.raw-options.local_scheme = "no-local-version"
+ build.artifacts = [ "*.mo" ]
+ build.hooks.vcs.version-file = "src/humanize/_version.py"
++# hatchling's default sdist selection is everything the VCS does not ignore,
++# which sweeps in the working notes at the repository root.
++build.targets.sdist.exclude = [
++  "/.jeffy",
++  "/BACKLOG.md",
++  "/JOURNAL-archive.md",
++  "/JOURNAL.md",
++  "/PLAN.md",
++]
++# The runtime reads only the compiled .mo; the .po sources it is built from
++# stay in the sdist, where a rebuild needs them.
++build.targets.wheel.exclude = [ "*.po" ]
+ 
+ [tool.ruff]
+ fix = true
+@@ -106,11 +118,21 @@ show_error_codes = true
+ 
+ [tool.pytest]
+ minversion = "9.0"
+-addopts = [ "--color=yes" ]
+-testpaths = [ "tests" ]
++# "humanize" is a package name rather than a path, resolved by --pyargs through
++# sys.path: the doctests are collected from the installed distribution, and the
++# working tree's src/ is never prepended to sys.path to shadow it. Naming src/
++# here instead would make every run - including tox and CI - test the checkout.
++addopts = [ "--color=yes", "--doctest-modules", "--pyargs" ]
++testpaths = [ "tests", "humanize" ]
+ filterwarnings = [ "error" ]
+ 
+ [tool.coverage]
++# `--cov humanize` names an importable package, so it measures whatever the
++# environment installed - a wheel in site-packages under `tox -e py`, not the
++# checkout. Without this mapping the XML uploaded to codecov carries those
++# install paths and names no file in the repository. The first entry is the
++# canonical path everything else is rewritten to.
++paths.source = [ "src/humanize", "*/humanize" ]
+ # Regexes for lines to exclude from consideration
+ report.exclude_also = [
+   # Don't complain if non-runnable code isn't run:
+diff --git a/src/humanize/filesize.py b/src/humanize/filesize.py
+index fb675fd..1d06483 100644
+--- a/src/humanize/filesize.py
++++ b/src/humanize/filesize.py
+@@ -2,11 +2,12 @@
+ 
+ from __future__ import annotations
+ 
+-__lazy_modules__ = {"humanize.i18n", "math"}
++__lazy_modules__ = {"humanize.i18n", "humanize.number", "math"}
+ 
+-from math import log
++from math import isfinite, isinf, log
+ 
+ from humanize.i18n import _gettext as _
++from humanize.number import _format_not_finite
+ 
+ suffixes = {
+     "decimal": (
+@@ -37,6 +38,28 @@ suffixes = {
+ }
+ 
+ 
++def _to_bytes(value: float | str) -> float:
++    """Return `value` as a float, or as an exact `int` when float cannot hold it.
++
++    `float()` answers a byte count past its range with `OverflowError` from an
++    integer and with `inf` from a decimal string, so both turn a number that is
++    merely large into a wrong result. A genuine infinity is left alone.
++    """
++    if isinstance(value, int):
++        return value
++
++    number = float(value)
++    if not isinf(number) or isinstance(value, float):
++        return number
++
++    from decimal import Decimal, InvalidOperation
++
++    try:
++        return int(Decimal(value))
++    except (InvalidOperation, OverflowError, ValueError):
++        return number
++
++
+ def naturalsize(
+     value: float | str,
+     binary: bool = False,
+@@ -79,7 +102,12 @@ def naturalsize(
+         format (str): Custom formatter.
+ 
+     Returns:
+-        str: Human readable representation of a filesize.
++        str: Human readable representation of a filesize, or `NaN`, `+Inf` or
++            `-Inf` when `value` is not finite.
++
++    Raises:
++        ValueError: If `value` is so large that its mantissa in the biggest
++            available suffix exceeds the range of a float.
+     """
+     if gnu:
+         suffix = suffixes["gnu"]
+@@ -89,7 +117,11 @@ def naturalsize(
+         suffix = suffixes["decimal"]
+ 
+     base = 1024 if (gnu or binary) else 1000
+-    bytes_ = float(value)
++    bytes_ = _to_bytes(value)
++    # Only a float can be non-finite here: _to_bytes answers with an exact int
++    # for anything float cannot hold, and an int is finite by construction.
++    if isinstance(bytes_, float) and not isfinite(bytes_):
++        return _format_not_finite(bytes_)
+     abs_bytes = abs(bytes_)
+ 
+     if abs_bytes == 1 and not gnu:
+@@ -99,11 +131,21 @@ def naturalsize(
+         return f"{int(bytes_)}B" if gnu else _("%d Bytes") % int(bytes_)
+ 
+     exp = int(min(log(abs_bytes, base), len(suffix)))
++    try:
++        mantissa = abs_bytes / base**exp
++    except OverflowError:
++        # Past the largest suffix there is no float mantissa left to print, and
++        # the alternative is the "inf QB" this branch exists to stop.
++        msg = (
++            f"Byte count is too large to express in {suffix[-1]}: "
++            "its mantissa exceeds the range of a float"
++        )
++        raise ValueError(msg) from None
+     # The suffix is chosen from the unrounded byte count, but `format` rounds the
+     # mantissa afterward; rounding can push it up to `base` (e.g. 999999 is
+     # 999.999 kB, which formats to "1000.0 kB"). When that happens and a larger
+     # suffix is available, step up one suffix so the result reads "1.0 MB".
+-    if exp < len(suffix) and abs(float(format % (abs_bytes / (base**exp)))) >= base:
++    if exp < len(suffix) and abs(float(format % mantissa)) >= base:
+         exp += 1
+     space = "" if gnu else " "
+     ret: str = format % (bytes_ / (base**exp)) + space + _(suffix[exp - 1])
+diff --git a/src/humanize/lists.py b/src/humanize/lists.py
+index 525f0e3..c59f36c 100644
+--- a/src/humanize/lists.py
++++ b/src/humanize/lists.py
+@@ -4,12 +4,13 @@ from __future__ import annotations
+ 
+ TYPE_CHECKING = False
+ if TYPE_CHECKING:
++    from collections.abc import Iterable
+     from typing import Any
+ 
+ __all__ = ["natural_list"]
+ 
+ 
+-def natural_list(items: list[Any]) -> str:
++def natural_list(items: Iterable[Any]) -> str:
+     """Natural list.
+ 
+     Convert a list of items into a human-readable string with commas and 'and'.
+@@ -21,18 +22,28 @@ def natural_list(items: list[Any]) -> str:
+         'one and two'
+         >>> natural_list(["one"])
+         'one'
++        >>> natural_list(str(n) for n in range(3))
++        '0, 1 and 2'
+ 
+     Args:
+-        items (list): An iterable of items.
++        items (iterable): An iterable of items. Any iterable is accepted, not
++            only a sequence.
+ 
+     Returns:
+         str: A string with commas and 'and' in the right places.
+     """
+     if not items:
++        # An empty or otherwise falsy container has always answered with "".
+         return ""
+-    if len(items) == 1:
+-        return str(items[0])
+-    elif len(items) == 2:
+-        return f"{str(items[0])} and {str(items[1])}"
+-    else:
+-        return ", ".join([str(item) for item in items[:-1]]) + f" and {str(items[-1])}"
++
++    values = [str(item) for item in items]
++    if not values:
++        # A generator is truthy whether or not it will yield anything, so an
++        # empty one only shows itself here.
++        return ""
++
++    if len(values) == 1:
++        return values[0]
++    if len(values) == 2:
++        return f"{values[0]} and {values[1]}"
++    return ", ".join(values[:-1]) + f" and {values[-1]}"
+diff --git a/src/humanize/number.py b/src/humanize/number.py
+index 2fb22c6..9bac714 100644
+--- a/src/humanize/number.py
++++ b/src/humanize/number.py
+@@ -13,6 +13,7 @@ from .i18n import _pgettext as P_
+ 
+ TYPE_CHECKING = False
+ if TYPE_CHECKING:
++    from decimal import Decimal
+     from typing import TypeAlias
+ 
+     # This type can be better defined by typing.SupportsFloat
+@@ -63,6 +64,71 @@ def _format_not_finite(value: float) -> str:
+     return ""
+ 
+ 
++def _not_finite(value: NumberOrString) -> str | None:
++    """Return the display string for a non-finite value, or `None` when finite.
++
++    A value that converts exactly to `int` is finite by construction, so it never
++    reaches `float()`: an integer beyond float range raises `OverflowError` there,
++    and a decimal string beyond float range becomes `inf` silently. Both answers
++    are wrong for a number that is merely large.
++    """
++    import math
++
++    try:
++        int(value)
++    except (OverflowError, TypeError, ValueError):
++        pass
++    else:
++        return None
++
++    number = float(value)
++    return None if math.isfinite(number) else _format_not_finite(number)
++
++
++def _require_number(value: NumberOrString) -> None:
++    """Raise `TypeError` naming the type when `value` is a string.
++
++    `_not_finite` classifies without converting - a value that converts exactly
++    to `int` is finite by construction and never reaches `float()` - so a
++    numeric string passes it intact and would reach arithmetic that assumes a
++    number. The two formatters documenting a numeric operand call this right
++    after that guard; the rest either document a `str` operand or return an
++    unparseable value unchanged.
++
++    The test is `isinstance`, never `math.isfinite` or any other check that
++    converts: `math.isfinite` answers a 400-digit integer with `OverflowError`,
++    which is the exact failure the exact-integer path exists to avoid. Because
++    it converts nothing it is also safe to run before `_not_finite` rather than
++    after, which is where it goes: `_not_finite` reaches `float()` for a string
++    that is not an exact integer, and `float('abc')` raises `ValueError` where
++    this raises the `TypeError` the operand type deserves.
++    """
++    if isinstance(value, str):
++        msg = f"must be real number, not {type(value).__name__}"
++        raise TypeError(msg)
++
++
++def _exact_int(value: NumberOrString) -> int | None:
++    """Return `value` as an exact `int`, or `None` when it is not one.
++
++    `int()` truncates, so 1.5 is not an exact integer here and returns `None`;
++    only an `int` and a string of digits qualify. Callers use this to keep a
++    large integer out of `float`, which would round it or overflow.
++
++    The result is always a plain `int`, never the `bool` a caller passed: a
++    caller that prints this value would otherwise print `True` where every
++    other formatter prints `1`.
++    """
++    if isinstance(value, int):
++        return int(value)
++    if isinstance(value, str):
++        try:
++            return int(value)
++        except ValueError:
++            return None
++    return None
++
++
+ def ordinal(value: NumberOrString, gender: str = "male") -> str:
+     """Converts an integer to its ordinal as a string.
+ 
+@@ -100,16 +166,19 @@ def ordinal(value: NumberOrString, gender: str = "male") -> str:
+     Returns:
+         str: Ordinal string.
+     """
+-    import math
+-
+     try:
+-        if not math.isfinite(float(value)):
+-            return _format_not_finite(float(value))
++        not_finite = _not_finite(value)
++        if not_finite is not None:
++            return not_finite
+         value = int(value)
+     except (TypeError, ValueError):
+         return str(value)
+     gender = "male" if gender == "male" else "female"
+-    digit = 0 if value % 100 in (11, 12, 13) else value % 10
++    # The suffix comes from the magnitude: Python's modulo on a negative integer
++    # returns the positive remainder, so -1 % 10 is 9 and every negative ordinal
++    # would otherwise take "th".
++    magnitude = abs(value)
++    digit = 0 if magnitude % 100 in (11, 12, 13) else magnitude % 10
+     return f"{value}{P_(f'{digit} ({gender})', _ORDINAL_SUFFIXES[digit])}"
+ 
+ 
+@@ -147,30 +216,33 @@ def intcomma(value: NumberOrString, ndigits: int | None = None) -> str:
+     Returns:
+         str: String containing commas every three digits.
+     """
+-    import math
+-
+     thousands_sep = thousands_separator()
+     decimal_sep = decimal_separator()
+     try:
+         if isinstance(value, str):
+             value = value.replace(thousands_sep, "").replace(decimal_sep, ".")
+-            if not math.isfinite(float(value)):
+-                return _format_not_finite(float(value))
++            not_finite = _not_finite(value)
++            if not_finite is not None:
++                return not_finite
+             if "." in value:
+                 value = float(value)
+             else:
+                 value = int(value)
+         else:
+-            if not math.isfinite(float(value)):
+-                return _format_not_finite(float(value))
+-            float(value)
++            not_finite = _not_finite(value)
++            if not_finite is not None:
++                return not_finite
+     except (TypeError, ValueError):
+         return str(value)
+ 
+-    if ndigits is not None:
+-        result = f"{value:,.{ndigits}f}"
+-    else:
++    if ndigits is None:
+         result = f"{value:,}"
++    elif isinstance(value, int):
++        # An integer has no fractional part to round, and the float-based "f"
++        # presentation overflows on one larger than a float can hold.
++        result = f"{value:,}.{'0' * ndigits}" if ndigits else f"{value:,}"
++    else:
++        result = f"{value:,.{ndigits}f}"
+     if thousands_sep != "," or decimal_sep != ".":
+         result = result.translate(str.maketrans(",.", thousands_sep + decimal_sep))
+     return result
+@@ -227,12 +299,17 @@ def intword(value: NumberOrString, format: str = "%.1f") -> str:
+     Returns:
+         str: Friendly text representation as a string, unless the value passed could not
+             be coaxed into an `int`.
++
++    Raises:
++        ValueError: If `value` is so large that its mantissa in googol, the biggest
++            available power, exceeds the range of a float.
+     """
+     import math
+ 
+     try:
+-        if not math.isfinite(float(value)):
+-            return _format_not_finite(float(value))
++        not_finite = _not_finite(value)
++        if not_finite is not None:
++            return not_finite
+         value = int(value)
+     except (TypeError, ValueError):
+         return str(value)
+@@ -252,7 +329,17 @@ def intword(value: NumberOrString, format: str = "%.1f") -> str:
+     # Consider the biggest power of 10 that is smaller than value
+     ordinal -= 1
+     power = powers[ordinal]
+-    chopped = value / power
++    try:
++        chopped = value / power
++    except OverflowError:
++        # Past googol there is no float mantissa left to print, and the
++        # alternative is the bare OverflowError this branch exists to replace.
++        # naturalsize raises the same way past its own largest suffix.
++        msg = (
++            f"Value is too large to express in {human_powers[-1][0]}: "
++            "its mantissa exceeds the range of a float"
++        )
++        raise ValueError(msg) from None
+     rounded_value = float(format % chopped)
+ 
+     if not largest_ordinal and rounded_value * power == powers[ordinal + 1]:
+@@ -295,11 +382,10 @@ def apnumber(value: NumberOrString) -> str:
+             returns a string unless the value was not `int`-able, then `str(value)`
+             is returned.
+     """
+-    import math
+-
+     try:
+-        if not math.isfinite(float(value)):
+-            return _format_not_finite(float(value))
++        not_finite = _not_finite(value)
++        if not_finite is not None:
++            return not_finite
+         value = int(value)
+     except (TypeError, ValueError):
+         return str(value)
+@@ -347,24 +433,31 @@ def fractional(value: NumberOrString) -> str:
+     Returns:
+         str: Fractional number as a string.
+     """
+-    import math
+-
+     try:
+-        number = float(value)
+-        if not math.isfinite(number):
+-            return _format_not_finite(number)
++        not_finite = _not_finite(value)
+     except (TypeError, ValueError):
+         return str(value)
+-    from fractions import Fraction
++    if not_finite is not None:
++        return not_finite
++
++    integer = _exact_int(value)
++    if integer is not None:
++        # An exact integer has no fractional part, and routing it through float
++        # would round it (10**30) or overflow (math.factorial(200)).
++        whole_number, numerator, denominator = integer, 0, 1
++    else:
++        from fractions import Fraction
++
++        number = float(value)
++        whole_number = int(number)
++        frac = Fraction(number - whole_number).limit_denominator(1000)
++        numerator = frac.numerator
++        denominator = frac.denominator
+ 
+-    whole_number = int(number)
+-    frac = Fraction(number - whole_number).limit_denominator(1000)
+-    numerator = frac.numerator
+-    denominator = frac.denominator
+     if whole_number and not numerator and denominator == 1:
+         # this means that an integer was passed in
+         # (or variants of that integer like 1.0000)
+-        return f"{whole_number:.0f}"
++        return str(whole_number)
+ 
+     if not whole_number:
+         return f"{numerator:.0f}/{denominator:.0f}"
+@@ -408,16 +501,28 @@ def scientific(value: NumberOrString, precision: int = 2) -> str:
+     Returns:
+         str: Number in scientific notation z.wq x 10ⁿ.
+     """
+-    import math
+-
+     try:
+-        value = float(value)
+-        if not math.isfinite(value):
+-            return _format_not_finite(value)
++        not_finite = _not_finite(value)
+     except (ValueError, TypeError):
+         return str(value)
++    if not_finite is not None:
++        return not_finite
++
++    integer = _exact_int(value)
++    if integer is None or integer == 0:
++        # Zero carries no significant digit to anchor the exponent, so Decimal
++        # renders it as "0.00e+2" at precision 2 and "0.000e+3" at precision 3.
++        # float renders it as "0.00e+00" at every precision, and zero is small
++        # enough that the exact-integer branch buys nothing here.
++        number: float | Decimal = float(value)
++    else:
++        # An exact integer keeps its own digits: float rounds it above 2**53 and
++        # cannot hold it at all past about 1.8e308.
++        from decimal import Decimal
++
++        number = Decimal(integer)
+     fmt = f"{{:.{int(precision)}e}}"
+-    n = fmt.format(value)
++    n = fmt.format(number)
+     part1, part2 = n.split("e")
+     # Normalise exponent: int() strips the "+" sign and leading zeros,
+     # while preserving "-" and a single "0" for 10⁰.
+@@ -425,13 +530,13 @@ def scientific(value: NumberOrString, precision: int = 2) -> str:
+ 
+ 
+ def clamp(
+-    value: float,
++    value: float | None,
+     format: str = "{:}",
+     floor: float | None = None,
+     ceil: float | None = None,
+     floor_token: str = "<",
+     ceil_token: str = ">",
+-) -> str:
++) -> str | None:
+     """Returns number with the specified format, clamped between floor and ceil.
+ 
+     If the number is larger than ceil or smaller than floor, then the respective limit
+@@ -455,7 +560,7 @@ def clamp(
+         ```
+ 
+     Args:
+-        value (int, float): Input number.
++        value (int, float, None): Input number, or `None` to pass through unchanged.
+         format (str OR callable): Can either be a formatting string, or a callable
+             function that receives value and returns a string.
+         floor (int, float): Smallest value before clamping.
+@@ -468,16 +573,17 @@ def clamp(
+     Returns:
+         str: Formatted number. The output is clamped between the indicated floor and
+             ceil. If the number is larger than ceil or smaller than floor, the output
+-            will be prepended with a token indicating as such.
++            will be prepended with a token indicating as such. `None` if value is
++            `None`.
+ 
+     """
+-    import math
+-
+     if value is None:
+         return None
+ 
+-    if not math.isfinite(value):
+-        return _format_not_finite(value)
++    _require_number(value)
++    not_finite = _not_finite(value)
++    if not_finite is not None:
++        return not_finite
+ 
+     if floor is not None and value < floor:
+         value = floor
+@@ -538,8 +644,10 @@ def metric(value: float, unit: str = "", precision: int = 3) -> str:
+     """
+     import math
+ 
+-    if not math.isfinite(value):
+-        return _format_not_finite(value)
++    _require_number(value)
++    not_finite = _not_finite(value)
++    if not_finite is not None:
++        return not_finite
+     exponent = int(math.floor(math.log10(abs(value)))) if value != 0 else 0
+ 
+     if exponent >= 33 or exponent < -30:
+diff --git a/src/humanize/time.py b/src/humanize/time.py
+index 4a07d52..2c6327e 100644
+--- a/src/humanize/time.py
++++ b/src/humanize/time.py
+@@ -46,6 +46,21 @@ class Unit(Enum):
+         return NotImplemented
+ 
+ 
++def _unit_named(name: str) -> Unit:
++    """Return the `Unit` a caller named, or raise `ValueError` naming the value.
++
++    Indexing `Unit` directly raises `KeyError('FOO')`, which says neither what
++    was wrong nor what would be right, and differs from the `ValueError` a
++    known-but-unsupported unit already raises.
++    """
++    try:
++        return Unit[name.upper()]
++    except KeyError:
++        known = ", ".join(unit.name.lower() for unit in Unit)
++        msg = f"Unknown unit '{name}'. Valid units are: {known}"
++        raise ValueError(msg) from None
++
++
+ def _now() -> dt.datetime:
+     import datetime as dt
+ 
+@@ -61,10 +76,24 @@ def _abs_timedelta(delta: dt.timedelta) -> dt.timedelta:
+     Returns:
+         datetime.timedelta: Absolute timedelta.
+     """
+-    if delta.days < 0:
+-        now = _now()
+-        return now - (now + delta)
+-    return delta
++    return abs(delta)
++
++
++def _shifted_from(now: dt.datetime, delta: dt.timedelta) -> dt.datetime:
++    """Return `now - delta`, clamped to the range a datetime can hold.
++
++    Callers use this only to decide tense. A timedelta spans about 2.7 million
++    years and a datetime about 10 thousand, so a delta beyond the calendar is
++    answered with its boundary rather than with an OverflowError - the tense is
++    the same either way, and the alternative is that `naturaltime` raises on a
++    value `naturaldelta` formats.
++    """
++    import datetime as dt
++
++    try:
++        return now - delta
++    except OverflowError:
++        return dt.datetime.min if delta > dt.timedelta(0) else dt.datetime.max
+ 
+ 
+ def _date_and_delta(
+@@ -82,15 +111,24 @@ def _date_and_delta(
+         date = value
+         delta = now - value
+     elif isinstance(value, dt.timedelta):
+-        date = now - value
++        date = _shifted_from(now, value)
+         delta = value
+     else:
++        # The same non-finite probe naturaldelta uses, and it has to run before
++        # the conversion rather than inside it: round() raises on nan and both
++        # infinities, but the precise path skips round() entirely, and
++        # timedelta() answers a non-finite value and a merely huge one with the
++        # same OverflowError. Only the huge one is the documented refusal.
++        try:
++            int(value)
++        except (OverflowError, TypeError, ValueError):
++            return None, value
+         try:
+             value = value if precise else round(value)
+             delta = dt.timedelta(seconds=value)
+-            date = now - delta
+         except (ValueError, TypeError):
+             return None, value
++        date = _shifted_from(now, delta)
+     return date, _abs_timedelta(delta)
+ 
+ 
+@@ -119,6 +157,8 @@ def naturaldelta(
+ 
+     Raises:
+         OverflowError: If `value` is too large to convert to datetime.timedelta.
++        ValueError: If `minimum_unit` is not a unit name, or names a unit this
++            function does not support.
+ 
+     Examples:
+         Compare two timestamps in a custom local timezone::
+@@ -132,13 +172,13 @@ def naturaldelta(
+         >>> later = now + dt.timedelta(minutes=30)
+ 
+         >>> assert naturaldelta(later - now) == "30 minutes"
+-        True
++
+         ```
+ 
+     """
+     import datetime as dt
+ 
+-    tmp = Unit[minimum_unit.upper()]
++    tmp = _unit_named(minimum_unit)
+     if tmp not in (Unit.SECONDS, Unit.MILLISECONDS, Unit.MICROSECONDS):
+         msg = f"Minimum unit '{minimum_unit}' not supported"
+         raise ValueError(msg)
+@@ -147,10 +187,17 @@ def naturaldelta(
+     if isinstance(value, dt.timedelta):
+         delta = value
+     else:
++        # int() is the non-finite probe: it rejects a string such as "NaN" or
++        # "inf", which this function does not support, raises ValueError on the
++        # float nan and OverflowError on both infinities. All three come back
++        # unchanged, as the Returns section says. A finite value too large for
++        # a timedelta is a different case and still raises, per Raises.
+         try:
+-            int(value)  # Explicitly don't support string such as "NaN" or "inf"
+-            value = float(value)
+-            delta = dt.timedelta(seconds=value)
++            int(value)
++        except (OverflowError, TypeError, ValueError):
++            return str(value)
++        try:
++            delta = dt.timedelta(seconds=float(value))
+         except (ValueError, TypeError):
+             return str(value)
+ 
+@@ -274,7 +321,15 @@ def naturaltime(
+             interpreted.  Defaults to the current time in the local timezone.
+ 
+     Returns:
+-        str: A natural representation of the input in a resolution that makes sense.
++        str: A natural representation of the input in a resolution that makes
++            sense, unless `value` cannot be converted to a datetime.timedelta -
++            nan, either infinity, or anything not date-ish. In that case,
++            `value` is returned unchanged as a string.
++
++    Raises:
++        OverflowError: If `value` is too large to convert to datetime.timedelta.
++        ValueError: If `minimum_unit` is not a unit name, or names a unit this
++            function does not support.
+     """
+     import datetime as dt
+ 
+@@ -320,6 +375,19 @@ def naturalday(value: dt.date | dt.datetime, format: str = "%b %d") -> str:
+     present day return representing string. Otherwise, return a string
+     formatted according to `format`.
+ 
++    Args:
++        value (datetime.date or datetime.datetime): A date, or a datetime whose
++            date part is used. An aware datetime is compared against today in
++            its own timezone.
++        format (str): A `strftime` format string, applied to every date that is
++            not today, tomorrow or yesterday.
++
++    Returns:
++        str: `today`, `tomorrow` or `yesterday` when the date is one of those,
++            and otherwise the date rendered with `format`. A `value` that is
++            not date-ish, or whose date is out of range, is returned unchanged
++            as a string.
++
+     """
+     import datetime as dt
+ 
+@@ -352,7 +420,20 @@ def naturalday(value: dt.date | dt.datetime, format: str = "%b %d") -> str:
+ 
+ 
+ def naturaldate(value: dt.date | dt.datetime) -> str:
+-    """Like `naturalday`, but append a year for dates more than ~five months away."""
++    """Like `naturalday`, but append a year for dates more than ~five months away.
++
++    Args:
++        value (datetime.date or datetime.datetime): A date, or a datetime whose
++            date part is used. An aware datetime is compared against today in
++            its own timezone.
++
++    Returns:
++        str: What `naturalday` returns, except that a date at least ~five
++            months from today is rendered with its year. A `value` that is not
++            date-ish, or whose date is out of range, is returned unchanged as a
++            string.
++
++    """
+     import datetime as dt
+ 
+     original_value = value
+@@ -535,16 +616,36 @@ def precisedelta(
+     '0 minutes'
+ 
+     ```
++
++    Args:
++        value (datetime.timedelta, int or float): A timedelta or a number of
++            seconds.
++        minimum_unit (str): The smallest unit the result may use. It is only a
++            floor: the function readjusts upwards to the greatest unit that
++            loses no precision.
++        suppress (iterable of str): Unit names to leave out of the result. The
++            time they carried is absorbed by the units that remain.
++        format (str): A format string applied to the fractional part of the
++            smallest unit shown.
++
++    Returns:
++        str: A precise representation of the amount of time elapsed, unless
++            `value` is not a datetime.timedelta and cannot be converted to one.
++            In that case, `value` is returned unchanged as a string.
++
++    Raises:
++        OverflowError: If `value` is too large to convert to datetime.timedelta.
++        ValueError: If `minimum_unit` or any entry of `suppress` is not a unit name.
+     """
+     date, delta = _date_and_delta(value, precise=True)
+     if date is None:
+         return str(value)
+ 
+-    suppress_set = {Unit[s.upper()] for s in suppress}
++    suppress_set = {_unit_named(s) for s in suppress}
+ 
+     # Find a suitable minimum unit (it can be greater than the one that the
+     # user gave us, if that one is suppressed).
+-    min_unit = Unit[minimum_unit.upper()]
++    min_unit = _unit_named(minimum_unit)
+     min_unit = _suitable_minimum_unit(min_unit, suppress_set)
+     del minimum_unit
+ 
+diff --git a/tests/test_filesize.py b/tests/test_filesize.py
+index e695639..0a6a505 100644
+--- a/tests/test_filesize.py
++++ b/tests/test_filesize.py
+@@ -4,6 +4,8 @@
+ 
+ from __future__ import annotations
+ 
++import math
++
+ import pytest
+ 
+ import humanize
+@@ -103,3 +105,44 @@ def test_naturalsize(test_args: list[int] | list[int | bool], expected: str) ->
+         test_args[0] = f"-{test_args[0]}"
+ 
+     assert humanize.naturalsize(*test_args) == "-" + expected
++
++
++def test_byte_counts_beyond_float_range() -> None:
++    # float() answers a byte count past its range with OverflowError from an
++    # integer and with inf from a decimal string; both used to reach the output.
++    n = 10**320
++    assert humanize.naturalsize(n) == humanize.naturalsize(str(n))
++    assert humanize.naturalsize(n) == humanize.naturalsize("1e320")
++    assert "inf" not in humanize.naturalsize(n)
++    # 10**320 bytes is 10**290 QB, so the integer part carries 291 digits and
++    # opens with a 1; the trailing digits are the float mantissa's own, exactly
++    # as they are for any other value this side of float range.
++    mantissa = humanize.naturalsize(n).removesuffix(" QB").removesuffix(".0")
++    assert len(mantissa) == 291
++    assert mantissa.startswith("1")
++    assert humanize.naturalsize(-n) == "-" + humanize.naturalsize(n)
++    # Past the largest suffix no float mantissa is left, and saying so beats
++    # printing "inf QB".
++    with pytest.raises(ValueError, match="too large to express in QB"):
++        humanize.naturalsize(10**400)
++    with pytest.raises(ValueError, match="too large to express in Q:"):
++        humanize.naturalsize(10**400, gnu=True)
++
++
++@pytest.mark.parametrize(
++    "test_input, expected",
++    [
++        (math.nan, "NaN"),
++        (math.inf, "+Inf"),
++        (-math.inf, "-Inf"),
++        ("nan", "NaN"),
++        ("inf", "+Inf"),
++        ("-inf", "-Inf"),
++    ],
++)
++def test_naturalsize_not_finite(test_input: float | str, expected: str) -> None:
++    # Every humanize.number entry names a non-finite value; naturalsize used to
++    # raise on nan and print "inf QB" on an infinity.
++    assert humanize.naturalsize(test_input) == expected
++    assert humanize.naturalsize(test_input, binary=True) == expected
++    assert humanize.naturalsize(test_input, gnu=True) == expected
+diff --git a/tests/test_lists.py b/tests/test_lists.py
+index cc514f3..ad47d3a 100644
+--- a/tests/test_lists.py
++++ b/tests/test_lists.py
+@@ -22,3 +22,18 @@ def test_natural_list(
+     test_args: list[str] | list[int] | list[str | int], expected: str
+ ) -> None:
+     assert humanize.natural_list(*test_args) == expected
++
++
++def test_natural_list_accepts_any_iterable() -> None:
++    # The signature documents an iterable, but len() and slicing made it a
++    # sequence in practice, so a generator raised TypeError.
++    assert (
++        humanize.natural_list(x for x in ["one", "two", "three"])
++        == "one, two and three"
++    )
++    assert humanize.natural_list(x for x in ["one", "two"]) == "one and two"
++    assert humanize.natural_list(x for x in ["one"]) == "one"
++    empty: list[str] = []
++    assert humanize.natural_list(x for x in empty) == ""
++    assert humanize.natural_list(iter(["one", "two"])) == "one and two"
++    assert humanize.natural_list(n for n in range(3)) == "0, 1 and 2"
+diff --git a/tests/test_number.py b/tests/test_number.py
+index 78639c3..24aa435 100644
+--- a/tests/test_number.py
++++ b/tests/test_number.py
+@@ -240,10 +240,20 @@ def test_scientific(test_args: list[typing.Any], expected: str) -> None:
+         ([-math.inf], "-Inf"),
+     ],
+ )
+-def test_clamp(test_args: list[typing.Any], expected: str) -> None:
++def test_clamp(test_args: list[typing.Any], expected: str | None) -> None:
+     assert humanize.clamp(*test_args) == expected
+ 
+ 
++def test_clamp_annotations_admit_none() -> None:
++    # clamp returns None for None and its published example asserts that; the
++    # package ships py.typed, so the annotation a consumer's checker reads has
++    # to admit it on both the argument and the result.
++    hints = typing.get_type_hints(humanize.clamp)
++    assert hints["value"] == (float | None)
++    assert hints["return"] == (str | None)
++    assert humanize.clamp(None) is None
++
++
+ @pytest.mark.parametrize(
+     "test_args, expected",
+     [
+@@ -315,3 +325,121 @@ def test_clamp(test_args: list[typing.Any], expected: str) -> None:
+ )
+ def test_metric(test_args: list[typing.Any], expected: str) -> None:
+     assert humanize.metric(*test_args) == expected
++
++
++def test_integers_beyond_float_range() -> None:
++    # An integer larger than a float can hold is still an exact integer: it must
++    # format, not raise OverflowError and not degrade to "+Inf" via float().
++    n = math.factorial(200)
++    assert humanize.intcomma(n) == format(n, ",")
++    assert humanize.intcomma(str(n)) == format(n, ",")
++    assert humanize.intcomma(n, 0) == format(n, ",")
++    assert humanize.intcomma(n, 2) == format(n, ",") + ".00"
++    assert humanize.ordinal(n) == f"{n}th"
++    assert humanize.ordinal(str(n)) == f"{n}th"
++    assert humanize.apnumber(n) == str(n)
++    assert humanize.intword(n).endswith(" googol")
++    assert humanize.intword(-n).startswith("-")
++
++
++def test_scientific_zero_keeps_a_zero_exponent() -> None:
++    # The exact-integer branch routed 0 through Decimal, whose ".2e" format
++    # renders it "0.00e+2" because zero carries no significant digit to anchor
++    # the exponent, so scientific(0) read "0.00 x 10²" while scientific(0.0)
++    # read "0.00 x 10⁰".
++    for zero in (0, "0", False, -0, 0.0):
++        assert humanize.scientific(zero) == "0.00 x 10⁰"
++    assert humanize.scientific(-0.0) == "-0.00 x 10⁰"
++    assert humanize.scientific(0, 0) == "0 x 10⁰"
++    assert humanize.scientific(0, 3) == "0.000 x 10⁰"
++
++
++@pytest.mark.parametrize(
++    "fn",
++    [
++        humanize.intcomma,
++        humanize.intword,
++        humanize.ordinal,
++        humanize.apnumber,
++        humanize.fractional,
++        humanize.scientific,
++        humanize.metric,
++        humanize.naturalsize,
++    ],
++)
++def test_bool_formats_as_the_int_it_is(fn: typing.Callable[[typing.Any], str]) -> None:
++    # bool is an int subclass, so every formatter that coerces its operand to a
++    # number must answer for True exactly as it answers for 1. clamp is not in
++    # this list: it formats through a format string, where "{:}".format(True)
++    # is "True" by design.
++    assert fn(True) == fn(1)
++    assert fn(False) == fn(0)
++
++
++def test_intword_past_googol_names_the_limit() -> None:
++    # intword divides by its largest power before formatting, so past about
++    # 1.8e408 the division itself overflows. The answer there is a 300-digit
++    # mantissa, so the limit is named rather than the range widened - the same
++    # contract naturalsize has past its largest suffix.
++    assert humanize.intword(10**408).endswith(" googol")
++    for value in (10**409, -(10**409), 10**500):
++        with pytest.raises(ValueError, match="too large to express in googol"):
++            humanize.intword(value)
++
++
++def test_exact_integers_keep_their_digits() -> None:
++    # float rounds an integer above 2**53 and cannot hold one past about
++    # 1.8e308; an exact integer must keep its own digits either way.
++    n = math.factorial(200)
++    assert humanize.scientific(n) == "7.89 x 10³⁷⁴"
++    assert humanize.scientific(str(n)) == "7.89 x 10³⁷⁴"
++    assert humanize.metric(n) == "7.89 x 10³⁷⁴"
++    assert humanize.fractional(n) == str(n)
++    assert humanize.fractional(str(n)) == str(n)
++    assert humanize.fractional(10**30) == str(10**30)
++    assert humanize.fractional(2**53 + 1) == str(2**53 + 1)
++    assert humanize.clamp(n) == str(n)
++    assert humanize.clamp(n, floor=1e6) == str(n)
++    # zero has no whole part to print, exactly as a float zero has none
++    assert humanize.fractional(0) == humanize.fractional(0.0)
++
++
++@pytest.mark.parametrize(
++    "test_input, expected",
++    [
++        (-1, "-1st"),
++        (-2, "-2nd"),
++        (-3, "-3rd"),
++        (-4, "-4th"),
++        (-11, "-11th"),
++        (-12, "-12th"),
++        (-13, "-13th"),
++        (-21, "-21st"),
++        (-101, "-101st"),
++        (-111, "-111th"),
++        (-1002, "-1002nd"),
++    ],
++)
++def test_ordinal_negative(test_input: int, expected: str) -> None:
++    # Python's modulo on a negative returns the positive remainder, so -1 % 10
++    # is 9; the suffix has to come from the magnitude or every negative takes
++    # "th".
++    assert humanize.ordinal(test_input) == expected
++
++
++@pytest.mark.parametrize("name", ["metric", "clamp"])
++@pytest.mark.parametrize("value", ["1234567", "-42", "1.5", "abc", "", "inf", "nan"])
++def test_numeric_only_formatters_refuse_a_string(name: str, value: str) -> None:
++    # Both document an int-or-float operand. _not_finite classifies an exact
++    # integer as finite without converting it, so a numeric string used to
++    # reach arithmetic and fail naming abs(), or slip through clamp unchanged.
++    with pytest.raises(TypeError, match="must be real number, not str"):
++        getattr(humanize, name)(value)
++
++
++@pytest.mark.parametrize("name", ["metric", "clamp"])
++def test_numeric_only_formatters_still_take_a_huge_int(name: str) -> None:
++    # The refusal must convert nothing: a check that reached float() would
++    # answer a 400-digit integer with OverflowError, which is exactly what the
++    # exact-integer path exists to avoid.
++    assert "inf" not in getattr(humanize, name)(10**400).lower()
+diff --git a/tests/test_time.py b/tests/test_time.py
+index 7699770..4fc9a30 100644
+--- a/tests/test_time.py
++++ b/tests/test_time.py
+@@ -828,6 +828,23 @@ def test_precisedelta_bogus_call() -> None:
+         humanize.naturaldelta(1, minimum_unit="years")
+ 
+ 
++@pytest.mark.parametrize(
++    "call",
++    [
++        lambda: humanize.naturaldelta(1, minimum_unit="foo"),
++        lambda: humanize.naturaltime(1, minimum_unit="foo"),
++        lambda: humanize.precisedelta(1, minimum_unit="foo"),
++        lambda: humanize.precisedelta(1, suppress=["foo"]),
++    ],
++)
++def test_unknown_unit_names_the_value(call: typing.Callable[[], str]) -> None:
++    # Indexing Unit directly raised KeyError('FOO'), which named neither the
++    # value the caller gave nor the ones it could have given, and differed from
++    # the ValueError a known-but-unsupported unit already raised.
++    with pytest.raises(ValueError, match="Unknown unit 'foo'. Valid units are: "):
++        call()
++
++
+ def test_time_unit() -> None:
+     years, minutes = time.Unit["YEARS"], time.Unit["MINUTES"]
+     assert minutes < years
+@@ -852,3 +869,38 @@ def test_time_unit() -> None:
+ )
+ def test_rounding_by_fmt(fmt: str, value: float, expected: float) -> None:
+     assert time._rounding_by_fmt(fmt, value) == pytest.approx(expected)
++
++
++@pytest.mark.parametrize("seconds", [6.3e10, 1e11, 1e13, 8.6e13])
++def test_delta_beyond_the_calendar(seconds: float) -> None:
++    # A timedelta spans about 2.7 million years and a datetime about 10
++    # thousand, so naturaltime and precisedelta used to raise OverflowError on
++    # deltas naturaldelta formats, because _date_and_delta built a datetime it
++    # only needed for tense.
++    assert humanize.naturaltime(seconds) == humanize.naturaldelta(seconds) + " ago"
++    assert humanize.naturaltime(seconds, future=True) == (
++        humanize.naturaldelta(seconds) + " from now"
++    )
++    assert isinstance(humanize.precisedelta(seconds), str)
++
++
++def test_delta_beyond_the_calendar_keeps_tense() -> None:
++    assert humanize.naturaltime(dt.timedelta(seconds=1e11)) == "3,170 years ago"
++    assert humanize.naturaltime(-dt.timedelta(seconds=1e11)) == "3,170 years from now"
++
++
++@pytest.mark.parametrize("name", ["naturaldelta", "naturaltime", "precisedelta"])
++@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
++def test_non_finite_seconds_come_back_unchanged(name: str, value: float) -> None:
++    # Each Returns section promises that a value which cannot be converted to
++    # int comes back unchanged. nan always did, because int(nan) raises
++    # ValueError; both infinities used to escape as OverflowError instead.
++    assert getattr(humanize, name)(value) == str(value)
++
++
++@pytest.mark.parametrize("name", ["naturaldelta", "naturaltime", "precisedelta"])
++def test_delta_beyond_timedelta_range_refuses(name: str) -> None:
++    # timedelta.max is 999999999 days, or 8.64e13 seconds. Past it all three
++    # refuse alike, which is the documented OverflowError.
++    with pytest.raises(OverflowError):
++        getattr(humanize, name)(1e14)
+diff --git a/tox.ini b/tox.ini
+index 1e50273..5de97dd 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -41,6 +41,3 @@ deps =
+     -r requirements-mypy.txt
+ commands =
+     mypy . {posargs}
+-
+-[pytest]
+-addopts = --color=yes --doctest-modules

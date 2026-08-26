@@ -108,6 +108,7 @@ loss rather than hiding it.
 |---|---:|---:|---|---:|
 | TOML decoder | 1 | 11 | converged | 0 |
 | gitignore matcher | 5 | 42 | converged | 3 |
+| humanize | 3 | 30 | converged | evaluator countersigned | 0 |
 | TOML-M (mutated spec) | 1 | 14 | converged, with a disclosed process violation | 0 |
 
 ## The convergence standard is not uniform, and here is the split
