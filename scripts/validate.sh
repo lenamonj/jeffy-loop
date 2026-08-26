@@ -339,6 +339,11 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "provoking a failure at every step" \
   "re-executes the claims it invalidates" \
   "write a line number into a state file"
+check_markers skills/jeffy/hooks/stop-hook.sh \
+  "jeffy_readme_measurements_violation"
+check_markers skills/jeffy/references/iteration-prompt.txt \
+  "never a REJECT reason by itself" \
+  "defects in the product or in the claims the declaration rests on"
 # The hook's two named notes. The model is taught to read both by name - the
 # run-state arithmetic on every re-feed, the one-time closing extension at the
 # budget boundary - so the names are an interface, not internal wording, and
@@ -6694,6 +6699,70 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook refused a declaration over 'returns 0', an exit status the table has no reason to carry"
     fi
     rm -f "$hb_state"
+
+    # ---------------------------------------------------------------------
+    # 1.18.3 (P1-68): a battery README states a measurement only as a claims
+    # value. nanoid drew three gate REJECTs on numbers its own battery READMEs
+    # stated in prose ("3 checks red" where the procedure reddens 4) while
+    # the P1-65 form check saw a claims file and passed. The hook now derives
+    # that every `x/y checks passed` phrase a touched README states is the
+    # <value> of some claims line in that battery, and refuses the standalone
+    # `N checks red` form as a count no command returns. Untouched READMEs
+    # are outside it (the P1-65 scope), so the corpus is not refused by an
+    # upgrade.
+    # ---------------------------------------------------------------------
+    hb_write_battery() { # $1 battery, $2 README body, $3 claims body
+      mkdir -p "$hb_proj/.jeffy/probes/$1"
+      printf '%s\n' "$2" > "$hb_proj/.jeffy/probes/$1/README.md"
+      printf '%s\n' "$3" > "$hb_proj/.jeffy/probes/$1/claims"
+    }
+    hb_declare() { # commit the tree, then declare on HEAD with base_head = hb_c1
+      hb_write_evaluator_artifact
+      hb_git add -A >/dev/null; hb_git commit -qm "$1"
+      hb_write_journal 1 3
+      hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+      hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    }
+    hb_write_plan none
+    # shellcheck disable=SC2016
+    hb_write_battery mbat '# mbat
+## Observed failing
+- with the guard removed: `mbat: 3/5 checks passed`, exit 1.' 'expect mbat: 5/5 checks passed :: echo "mbat: 5/5 checks passed"'
+    hb_declare m1
+    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "mbat: 3/5 checks passed"; then
+      pass "stop hook refuses a declaration over a battery README measurement no claims line carries, by phrase (P1-68)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a README-stated measurement (3/5 checks passed) that no claims line derives"
+    fi
+    rm -f "$hb_state"
+    # shellcheck disable=SC2016
+    hb_write_battery mbat '# mbat
+## Observed failing
+- with the guard removed: `mbat: 3/5 checks passed`, exit 1.' 'expect mbat: 5/5 checks passed :: echo "mbat: 5/5 checks passed"
+expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
+    hb_declare m2
+    if [ ! -f "$hb_state" ] && ! printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "checks passed"; then
+      pass "stop hook accepts a README measurement that is the value of a claims line in its battery (P1-68 control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused a README measurement its claims file carries verbatim"
+    fi
+    rm -f "$hb_state"
+    hb_write_battery mbat '# mbat
+## Observed failing
+- with the guard removed: 2 checks red, exit 1.' 'expect mbat: 5/5 checks passed :: echo "mbat: 5/5 checks passed"'
+    hb_declare m3
+    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "2 checks red"; then
+      pass "stop hook refuses the standalone 'N checks red' form as a count no command returns (P1-68)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook passed 'N checks red' prose in a battery README"
+    fi
+    rm -f "$hb_state"
+    rm -rf "$hb_proj/.jeffy/probes/mbat"
+    hb_git add -A >/dev/null; hb_git commit -qm m4 >/dev/null
 
     rm -rf "$hb_tmp"
   fi

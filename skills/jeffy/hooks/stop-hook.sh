@@ -341,6 +341,42 @@ $(git -C "$1" diff --name-only --relative "$2" HEAD -- '.jeffy/probes/*/README.m
 EOF
 }
 
+# 1.18.3 (P1-68): a battery README states a measurement only as a claims
+# value. The P1-65 form check proved a claims file exists and parses; it said
+# nothing about whether the numbers the README states are among the values
+# that file executes, and a target drew three gate REJECTs on exactly that
+# ("3 checks red" where its own procedure reddens 4). This helper DERIVES,
+# never executes: for every battery README this run wrote or edited, each
+# `<battery>: x/y checks passed` phrase must be the <value> of some claims
+# line in that battery, and the standalone `N checks red` / `N checks
+# reddened` form is refused as a count no command returns - write the
+# summary line the battery prints instead. Untouched READMEs are outside it.
+jeffy_readme_measurements_violation() { # $1 project root, $2 base commit
+  [ -n "$2" ] || return 0
+  git -C "$1" rev-parse --verify --quiet "$2^{commit}" >/dev/null 2>&1 || return 0
+  while IFS= read -r jrm_readme; do
+    [ -n "$jrm_readme" ] || continue
+    jrm_dir="${jrm_readme%/README.md}"
+    [ -f "$1/$jrm_readme" ] || continue
+    jrm_red="$(tr -d '\r' < "$1/$jrm_readme" | grep -oE '[0-9]+ checks? (red|reddened)' | head -n 1)"
+    if [ -n "$jrm_red" ]; then
+      printf '%s' "$jrm_readme states '$jrm_red', a count no command returns; a battery README states a measurement only as the summary line its battery prints (<battery>: x/y checks passed), and that line is the <value> of a claims line in $jrm_dir/claims that skills/jeffy/hooks/lib/check-claims.sh executes (P1-68)"
+      return 0
+    fi
+    while IFS= read -r jrm_phrase; do
+      [ -n "$jrm_phrase" ] || continue
+      if ! grep -qF -- "expect $jrm_phrase ::" "$1/$jrm_dir/claims" 2>/dev/null; then
+        printf '%s' "$jrm_readme states '$jrm_phrase' and no line of $jrm_dir/claims carries it as its <value>; a battery README states a measurement only as a claims value skills/jeffy/hooks/lib/check-claims.sh executes - add 'expect $jrm_phrase :: <mutate; run; restore>' or remove the number (P1-68)"
+        return 0
+      fi
+    done <<EOF
+$(tr -d '\r' < "$1/$jrm_readme" | grep -oE '[A-Za-z0-9_.-]+: [0-9]+/[0-9]+ checks passed' | sort -u)
+EOF
+  done <<EOF
+$(git -C "$1" diff --name-only --relative "$2" HEAD -- '.jeffy/probes/*/README.md' 2>/dev/null; git -C "$1" ls-files --others --exclude-standard -- '.jeffy/probes/*/README.md' 2>/dev/null)
+EOF
+}
+
 # 1.18.2 (P1-67): a count a governance document states is an executable
 # claim. PLAN.md carries a Stated counts table - rows `label|stated|command`
 # inside a COUNTS heredoc, executed by hooks/lib/check-claims.sh - and prose
@@ -905,6 +941,11 @@ if [ -n "$promise" ]; then
       if [ -z "$violation" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         cf_v="$(jeffy_claims_form_violation "$root" "$(fm base_head)")"
         [ -n "$cf_v" ] && violation="$cf_v"
+      fi
+      # P1-68: the numbers a touched battery README states are claims values.
+      if [ -z "$violation" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        rm_v="$(jeffy_readme_measurements_violation "$root" "$(fm base_head)")"
+        [ -n "$rm_v" ] && violation="$rm_v"
       fi
       # P1-67 on the declaration path: a count PLAN.md or BACKLOG.md states
       # that the Stated counts table does not carry. Derived from the text,
