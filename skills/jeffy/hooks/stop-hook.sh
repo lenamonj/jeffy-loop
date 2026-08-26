@@ -38,9 +38,17 @@ JEFFY_LOOP_MEMORY_RE='^(PLAN\.md|BACKLOG\.md|JOURNAL\.md|JOURNAL-archive\.md|\.j
 # cannot do this: every iteration writes a journal entry, so the plain hash
 # always differs and an oscillating run looks like a progressing one forever.
 jeffy_content_tree_hash() { # $1 project root
-  git -C "$1" ls-tree -r HEAD 2>/dev/null | awk -F'\t' -v re="$JEFFY_LOOP_MEMORY_RE" '
-    NF == 2 && $2 !~ re { print $1 "\t" $2 }
-  ' | cksum | tr ' \t' '--'
+  # The pattern reaches awk through the environment rather than through -v,
+  # because awk applies its own escape processing to a -v assignment: every
+  # backslash-escaped dot above arrived here as a plain dot, so this site
+  # matched a wider pattern than the three grep -E readers of the same
+  # variable, and gawk announced the difference on stderr at every turn end.
+  # One definition has to mean one thing, which is what the comment above it
+  # already claimed. (AA1)
+  git -C "$1" ls-tree -r HEAD 2>/dev/null \
+    | JEFFY_LOOP_MEMORY_RE="$JEFFY_LOOP_MEMORY_RE" awk -F'\t' '
+        NF == 2 && $2 !~ ENVIRON["JEFFY_LOOP_MEMORY_RE"] { print $1 "\t" $2 }
+      ' | cksum | tr ' \t' '--'
 }
 
 # The primary journal type of one iteration of this run - the task id or the
