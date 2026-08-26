@@ -30,11 +30,15 @@ paragraph asserts every figure escapes. What is written is each figure against t
 claims line that carries it - the 0 of the wall-ceiling admit run, the 0 of the
 memory-ceiling admit run, the exit 2 of a refused ceiling, and the ones recorded as
 verdicts rather than as numbers, defaults-ok, wall-ok and mem-ok, for the reason
-below. Every integer and number word in this file resolves to one of four
-things, which X3 checked by extracting them all: a claims value, a value inside a
-claims command, an input to a mutation the Observed failing record names, or the
-sweep bar's own count of how many values a parameter is exercised at. Nothing here
-counts this battery's claims.
+below. Every figure stated in this file resolves to a claims value, a value
+inside a claims command, an input to a mutation the Observed failing record names,
+or the count of values the sweep bar exercises a parameter at, which X3 classified
+by extracting them. That reading covers less than the sentence used to claim: it
+said every integer and number word, and running the extraction reports a number
+word used as an English selector rather than as a figure, which no such class
+resolves. The narrower property is enforced rather than classified, by the claims
+line beside the check-claims README: nothing in this file counts this battery's
+claims.
 
 The wall kill, the memory kill and the defaults pair were host-dependent expected
 values until V2, and a claims file that records one blocks convergence on the hosts
@@ -57,7 +61,7 @@ memory verdicts each mismatch naming the notice that went missing.
 
 Where no systemd user scope is reachable the memory dimension is not exercised,
 and where neither timeout(1) nor gtimeout(1) is on PATH the wall dimension is not
-either. The battery says so on stdout in both cases instead of passing over a
+either. The battery says so on stdout in each case instead of passing over a
 dimension in silence, and in both it asserts the degradation was announced on
 stderr, because a ceiling that turns itself off quietly is the failure this whole
 instrument exists to make visible. The wall half of that was missing until V2:

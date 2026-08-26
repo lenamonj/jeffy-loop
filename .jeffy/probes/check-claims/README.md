@@ -6,8 +6,8 @@ reproduce. Every case asserts the exact stdout verdict line, the exact summary
 counts on stderr and the exit status together - not one of the three, because this
 instrument fails by reporting the wrong count as easily as by reporting the wrong
 verdict. No case total is spelled here: the table-driven cases are counted out of
-run.sh by the claims line beside this file, and the usage case is pinned by the
-other one, so the two measurements carry the population between them.
+run.sh by a claims line beside this file, and the usage case is pinned by
+another, so what carries the population is a measurement rather than a word.
 
 What is pinned, in the order the cases run: a claim that reproduces; a claim
 that no longer reproduces, which must be named with both the expected and the
@@ -20,14 +20,26 @@ status; a battery carrying no claims file checking nothing; and an absent
 project root refused at exit 2, which is deliberately distinct from the 1 that
 means a claim failed, so a caller can tell a broken invocation from a finding.
 
-Two measurements, and the claims file beside this one carries both rather than
-restating them: check-claims.sh exits 2 on an unusable project root, and the
+What this file records is carried by the claims file beside it rather than
+restated here: check-claims.sh exits 2 on an unusable project root, and the
 table-driven cases are counted out of run.sh. Neither is asserted as a total here:
 the exit status appears above only as the digit its own claims line expects, and
 the case count appears only inside the `expected 7 got a` fault string quoted from
 a driven mutation below, which is that same claims line's value coming back out of
-the instrument. A total written here as a total is one no command returns, and that
-is exactly how this README came to assert one that was wrong for two runs.
+the instrument. A total written here as a total is a figure no command returns, and
+that is exactly how this README came to assert one that was wrong for two runs.
+
+That rule is no longer prose. A claims line beside this file scans every battery
+README for a cardinal standing in a count position - a number word or digit
+followed, within a couple of words, by a noun naming this population - and expects
+to find none, so a total reintroduced into any battery README is reported by the
+very instrument this battery pins, at every gate and every declaration. Ordinals
+are outside it by construction: an ordinal names a position and never a
+population. It over-matches on purpose, which is why the sibling README says each
+case rather than counting them; a false positive costs one rewording, a false
+negative ships the class again. It was driven on the totals this file carried and
+on the ones the sibling carried before them, each reported, and on an ordinal
+written into the same position, silent.
 
 Observed failing: driven by mutation before it was trusted. Removing the
 malformed-line arm so an unrecognised line is skipped instead of erroring makes
