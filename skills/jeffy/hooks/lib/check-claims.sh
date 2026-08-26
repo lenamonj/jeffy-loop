@@ -61,7 +61,11 @@ while IFS= read -r d; do
     case "$line" in ''|none) continue ;; esac
     case "$line" in
       'expect '*' :: '*) ;;
-      *) echo "ERROR $bat: malformed claims line '$line'"; err=$((err + 1)); continue ;;
+      # A malformed line is a row this run read and rejected, so it counts as
+      # checked exactly as a row whose command errored does. Incrementing err
+      # alone broke both identities the output contract states, on the one row
+      # shape no ordinary run reaches. (AD1)
+      *) echo "ERROR $bat: malformed claims line '$line'"; err=$((err + 1)); checked=$((checked + 1)); continue ;;
     esac
     rest="${line#expect }"
     want="${rest%% :: *}"
@@ -102,7 +106,8 @@ while IFS= read -r line || [ -n "$line" ]; do
   [ -n "$line" ] || continue
   case "$line" in
     [a-z]*'|'*'|'*) ;;
-    *) echo "ERROR PLAN: malformed Stated counts row '$line' (label|stated|command)"; err=$((err + 1)); continue ;;
+    # Same as the claims loop above: read and rejected is checked. (AD1)
+    *) echo "ERROR PLAN: malformed Stated counts row '$line' (label|stated|command)"; err=$((err + 1)); checked=$((checked + 1)); continue ;;
   esac
   lbl="${line%%|*}"; rest="${line#*|}"; want="${rest%%|*}"; cmd="${rest#*|}"
   got="$(cd "$root" && bash "$probe" bash -c "$cmd" 2>/dev/null)"

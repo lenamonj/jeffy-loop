@@ -19,7 +19,11 @@ battery with nothing to check; a command that fails erroring with its own exit
 status; a row this host cannot derive being skipped rather than checked, with
 the summary reporting the skip count beside the checked one, since only that
 pair tells a host that compared every row apart from one that derived none of
-them; a battery carrying no claims file checking nothing; and an absent
+them; every row shape at once - a match, a mismatch, a command that errors, a
+malformed line and a host-unavailable row in one run - which is the only case
+that can hold the two identities the output contract states, that checked equals
+matched plus mismatched plus errored and that checked plus skipped is every row
+read; a battery carrying no claims file checking nothing; and an absent
 project root refused at exit 2, which is deliberately distinct from the 1 that
 means a claim failed, so a caller can tell a broken invocation from a finding.
 
@@ -60,7 +64,12 @@ malformed-line arm so an unrecognised line is skipped instead of erroring makes
 the malformed case fault on both the summary and the verdict; changing the
 comparison from the last non-empty line to the first makes the third case fault
 with `expected 7 got a`. Both were run against the shipped file and the file was
-restored byte-identical afterwards. The skip case was driven the same way and
+restored byte-identical afterwards. The all-shapes case was driven against the
+instrument as it stood before AD1, from a copy taken aside rather than by
+checking out over the fix: on the identical fixture it reports 3 checked where
+matched plus mismatched plus errored is 4, because a malformed row incremented
+errored and continued before the checked increment, so the identity failed on
+the one row shape no ordinary run reaches. The skip case was driven the same way and
 with an isolating mutation rather than a broad one, because a mutation that
 fells every case proves only that the file is read: counting a skipped row as
 checked again while leaving the summary's skip field in place fells that case

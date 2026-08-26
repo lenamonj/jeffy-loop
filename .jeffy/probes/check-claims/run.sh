@@ -51,7 +51,7 @@ ck "every line of a claims file is run, not the first" 0 \
 # whose syntax drifted must not read as a battery with nothing to check.
 printf 'this is not a claims line\n' > "$d/.jeffy/probes/alpha/claims"
 ck "a malformed line errors rather than skipping" 1 \
-   "claims: 0 checked, 0 mismatched, 1 errored, 0 skipped" "ERROR alpha: malformed claims line 'this is not a claims line';"
+   "claims: 1 checked, 0 mismatched, 1 errored, 0 skipped" "ERROR alpha: malformed claims line 'this is not a claims line';"
 
 printf 'expect 7 :: exit 4\n' > "$d/.jeffy/probes/alpha/claims"
 ck "a command that fails errors with its status" 1 \
@@ -75,6 +75,23 @@ ck "a row the host cannot derive is skipped and not checked, and the exit status
    "MATCH alpha: 7;SKIP PLAN:pdf-pages: unavailable:python3;MATCH PLAN:skill-paths: 8;"
 rm -f "$d/PLAN.md"
 
+# AD1: every row shape at once, which is the only case that can hold the two
+# identities the output contract states - checked equals matched plus
+# mismatched plus errored, and checked plus skipped is every row read. Neither
+# was pinned before, because no case put an errored row beside a matched one
+# and a skipped one, and the malformed shape was the one that broke both.
+printf 'expect 7 :: echo 7\nexpect 8 :: echo 9\nexpect 5 :: exit 4\nnot a claims line\n' > "$d/.jeffy/probes/alpha/claims"
+{
+  printf '# Plan\n\n## Verify command\nCommand: none\n\n'
+  printf "  done <<'COUNTS'\n"
+  printf 'pdf-pages|32|echo unavailable:python3\n'
+  printf 'COUNTS\n'
+} > "$d/PLAN.md"
+ck "every row shape at once, and both accounting identities hold" 1 \
+   "claims: 4 checked, 1 mismatched, 2 errored, 1 skipped" \
+   "MATCH alpha: 7;MISMATCH alpha: expected 8 got 9;ERROR alpha: exit 4 (exit 4);ERROR alpha: malformed claims line 'not a claims line';SKIP PLAN:pdf-pages: unavailable:python3;"
+rm -f "$d/PLAN.md"
+
 rm -f "$d/.jeffy/probes/alpha/claims" "$d/.jeffy/probes/beta/claims"
 ck "batteries carrying no claims file check nothing" 0 \
    "claims: 0 checked, 0 mismatched, 0 errored, 0 skipped" ""
@@ -85,5 +102,5 @@ bash "$CC" /no/such/directory >/dev/null 2>"$e"
 if [ "$?" != 2 ]; then echo "FAIL an absent project root is refused at 2"; fails=$((fails + 1)); fi
 
 rm -rf "$d" "$o" "$e"
-[ "$fails" -eq 0 ] && echo "check-claims battery ok: 8 table-driven cases plus the usage case" || echo "check-claims battery: $fails failure(s)"
+[ "$fails" -eq 0 ] && echo "check-claims battery ok: 9 table-driven cases plus the usage case" || echo "check-claims battery: $fails failure(s)"
 [ "$fails" -eq 0 ]
