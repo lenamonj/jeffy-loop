@@ -347,6 +347,18 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "provoking a failure at every step" \
   "re-executes the claims it invalidates" \
   "write a line number into a state file"
+# 1.19.1: a sed program in the hook or its libraries never uses the GNU-only
+# `\|` alternation. BSD sed on macOS reads it literally, so 1.19.0's severity
+# ceiling never fired there while Linux and Windows passed; shellcheck does
+# not see sed dialects. Derived from the text: any `sed` invocation whose
+# program carries a backslash-pipe is refused; `sed -E` with `(a|b)` is the
+# portable form.
+gnu_alt="$(grep -nE 'sed[^#]*\\[|]' skills/jeffy/hooks/stop-hook.sh skills/jeffy/hooks/lib/*.sh 2>/dev/null | head -n 1)"
+if [ -z "$gnu_alt" ]; then
+  pass "no sed program in the hook or its libraries uses the GNU-only backslash-pipe alternation (1.19.1: BSD sed reads it literally)"
+else
+  fault "sed program uses GNU-only backslash-pipe alternation, which BSD sed reads literally: ${gnu_alt:0:140}"
+fi
 check_markers skills/jeffy/hooks/stop-hook.sh \
   "jeffy_severity_class_violation() {" \
   "sv_v=\"\$(jeffy_severity_class_violation" \

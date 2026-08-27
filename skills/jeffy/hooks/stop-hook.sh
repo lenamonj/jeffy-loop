@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.19.0"
+JEFFY_VERSION="1.19.1"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -359,7 +359,7 @@ jeffy_severity_class_violation() { # $1 project root, $2 base commit
   while IFS= read -r jsc_line; do
     [ -n "$jsc_line" ] || continue
     jsc_id="$(printf '%s' "$jsc_line" | sed -n 's/^- \[[ x]\] \([A-Za-z0-9_-]*\) (.*/\1/p')"
-    jsc_class="$(printf '%s' "$jsc_line" | sed -n 's/^- \[[ x]\] [A-Za-z0-9_-]* (\(High\|Medium\), *\([a-z-]*\).*/\2/p')"
+    jsc_class="$(printf '%s' "$jsc_line" | sed -E -n 's/^- \[[ x]\] [A-Za-z0-9_-]* \((High|Medium), *([a-z-]*).*/\2/p')"
     case "$jsc_class" in
       test|dev-tooling)
         printf '%s' "BACKLOG.md task $jsc_id is scored High or Medium with class $jsc_class; a user of the shipped product never runs tests or developer tooling, so the severity ceiling by class makes it a Low - re-score it, and put the iterations into what users meet"
@@ -371,7 +371,7 @@ jeffy_severity_class_violation() { # $1 project root, $2 base commit
         fi ;;
     esac
   done <<EOF
-$(git -C "$1" diff --unified=0 "$2" -- BACKLOG.md 2>/dev/null | tr -d '\r' | sed -n 's/^+\(- \[[ x]\] [A-Za-z0-9_-]* (\(High\|Medium\),.*\)$/\1/p')
+$(git -C "$1" diff --unified=0 "$2" -- BACKLOG.md 2>/dev/null | tr -d '\r' | sed -E -n 's/^\+(- \[[ x]\] [A-Za-z0-9_-]* \((High|Medium),.*)$/\1/p')
 EOF
 }
 
