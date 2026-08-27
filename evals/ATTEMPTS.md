@@ -1313,5 +1313,10 @@ named a README-stated measurement as a REJECT reason. Both were changed in
 1.18.3 before its push - a README's measured phrases are now claims values
 the hook derives and the tool executes, and the gate rejects on the product
 or on the claims the declaration rests on, never on the loop's notebook -
-and nanoid was re-run on a fresh tree under that engine. This record stands
-as it happened.
+and nanoid was re-run on a fresh tree under that engine as a regression test
+of that change, not as a study run: it converged in 12 iterations with two
+Highs and four Mediums closed and the gate passing on the product, and the
+product-only patch from that tree is published here as `nanoid/fixes.patch`.
+It is not counted as a convergence and carries no receipt, because an engine
+changed with a target's verdicts in hand cannot be accepted on that target.
+This record stands as it happened.

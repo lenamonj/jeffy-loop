@@ -200,6 +200,10 @@ check_markers() {
 }
 check_markers skills/jeffy/references/plan-default.md \
   "## Operating envelope" \
+  "judge by the consequence a user of the shipped product meets" \
+  "Severity ceiling by class:" \
+  "a documented promise the code does not keep" \
+  "everything a user of the shipped product never meets" \
   "observed failing on" \
   "then unswept or stale Surface inventory rows, then open Medium" \
   "never the mapping of unswept surface" \
@@ -269,6 +273,10 @@ check_markers skills/jeffy/references/journal-default.md \
   "so two runs in one session are told apart" \
   "or AUDIT or SWEEP or EVALUATOR or RATCHET"
 check_markers skills/jeffy/references/iteration-prompt.txt \
+  "your scope is what this run found and says it fixed, nothing wider" \
+  "confirm it failed there" \
+  "do not audit the project for findings of your own" \
+  "names what a user of the shipped product meets" \
   "Salvage first:" \
   "ignoring any path under .jeffy/metrics/, which the Stop hook writes after every checkpoint" \
   "To declare convergence, and only then, output the run report" \
@@ -340,6 +348,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "re-executes the claims it invalidates" \
   "write a line number into a state file"
 check_markers skills/jeffy/hooks/stop-hook.sh \
+  "jeffy_severity_class_violation() {" \
+  "sv_v=\"\$(jeffy_severity_class_violation" \
   "jeffy_readme_measurements_violation"
 check_markers skills/jeffy/references/iteration-prompt.txt \
   "never a REJECT reason by itself" \
@@ -1305,7 +1315,7 @@ fi
 #      rule once and nothing else paraphrases it.
 if [ -f "$prompt_file" ]; then
   p02_ok=1
-  for p02_clause in 'zero open High and zero open Medium' 'lists each carried Low by ID' 're-score the severity of every open and carried finding'; do
+  for p02_clause in 'zero open High and zero open Medium' 'lists each carried Low by ID' 're-score those closed tasks and every open or carried High or Medium'; do
     p02_n="$(grep -oF -- "$p02_clause" "$prompt_file" | wc -l | tr -d '[:space:]')"
     if [ "$p02_n" != "1" ]; then
       p02_ok=0
@@ -6763,6 +6773,57 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     rm -f "$hb_state"
     rm -rf "$hb_proj/.jeffy/probes/mbat"
     hb_git add -A >/dev/null; hb_git commit -qm m4 >/dev/null
+
+    # ---------------------------------------------------------------------
+    # 1.19.0: the severity ceiling by class. A High or Medium names what a
+    # user of the shipped product meets: a task of class test or dev-tooling
+    # is Low always, and a High or Medium of class docs or build-ci states
+    # its Consequence on the line. Derived from the BACKLOG.md task lines
+    # this run added since its base commit; carried lines are outside it.
+    # ---------------------------------------------------------------------
+    hb_declare_with_task() { # $1 commit label, $2 task line to file this run
+      hb_write_evaluator_artifact
+      hb_git add -A >/dev/null; hb_git commit -qm "$1"
+      hb_write_journal 1 3
+      hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+      hb_write_backlog "$2" "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    }
+    hb_write_plan none
+    hb_declare_with_task s1 '- [x] T1 (Medium, test, testing): the suite has no case for the empty input. Acceptance: a test exists.'
+    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "task T1 is scored High or Medium with class test"; then
+      pass "stop hook refuses a declaration over a Medium of class test filed this run (1.19.0 severity ceiling by class)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a test-class Medium, which a user of the shipped product never meets"
+    fi
+    rm -f "$hb_state"
+    hb_declare_with_task s2 '- [x] D1 (Medium, docs, documentation): the README documents a flag the CLI does not accept. Acceptance: the README names only accepted flags.'
+    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "task D1 is scored High or Medium with class docs and states no Consequence"; then
+      pass "stop hook refuses a docs-class Medium filed this run that states no Consequence (1.19.0)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a docs-class Medium with no Consequence stated"
+    fi
+    rm -f "$hb_state"
+    hb_declare_with_task s3 '- [x] D2 (Medium, docs, documentation): the README documents a flag the CLI does not accept. Consequence: a user following the README gets a usage error. Acceptance: the README names only accepted flags.'
+    if [ ! -f "$hb_state" ] && ! printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "severity ceiling"; then
+      pass "stop hook accepts a docs-class Medium that states its Consequence (1.19.0 control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused a docs-class Medium that states what a user meets"
+    fi
+    rm -f "$hb_state"
+    hb_declare_with_task s4 '- [x] R1 (Medium, runtime, correctness): parse() returns null for a trailing comma. Acceptance: node -e test exits 0.'
+    if [ ! -f "$hb_state" ] && ! printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "severity ceiling"; then
+      pass "stop hook accepts a runtime-class Medium with no Consequence field (1.19.0 control: the ceiling is by class)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused a runtime Medium, which the ceiling never touches"
+    fi
+    rm -f "$hb_state"
+    hb_write_backlog '' ''
+    hb_git add -A >/dev/null; hb_git commit -qm s5 >/dev/null
 
     rm -rf "$hb_tmp"
   fi

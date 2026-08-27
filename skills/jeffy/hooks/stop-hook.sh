@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.18.3"
+JEFFY_VERSION="1.19.0"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -338,6 +338,40 @@ jeffy_claims_form_violation() { # $1 project root, $2 base commit
     fi
   done <<EOF
 $(git -C "$1" diff --name-only --relative "$2" HEAD -- '.jeffy/probes/*/README.md' 2>/dev/null; git -C "$1" ls-files --others --exclude-standard -- '.jeffy/probes/*/README.md' 2>/dev/null)
+EOF
+}
+
+# 1.19.0: the severity ceiling by class. Runs spent a third of their
+# iterations on Mediums, and the late ones were mostly harness items - a
+# pytest config, a black line, a lint job, a coverage path - that a user of
+# the shipped product never meets, each costing an iteration plus an audit
+# plus a gate cycle. This helper DERIVES from the BACKLOG.md task lines this
+# run added since its base commit: a High or Medium of class test or
+# dev-tooling is refused, because the user never runs those; a High or Medium
+# of class docs or build-ci is refused unless its line states
+# `Consequence:`, what a user of the shipped product meets. Lines carried
+# from earlier runs are outside it - the audit re-scores those under the
+# rubric - so no tree is refused by an upgrade.
+jeffy_severity_class_violation() { # $1 project root, $2 base commit
+  [ -n "$2" ] || return 0
+  git -C "$1" rev-parse --verify --quiet "$2^{commit}" >/dev/null 2>&1 || return 0
+  [ -f "$1/BACKLOG.md" ] || return 0
+  while IFS= read -r jsc_line; do
+    [ -n "$jsc_line" ] || continue
+    jsc_id="$(printf '%s' "$jsc_line" | sed -n 's/^- \[[ x]\] \([A-Za-z0-9_-]*\) (.*/\1/p')"
+    jsc_class="$(printf '%s' "$jsc_line" | sed -n 's/^- \[[ x]\] [A-Za-z0-9_-]* (\(High\|Medium\), *\([a-z-]*\).*/\2/p')"
+    case "$jsc_class" in
+      test|dev-tooling)
+        printf '%s' "BACKLOG.md task $jsc_id is scored High or Medium with class $jsc_class; a user of the shipped product never runs tests or developer tooling, so the severity ceiling by class makes it a Low - re-score it, and put the iterations into what users meet"
+        return 0 ;;
+      docs|build-ci)
+        if ! printf '%s' "$jsc_line" | grep -q 'Consequence:'; then
+          printf '%s' "BACKLOG.md task $jsc_id is scored High or Medium with class $jsc_class and states no Consequence; a High or Medium of that class carries 'Consequence: <what a user of the shipped product meets>' on its line, and a line that cannot state one is a Low"
+          return 0
+        fi ;;
+    esac
+  done <<EOF
+$(git -C "$1" diff --unified=0 "$2" -- BACKLOG.md 2>/dev/null | tr -d '\r' | sed -n 's/^+\(- \[[ x]\] [A-Za-z0-9_-]* (\(High\|Medium\),.*\)$/\1/p')
 EOF
 }
 
@@ -946,6 +980,11 @@ if [ -n "$promise" ]; then
       if [ -z "$violation" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         rm_v="$(jeffy_readme_measurements_violation "$root" "$(fm base_head)")"
         [ -n "$rm_v" ] && violation="$rm_v"
+      fi
+      # 1.19.0: the severity ceiling by class, on the task lines this run filed.
+      if [ -z "$violation" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        sv_v="$(jeffy_severity_class_violation "$root" "$(fm base_head)")"
+        [ -n "$sv_v" ] && violation="$sv_v"
       fi
       # P1-67 on the declaration path: a count PLAN.md or BACKLOG.md states
       # that the Stated counts table does not carry. Derived from the text,
