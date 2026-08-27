@@ -109,6 +109,7 @@ loss rather than hiding it.
 | TOML decoder | 1 | 11 | converged | 0 |
 | gitignore matcher | 5 | 42 | converged | 3 |
 | humanize | 3 | 30 | converged | evaluator countersigned | 0 |
+| nanoid | 3 | 30 | **not converged** | n/a | 3 |
 | TOML-M (mutated spec) | 1 | 14 | converged, with a disclosed process violation | 0 |
 
 ## The convergence standard is not uniform, and here is the split
@@ -1276,3 +1277,41 @@ the REJECT reason is engine-derivable, because a rule that says
 "re-run every recorded measurement" was left to enumerate the set from
 a pattern invented at audit time instead of from the tree. The fix is
 filed as P1-65 and this run is its evidence.
+
+## nanoid, six rejections, three of them on the loop's own notes
+
+`ai/nanoid` (26,944 stars), the URL-safe unique id generator, ran on
+2026-08-26 as one of the two targets in the acceptance cohort for engine
+1.18.3 against a pre-registered three rounds of ten and spent all 30
+iterations without converging: **14 of 14 rows swept, 19 findings closed -
+3 High, 9 Medium, 7 Low** - with 1 Medium and 5 Low still open at close.
+The Highs were real and closed in round 1: alphabets the byte-based
+generators cannot sample looped forever or emitted the string `undefined`
+instead of being rejected at the one boundary they all reach; the browser
+build threw above Web Crypto's 65536-byte quota because it requested its
+entropy in one call; a string alphabet of astral symbols passed the 1..256
+guard by UTF-16 code-unit count and was then indexed by code unit, splitting
+surrogate pairs. The gate was invoked six times and rejected six times.
+Two of the six rejections were defects the run itself had introduced and
+were fixed on the iteration after: an oxlint ignore pattern that matched the
+published CLI by basename and silently removed it from the lint gate, and a
+branch the EPIPE fix added that no test drove, which took the file's branch
+coverage under the 100 percent the project's own gate requires while the
+journal entry closing the fix asserted the gate did not measure that file.
+A sixth was a measurement in a PLAN.md Lesson the run wrote at iteration 1
+and invalidated itself at iteration 3. The other three rejections carried
+one class, the same class that had cost `classnames` its convergence the
+day before: a measurement stated in prose in the loop's own battery README
+under `.jeffy/probes/` that its recorded procedure contradicts - "3 checks
+red" where re-running the mutation reddens 4, a "5 reddened" that is
+heap-dependent and returns 4 one run in nine, an ordinal left at "fourth"
+after the count beside it moved to 5. Nothing a user of nanoid runs or
+reads was wrong in any of the three. That is an engine finding, not a
+finding about nanoid: 1.18.0 had made a claims file mandatory for every
+battery but checked only that it existed and parsed, and the gate brief
+named a README-stated measurement as a REJECT reason. Both were changed in
+1.18.3 before its push - a README's measured phrases are now claims values
+the hook derives and the tool executes, and the gate rejects on the product
+or on the claims the declaration rests on, never on the loop's notebook -
+and nanoid was re-run on a fresh tree under that engine. This record stands
+as it happened.
