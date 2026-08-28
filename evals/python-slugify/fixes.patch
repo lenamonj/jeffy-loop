@@ -1,0 +1,423 @@
+diff --git a/.gitignore b/.gitignore
+index 6cc65d2..d308d4b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -60,3 +60,4 @@ docs/_build/
+ target/
+ 
+ *.*DS_Store
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index 0dfbd92..103aaa4 100644
+--- a/README.md
++++ b/README.md
+@@ -54,14 +54,21 @@ def slugify(
+   :param entities (bool): converts html entities to unicode (foo &amp; bar -> foo-bar)
+   :param decimal (bool): converts html decimal to unicode (&#381; -> Ž -> z)
+   :param hexadecimal (bool): converts html hexadecimal to unicode (&#x17D; -> Ž -> z)
+-  :param max_length (int): output string length
++  :param max_length (int): output string length, counted before a custom separator is
++      substituted - a separator longer than one character makes the result longer
+   :param word_boundary (bool): truncates to end of full words (length may be shorter than max_length)
+   :param save_order (bool): if parameter is True and max_length > 0 return whole words in the initial order
+   :param separator (str): separator between words
+-  :param stopwords (iterable): words to discount
++  :param stopwords (iterable): words to discount; a str or bytes raises TypeError, because
++      it would otherwise be read as one stopword per character
+   :param regex_pattern (str): regex pattern for disallowed characters
+   :param lowercase (bool): activate case sensitivity by setting it to False
+-  :param replacements (iterable): list of replacement rules e.g. [['|', 'or'], ['%', 'percent']]
++  :param replacements (iterable): list of replacement rules, rejected as a str or bytes for
++      the same reason as stopwords, applied to the input and again
++      to the finished slug, so a rule can target either; a rule that matched the input and
++      whose replacement contains its own pattern is withheld from the second pass only
++      inside an occurrence of that replacement
++      e.g. [['|', 'or'], ['%', 'percent'], ['-', '_']]
+   :param allow_unicode (bool): allow unicode characters
+   :return (str): slugify text
+   """
+diff --git a/dev.requirements.txt b/dev.requirements.txt
+index 5f94d7b..d8e8f55 100644
+--- a/dev.requirements.txt
++++ b/dev.requirements.txt
+@@ -1,3 +1,3 @@
+-pycodestyle==2.8.0
+-twine==3.4.1
+-flake8==4.0.1
+\ No newline at end of file
++pycodestyle==2.14.0
++twine==7.0.0
++flake8==7.3.0
+diff --git a/slugify/__main__.py b/slugify/__main__.py
+index 4cc4616..294889c 100644
+--- a/slugify/__main__.py
++++ b/slugify/__main__.py
+@@ -76,6 +76,7 @@ def slugify_params(args: argparse.Namespace) -> dict[str, Any]:
+         save_order=args.save_order,
+         separator=args.separator,
+         stopwords=args.stopwords,
++        regex_pattern=args.regex_pattern,
+         lowercase=args.lowercase,
+         replacements=args.replacements,
+         allow_unicode=args.allow_unicode
+diff --git a/slugify/slugify.py b/slugify/slugify.py
+index 09c7e07..9eb3ec5 100644
+--- a/slugify/slugify.py
++++ b/slugify/slugify.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import bisect
+ import re
+ import unicodedata
+ from collections.abc import Iterable
+@@ -24,6 +25,55 @@ NUMBERS_PATTERN = re.compile(r'(?<=\d),(?=\d)')
+ DEFAULT_SEPARATOR = '-'
+ 
+ 
++def _decode_numeric_reference(match: re.Match[str], base: int) -> str:
++    """
++    Decode one numeric character reference, leaving an undecodable one as it was.
++    chr() rejects values above U+10FFFF and int() rejects digit strings past the
++    interpreter's conversion limit; neither may cost the references around it.
++    """
++    try:
++        return chr(int(match.group(1), base))
++    except (ValueError, OverflowError):
++        return match.group(0)
++
++
++def _replace_outside_replacement(text: str, old: str, new: str) -> str:
++    """
++    Replace old with new, skipping any match that lies inside an occurrence of new.
++    Used for a rule whose replacement contains its own pattern, so the second
++    replacement pass reaches text the slug form supplies without rewriting the
++    replacement text the first pass already wrote.
++    """
++    occupied = []
++    start = 0
++    while True:
++        index = text.find(new, start)
++        if index < 0:
++            break
++        occupied.append(index)
++        start = index + 1
++
++    pieces = []
++    position = 0
++    while True:
++        index = text.find(old, position)
++        if index < 0:
++            break
++        end = index + len(old)
++        # Every occurrence of new is the same length, so among those starting at or before
++        # this match the latest one reaches furthest: it is the only one that can contain
++        # the match, and a binary search for it keeps this pass off a quadratic scan.
++        nearest = bisect.bisect_right(occupied, index) - 1
++        if nearest >= 0 and end <= occupied[nearest] + len(new):
++            pieces.append(text[position:end])
++        else:
++            pieces.append(text[position:index])
++            pieces.append(new)
++        position = end
++    pieces.append(text[position:])
++    return ''.join(pieces)
++
++
+ def smart_truncate(
+     string: str,
+     max_length: int = 0,
+@@ -34,7 +84,8 @@ def smart_truncate(
+     """
+     Truncate a string.
+     :param string (str): string for modification
+-    :param max_length (int): output string length
++    :param max_length (int): output string length; zero or negative truncates nothing,
++        which is the guard slugify() applies before it calls here
+     :param word_boundary (bool):
+     :param save_order (bool): if True then word order of output string is like input string
+     :param separator (str): separator between words
+@@ -43,7 +94,7 @@ def smart_truncate(
+ 
+     string = string.strip(separator)
+ 
+-    if not max_length:
++    if max_length <= 0:
+         return string
+ 
+     if len(string) < max_length:
+@@ -67,7 +118,8 @@ def smart_truncate(
+             else:
+                 if save_order:
+                     break
+-    if not truncated:  # pragma: no cover
++    if not truncated:
++        # every word is longer than the limit, so the word-boundary loop kept nothing
+         truncated = string[:max_length]
+     return truncated.strip(separator)
+ 
+@@ -93,22 +145,44 @@ def slugify(
+     :param entities (bool): converts html entities to unicode
+     :param decimal (bool): converts html decimal to unicode
+     :param hexadecimal (bool): converts html hexadecimal to unicode
+-    :param max_length (int): output string length
++    :param max_length (int): output string length, counted before a custom separator is
++        substituted - a separator longer than one character makes the result longer
+     :param word_boundary (bool): truncates to complete word even if length ends up shorter than max_length
+     :param save_order (bool): if parameter is True and max_length > 0 return whole words in the initial order
+     :param separator (str): separator between words
+-    :param stopwords (iterable): words to discount
++    :param stopwords (iterable): words to discount; a str or bytes raises TypeError, because
++        it would otherwise be read as one stopword per character
+     :param regex_pattern (str): regex pattern for disallowed characters
+     :param lowercase (bool): activate case sensitivity by setting it to False
+-    :param replacements (iterable): list of replacement rules e.g. [['|', 'or'], ['%', 'percent']]
++    :param replacements (iterable): list of replacement rules, rejected as a str or bytes for
++        the same reason as stopwords, applied to the input and again
++        to the finished slug, so a rule can target either; a rule that matched the input and
++        whose replacement contains its own pattern is withheld from the second pass only
++        inside an occurrence of that replacement
++        e.g. [['|', 'or'], ['%', 'percent'], ['-', '_']]
+     :param allow_unicode (bool): allow unicode characters
+     :return (str):
+     """
+ 
+-    # user-specific replacements
++    # One validation boundary for the two iterable options, because a str and a bytes are
++    # themselves iterable: stopwords then reads as one stopword per character and quietly
++    # matches nothing or everything, and replacements raises an unpacking error naming neither
++    # the option nor the mistake.
++    for option, value in (('stopwords', stopwords), ('replacements', replacements)):
++        if isinstance(value, (str, bytes)):
++            raise TypeError('%s must be an iterable of items, not a %s; '
++                            'wrap a single value in a list' % (option, type(value).__name__))
++
++    # user-specific replacements, applied to the input. A rule that fires here and whose
++    # replacement contains its own pattern is recorded, so the second pass below cannot
++    # rewrite the replacement text this pass wrote.
++    guarded = set()
+     if replacements:
+-        for old, new in replacements:
+-            text = text.replace(old, new)
++        for index, (old, new) in enumerate(replacements):
++            if old in text:
++                text = text.replace(old, new)
++                if old and old in new:
++                    guarded.add(index)
+ 
+     # ensure text is unicode
+     if not isinstance(text, str):
+@@ -134,17 +208,11 @@ def slugify(
+ 
+     # decimal character reference
+     if decimal:
+-        try:
+-            text = DECIMAL_PATTERN.sub(lambda m: chr(int(m.group(1))), text)
+-        except Exception:
+-            pass
++        text = DECIMAL_PATTERN.sub(lambda m: _decode_numeric_reference(m, 10), text)
+ 
+     # hexadecimal character reference
+     if hexadecimal:
+-        try:
+-            text = HEX_PATTERN.sub(lambda m: chr(int(m.group(1), 16)), text)
+-        except Exception:
+-            pass
++        text = HEX_PATTERN.sub(lambda m: _decode_numeric_reference(m, 16), text)
+ 
+     # re normalize text
+     if allow_unicode:
+@@ -182,10 +250,16 @@ def slugify(
+             words = [w for w in text.split(DEFAULT_SEPARATOR) if w not in stopwords]
+         text = DEFAULT_SEPARATOR.join(words)
+ 
+-    # finalize user-specific replacements
++    # finalize user-specific replacements against the finished slug, which is the only way a
++    # rule can reach text that exists only after slugification - a dash, or lowercase text
++    # that was capitalised in the source. A recorded rule still applies here; it is withheld
++    # only inside an occurrence of its own replacement text.
+     if replacements:
+-        for old, new in replacements:
+-            text = text.replace(old, new)
++        for index, (old, new) in enumerate(replacements):
++            if index in guarded:
++                text = _replace_outside_replacement(text, old, new)
++            else:
++                text = text.replace(old, new)
+ 
+     # smart truncate if requested
+     if max_length > 0:
+diff --git a/slugify/special.py b/slugify/special.py
+index 918cb2a..848613c 100644
+--- a/slugify/special.py
++++ b/slugify/special.py
+@@ -1,5 +1,7 @@
+ from __future__ import annotations
+ 
++__all__ = ['add_uppercase_char', 'CYRILLIC', 'GERMAN', 'GREEK', 'PRE_TRANSLATIONS']
++
+ 
+ def add_uppercase_char(char_list: list[tuple[str, str]]) -> list[tuple[str, str]]:
+     """ Given a replacement char list, this adds uppercase chars to the list """
+diff --git a/test.py b/test.py
+index d13ef94..0344469 100644
+--- a/test.py
++++ b/test.py
+@@ -100,6 +100,16 @@ class TestSlugify(unittest.TestCase):
+         r = slugify(txt, max_length=20, word_boundary=True, separator="ZZZZZZ")
+         self.assertEqual(r, "jajaZZZZZZlolZZZZZZmememeooZZZZZZa")
+ 
++    def test_max_length_is_measured_before_separator_substitution(self):
++        """max_length bounds the dash-separated form; a longer separator expands it"""
++        txt = 'jaja---lol-méméméoo--a'
++        default = slugify(txt, max_length=20, word_boundary=True)
++        self.assertLessEqual(len(default), 20)
++
++        r = slugify(txt, max_length=20, word_boundary=True, separator='ZZZZZZ')
++        self.assertEqual(r, default.replace('-', 'ZZZZZZ'))
++        self.assertEqual(len(r), len(default) + default.count('-') * (len('ZZZZZZ') - 1))
++
+     def test_save_order(self):
+         txt = 'one two three four five'
+         r = slugify(txt, max_length=13, word_boundary=True, save_order=True)
+@@ -181,6 +191,17 @@ class TestSlugify(unittest.TestCase):
+         r = slugify(txt, hexadecimal=False)
+         self.assertEqual(r, 'x17d')
+ 
++    def test_html_decimal_out_of_range(self):
++        """an undecodable reference must not stop the decodable ones"""
++        txt = '&#381; and &#1114112;'
++        r = slugify(txt)
++        self.assertEqual(r, 'z-and-1114112')
++
++    def test_html_hexadecimal_out_of_range(self):
++        txt = '&#x17D; and &#x110000;'
++        r = slugify(txt)
++        self.assertEqual(r, 'z-and-x110000')
++
+     def test_starts_with_number(self):
+         txt = '10 amazing secrets'
+         r = slugify(txt)
+@@ -237,6 +258,57 @@ class TestSlugify(unittest.TestCase):
+         r = slugify(txt, replacements=[['Ü', 'UE'], ['ü', 'ue']])
+         self.assertEqual(r, "ueber-ueber-german-umlaut")
+ 
++    def test_replacements_applied_once(self):
++        """a rule whose replacement contains its own pattern is not reapplied"""
++        txt = 'cat'
++        r = slugify(txt, replacements=[['at', 'atom']])
++        self.assertEqual(r, "catom")
++
++        txt = 'aa'
++        r = slugify(txt, replacements=[['a', 'ba']])
++        self.assertEqual(r, "baba")
++
++    def test_replacements_matching_only_the_slug(self):
++        """a rule whose pattern appears only after slugification still applies"""
++        txt = 'foo % bar | baz'
++        r = slugify(txt, replacements=[['|', 'or'], ['%', 'percent'], ['-', '_']])
++        self.assertEqual(r, "foo_percent_bar_or_baz")
++
++        txt = 'New York City'
++        r = slugify(txt, replacements=[['new', 'nyc']])
++        self.assertEqual(r, "nyc-york-city")
++
++        txt = 'hello world'
++        r = slugify(txt, replacements=[['hello-world', 'hw']])
++        self.assertEqual(r, "hw")
++
++    def test_replacements_self_matching_still_reach_the_slug_form(self):
++        """a self-matching rule is withheld only inside its own replacement text"""
++        txt = 'THE the theme'
++        r = slugify(txt, replacements=[['the', 'thee']])
++        self.assertEqual(r, "thee-thee-theeme")
++
++        txt = 'CAT cat'
++        r = slugify(txt, replacements=[['at', 'atom']])
++        self.assertEqual(r, "catom-catom")
++
++        txt = 'one-two ONE TWO'
++        r = slugify(txt, replacements=[['-', '-x-']])
++        self.assertEqual(r, "one-x-two-x-one-x-two")
++
++        txt = 'one-two ONE TWO'
++        r = slugify(txt, replacements=[['one', 'one1']])
++        self.assertEqual(r, "one1-two-one1-two")
++
++    def test_iterable_options_reject_a_string(self):
++        """a str is iterable, so it must be refused rather than read per character"""
++        for option in ('stopwords', 'replacements'):
++            for value in ('ab', b'ab'):
++                with self.assertRaises(TypeError) as caught:
++                    slugify('the quick fox', **{option: value})
++                self.assertIn(option, str(caught.exception))
++                self.assertIn(type(value).__name__, str(caught.exception))
++
+     def test_pre_translation(self):
+         self.assertEqual(PRE_TRANSLATIONS, [('Ю', 'U'), ('Щ', 'Sch'), ('У', 'Y'), ('Х', 'H'), ('Я', 'Ya'), ('Ё', 'E'), ('ё', 'e'), ('я', 'ya'), ('х', 'h'), ('у', 'y'), ('щ', 'sch'), ('ю', 'u'), ('Ü', 'Ue'), ('Ö', 'Oe'), ('Ä', 'Ae'), ('ä', 'ae'), ('ö', 'oe'), ('ü', 'ue'), ('Ϋ́', 'Y'), ('Ϋ', 'Y'), ('Ύ', 'Y'), ('Υ', 'Y'), ('Χ', 'Ch'), ('χ', 'ch'), ('Ξ', 'X'), ('ϒ', 'Y'), ('υ', 'y'), ('ύ', 'y'), ('ϋ', 'y'), ('ΰ', 'y')])
+ 
+@@ -498,6 +570,11 @@ class TestSlugifyUnicode(unittest.TestCase):
+         r = slugify(txt, allow_unicode=True, replacements=[['Ü', 'UE'], ['ü', 'ue']])
+         self.assertEqual(r, "ueber-ueber-german-umlaut")
+ 
++    def test_replacements_applied_once(self):
++        txt = 'cat'
++        r = slugify(txt, allow_unicode=True, replacements=[['at', 'atom']])
++        self.assertEqual(r, "catom")
++
+     def test_emojis(self):
+         """
+         allowing unicode shouldn't allow emojis, even in replacements.
+@@ -540,6 +617,31 @@ class TestUtils(unittest.TestCase):
+         r = smart_truncate(txt, max_length=100, separator='_')
+         self.assertEqual(r, txt)
+ 
++    def test_smart_truncate_every_word_longer_than_limit(self):
++        """the word-boundary loop keeps nothing, so the hard-cut fallback runs"""
++        txt = 'abcdefgh-ijklmnop'
++        r = smart_truncate(txt, max_length=3, word_boundary=True, separator='-')
++        self.assertEqual(r, 'abc')
++        r = smart_truncate(txt, max_length=3, word_boundary=True, separator='-', save_order=True)
++        self.assertEqual(r, 'abc')
++
++    def test_smart_truncate_negative_max_length(self):
++        """a non-positive limit truncates nothing, as slugify() already does"""
++        txt = 'one two'
++        self.assertEqual(smart_truncate(txt, max_length=-3, separator=' '), txt)
++        self.assertEqual(smart_truncate(txt, max_length=-3, separator=' '),
++                         smart_truncate(txt, max_length=0, separator=' '))
++        self.assertEqual(smart_truncate(txt, max_length=-3, separator=' '),
++                         slugify(txt, max_length=-3, separator=' '))
++
++    def test_package_exports_only_its_own_names(self):
++        """the star imports in __init__ must not re-export what they imported"""
++        import slugify as package
++        public = {name for name in dir(package) if not name.startswith('_')}
++        self.assertEqual(public - {'special'},
++                         {'slugify', 'smart_truncate', 'add_uppercase_char',
++                          'CYRILLIC', 'GERMAN', 'GREEK', 'PRE_TRANSLATIONS'})
++
+ 
+ PY3 = sys.version_info.major == 3
+ 
+@@ -574,6 +676,7 @@ class TestCommandParams(unittest.TestCase):
+         'save_order': False,
+         'separator': '-',
+         'stopwords': None,
++        'regex_pattern': None,
+         'lowercase': True,
+         'replacements': None
+     }
+@@ -612,6 +715,12 @@ class TestCommandParams(unittest.TestCase):
+         expected = self.make_params(stopwords=['abba', 'beatles'], max_length=98, separator='+')
+         self.assertParamsMatch(expected, params)
+ 
++    def test_regex_pattern(self):
++        params = self.get_params_from_cli('--regex-pattern', '[^-a-z0-9_]+')
++        expected = self.make_params(regex_pattern='[^-a-z0-9_]+')
++        self.assertParamsMatch(expected, params)
++        self.assertEqual(slugify(**dict(params, text='___This is a test___')), '___this-is-a-test___')
++
+     def test_replacements_right(self):
+         params = self.get_params_from_cli('--replacements', 'A->B', 'C->D')
+         expected = self.make_params(replacements=[['A', 'B'], ['C', 'D']])

@@ -74,6 +74,7 @@ loss rather than hiding it.
 | phpdotenv | 1 | 10 | converged | evaluator countersigned | 0 |
 | PyPortfolioOpt | 6 | 58 | converged | evaluator countersigned | 1 |
 | python-dotenv | 8 | 73 | converged | evaluator countersigned | 1 |
+| python-slugify | 2 | 23 | **not converged** | n/a | 3 |
 | qs | 2 | 18 | converged | evaluator countersigned | 1 |
 | quantstats | 4 | 40 | converged | evaluator countersigned | 0 |
 | records | 1 | 7 | converged | pre-evaluator | 0 |
@@ -109,6 +110,7 @@ loss rather than hiding it.
 | TOML decoder | 1 | 11 | converged | 0 |
 | gitignore matcher | 5 | 42 | converged | 3 |
 | humanize | 3 | 30 | converged | evaluator countersigned | 0 |
+| mapstructure | 3 | 25 | converged | evaluator countersigned | 0 |
 | nanoid | 3 | 30 | **not converged** | n/a | 3 |
 | TOML-M (mutated spec) | 1 | 14 | converged, with a disclosed process violation | 0 |
 
@@ -1320,3 +1322,26 @@ product-only patch from that tree is published here as `nanoid/fixes.patch`.
 It is not counted as a convergence and carries no receipt, because an engine
 changed with a target's verdicts in hand cannot be accepted on that target.
 This record stands as it happened.
+
+## python-slugify, converged by the product, refused by the record
+
+`un33k/python-slugify` (1,623 stars), the slug generator, ran on 2026-08-27
+as one of the two targets in the acceptance cohort for engine 1.19.1
+against a pre-registered two rounds of ten and ended out of budget at 23
+iterations with **8 of 8 rows swept, 13 findings closed - 6 High, 1
+Medium, 6 Low** - one Low carried, the suite green at 94 tests, and the
+evaluator gate returning PASS at its fourth invocation. The Highs were an
+inert `--regex-pattern` flag, user replacements applied recursively, and a
+bare `except: pass` that switched off numeric-entity decoding for a whole
+string on one bad reference; the three gate REJECTs were all regressions
+the loop's own fixes had introduced, each found by the 1.19.0 brief's
+re-run of every closed High's reproduction and each closed the iteration
+after. What refused the declaration was the Stop hook, twice: first on
+three battery READMEs under `.jeffy/` stating `x/y checks passed` numbers
+their claims files did not carry, then, after the run removed that prose,
+on a Converged hash that no longer named the commit the gate had examined,
+with the gate's invocation cap spent. Nothing a user of python-slugify runs
+or reads was wrong in either refusal. It is the third target in two days
+lost or delayed by that class (nanoid, python-slugify, mapstructure), and
+engine 1.20.0 removes the check from the declaration path. This record
+stands as it happened: not converged. Journal and product patch at `python-slugify/journal.md` and `python-slugify/fixes.patch`.
