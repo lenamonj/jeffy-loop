@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.19.1"
+JEFFY_VERSION="1.20.0"
 
 root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
@@ -976,11 +976,12 @@ if [ -n "$promise" ]; then
         cf_v="$(jeffy_claims_form_violation "$root" "$(fm base_head)")"
         [ -n "$cf_v" ] && violation="$cf_v"
       fi
-      # P1-68: the numbers a touched battery README states are claims values.
-      if [ -z "$violation" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        rm_v="$(jeffy_readme_measurements_violation "$root" "$(fm base_head)")"
-        [ -n "$rm_v" ] && violation="$rm_v"
-      fi
+      # 1.20.0 (P1-69): the P1-68 README-measurement check no longer refuses a
+      # declaration. Three targets in two days (nanoid, python-slugify,
+      # mapstructure) lost gate cycles, an iteration, or the run itself to
+      # numbers in the loop's own battery notes while the product had
+      # converged. Nothing under .jeffy/ blocks a declaration; the check
+      # rides every ordinary checkpoint as a README MEASUREMENTS notice.
       # 1.19.0: the severity ceiling by class, on the task lines this run filed.
       if [ -z "$violation" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         sv_v="$(jeffy_severity_class_violation "$root" "$(fm base_head)")"
@@ -2240,6 +2241,15 @@ fi
 if [ -n "$root" ]; then jeffy_verify_count_note "$root"; fi
 if [ -n "$vc_note" ]; then
   reason="$reason VERIFY COUNT: $vc_note."
+fi
+# 1.20.0 (P1-69): a touched battery README's measurements that its claims
+# file does not carry are named here, at the checkpoint, and never refused.
+rm_note=""
+if [ -n "$root" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  rm_note="$(jeffy_readme_measurements_violation "$root" "$(fm base_head)")"
+fi
+if [ -n "$rm_note" ]; then
+  reason="$reason README MEASUREMENTS: $rm_note."
 fi
 if [ -n "$final_note" ]; then
   reason="$reason FINAL ITERATION: $final_note."

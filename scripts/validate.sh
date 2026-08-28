@@ -6752,11 +6752,24 @@ if command -v jq >/dev/null 2>&1; then
 ## Observed failing
 - with the guard removed: `mbat: 3/5 checks passed`, exit 1.' 'expect mbat: 5/5 checks passed :: echo "mbat: 5/5 checks passed"'
     hb_declare m1
-    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "mbat: 3/5 checks passed"; then
-      pass "stop hook refuses a declaration over a battery README measurement no claims line carries, by phrase (P1-68)"
+    if [ ! -f "$hb_state" ] && ! printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "checks passed"; then
+      pass "stop hook accepts a declaration over a battery README measurement no claims line carries: nothing under .jeffy/ blocks a declaration (1.20.0, P1-69)"
     else
       printf '%s\n' "$hb_out"
-      fault "stop hook accepted a README-stated measurement (3/5 checks passed) that no claims line derives"
+      fault "stop hook refused a declaration on a number in the loop's own battery README, the class that cost python-slugify its convergence"
+    fi
+    rm -f "$hb_state"
+    # the same README at an ordinary checkpoint is named as a notice
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+    hb_write_backlog '' ''
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'README MEASUREMENTS:' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'mbat: 3/5 checks passed'; then
+      pass "stop hook names a battery README measurement no claims line carries at the ordinary checkpoint (1.20.0 notice)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook did not name the README measurement mismatch at the checkpoint"
     fi
     rm -f "$hb_state"
     # shellcheck disable=SC2016
@@ -6776,11 +6789,11 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
 ## Observed failing
 - with the guard removed: 2 checks red, exit 1.' 'expect mbat: 5/5 checks passed :: echo "mbat: 5/5 checks passed"'
     hb_declare m3
-    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "2 checks red"; then
-      pass "stop hook refuses the standalone 'N checks red' form as a count no command returns (P1-68)"
+    if [ ! -f "$hb_state" ] && ! printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "checks red"; then
+      pass "stop hook accepts a declaration over the standalone 'N checks red' form in a battery README (1.20.0, P1-69: a notice, never a refusal)"
     else
       printf '%s\n' "$hb_out"
-      fault "stop hook passed 'N checks red' prose in a battery README"
+      fault "stop hook refused a declaration on 'N checks red' prose under .jeffy/"
     fi
     rm -f "$hb_state"
     rm -rf "$hb_proj/.jeffy/probes/mbat"
