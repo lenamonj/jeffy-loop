@@ -39,7 +39,7 @@ Five fixes are in other people's code because a maintainer with no stake in this
 
 A sixth is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
-Behind them: **<!-- count:converged -->52<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **31 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+Behind them: **<!-- count:converged -->54<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **32 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#real-world-validation-on-open-source-repositories)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
 
@@ -265,7 +265,7 @@ Five guarantees. Each one is enforced by the iteration prompt, the state files, 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
-  <img src="media/language-pie-light.png" alt="Pie chart of the 52 converged public targets by language: Python 12 at 23.1 percent, Go 8 at 15.4 percent, JavaScript 7 at 13.5 percent, Rust 7 at 13.5 percent, TypeScript 4 at 7.7 percent, C++ 3 at 5.8 percent, C 2 at 3.8 percent, C# 2 at 3.8 percent, Java 2 at 3.8 percent, PHP 2 at 3.8 percent, Kotlin 1 at 1.9 percent, Ruby 1 at 1.9 percent, Swift 1 at 1.9 percent." width="900">
+  <img src="media/language-pie-light.png" alt="Pie chart of the 54 converged public targets by language: Python 12 at 22.2 percent, Go 9 at 16.7 percent, Rust 8 at 14.8 percent, JavaScript 7 at 13.0 percent, TypeScript 4 at 7.4 percent, C++ 3 at 5.6 percent, C 2 at 3.7 percent, C# 2 at 3.7 percent, Java 2 at 3.7 percent, PHP 2 at 3.7 percent, Kotlin 1 at 1.9 percent, Ruby 1 at 1.9 percent, Swift 1 at 1.9 percent." width="900">
 </picture>
 
 <sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
@@ -278,9 +278,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->81<!-- /count -->** | **<!-- count:fixed -->53<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->14<!-- /count -->** | **<!-- count:merged -->4<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->84<!-- /count -->** | **<!-- count:fixed -->55<!-- /count -->** | **<!-- count:failed -->29<!-- /count -->** | **<!-- count:prs -->14<!-- /count -->** | **<!-- count:merged -->4<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->52<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->54<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
 <sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md).</sub>
 
@@ -307,6 +307,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | commander.js | JavaScript | [details](evals/commander-js/REPORT.md) - error named wrong argument | Fixed |
 | underscore | JavaScript | [details](evals/underscore/REPORT.md) - __proto__ prototype write | Fixed |
 | gson | Java | [details](evals/gson/REPORT.md) - one audit, nothing changed | Fixed |
+| urfave/cli | Go | [details](evals/urfave-cli/REPORT.md) - a lone - ended flag parsing | Fixed |
 | Catch2 | C++ | [details](evals/catch2/REPORT.md) - 18 findings, 6 High | Fixed |
 | validator | Go | [details](evals/validator/REPORT.md) - cyclic struct killed process | Fixed |
 | clap | Rust | [details](evals/clap/REPORT.md) - 35 rows over 4 runs | Fixed |
@@ -328,6 +329,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | magic_enum | C++ | [details](evals/magic_enum/REPORT.md) - 6 members never compiled | Fixed |
 | vavr | Java | [details](evals/vavr/REPORT.md) - BitSet.removeAll threw | Fixed |
 | go-uuid | Go | [details](evals/go-uuid/REPORT.md) - SQL NULL returned stale UUID | Fixed |
+| indicatif | Rust | [details](evals/indicatif/REPORT.md) - draw-width underflow panic | Fixed |
 | ta | Python | [details](evals/ta/REPORT.md) - wrong numbers since 2023 | Fixed |
 | go-cmp | Go | [details](evals/go-cmp/REPORT.md) - 2 grouping bugs, +31/-13 | Fixed |
 | more-itertools | Python | [details](evals/more-itertools/REPORT.md) - sample() wrong on negatives | Fixed |
@@ -354,6 +356,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | goldmark | Go | [details](evals/ATTEMPTS.md) - 5 runs, 47 iters, not converged | Failed |
 | Humanizer | C# | [details](evals/ATTEMPTS.md) - 4 runs, 32 iters, not converged | Failed |
 | image-rs | Rust | [details](evals/ATTEMPTS.md) - 5 runs, 40 iters, not converged | Failed |
+| immer | TypeScript | [details](evals/immer/journal.md) - 3 runs, 31 iters, not converged | Failed |
 | itsdangerous | Python | [details](evals/ATTEMPTS.md) - 3 runs, 31 iters, not converged | Failed |
 | libuv | C | [details](evals/ATTEMPTS.md) - started, then abandoned | Failed |
 | mruby | C | [details](evals/ATTEMPTS.md) - 10 runs, 113 iters, not converged | Failed |
@@ -470,7 +473,7 @@ Check K is the clearest example, because it closed the hole it was born from. Th
 
 **The gate grades the run's evidence, not only the code.** The adversarial evaluator is the mechanism that makes self-improvement honest, because the most common failure is not a missed bug but a proof that does not prove anything. `path-to-regexp` is the plainest case in the corpus: three runs, five evaluator invocations, four of them rejections, and **not one rejection was a missed defect in the library**. Every one was a defect in the run's own evidence, including a verify command whose randomised assertions could report safe without ever searching. Those findings improve the method, not the target.
 
-**Failures are published beside successes.** `evals/ATTEMPTS.md` carries every attempt, including **31 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. A corpus of only successes cannot teach anything about where the method stops working, and knowing where it stops is what tells us what to build next. Several of the engine's largest changes exist because a published failure named the gap first.
+**Failures are published beside successes.** `evals/ATTEMPTS.md` carries every attempt, including **32 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. A corpus of only successes cannot teach anything about where the method stops working, and knowing where it stops is what tells us what to build next. Several of the engine's largest changes exist because a published failure named the gap first.
 
 The governing principle came from a self-run that caught its own author. A run promoted a lesson into `PLAN.md` and then broke that same lesson two iterations later, in the very work that promoted it. **A promoted lesson does not protect the iteration that promotes it.** So where a lesson can be checked mechanically it belongs in the harness, and where it cannot it is written down knowing that prose is the weaker instrument.
 

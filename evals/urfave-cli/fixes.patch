@@ -1,0 +1,982 @@
+diff --git a/.gitignore b/.gitignore
+index 6b191490..e7bdd9ab 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -9,3 +9,4 @@
+ coverage.txt
+ examples/*/built-example
+ vendor
++.claude/jeffy-loop.local.md
+diff --git a/args.go b/args.go
+index 0dad2099..e7ffad77 100644
+--- a/args.go
++++ b/args.go
+@@ -82,6 +82,15 @@ type requiredArgument interface {
+ 	required() bool
+ }
+ 
++// An argument declared without a name has nothing to show in a usage line, so
++// it renders these generic forms instead of formatting an empty string into
++// the usage templates. "[arguments...]" is what the help templates printed for
++// any declared arguments before they rendered each argument's own usage.
++const (
++	defaultArgumentName   = "arguments"
++	defaultArgumentsUsage = "[arguments...]"
++)
++
+ // AnyArguments to differentiate between no arguments(nil) vs aleast one
+ var AnyArguments = []Argument{
+ 	&StringArgs{
+@@ -100,6 +109,15 @@ type ArgumentBase[T any, C any, VC ValueCreator[T, C]] struct {
+ 	value *T
+ }
+ 
++// nameForUsage is the name this argument shows in a usage line, which is the
++// generic word when the argument was declared without one.
++func (a *ArgumentBase[T, C, VC]) nameForUsage() string {
++	if a.Name == "" {
++		return defaultArgumentName
++	}
++	return a.Name
++}
++
+ func (a *ArgumentBase[T, C, VC]) HasName(s string) bool {
+ 	return s == a.Name
+ }
+@@ -121,7 +139,7 @@ func (a *ArgumentBase[T, C, VC]) Usage() string {
+ 	if a.Required {
+ 		usageFormat = "%[1]s"
+ 	}
+-	return fmt.Sprintf(usageFormat, a.Name)
++	return fmt.Sprintf(usageFormat, a.nameForUsage())
+ }
+ 
+ func (a *ArgumentBase[T, C, VC]) Parse(s []string) ([]string, error) {
+@@ -185,6 +203,16 @@ func (a *ArgumentsBase[T, C, VC]) Usage() string {
+ 		return a.UsageText
+ 	}
+ 
++	if a.Name == "" {
++		// An unnamed set - cli.AnyArguments is the exported one - has no name
++		// to put in the forms below, which would render "[ ...]". The help
++		// templates have always called an unnamed set "arguments".
++		if a.Min == 0 {
++			return defaultArgumentsUsage
++		}
++		return defaultArgumentName + " " + defaultArgumentsUsage
++	}
++
+ 	usageFormat := ""
+ 	if a.Min == 0 {
+ 		if a.Max == 1 {
+diff --git a/cli.go b/cli.go
+index d833aff5..c6acc002 100644
+--- a/cli.go
++++ b/cli.go
+@@ -10,12 +10,12 @@
+ //
+ //	func main() {
+ //		cmd := &cli.Command{
+-//	  		Name: "greet",
+-//	  		Usage: "say a greeting",
+-//	  		Action: func(c *cli.Context) error {
+-//	  			fmt.Println("Greetings")
+-//	  			return nil
+-//	  		},
++//			Name:  "greet",
++//			Usage: "say a greeting",
++//			Action: func(context.Context, *cli.Command) error {
++//				fmt.Println("Greetings")
++//				return nil
++//			},
+ //		}
+ //
+ //		cmd.Run(context.Background(), os.Args)
+diff --git a/command.go b/command.go
+index d24cd877..3976b2c7 100644
+--- a/command.go
++++ b/command.go
+@@ -91,7 +91,10 @@ type Command struct {
+ 	Reader io.Reader `json:"-"`
+ 	// Writer writer to write output to
+ 	Writer io.Writer `json:"-"`
+-	// ErrWriter writes error output
++	// ErrWriter writes error output. When unset it is inherited from the
++	// parent command, or defaults to the package-level ErrWriter, so a caller
++	// who redirects either one receives every stream this command writes,
++	// including the message an ExitCoder produces.
+ 	ErrWriter io.Writer `json:"-"`
+ 	// ExitErrHandler processes any error encountered while running a Command before it is
+ 	// returned to the caller. If no function is provided, HandleExitCoder is used as the
+@@ -333,7 +336,7 @@ func (cmd *Command) handleExitCoder(ctx context.Context, err error) error {
+ 		return err
+ 	}
+ 
+-	HandleExitCoder(err)
++	handleExitCoderTo(cmd.ErrWriter, err)
+ 	return err
+ }
+ 
+diff --git a/command_parse.go b/command_parse.go
+index 939ad90b..b9b16f61 100644
+--- a/command_parse.go
++++ b/command_parse.go
+@@ -114,15 +114,19 @@ func (cmd *Command) parseFlags(args Args) (Args, error) {
+ 				return &stringSliceArgs{posArgs}, nil
+ 			}
+ 
+-			posArgs = append(posArgs, firstArg)
++			// The trimmed form classifies the argument; the argument
++			// itself is what the action receives, byte for byte.
++			posArgs = append(posArgs, rargs[0])
+ 			continue
+ 		}
+ 
+ 		numMinuses := 1
+-		// this is same as firstArg == "-"
++		// this is same as firstArg == "-", the conventional stdin
++		// placeholder. It is a positional argument like any other, so
++		// parsing continues with the arguments that follow it.
+ 		if len(firstArg) == 1 {
+-			posArgs = append(posArgs, firstArg)
+-			break
++			posArgs = append(posArgs, rargs[0])
++			continue
+ 		}
+ 
+ 		shortOptionHandling := cmd.useShortOptionHandling()
+@@ -208,28 +212,42 @@ func (cmd *Command) parseFlags(args Args) (Args, error) {
+ 			return &stringSliceArgs{posArgs}, fmt.Errorf("%s%s", providedButNotDefinedErrMsg, flagName)
+ 		}
+ 
++		// Resolve every member of the group before applying any of it. An
++		// unknown member means the whole token is an undefined flag, and
++		// that diagnosis outranks any complaint about the members that did
++		// resolve; checking first also stops a group from half-applying
++		// before it fails.
++		for index, c := range flagName {
++			if cmd.lookupFlag(string(c)) != nil {
++				continue
++			}
++			if index == 0 && cmd.DefaultCommand != "" {
++				posArgs = append(posArgs, rargs...)
++				return &stringSliceArgs{posArgs}, nil
++			}
++			return &stringSliceArgs{posArgs}, fmt.Errorf("%s%s", providedButNotDefinedErrMsg, flagName)
++		}
++
+ 		// try to split the flags
+ 		for index, c := range flagName {
+ 			tracef("processing flag (fName=%[1]q)", string(c))
+-			if sf := cmd.lookupFlag(string(c)); sf == nil {
+-				if index == 0 && cmd.DefaultCommand != "" {
+-					posArgs = append(posArgs, rargs...)
+-					return &stringSliceArgs{posArgs}, nil
+-				}
+-				return &stringSliceArgs{posArgs}, fmt.Errorf("%s%s", providedButNotDefinedErrMsg, flagName)
+-			} else if fb, ok := sf.(boolFlag); ok && fb.IsBoolFlag() {
+-				fv := flagVal
+-				if index == (len(flagName)-1) && flagVal == "" {
+-					fv = "true"
+-				}
+-				if fv == "" {
+-					fv = "true"
++			// index is a byte offset into flagName, so the last member of
++			// the group is the one whose rune ends at the end of it. A
++			// plain index == len(flagName)-1 misses a multi-byte name.
++			isLast := index+len(string(c)) == len(flagName)
++			sf := cmd.lookupFlag(string(c))
++			if fb, ok := sf.(boolFlag); ok && fb.IsBoolFlag() {
++				// A group's "=value" belongs to its last member. Every
++				// other bool in the group is simply switched on.
++				fv := "true"
++				if isLast && flagVal != "" {
++					fv = flagVal
+ 				}
+ 				if err := cmd.set(flagName, sf, fv); err != nil {
+ 					tracef("processing flag.2 (fName=%[1]q)", string(c))
+ 					return &stringSliceArgs{posArgs}, err
+ 				}
+-			} else if index == len(flagName)-1 { // last flag can take an arg
++			} else if isLast { // only the last flag in a group can take a value
+ 				if flagVal == "" {
+ 					if len(rargs) == 1 {
+ 						return &stringSliceArgs{posArgs}, fmt.Errorf("%s%s", argumentNotProvidedErrMsg, string(c))
+@@ -242,6 +260,14 @@ func (cmd *Command) parseFlags(args Args) (Args, error) {
+ 					tracef("processing flag.4 (fName=%[1]q)", string(c))
+ 					return &stringSliceArgs{posArgs}, err
+ 				}
++			} else {
++				// A value-taking flag anywhere but the end of the group
++				// used to fall through here with no value set and no
++				// error reported.
++				return &stringSliceArgs{posArgs}, fmt.Errorf(
++					"%s-%s (only the last flag in the group -%s can take a value)",
++					argumentNotProvidedErrMsg, string(c), flagName,
++				)
+ 			}
+ 		}
+ 	}
+diff --git a/command_run.go b/command_run.go
+index 147dfffc..54aa7a1c 100644
+--- a/command_run.go
++++ b/command_run.go
+@@ -35,10 +35,13 @@ outer:
+ 					args = append(args, token)
+ 				}
+ 			case stateSearchForString:
+-				// make sure string is not empty
++				// An unterminated quote leaves a token in hand. Keep it
++				// once when it holds anything but whitespace; without the
++				// break it was appended once per non-space rune in it.
+ 				for _, t := range token {
+ 					if !unicode.IsSpace(t) {
+ 						args = append(args, token)
++						break
+ 					}
+ 				}
+ 			}
+diff --git a/command_setup.go b/command_setup.go
+index 13ef7063..e704b6af 100644
+--- a/command_setup.go
++++ b/command_setup.go
+@@ -70,8 +70,8 @@ func (cmd *Command) setupDefaults(osArgs []string) {
+ 			tracef("inheriting ErrWriter from parent (cmd=%[1]q)", cmd.Name)
+ 			cmd.ErrWriter = cmd.parent.ErrWriter
+ 		} else {
+-			tracef("setting default ErrWriter as os.Stderr (cmd=%[1]q)", cmd.Name)
+-			cmd.ErrWriter = os.Stderr
++			tracef("setting default ErrWriter as the package-level ErrWriter (cmd=%[1]q)", cmd.Name)
++			cmd.ErrWriter = ErrWriter
+ 		}
+ 	}
+ 
+diff --git a/command_test.go b/command_test.go
+index 843c3a47..47014f55 100644
+--- a/command_test.go
++++ b/command_test.go
+@@ -1156,6 +1156,50 @@ func TestCommand_CommandWithDash(t *testing.T) {
+ 	require.Equal(t, "-", args.Get(1))
+ }
+ 
++func TestCommand_CommandWithDashFollowedByArgs(t *testing.T) {
++	var args Args
++
++	cmd := &Command{
++		Commands: []*Command{
++			{
++				Name: "cmd",
++				Action: func(_ context.Context, cmd *Command) error {
++					args = cmd.Args()
++					return nil
++				},
++			},
++		},
++	}
++
++	require.NoError(t, cmd.Run(buildTestContext(t), []string{"", "cmd", "-", "foo", "bar"}))
++	require.NotNil(t, args)
++	require.Equal(t, []string{"-", "foo", "bar"}, args.Slice())
++}
++
++func TestCommand_CommandWithDashFollowedByFlag(t *testing.T) {
++	var args Args
++	var opt string
++
++	cmd := &Command{
++		Commands: []*Command{
++			{
++				Name:  "cmd",
++				Flags: []Flag{&StringFlag{Name: "option"}},
++				Action: func(_ context.Context, cmd *Command) error {
++					args = cmd.Args()
++					opt = cmd.String("option")
++					return nil
++				},
++			},
++		},
++	}
++
++	require.NoError(t, cmd.Run(buildTestContext(t), []string{"", "cmd", "-", "--option", "v"}))
++	require.NotNil(t, args)
++	require.Equal(t, []string{"-"}, args.Slice())
++	require.Equal(t, "v", opt)
++}
++
+ func TestCommand_CommandWithNoFlagBeforeTerminator(t *testing.T) {
+ 	var args Args
+ 
+@@ -3206,12 +3250,49 @@ func buildMinimalTestCommand() *Command {
+ }
+ 
+ func TestSetupInitializesBothWriters(t *testing.T) {
++	// An unset ErrWriter follows the package-level ErrWriter rather than
++	// os.Stderr directly, so a caller who redirects either one sees every
++	// stream a command writes. The package-level default is os.Stderr, so an
++	// unconfigured command still ends up there.
++	saved := ErrWriter
++	defer func() { ErrWriter = saved }()
++
++	ErrWriter = os.Stderr
+ 	cmd := &Command{}
+-
+ 	cmd.setupDefaults([]string{"test"})
++	assert.Equal(t, os.Stderr, cmd.ErrWriter, "expected cmd.ErrWriter to follow the package-level ErrWriter")
++	assert.Equal(t, os.Stdout, cmd.Writer, "expected cmd.Writer to be os.Stdout")
+ 
+-	assert.Equal(t, cmd.ErrWriter, os.Stderr, "expected a.ErrWriter to be os.Stderr")
+-	assert.Equal(t, cmd.Writer, os.Stdout, "expected a.Writer to be os.Stdout")
++	var buf bytes.Buffer
++	ErrWriter = &buf
++	redirected := &Command{}
++	redirected.setupDefaults([]string{"test"})
++	assert.Equal(t, &buf, redirected.ErrWriter, "expected cmd.ErrWriter to follow a redirected package-level ErrWriter")
++}
++
++func TestCommandErrWriterCapturesExitCoderMessage(t *testing.T) {
++	// A caller who redirects only the command's own ErrWriter must see the
++	// error text an ExitCoder produces, not just "Incorrect Usage:".
++	savedExiter, savedErrWriter := OsExiter, ErrWriter
++	defer func() { OsExiter, ErrWriter = savedExiter, savedErrWriter }()
++
++	var packageLevel bytes.Buffer
++	OsExiter = func(int) {}
++	ErrWriter = &packageLevel
++
++	var cmdErr bytes.Buffer
++	cmd := &Command{
++		Name:      "prog",
++		Writer:    io.Discard,
++		ErrWriter: &cmdErr,
++	}
++
++	_ = cmd.Run(buildTestContext(t), []string{"prog", "help", "nosuchthing"})
++
++	assert.Contains(t, cmdErr.String(), "No help topic for 'nosuchthing'",
++		"expected the ExitCoder message on the command's own ErrWriter")
++	assert.Empty(t, packageLevel.String(),
++		"expected nothing on the package-level ErrWriter when the command has its own")
+ }
+ 
+ func TestSetupInitializesOnlyNilWriters(t *testing.T) {
+@@ -6103,6 +6184,37 @@ func TestCommand_ExclusiveFlagsPersistent(t *testing.T) {
+ 	}
+ }
+ 
++// An unterminated quote in stdin input used to yield the token once per
++// non-space rune it contained.
++func TestReadArgsFromStdinUnterminatedQuote(t *testing.T) {
++	testCases := []struct {
++		Name     string
++		Stdin    string
++		Expected []string
++	}{
++		{Name: "terminated", Stdin: `"abc" def`, Expected: []string{"abc", "def"}},
++		{Name: "unterminated", Stdin: `"abcdef`, Expected: []string{"abcdef"}},
++		{Name: "unterminated with spaces", Stdin: `"ab cd`, Expected: []string{"ab cd"}},
++		{Name: "unterminated whitespace only", Stdin: `"   `, Expected: []string{}},
++	}
++
++	for _, tc := range testCases {
++		t.Run(tc.Name, func(t *testing.T) {
++			var args []string
++			cmd := &Command{
++				ReadArgsFromStdin: true,
++				Reader:            strings.NewReader(tc.Stdin),
++				Action: func(_ context.Context, cmd *Command) error {
++					args = cmd.Args().Slice()
++					return nil
++				},
++			}
++			require.NoError(t, cmd.Run(buildTestContext(t), []string{"prog"}))
++			assert.Equal(t, tc.Expected, args)
++		})
++	}
++}
++
+ func TestEmptyPositionalArgs(t *testing.T) {
+ 	testCases := []struct {
+ 		Name     string
+@@ -6124,6 +6236,21 @@ func TestEmptyPositionalArgs(t *testing.T) {
+ 			Args:     []string{"app", "hello", "  ", "world"},
+ 			Expected: []string{"hello", "  ", "world"},
+ 		},
++		{
++			Name:     "padded arg keeps its whitespace",
++			Args:     []string{"app", "  spaced  ", "x"},
++			Expected: []string{"  spaced  ", "x"},
++		},
++		{
++			Name:     "trailing whitespace is part of the value",
++			Args:     []string{"app", "report.txt "},
++			Expected: []string{"report.txt "},
++		},
++		{
++			Name:     "padded arg after a flag terminator",
++			Args:     []string{"app", "--", " a ", "b "},
++			Expected: []string{" a ", "b "},
++		},
+ 	}
+ 
+ 	for _, tc := range testCases {
+diff --git a/docs/go.mod b/docs/go.mod
+index 80ac54b0..c7f0d407 100644
+--- a/docs/go.mod
++++ b/docs/go.mod
+@@ -8,9 +8,3 @@ require (
+ 	github.com/urfave/cli-altsrc/v3 v3.0.1
+ 	github.com/urfave/cli/v3 v3.1.1
+ )
+-
+-require (
+-	github.com/BurntSushi/toml v1.5.0 // indirect
+-	github.com/stretchr/testify v1.11.1 // indirect
+-	gopkg.in/yaml.v3 v3.0.1 // indirect
+-)
+diff --git a/docs/go.sum b/docs/go.sum
+index 8127db63..7d10151b 100644
+--- a/docs/go.sum
++++ b/docs/go.sum
+@@ -1,20 +1,6 @@
+-github.com/BurntSushi/toml v1.3.2 h1:o7IhLm0Msx3BaB+n3Ag7L8EVlByGnpq14C4YWiu/gL8=
+-github.com/BurntSushi/toml v1.3.2/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=
+-github.com/BurntSushi/toml v1.5.0 h1:W5quZX/G/csjUnuI8SUYlsHs9M38FC7znL0lIO+DvMg=
+-github.com/BurntSushi/toml v1.5.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
+-github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+-github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+-github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+-github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+-github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=
+-github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
+-github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
+-github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+-github.com/urfave/cli-altsrc/v3 v3.0.0-alpha2 h1:j4SaBpPB8++L0c0KuTnz/Yus3UQoWJ54hQjhIMW8rCM=
+-github.com/urfave/cli-altsrc/v3 v3.0.0-alpha2/go.mod h1:Q79oyIY/z4jtzIrKEK6MUeWC7/szGr46x4QdOaOAIWc=
++github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
++github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
+ github.com/urfave/cli-altsrc/v3 v3.0.1 h1:v+gHk59syLk8ao9rYybZs43+D5ut/gzj0omqQ1XYl8k=
+ github.com/urfave/cli-altsrc/v3 v3.0.1/go.mod h1:8UtsKKcxFVzvaoySFPfvQOk413T+IXJhaCWyyoPW3yM=
+-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
+-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+-gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+-gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
++go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
++go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
+diff --git a/errors.go b/errors.go
+index ff0dfa51..19d513a0 100644
+--- a/errors.go
++++ b/errors.go
+@@ -11,7 +11,9 @@ import (
+ var OsExiter = os.Exit
+ 
+ // ErrWriter is used to write errors to the user. This can be anything
+-// implementing the io.Writer interface and defaults to os.Stderr.
++// implementing the io.Writer interface and defaults to os.Stderr. A Command
++// that sets no ErrWriter of its own writes here; one that does writes there
++// instead.
+ var ErrWriter io.Writer = os.Stderr
+ 
+ // MultiError is an error that wraps multiple errors.
+@@ -161,16 +163,27 @@ func (ee *exitError) ExitCode() int {
+ //
+ // This function is the default error-handling behavior for a Command.
+ func HandleExitCoder(err error) {
++	handleExitCoderTo(ErrWriter, err)
++}
++
++// handleExitCoderTo is HandleExitCoder with the destination named, so a
++// Command can send its own error text to its own ErrWriter instead of to the
++// package-level one. A nil writer falls back to ErrWriter.
++func handleExitCoderTo(w io.Writer, err error) {
+ 	if err == nil {
+ 		return
+ 	}
+ 
++	if w == nil {
++		w = ErrWriter
++	}
++
+ 	if exitErr, ok := err.(ExitCoder); ok {
+ 		if msg := err.Error(); msg != "" {
+ 			if _, ok := exitErr.(ErrorFormatter); ok {
+-				_, _ = fmt.Fprintf(ErrWriter, "%+v\n", err)
++				_, _ = fmt.Fprintf(w, "%+v\n", err)
+ 			} else {
+-				_, _ = fmt.Fprintln(ErrWriter, err)
++				_, _ = fmt.Fprintln(w, err)
+ 			}
+ 		}
+ 		OsExiter(exitErr.ExitCode())
+@@ -178,19 +191,19 @@ func HandleExitCoder(err error) {
+ 	}
+ 
+ 	if multiErr, ok := err.(MultiError); ok {
+-		code := handleMultiError(multiErr)
++		code := handleMultiError(w, multiErr)
+ 		OsExiter(code)
+ 		return
+ 	}
+ }
+ 
+-func handleMultiError(multiErr MultiError) int {
++func handleMultiError(w io.Writer, multiErr MultiError) int {
+ 	code := 1
+ 	for _, merr := range multiErr.Errors() {
+ 		if multiErr2, ok := merr.(MultiError); ok {
+-			code = handleMultiError(multiErr2)
++			code = handleMultiError(w, multiErr2)
+ 		} else if merr != nil {
+-			fmt.Fprintln(ErrWriter, merr)
++			fmt.Fprintln(w, merr)
+ 			if exitErr, ok := merr.(ExitCoder); ok {
+ 				code = exitErr.ExitCode()
+ 			}
+diff --git a/errors_test.go b/errors_test.go
+index fd4d18c7..298f91c4 100644
+--- a/errors_test.go
++++ b/errors_test.go
+@@ -202,7 +202,10 @@ func TestHandleExitCoder_MultiErrorWithFormat(t *testing.T) {
+ 	}
+ 	ErrWriter = &bytes.Buffer{}
+ 
+-	defer func() { OsExiter = fakeOsExiter }()
++	defer func() {
++		OsExiter = fakeOsExiter
++		ErrWriter = fakeErrWriter
++	}()
+ 
+ 	err := newMultiError(NewErrorWithFormat("err1"), NewErrorWithFormat("err2"))
+ 	HandleExitCoder(err)
+diff --git a/flag_generic.go b/flag_generic.go
+index 5ee07c7a..b153689f 100644
+--- a/flag_generic.go
++++ b/flag_generic.go
+@@ -30,11 +30,13 @@ func (f *genericValue) Set(s string) error {
+ 	return nil
+ }
+ 
++// Get returns the wrapped Value itself, which is the type parameter T of
++// GenericFlag. Returning f.val.Get() instead would hand back whatever the
++// caller's Get returns - the stdlib flag.Getter contract asks for the
++// contents of the Value - and FlagBase asserts this result to T unchecked
++// when running a Validator or an Action.
+ func (f *genericValue) Get() any {
+-	if f.val != nil {
+-		return f.val.Get()
+-	}
+-	return nil
++	return f.val
+ }
+ 
+ func (f *genericValue) String() string {
+diff --git a/flag_test.go b/flag_test.go
+index 2af15a96..a36360b3 100644
+--- a/flag_test.go
++++ b/flag_test.go
+@@ -1708,6 +1708,85 @@ func TestGenericFlagValueFromCommand(t *testing.T) {
+ 	assert.Nil(t, cmd.Generic("someother"))
+ }
+ 
++// contentsParser follows the stdlib flag.Getter contract - "Get returns the
++// contents of the Value" - rather than returning the receiver as Parser does.
++type contentsParser [2]string
++
++func (p *contentsParser) Set(value string) error {
++	parts := strings.Split(value, ",")
++	if len(parts) != 2 {
++		return fmt.Errorf("invalid format")
++	}
++
++	(*p)[0] = parts[0]
++	(*p)[1] = parts[1]
++
++	return nil
++}
++
++func (p *contentsParser) String() string {
++	return fmt.Sprintf("%s,%s", p[0], p[1])
++}
++
++func (p *contentsParser) Get() any {
++	return *p
++}
++
++func TestGenericFlagValueWhenGetReturnsContents(t *testing.T) {
++	cmd := &Command{
++		Name: "foo",
++		Flags: []Flag{
++			&GenericFlag{Name: "myflag", Value: &contentsParser{}},
++		},
++	}
++
++	assert.NoError(t, cmd.Run(buildTestContext(t), []string{"foo", "--myflag", "abc,def"}))
++	assert.Equal(t, &contentsParser{"abc", "def"}, cmd.Generic("myflag"))
++	assert.Equal(t, &contentsParser{"abc", "def"}, cmd.Value("myflag"))
++}
++
++func TestGenericFlagActionWhenGetReturnsContents(t *testing.T) {
++	var seen Value
++
++	cmd := &Command{
++		Name: "foo",
++		Flags: []Flag{
++			&GenericFlag{
++				Name:  "myflag",
++				Value: &contentsParser{},
++				Action: func(_ context.Context, _ *Command, v Value) error {
++					seen = v
++					return nil
++				},
++			},
++		},
++	}
++
++	assert.NoError(t, cmd.Run(buildTestContext(t), []string{"foo", "--myflag", "abc,def"}))
++	assert.Equal(t, &contentsParser{"abc", "def"}, seen)
++}
++
++func TestGenericFlagValidatorWhenGetReturnsContents(t *testing.T) {
++	cmd := &Command{
++		Name: "foo",
++		Flags: []Flag{
++			&GenericFlag{
++				Name:  "myflag",
++				Value: &contentsParser{},
++				Validator: func(v Value) error {
++					if v.String() == "abc,def" {
++						return fmt.Errorf("rejected %s", v)
++					}
++					return nil
++				},
++			},
++		},
++	}
++
++	assert.ErrorContains(t, cmd.Run(buildTestContext(t), []string{"foo", "--myflag", "abc,def"}), "rejected abc,def")
++	assert.NoError(t, cmd.Run(buildTestContext(t), []string{"foo", "--myflag", "ghi,jkl"}))
++}
++
+ func TestParseGenericFromEnv(t *testing.T) {
+ 	t.Setenv("APP_SERVE", "20,30")
+ 	cmd := &Command{
+@@ -3524,6 +3603,58 @@ func TestEndValue(t *testing.T) {
+ 	assert.Error(t, cmd.Run(buildTestContext(t), []string{"foo", "-cd=s"}))
+ }
+ 
++// A short flag group carries at most one value, and it belongs to the group's
++// last member. A value-taking flag anywhere else used to be dropped in silence.
++func TestParseShortOptionGroupValuePlacement(t *testing.T) {
++	newCmd := func() *Command {
++		cmd := buildMinimalTestCommand()
++		cmd.UseShortOptionHandling = true
++		cmd.Flags = []Flag{
++			&StringFlag{Name: "one", Aliases: []string{"o"}},
++			&BoolFlag{Name: "brief", Aliases: []string{"b"}},
++			&BoolFlag{Name: "check", Aliases: []string{"c"}},
++		}
++		return cmd
++	}
++
++	t.Run("value flag last takes the next argument", func(t *testing.T) {
++		cmd := newCmd()
++		require.NoError(t, cmd.Run(buildTestContext(t), []string{"foo", "-bo", "val"}))
++		assert.Equal(t, "val", cmd.String("one"))
++		assert.True(t, cmd.Bool("brief"))
++	})
++
++	t.Run("value flag not last is an error, not a silent drop", func(t *testing.T) {
++		cmd := newCmd()
++		err := cmd.Run(buildTestContext(t), []string{"foo", "-ob", "val"})
++		require.Error(t, err)
++		assert.Contains(t, err.Error(), "only the last flag in the group")
++		assert.Empty(t, cmd.String("one"))
++	})
++
++	t.Run("equals value goes to the last member", func(t *testing.T) {
++		cmd := newCmd()
++		require.NoError(t, cmd.Run(buildTestContext(t), []string{"foo", "-bco=val"}))
++		assert.Equal(t, "val", cmd.String("one"))
++		assert.True(t, cmd.Bool("brief"))
++		assert.True(t, cmd.Bool("check"))
++	})
++
++	t.Run("an unknown member is reported as undefined", func(t *testing.T) {
++		cmd := newCmd()
++		err := cmd.Run(buildTestContext(t), []string{"foo", "-bzc"})
++		require.Error(t, err)
++		assert.Contains(t, err.Error(), "flag provided but not defined: -bzc")
++	})
++
++	t.Run("a group that fails does not half-apply", func(t *testing.T) {
++		cmd := newCmd()
++		err := cmd.Run(buildTestContext(t), []string{"foo", "-bzc"})
++		require.Error(t, err)
++		assert.False(t, cmd.Bool("brief"))
++	})
++}
++
+ // TestFlagBaseInterfaceValueType covers flags whose value type is an interface
+ // (GenericFlag), for which reflect.TypeOf on the zero value yields nil.
+ func TestFlagBaseInterfaceValueType(t *testing.T) {
+diff --git a/godoc-current.txt b/godoc-current.txt
+index a5382b2d..2b744c8c 100644
+--- a/godoc-current.txt
++++ b/godoc-current.txt
+@@ -13,12 +13,12 @@ application:
+ 
+     func main() {
+     	cmd := &cli.Command{
+-      		Name: "greet",
+-      		Usage: "say a greeting",
+-      		Action: func(c *cli.Context) error {
+-      			fmt.Println("Greetings")
+-      			return nil
+-      		},
++    		Name:  "greet",
++    		Usage: "say a greeting",
++    		Action: func(context.Context, *cli.Command) error {
++    			fmt.Println("Greetings")
++    			return nil
++    		},
+     	}
+ 
+     	cmd.Run(context.Background(), os.Args)
+@@ -90,7 +90,9 @@ var DefaultAppComplete = DefaultRootCommandComplete
+ var DefaultInverseBoolPrefix = "no-"
+ var ErrWriter io.Writer = os.Stderr
+     ErrWriter is used to write errors to the user. This can be anything
+-    implementing the io.Writer interface and defaults to os.Stderr.
++    implementing the io.Writer interface and defaults to os.Stderr. A Command
++    that sets no ErrWriter of its own writes here; one that does writes there
++    instead.
+ 
+ var FishCompletionTemplate = `# {{ .Command.Name }} fish shell completion
+ 
+@@ -115,7 +117,7 @@ var RootCommandHelpTemplate = `NAME:
+    {{template "helpNameTemplate" .}}
+ 
+ USAGE:
+-   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}} {{if .VisibleFlags}}[global options]{{end}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} [arguments...]{{end}}{{end}}{{end}}{{if .Version}}{{if not .HideVersion}}
++   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}} {{if .VisibleFlags}}[global options]{{end}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} {{template "argsTemplate" .}}{{end}}{{end}}{{end}}{{if .Version}}{{if not .HideVersion}}
+ 
+ VERSION:
+    {{.Version}}{{end}}{{end}}{{if .Description}}
+@@ -158,7 +160,7 @@ var SubcommandHelpTemplate = `NAME:
+    {{template "helpNameTemplate" .}}
+ 
+ USAGE:
+-   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} [arguments...]{{end}}{{end}}{{end}}{{if .Category}}
++   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} {{template "argsTemplate" .}}{{end}}{{end}}{{end}}{{if .Category}}
+ 
+ CATEGORY:
+    {{.Category}}{{end}}{{if .Description}}
+@@ -517,7 +519,10 @@ type Command struct {
+ 	Reader io.Reader `json:"-"`
+ 	// Writer writer to write output to
+ 	Writer io.Writer `json:"-"`
+-	// ErrWriter writes error output
++	// ErrWriter writes error output. When unset it is inherited from the
++	// parent command, or defaults to the package-level ErrWriter, so a caller
++	// who redirects either one receives every stream this command writes,
++	// including the message an ExitCoder produces.
+ 	ErrWriter io.Writer `json:"-"`
+ 	// ExitErrHandler processes any error encountered while running a Command before it is
+ 	// returned to the caller. If no function is provided, HandleExitCoder is used as the
+diff --git a/help_test.go b/help_test.go
+index 49f70db0..48fbd057 100644
+--- a/help_test.go
++++ b/help_test.go
+@@ -168,6 +168,98 @@ GLOBAL OPTIONS:
+ 		"expected output to include usage text")
+ }
+ 
++func Test_HelpFlag_ArgumentsNamedInUsage(t *testing.T) {
++	// A root command and a subcommand carrying the identical Arguments
++	// declaration must render those arguments the same way: by the usage each
++	// one reports, not by a generic placeholder on one and names on the other.
++	args := func() []Argument {
++		return []Argument{
++			&StringArg{Name: "SOURCE", Required: true},
++			&StringArg{Name: "DEST"},
++		}
++	}
++
++	for _, testCase := range []struct {
++		name     string
++		argv     []string
++		expected string
++	}{
++		{
++			name:     "root",
++			argv:     []string{"prog", "--help"},
++			expected: "prog [global options] [command [command options]] SOURCE [DEST]",
++		},
++		{
++			name:     "command",
++			argv:     []string{"prog", "child", "--help"},
++			expected: "prog child [options] SOURCE [DEST]",
++		},
++		{
++			name:     "subcommand with children",
++			argv:     []string{"prog", "parent", "--help"},
++			expected: "prog parent [command [command options]] SOURCE [DEST]",
++		},
++	} {
++		t.Run(testCase.name, func(t *testing.T) {
++			output := new(bytes.Buffer)
++			cmd := &Command{
++				Name:      "prog",
++				Arguments: args(),
++				Commands: []*Command{
++					{Name: "child", Arguments: args()},
++					{
++						Name:      "parent",
++						Arguments: args(),
++						Commands:  []*Command{{Name: "leaf"}},
++					},
++				},
++				Writer: output,
++			}
++
++			_ = cmd.Run(buildTestContext(t), testCase.argv)
++			assert.Contains(t, output.String(), testCase.expected)
++		})
++	}
++}
++
++func Test_HelpFlag_UnnamedArgumentsUsage(t *testing.T) {
++	// AnyArguments carries no name, so it renders the generic placeholder
++	// rather than formatting an empty name into the usage forms.
++	for _, testCase := range []struct {
++		name      string
++		arguments []Argument
++		expected  string
++	}{
++		{
++			name:      "any arguments",
++			arguments: AnyArguments,
++			expected:  "prog child [options] [arguments...]",
++		},
++		{
++			name:      "unnamed and required",
++			arguments: []Argument{&StringArgs{Min: 1, Max: -1}},
++			expected:  "prog child [options] arguments [arguments...]",
++		},
++		{
++			name:      "unnamed single",
++			arguments: []Argument{&StringArg{}},
++			expected:  "prog child [options] [arguments]",
++		},
++	} {
++		t.Run(testCase.name, func(t *testing.T) {
++			output := new(bytes.Buffer)
++			cmd := &Command{
++				Name:     "prog",
++				Commands: []*Command{{Name: "child", Arguments: testCase.arguments}},
++				Writer:   output,
++			}
++
++			_ = cmd.Run(buildTestContext(t), []string{"prog", "child", "--help"})
++			assert.Contains(t, output.String(), testCase.expected)
++		})
++	}
++}
++
+ func Test_HelpCommand_RequiredFlagsNoDefault(t *testing.T) {
+ 	output := new(bytes.Buffer)
+ 
+diff --git a/template.go b/template.go
+index 92030cc8..d3605a7f 100644
+--- a/template.go
++++ b/template.go
+@@ -2,7 +2,7 @@ package cli
+ 
+ var (
+ 	helpNameTemplate    = `{{$v := offset .FullName 6}}{{wrap .FullName 3}}{{if .Usage}} - {{wrap .Usage $v}}{{end}}`
+-	argsTemplate        = `{{if .Arguments}}{{range .Arguments}}{{.Usage}} {{end}}{{end}}`
++	argsTemplate        = `{{range $i, $a := .Arguments}}{{if $i}} {{end}}{{$a.Usage}}{{end}}`
+ 	usageTemplate       = `{{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}}{{if .VisibleFlags}} [options]{{end}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} {{template "argsTemplate" .}}{{end}}{{end}}{{end}}`
+ 	descriptionTemplate = `{{wrap .Description 3}}`
+ 	authorsTemplate     = `{{with $length := len .Authors}}{{if ne 1 $length}}S{{end}}{{end}}:
+@@ -45,7 +45,7 @@ var RootCommandHelpTemplate = `NAME:
+    {{template "helpNameTemplate" .}}
+ 
+ USAGE:
+-   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}} {{if .VisibleFlags}}[global options]{{end}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} [arguments...]{{end}}{{end}}{{end}}{{if .Version}}{{if not .HideVersion}}
++   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}} {{if .VisibleFlags}}[global options]{{end}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} {{template "argsTemplate" .}}{{end}}{{end}}{{end}}{{if .Version}}{{if not .HideVersion}}
+ 
+ VERSION:
+    {{.Version}}{{end}}{{end}}{{if .Description}}
+@@ -95,7 +95,7 @@ var SubcommandHelpTemplate = `NAME:
+    {{template "helpNameTemplate" .}}
+ 
+ USAGE:
+-   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} [arguments...]{{end}}{{end}}{{end}}{{if .Category}}
++   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} {{template "argsTemplate" .}}{{end}}{{end}}{{end}}{{if .Category}}
+ 
+ CATEGORY:
+    {{.Category}}{{end}}{{if .Description}}
+diff --git a/testdata/godoc-v3.x.txt b/testdata/godoc-v3.x.txt
+index a5382b2d..2b744c8c 100644
+--- a/testdata/godoc-v3.x.txt
++++ b/testdata/godoc-v3.x.txt
+@@ -13,12 +13,12 @@ application:
+ 
+     func main() {
+     	cmd := &cli.Command{
+-      		Name: "greet",
+-      		Usage: "say a greeting",
+-      		Action: func(c *cli.Context) error {
+-      			fmt.Println("Greetings")
+-      			return nil
+-      		},
++    		Name:  "greet",
++    		Usage: "say a greeting",
++    		Action: func(context.Context, *cli.Command) error {
++    			fmt.Println("Greetings")
++    			return nil
++    		},
+     	}
+ 
+     	cmd.Run(context.Background(), os.Args)
+@@ -90,7 +90,9 @@ var DefaultAppComplete = DefaultRootCommandComplete
+ var DefaultInverseBoolPrefix = "no-"
+ var ErrWriter io.Writer = os.Stderr
+     ErrWriter is used to write errors to the user. This can be anything
+-    implementing the io.Writer interface and defaults to os.Stderr.
++    implementing the io.Writer interface and defaults to os.Stderr. A Command
++    that sets no ErrWriter of its own writes here; one that does writes there
++    instead.
+ 
+ var FishCompletionTemplate = `# {{ .Command.Name }} fish shell completion
+ 
+@@ -115,7 +117,7 @@ var RootCommandHelpTemplate = `NAME:
+    {{template "helpNameTemplate" .}}
+ 
+ USAGE:
+-   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}} {{if .VisibleFlags}}[global options]{{end}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} [arguments...]{{end}}{{end}}{{end}}{{if .Version}}{{if not .HideVersion}}
++   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}} {{if .VisibleFlags}}[global options]{{end}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} {{template "argsTemplate" .}}{{end}}{{end}}{{end}}{{if .Version}}{{if not .HideVersion}}
+ 
+ VERSION:
+    {{.Version}}{{end}}{{end}}{{if .Description}}
+@@ -158,7 +160,7 @@ var SubcommandHelpTemplate = `NAME:
+    {{template "helpNameTemplate" .}}
+ 
+ USAGE:
+-   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} [arguments...]{{end}}{{end}}{{end}}{{if .Category}}
++   {{if .UsageText}}{{wrap .UsageText 3}}{{else}}{{.FullName}}{{if .VisibleCommands}} [command [command options]]{{end}}{{if .ArgsUsage}} {{.ArgsUsage}}{{else}}{{if .Arguments}} {{template "argsTemplate" .}}{{end}}{{end}}{{end}}{{if .Category}}
+ 
+ CATEGORY:
+    {{.Category}}{{end}}{{if .Description}}
+@@ -517,7 +519,10 @@ type Command struct {
+ 	Reader io.Reader `json:"-"`
+ 	// Writer writer to write output to
+ 	Writer io.Writer `json:"-"`
+-	// ErrWriter writes error output
++	// ErrWriter writes error output. When unset it is inherited from the
++	// parent command, or defaults to the package-level ErrWriter, so a caller
++	// who redirects either one receives every stream this command writes,
++	// including the message an ExitCoder produces.
+ 	ErrWriter io.Writer `json:"-"`
+ 	// ExitErrHandler processes any error encountered while running a Command before it is
+ 	// returned to the caller. If no function is provided, HandleExitCoder is used as the

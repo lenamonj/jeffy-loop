@@ -1,0 +1,1340 @@
+diff --git a/.gitignore b/.gitignore
+index f154dce..63ce087 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -65,3 +65,4 @@ website/.docusaurus
+ .gitpod.yml
+ 
+ .watchman-cookie*
++.claude/jeffy-loop.local.md
+diff --git a/.prettierignore b/.prettierignore
+new file mode 100644
+index 0000000..9c464c1
+--- /dev/null
++++ b/.prettierignore
+@@ -0,0 +1,9 @@
++# Jeffy loop state files. Prettier's proseWrap "never" joins the labelled
++# lines of PLAN.md's Verify command block into one paragraph and rewrites
++# __tests__ as **tests**, which destroys the grammar the Stop hook and the
++# verify wrapper parse. These files are machine-read, not prose.
++PLAN.md
++BACKLOG.md
++JOURNAL.md
++JOURNAL-archive.md
++.jeffy/
+diff --git a/__tests__/base.js b/__tests__/base.js
+index c76e359..d74c922 100644
+--- a/__tests__/base.js
++++ b/__tests__/base.js
+@@ -60,7 +60,7 @@ function runBaseTest(
+ 	useListener,
+ 	useArrayMethods = false
+ ) {
+-	const listener = useListener ? function() {} : undefined
++	const listener = useListener ? function () {} : undefined
+ 
+ 	const {produce, produceWithPatches} = createPatchedImmer({
+ 		autoFreeze,
+@@ -73,7 +73,7 @@ function runBaseTest(
+ 		const immer = new Immer(options)
+ 
+ 		const {produce} = immer
+-		immer.produce = function(...args) {
++		immer.produce = function (...args) {
+ 			return typeof args[1] === "function" && args.length < 3
+ 				? produce(...args, listener)
+ 				: produce(...args)
+@@ -1258,6 +1258,43 @@ function runBaseTest(
+ 						expect(result).toBe(base)
+ 					})
+ 
++					// The plugin's documented bargain, so it is only defined where the
++					// plugin is loaded. Without it every callback receives drafts,
++					// which is immer's baseline and not what this asserts.
++					if (useArrayMethods)
++						test("a callback receives base values before and after a filter", () => {
++							// filter, find and slice create drafts for the items they
++							// return. That must not change what a later callback is
++							// handed, or the documented bargain would depend on an
++							// unrelated earlier statement.
++							const base = {items: [{n: 1}, {n: 2}, {n: 3}]}
++							const seen = []
++							const result = produce(base, draft => {
++								expect(draft.items.some(x => isDraft(x))).toBe(false)
++								draft.items.filter(x => x.n === 2)
++								expect(draft.items.some(x => isDraft(x))).toBe(false)
++								draft.items.some(x => {
++									seen.push(isDraft(x))
++									return false
++								})
++							})
++							expect(seen).toEqual([false, false, false])
++							expect(result).toBe(base)
++						})
++
++					test("a callback sees a mutation the recipe already made", () => {
++						const base = {items: [1, 2, 3]}
++						const seen = []
++						produce(base, draft => {
++							draft.items.push(9)
++							draft.items.some(x => {
++								seen.push(x)
++								return false
++							})
++						})
++						expect(seen).toEqual([1, 2, 3, 9])
++					})
++
+ 					test("indexOf with fromIndex parameter", () => {
+ 						const base = {items: [1, 2, 3, 2, 5]}
+ 						const result = produce(base, draft => {
+@@ -1334,28 +1371,18 @@ function runBaseTest(
+ 						expect(result).toBe(base)
+ 					})
+ 
+-					// Behavior differs based on array methods plugin
+-					if (useArrayMethods) {
+-						test("concat returns base values, not drafts (with plugin)", () => {
+-							const base = {items: [{id: 1, value: 10}]}
+-							const result = produce(base, draft => {
+-								const concatenated = draft.items.concat()
+-								// With plugin: concat returns base values, not drafts
+-								expect(isDraft(concatenated[0])).toBe(false)
+-							})
+-							expect(result).toBe(base)
+-						})
+-					} else {
+-						test("concat returns draft proxies (default behavior)", () => {
+-							const base = {items: [{id: 1, value: 10}]}
+-							const result = produce(base, draft => {
+-								const concatenated = draft.items.concat()
+-								// Without plugin: concat returns draft proxies via get trap
+-								expect(isDraft(concatenated[0])).toBe(true)
+-							})
+-							expect(result).toBe(base)
++					// concat is not overridden by the plugin, so this holds either way.
++					// It builds a new array from the elements it is handed, and the
++					// plugin cannot give it base values without handing the caller its
++					// own base objects to mutate.
++					test("concat returns draft proxies", () => {
++						const base = {items: [{id: 1, value: 10}]}
++						const result = produce(base, draft => {
++							const concatenated = draft.items.concat()
++							expect(isDraft(concatenated[0])).toBe(true)
+ 						})
+-					}
++						expect(result).toBe(base)
++					})
+ 
+ 					test("concat with multiple arrays", () => {
+ 						const base = {items: [{id: 1}]}
+@@ -1417,30 +1444,16 @@ function runBaseTest(
+ 						expect(result).toBe(base)
+ 					})
+ 
+-					// Behavior differs based on array methods plugin
+-					if (useArrayMethods) {
+-						test("flat returns base values, not drafts (with plugin)", () => {
+-							const base = {nested: [[{id: 1}], [{id: 2}]]}
+-							const result = produce(base, draft => {
+-								const flattened = draft.nested.flat()
+-								expect(flattened).toHaveLength(2)
+-								// With plugin: flat returns base values, not drafts
+-								expect(isDraft(flattened[0])).toBe(false)
+-							})
+-							expect(result).toBe(base)
+-						})
+-					} else {
+-						test("flat returns draft proxies (default behavior)", () => {
+-							const base = {nested: [[{id: 1}], [{id: 2}]]}
+-							const result = produce(base, draft => {
+-								const flattened = draft.nested.flat()
+-								expect(flattened).toHaveLength(2)
+-								// Without plugin: flat returns draft proxies via get trap
+-								expect(isDraft(flattened[0])).toBe(true)
+-							})
+-							expect(result).toBe(base)
++					// flat is not overridden either, for the same reason as concat.
++					test("flat returns draft proxies", () => {
++						const base = {nested: [[{id: 1}], [{id: 2}]]}
++						const result = produce(base, draft => {
++							const flattened = draft.nested.flat()
++							expect(flattened).toHaveLength(2)
++							expect(isDraft(flattened[0])).toBe(true)
+ 						})
+-					}
++						expect(result).toBe(base)
++					})
+ 
+ 					test("flat with empty nested arrays", () => {
+ 						const base = {nested: [[], [1, 2], []]}
+@@ -1835,32 +1848,19 @@ function runBaseTest(
+ 						expect(result.items[0].value).toBe(999)
+ 					})
+ 
+-					// Behavior differs based on array methods plugin
+-					if (useArrayMethods) {
+-						test("concat returns base values that cannot affect original (with plugin)", () => {
+-							const base = {items: [{id: 1, value: 10}]}
+-							const result = produce(base, draft => {
+-								const concatenated = draft.items.concat()
+-								// With plugin: concat returns base values, not drafts
+-								expect(isDraft(concatenated[0])).toBe(false)
+-								// Attempting to mutate won't affect the draft
+-								// (would throw if autoFreeze is on, or just not be tracked)
+-							})
+-							expect(result).toBe(base)
+-						})
+-					} else {
+-						test("concat returns drafts that can affect original (default behavior)", () => {
+-							const base = {items: [{id: 1, value: 10}]}
+-							const result = produce(base, draft => {
+-								const concatenated = draft.items.concat()
+-								// Without plugin: concat returns draft proxies via get trap
+-								expect(isDraft(concatenated[0])).toBe(true)
+-								// Mutations to concatenated items ARE tracked
+-								concatenated[0].value = 999
+-							})
+-							expect(result.items[0].value).toBe(999)
++					// A write through a concat result reaches the draft state and never
++					// the base. Handing out base values instead meant this same write
++					// landed in the caller's base object (IMM-008).
++					test("concat returns drafts that can affect original", () => {
++						const base = {items: [{id: 1, value: 10}]}
++						const result = produce(base, draft => {
++							const concatenated = draft.items.concat()
++							expect(isDraft(concatenated[0])).toBe(true)
++							concatenated[0].value = 999
+ 						})
+-					}
++						expect(result.items[0].value).toBe(999)
++						expect(base.items[0].value).toBe(10)
++					})
+ 				})
+ 
+ 				describe("combined operations", () => {
+@@ -3105,11 +3105,50 @@ function runBaseTest(
+ 			// This isn't defined anywhere explicitly, so could be changed
+ 			// in the future to follow === behavior, rather than Object.is.
+ 			// But I think this is fine as is.
++			//
++			// Preserving that difference means the write has to land: both
++			// guards in the set trap now compare with is(), so the change is
++			// detected and the assigned value is the one that ends up in the
++			// copy. Previously the second guard compared with === and dropped
++			// the write, which returned a new state holding the old value.
+ 			expect(nextState).not.toBe(baseState)
+-			expect(nextState.x).toBe(-0)
+-			expect(nextState.x).not.toBe(+0)
+-			// however, toEqual treats -0 === +0 (which is true!)
+-			expect(nextState).toEqual(baseState)
++			expect(nextState.x).toBe(+0)
++			expect(nextState.x).not.toBe(-0)
++			// toEqual distinguishes -0 from +0 as well, so once the write
++			// lands the two states no longer deeply equal each other
++			expect(nextState).not.toEqual(baseState)
++		})
++
++		it("should handle equality correctly - signed zero through every container", () => {
++			// The same write through an array index and a Map key, and the NaN
++			// half of the same comparison, which must stay a no-op everywhere.
++			const baseArray = [-0]
++			const nextArray = produce(baseArray, draft => {
++				draft[0] = +0
++			})
++			expect(nextArray).not.toBe(baseArray)
++			expect(nextArray[0]).toBe(+0)
++
++			const baseMap = new Map([["x", -0]])
++			const nextMap = produce(baseMap, draft => {
++				draft.set("x", +0)
++			})
++			expect(nextMap).not.toBe(baseMap)
++			expect(nextMap.get("x")).toBe(+0)
++
++			// NaN written over NaN changes nothing, so the base is shared.
++			const baseNaN = {x: NaN}
++			expect(
++				produce(baseNaN, draft => {
++					draft.x = NaN
++				})
++			).toBe(baseNaN)
++			const baseMapNaN = new Map([["x", NaN]])
++			expect(
++				produce(baseMapNaN, draft => {
++					draft.set("x", NaN)
++				})
++			).toBe(baseMapNaN)
+ 		})
+ 
+ 		it("should handle equality correctly - 3", () => {
+@@ -3304,13 +3343,13 @@ function runBaseTest(
+ 
+ 		it("'this' should not be bound anymore - 1", () => {
+ 			const base = {x: 3}
+-			const next1 = produce(base, function() {
++			const next1 = produce(base, function () {
+ 				expect(this).toBe(undefined)
+ 			})
+ 		})
+ 
+ 		it("'this' should not be bound anymore - 2", () => {
+-			const incrementor = produce(function() {
++			const incrementor = produce(function () {
+ 				expect(this).toBe(undefined)
+ 			})
+ 			incrementor()
+@@ -3319,7 +3358,7 @@ function runBaseTest(
+ 		it("should be possible to use dynamic bound this", () => {
+ 			const world = {
+ 				counter: {count: 1},
+-				inc: produce(function(draft) {
++				inc: produce(function (draft) {
+ 					expect(this).toBe(world)
+ 					draft.counter.count = this.counter.count + 1
+ 				})
+diff --git a/__tests__/patch.js b/__tests__/patch.js
+index 7e26cb4..c424552 100644
+--- a/__tests__/patch.js
++++ b/__tests__/patch.js
+@@ -950,12 +950,30 @@ describe("sets - mutate - 1", () => {
+ 		[
+ 			{op: "remove", path: [1], value: {id: 2, val: "you"}},
+ 			{op: "remove", path: [0], value: {id: 1, val: "rock"}},
+-			{op: "add", path: [1], value: {id: 2, val: "will"}},
+-			{op: "add", path: [0], value: {id: 1, val: "We"}}
++			// The reinsertions are ascending. Each index names a position in the
++			// base set, and applyPatches reinserts at that index rather than
++			// appending, so a position is only meaningful once every lower one has
++			// been filled. Descending here restored the members in reverse order.
++			{op: "add", path: [0], value: {id: 1, val: "We"}},
++			{op: "add", path: [1], value: {id: 2, val: "will"}}
+ 		]
+ 	)
+ })
+ 
++// toEqual compares a Set by membership, not by iteration order, so the
++// "patches can be reversed" check above cannot see an undo that restores the
++// right members in the wrong order. That is how #IMM-006 survived the suite.
++test("inverse patches restore a Set's iteration order", () => {
++	const base = new Set([1, 2, 3, 4, 5])
++	const [result, , inversePatches] = produceWithPatches(base, d => {
++		d.delete(1)
++		d.delete(3)
++		d.add(9)
++	})
++	expect([...result]).toEqual([2, 4, 5, 9])
++	expect([...applyPatches(result, inversePatches)]).toEqual([1, 2, 3, 4, 5])
++})
++
+ // These patches were more optimal pre immer 7, but not always correct
+ runPatchTests(
+ 	"arrays - splice should should result in remove op.",
+diff --git a/src/core/current.ts b/src/core/current.ts
+index 81c431a..fdb561d 100644
+--- a/src/core/current.ts
++++ b/src/core/current.ts
+@@ -8,7 +8,10 @@ import {
+ 	set,
+ 	ImmerState,
+ 	isDraftable,
+-	isFrozen
++	isFrozen,
++	getArchtype,
++	ArchType,
++	remapSet
+ } from "../internal"
+ 
+ /** Takes a snapshot of the current state of a draft and finalizes it (but without freezing). This is a great utility to print the current state during debugging (no Proxies in the way). The output of current can also be safely leaked outside the producer. */
+@@ -22,24 +25,29 @@ function currentImpl(value: any): any {
+ 	if (!isDraftable(value) || isFrozen(value)) return value
+ 	const state: ImmerState | undefined = value[DRAFT_STATE]
+ 	let copy: any
+-	let strict = true // Default to strict for compatibility
+ 	if (state) {
+ 		if (!state.modified_) return state.base_
+ 		// Optimization: avoid generating new drafts during copying
+ 		state.finalized_ = true
+ 		copy = shallowCopy(value, state.scope_.immer_.useStrictShallowCopy_)
+-		strict = state.scope_.immer_.shouldUseStrictIteration()
+ 	} else {
+ 		copy = shallowCopy(value, true)
+ 	}
+-	// recurse
+-	each(
+-		copy,
+-		(key, childValue) => {
++	// Recurse strictly, whatever the instance's iteration policy says. This
++	// walk is what replaces nested drafts with their snapshot values, and a
++	// draft can sit under any own key of the copy - a symbol or a
++	// non-enumerable property just as much as a plain string key. Skipping
++	// those keys leaves a live draft in the value `current` hands back, and
++	// that draft is revoked when the producer returns. Iterating loosely buys
++	// nothing here either: the walk is over the copy, which holds only the
++	// keys it holds.
++	if (getArchtype(copy) === ArchType.Set) {
++		remapSet(copy, currentImpl)
++	} else {
++		each(copy, (key, childValue) => {
+ 			set(copy, key, currentImpl(childValue))
+-		},
+-		strict
+-	)
++		})
++	}
+ 	if (state) {
+ 		state.finalized_ = false
+ 	}
+diff --git a/src/core/finalize.ts b/src/core/finalize.ts
+index 9a76e2b..bfe8f1f 100644
+--- a/src/core/finalize.ts
++++ b/src/core/finalize.ts
+@@ -21,6 +21,8 @@ import {
+ 	prepareCopy,
+ 	getFinalValue,
+ 	getValue,
++	remapSet,
++	getArchtype,
+ 	ProxyArrayState
+ } from "../internal"
+ 
+@@ -295,6 +297,27 @@ export function handleValue(
+ 
+ 	handledSet.add(target)
+ 
++	if (getArchtype(target) === ArchType.Set) {
++		// A Set is rebuilt rather than rewritten in place: substituting a
++		// member from inside a walk of that same Set leaves the old member
++		// behind, so the result would carry both the draft and its final
++		// value. See remapSet.
++		remapSet(target, value => {
++			if (isDraft(value)) {
++				const state: ImmerState = value[DRAFT_STATE]
++				if (isSameScope(state, rootScope)) {
++					const updatedValue = getFinalValue(state)
++					markStateFinalized(state)
++					return updatedValue
++				}
++			} else if (isDraftable(value)) {
++				handleValue(value, handledSet, rootScope)
++			}
++			return value
++		})
++		return target
++	}
++
+ 	// Process ALL properties/entries
+ 	each(target, (key, value) => {
+ 		if (isDraft(value)) {
+diff --git a/src/core/immerClass.ts b/src/core/immerClass.ts
+index 2922f61..fc90f7a 100644
+--- a/src/core/immerClass.ts
++++ b/src/core/immerClass.ts
+@@ -47,18 +47,14 @@ export type StrictMode = boolean | "class_only"
+ export class Immer implements ProducersFns {
+ 	autoFreeze_: boolean = true
+ 	useStrictShallowCopy_: StrictMode = false
+-	useStrictIteration_: boolean = false
+ 
+ 	constructor(config?: {
+ 		autoFreeze?: boolean
+ 		useStrictShallowCopy?: StrictMode
+-		useStrictIteration?: boolean
+ 	}) {
+ 		if (isBoolean(config?.autoFreeze)) this.setAutoFreeze(config!.autoFreeze)
+ 		if (isBoolean(config?.useStrictShallowCopy))
+ 			this.setUseStrictShallowCopy(config!.useStrictShallowCopy)
+-		if (isBoolean(config?.useStrictIteration))
+-			this.setUseStrictIteration(config!.useStrictIteration)
+ 	}
+ 
+ 	/**
+@@ -188,20 +184,6 @@ export class Immer implements ProducersFns {
+ 		this.useStrictShallowCopy_ = value
+ 	}
+ 
+-	/**
+-	 * Pass false to use faster iteration that skips non-enumerable properties
+-	 * but still handles symbols for compatibility.
+-	 *
+-	 * By default, strict iteration is enabled (includes all own properties).
+-	 */
+-	setUseStrictIteration(value: boolean) {
+-		this.useStrictIteration_ = value
+-	}
+-
+-	shouldUseStrictIteration(): boolean {
+-		return this.useStrictIteration_
+-	}
+-
+ 	applyPatches<T extends Objectish>(base: T, patches: readonly Patch[]): T {
+ 		// If a patch replaces the entire state, take that replacement as base
+ 		// before applying patches
+diff --git a/src/core/proxy.ts b/src/core/proxy.ts
+index 70e95ad..ee2a3e2 100644
+--- a/src/core/proxy.ts
++++ b/src/core/proxy.ts
+@@ -199,11 +199,11 @@ export const objectTraps: ProxyHandler<ProxyState> = {
+ 		}
+ 
+ 		if (
+-			(state.copy_![prop] === value &&
+-				// special case: handle new props with value 'undefined'
+-				(value !== undefined || has(state.copy_, prop, state.type_))) ||
+-			// special case: NaN
+-			(Number.isNaN(value) && Number.isNaN(state.copy_![prop]))
++			// is() rather than ===, so that this guard agrees with the one above:
++			// it distinguishes +0 from -0 and treats NaN as equal to itself
++			is(state.copy_![prop], value) &&
++			// special case: handle new props with value 'undefined'
++			(value !== undefined || has(state.copy_, prop, state.type_))
+ 		)
+ 			return true
+ 
+diff --git a/src/immer.ts b/src/immer.ts
+index 0256afa..c63f23a 100644
+--- a/src/immer.ts
++++ b/src/immer.ts
+@@ -69,15 +69,6 @@ export const setAutoFreeze = /* @__PURE__ */ immer.setAutoFreeze.bind(immer)
+ export const setUseStrictShallowCopy =
+ 	/* @__PURE__ */ immer.setUseStrictShallowCopy.bind(immer)
+ 
+-/**
+- * Pass false to use loose iteration that only processes enumerable string properties.
+- * This skips symbols and non-enumerable properties for maximum performance.
+- *
+- * By default, strict iteration is enabled (includes all own properties).
+- */
+-export const setUseStrictIteration =
+-	/* @__PURE__ */ immer.setUseStrictIteration.bind(immer)
+-
+ /**
+  * Apply an array of Immer patches to the first argument.
+  *
+diff --git a/src/plugins/arrayMethods.ts b/src/plugins/arrayMethods.ts
+index edd4f1b..be17246 100644
+--- a/src/plugins/arrayMethods.ts
++++ b/src/plugins/arrayMethods.ts
+@@ -33,8 +33,9 @@ type MutatingArrayMethod =
+  * - `filter`, `slice`: Return array of draft proxies
+  * - `find`, `findLast`: Return single draft proxy or undefined
+  *
+- * **Transform operations** (return base values - mutations don't track):
+- * - `concat`, `flat`: Create new structures, not subsets of original
++ * `concat` and `flat` are not in this set at all. They build a new array from
++ * the elements they are handed, so intercepting them meant handing the caller
++ * its own base objects; they read through the proxy and return drafts instead.
+  *
+  * **Primitive-returning** (no draft needed):
+  * - `findIndex`, `findLastIndex`, `indexOf`, `lastIndexOf`: Return numbers
+@@ -44,8 +45,6 @@ type MutatingArrayMethod =
+ type NonMutatingArrayMethod =
+ 	| "filter"
+ 	| "slice"
+-	| "concat"
+-	| "flat"
+ 	| "find"
+ 	| "findIndex"
+ 	| "findLast"
+@@ -73,11 +72,33 @@ export type ArrayOperationMethod = MutatingArrayMethod | NonMutatingArrayMethod
+  *
+  * **Non-mutating methods** fall into categories:
+  * - **Subset operations** (filter, slice, find, findLast): Return draft proxies - mutations track
+- * - **Transform operations** (concat, flat): Return base values - mutations don't track
+  * - **Primitive-returning** (indexOf, includes, some, every, etc.): Return primitives
+  *
++ * `concat` and `flat` are not overridden. They build a new array from the
++ * elements they are handed, so the plugin cannot give them base values without
++ * giving the caller its own base objects to mutate; they read through the proxy
++ * and return drafts, exactly as they do without this plugin.
++ *
+  * **Important**: Callbacks for overridden methods receive base values, not drafts.
+- * This is the core performance optimization.
++ * This is the core performance optimization. It holds while nothing in the array
++ * has been modified, which is the whole of a read-only pass. Mutating the array
++ * moves callbacks onto its current members, which may be drafts, and so does
++ * mutating any element in it: a change to an element marks the array itself
++ * modified, and the callbacks then have to see that change rather than the base
++ * value it replaced. The identity does not otherwise depend on what ran earlier
++ * in the recipe: an intervening `filter`, `find` or `slice` creates drafts for
++ * the items it returns, and callbacks after it still receive base values.
++ *
++ * A callback argument is the caller's own base object, so writing to it mutates
++ * the state they already hold: immer's guarantee that a producer never touches
++ * the base does not cover it and nothing reports the write. Read from callback
++ * arguments only, and make changes through the draft or through the drafts the
++ * subset methods return.
++ *
++ * The lookup methods (`indexOf`, `lastIndexOf`, `includes`) are the exception
++ * and take no callback: they compare the value you pass against the draft's own
++ * members, so pass a draft you obtained from the array. A base object is not
++ * guaranteed to match, exactly as it is not without this plugin.
+  *
+  * @example
+  * ```ts
+@@ -121,8 +142,6 @@ export function enableArrayMethods() {
+ 	const NON_MUTATING_METHODS = new Set<NonMutatingArrayMethod>([
+ 		"filter",
+ 		"slice",
+-		"concat",
+-		"flat",
+ 		...FIND_METHODS,
+ 		"findIndex",
+ 		"findLastIndex",
+@@ -136,6 +155,14 @@ export function enableArrayMethods() {
+ 		"toLocaleString"
+ 	])
+ 
++	/** Non-mutating methods that hand each element to a caller-supplied callback. */
++	const CALLBACK_METHODS = new Set<NonMutatingArrayMethod>([
++		"some",
++		"every",
++		"findIndex",
++		"findLastIndex"
++	])
++
+ 	// Type guard for method detection
+ 	function isMutatingArrayMethod(
+ 		method: string
+@@ -424,10 +451,10 @@ export function enableArrayMethods() {
+ 	 * filtered[0].value = 999 // Mutates draft.items[originalIndex]
+ 	 * ```
+ 	 *
+-	 * **Transform operations** return base values (no draft tracking):
+-	 * - `concat`, `flat`: These create NEW arrays rather than selecting subsets.
+-	 *   Since the result structure differs from the original, tracking mutations
+-	 *   back to specific draft indices would be impractical/impossible.
++	 * `concat` and `flat` never reach this function: they are not intercepted, so
++	 * they read through the proxy's own get trap and return drafts. Intercepting
++	 * them meant returning base values, which handed the caller its own objects
++	 * and let a write to a returned element reach the base state.
+ 	 *
+ 	 * **Primitive operations** return the native result directly:
+ 	 * - `indexOf`, `includes`, `some`, `every`, `join`, etc.
+@@ -435,7 +462,7 @@ export function enableArrayMethods() {
+ 	 * @param state - The proxy array state
+ 	 * @param method - The non-mutating method name
+ 	 * @param args - Arguments passed to the method
+-	 * @returns Drafts for subset operations, base values for transforms, primitives otherwise
++	 * @returns Drafts for subset operations, primitives otherwise
+ 	 */
+ 	function handleNonMutatingOperation(
+ 		state: ProxyArrayState,
+@@ -444,14 +471,26 @@ export function enableArrayMethods() {
+ 	) {
+ 		const source = latest(state)
+ 
++		// What a callback is handed. `source` is the copy once one exists, and
++		// filter, find and slice populate the copy with child drafts by design, so
++		// driving a predicate from it hands the callback drafts as a side effect of
++		// an unrelated earlier statement. While the array is unmodified the copy
++		// holds those same members with nothing written to them, so the base is the
++		// same data and is the stable identity the plugin documents. Once the array
++		// is modified the copy is the only current source and the callback gets it.
++		// The lookup methods deliberately keep reading `source`: they compare a
++		// caller-supplied value against the draft's own members, so a draft the
++		// caller is holding has to match.
++		const callbackSource = state.modified_ ? source : state.base_
++
+ 		// Methods that return arrays with selected items - need to return drafts
+ 		if (method === "filter") {
+ 			const predicate = args[0]
+ 			const result: any[] = []
+ 
+ 			// First pass: call predicate on base values to determine which items pass
+-			for (let i = 0; i < source.length; i++) {
+-				if (predicate(source[i], i, source)) {
++			for (let i = 0; i < callbackSource.length; i++) {
++				if (predicate(callbackSource[i], i, callbackSource)) {
+ 					// Only create draft for items that passed the predicate
+ 					result.push(state.draft_[i])
+ 				}
+@@ -464,10 +503,10 @@ export function enableArrayMethods() {
+ 			const predicate = args[0]
+ 			const isForward = method === "find"
+ 			const step = isForward ? 1 : -1
+-			const start = isForward ? 0 : source.length - 1
++			const start = isForward ? 0 : callbackSource.length - 1
+ 
+-			for (let i = start; i >= 0 && i < source.length; i += step) {
+-				if (predicate(source[i], i, source)) {
++			for (let i = start; i >= 0 && i < callbackSource.length; i += step) {
++				if (predicate(callbackSource[i], i, callbackSource)) {
+ 					return state.draft_[i]
+ 				}
+ 			}
+@@ -492,12 +531,18 @@ export function enableArrayMethods() {
+ 			return result
+ 		}
+ 
+-		// For other methods, call on base array directly:
++		// For other methods, call on the array directly:
++		// - some, every, findIndex, findLastIndex: take a callback, so they read
++		//   callbackSource for the identity the plugin documents
+ 		// - indexOf, includes, join, toString: Return primitives, no draft needed
+-		// - concat, flat: Return NEW arrays (not subsets). Elements are base values.
+-		//   This is intentional - concat/flat create new data structures rather than
+-		//   selecting subsets of the original, making draft tracking impractical.
+-		return source[method as keyof typeof Array.prototype](...args)
++		// concat and flat are deliberately not here and not intercepted at all:
++		// they build a new array out of the elements they are given, so handing
++		// them base values handed the caller its own base objects, and a write to
++		// a returned element reached the base state (IMM-008). Uninterrupted, they
++		// read through the proxy and get drafts, which is what immer does without
++		// this plugin loaded.
++		const readFrom = CALLBACK_METHODS.has(method) ? callbackSource : source
++		return readFrom[method as keyof typeof Array.prototype](...args)
+ 	}
+ 
+ 	loadPlugin(PluginArrayMethods, {
+diff --git a/src/plugins/mapset.ts b/src/plugins/mapset.ts
+index 0cc2158..d758830 100644
+--- a/src/plugins/mapset.ts
++++ b/src/plugins/mapset.ts
+@@ -16,6 +16,8 @@ import {
+ 	ArchType,
+ 	each,
+ 	getValue,
++	is,
++	remapSet,
+ 	PluginMapSet,
+ 	handleCrossReference
+ } from "../internal"
+@@ -27,9 +29,8 @@ import {
+ // while keeping the runtime feature detect accurate. (#1273)
+ const _globalIterator = (globalThis as any).Iterator as
+ 	| undefined
+-	| { from: <T>(iterable: Iterator<T>) => IterableIterator<T> }
+-const hasIteratorFrom =
+-	typeof _globalIterator?.from === "function"
++	| {from: <T>(iterable: Iterator<T>) => IterableIterator<T>}
++const hasIteratorFrom = typeof _globalIterator?.from === "function"
+ 
+ export function enableMapSet() {
+ 	class DraftMap extends Map {
+@@ -64,7 +65,7 @@ export function enableMapSet() {
+ 		set(key: any, value: any) {
+ 			const state: MapState = this[DRAFT_STATE]
+ 			assertUnrevoked(state)
+-			if (!latest(state).has(key) || latest(state).get(key) !== value) {
++			if (!latest(state).has(key) || !is(latest(state).get(key), value)) {
+ 				prepareMapCopy(state)
+ 				markChanged(state)
+ 				state.assigned_!.set(key, true)
+@@ -341,14 +342,11 @@ export function enableMapSet() {
+ 	}
+ 
+ 	function fixSetContents(target: ImmerState) {
+-		// For sets we clone before iterating, otherwise we can get in endless loop due to modifying during iteration, see #628
+-		// To preserve insertion order in all cases we then clear the set
++		// Rebuilt rather than rewritten in place: modifying a Set during
++		// iteration of that same Set does not terminate (#628), and clearing
++		// before re-adding is what keeps insertion order (#819). See remapSet.
+ 		if (target.type_ === ArchType.Set && target.copy_) {
+-			const copy = new Set(target.copy_)
+-			target.copy_.clear()
+-			copy.forEach(value => {
+-				target.copy_!.add(getValue(value))
+-			})
++			remapSet(target.copy_, getValue)
+ 		}
+ 	}
+ 
+diff --git a/src/plugins/patches.ts b/src/plugins/patches.ts
+index 08c7d0f..5fd4203 100644
+--- a/src/plugins/patches.ts
++++ b/src/plugins/patches.ts
+@@ -247,7 +247,9 @@ export function enablePatches() {
+ 			const value = get(copy_!, key, type_)
+ 			const op = !assignedValue ? REMOVE : has(base_, key) ? REPLACE : ADD
+ 			if (origValue === value && op === REPLACE) return
+-			const path = basePath.concat(key as any)
++			// `concat` spreads an array argument, so the key is wrapped: a Map
++			// keyed by an array is one path element, not several (IMM-016).
++			const path = basePath.concat([key])
+ 			patches.push(
+ 				op === REMOVE
+ 					? {op, path}
+@@ -280,7 +282,12 @@ export function enablePatches() {
+ 					path,
+ 					value
+ 				})
+-				inversePatches.unshift({
++				// Pushed rather than unshifted, so these arrive in ascending index
++				// order. Each index names a position in the base set, and a position
++				// is only meaningful once every lower one has been filled. The
++				// inverses of the additions below are still unshifted, which keeps
++				// them ahead of these - removals first, then reinsertions.
++				inversePatches.push({
+ 					op: ADD,
+ 					path,
+ 					value
+@@ -325,8 +332,80 @@ export function enablePatches() {
+ 		})
+ 	}
+ 
++	/**
++	 * Reinsert `value` at `key` in a Set's iteration order, expressed on the
++	 * array that holds that order. This is exactly what a Set `add` patch does
++	 * one patch at a time - `add` is SameValueZero, so a value already in the
++	 * head does not move and one in the tail moves to `key` - but it leaves the
++	 * order in an array so a run of these costs one Set rebuild instead of one
++	 * per patch.
++	 */
++	function reinsertInOrder(order: any[], key: any, value: any) {
++		const at = order.findIndex(v => v === value || (v !== v && value !== value))
++		if (typeof key !== "number" || key >= order.length) {
++			if (at === -1) order.push(value)
++			return
++		}
++		if (at === -1) {
++			order.splice(key, 0, value)
++			return
++		}
++		if (at < key) return
++		order.splice(at, 1)
++		order.splice(key, 0, value)
++	}
++
++	const samePath = (a: PatchPath, b: PatchPath) =>
++		a.length === b.length && a.every((p, i) => p === b[i])
++
++	/**
++	 * Apply a whole run of Set `add` patches to the array holding the set's
++	 * order, and return the new order.
++	 *
++	 * A generated inverse patch list reinserts at strictly ascending indices and
++	 * every reinserted value is one the set no longer holds, so that shape is
++	 * merged in a single pass, linear in the set and the run together. Anything
++	 * else - repeated or descending indices, a value the set already holds -
++	 * falls back to applying the patches one at a time, which is what the
++	 * per-patch semantics are defined as.
++	 */
++	function reinsertRun(order: any[], present: Set<any>, inserts: [any, any][]) {
++		let ascending = true
++		let last = -1
++		const fresh = new Set()
++		for (const [key, value] of inserts) {
++			if (
++				typeof key !== "number" ||
++				key <= last ||
++				present.has(value) ||
++				fresh.has(value)
++			) {
++				ascending = false
++				break
++			}
++			last = key
++			fresh.add(value)
++		}
++		if (!ascending) {
++			const out = order.slice()
++			inserts.forEach(([key, value]) => reinsertInOrder(out, key, value))
++			return out
++		}
++		const out: any[] = []
++		let i = 0
++		inserts.forEach(([key, value]) => {
++			while (out.length < key && i < order.length) out.push(order[i++])
++			out.push(value)
++		})
++		while (i < order.length) out.push(order[i++])
++		return out
++	}
++
+ 	function applyPatches_<T>(draft: T, patches: readonly Patch[]): T {
+-		patches.forEach(patch => {
++		// Index of the last patch a batched Set reinsertion already applied.
++		let batchedThrough = -1
++		patches.forEach((patch, n) => {
++			if (n <= batchedThrough) return
+ 			const {path, op} = patch
+ 
+ 			let base: any = draft
+@@ -375,8 +454,39 @@ export function enablePatches() {
+ 								: base.splice(key as any, 0, value)
+ 						case ArchType.Map:
+ 							return base.set(key, value)
+-						case ArchType.Set:
+-							return base.add(value)
++						case ArchType.Set: {
++							// A set has an observable iteration order and the patch
++							// carries the value's index in the set it belonged to, so
++							// reinsert at that index. Appending instead is what stopped
++							// an inverse patch from restoring the base's order.
++							//
++							// An append is already cheap and is by far the common case,
++							// so it keeps the direct path; only a reinsertion pays.
++							if (typeof key !== "number" || key >= base.size)
++								return base.add(value)
++							// Reinserting one patch at a time meant rebuilding the tail
++							// through the Set for each, which is quadratic in the set's
++							// size (IMM-007). From here the whole run of `add` patches on
++							// this same Set is applied to one array and written back once.
++							const parent = path.slice(0, -1)
++							const inserts: [any, any][] = []
++							let m = n
++							while (m < patches.length) {
++								const q = patches[m]
++								if (q.op !== ADD || !samePath(q.path.slice(0, -1), parent))
++									break
++								inserts.push([
++									q.path[q.path.length - 1],
++									deepClonePatchValue(q.value)
++								])
++								m++
++							}
++							const order = reinsertRun(Array.from(base), base, inserts)
++							base.clear()
++							order.forEach((v: any) => base.add(v))
++							batchedThrough = m - 1
++							return
++						}
+ 						default:
+ 							return (base[key] = value)
+ 					}
+diff --git a/src/types/index.js.flow b/src/types/index.js.flow
+index 14f61fd..b61b50f 100644
+--- a/src/types/index.js.flow
++++ b/src/types/index.js.flow
+@@ -2,7 +2,7 @@
+ 
+ export interface Patch {
+ 	op: "replace" | "remove" | "add";
+-	path: (string | number)[];
++	path: any[];
+ 	value?: any;
+ }
+ 
+diff --git a/src/types/types-external.ts b/src/types/types-external.ts
+index d42ab8f..b04601e 100644
+--- a/src/types/types-external.ts
++++ b/src/types/types-external.ts
+@@ -87,7 +87,16 @@ export type Immutable<T> = T extends PrimitiveType
+ 
+ export interface Patch {
+ 	op: "replace" | "remove" | "add"
+-	path: (string | number)[]
++	/**
++	 * The route from the root of the state to the changed value. A path element
++	 * is a string for a plain object's string key, a number for an array index
++	 * or a `Set` member's position, a symbol for a symbol-keyed property, and
++	 * the key itself - any value at all - for a `Map`. Only a path whose every
++	 * element is a string or a number survives `JSON.stringify` or the RFC-6901
++	 * normalization; serializing any other path silently loses the element. See
++	 * the Patches page for what that costs and how to detect it.
++	 */
++	path: any[]
+ 	value?: any
+ }
+ 
+diff --git a/src/utils/common.ts b/src/utils/common.ts
+index 513c153..5d09593 100644
+--- a/src/utils/common.ts
++++ b/src/utils/common.ts
+@@ -89,7 +89,8 @@ export function each<T extends Objectish>(
+ export function each(obj: any, iter: any, strict: boolean = true) {
+ 	if (getArchtype(obj) === ArchType.Object) {
+ 		// If strict, we do a full iteration including symbols and non-enumerable properties
+-		// Otherwise, we only iterate enumerable string properties for performance
++		// Otherwise, we only iterate enumerable string properties for performance.
++		// The one caller that passes false is freeze(), deliberately, per #590.
+ 		const keys = strict ? Reflect.ownKeys(obj) : O.keys(obj)
+ 		keys.forEach(key => {
+ 			iter(key, obj[key], obj)
+@@ -105,12 +106,12 @@ export function getArchtype(thing: any): ArchType {
+ 	return state
+ 		? state.type_
+ 		: isArray(thing)
+-		? ArchType.Array
+-		: isMap(thing)
+-		? ArchType.Map
+-		: isSet(thing)
+-		? ArchType.Set
+-		: ArchType.Object
++			? ArchType.Array
++			: isMap(thing)
++				? ArchType.Map
++				: isSet(thing)
++					? ArchType.Set
++					: ArchType.Object
+ }
+ 
+ /*#__PURE__*/
+@@ -145,6 +146,24 @@ export let set = (
+ 	} else thing[propOrOldValue] = value
+ }
+ 
++/**
++ * Replace every member of a Set with `fn(member)`, keeping insertion order.
++ *
++ * A Set cannot be rewritten member by member while it is being walked. `set`
++ * above only adds - its matching delete was removed so that replacing a member
++ * would not move that member to the end (#819) - so a substitution made from
++ * inside a `forEach` leaves the old member in place, and the new one is then
++ * visited by that same `forEach` and substituted again. Where the substitution
++ * allocates, that does not terminate. Rebuilding from a snapshot of the
++ * members avoids both, and the resulting order is exactly the order the
++ * members were already in.
++ */
++export function remapSet(target: AnySet, fn: (value: any) => any) {
++	const next = Array.from(target, value => fn(value))
++	target.clear()
++	for (let i = 0; i < next.length; i++) target.add(next[i])
++}
++
+ /*#__PURE__*/
+ export function is(x: any, y: any): boolean {
+ 	// From: https://github.com/facebook/fbjs/blob/c69904a511b900266935168223063dd8772dfc40/packages/fbjs/src/core/shallowEqual.js
+diff --git a/src/utils/plugins.ts b/src/utils/plugins.ts
+index 3cc8920..a2f8a96 100644
+--- a/src/utils/plugins.ts
++++ b/src/utils/plugins.ts
+@@ -96,4 +96,4 @@ export interface SetState extends ImmerBaseState {
+ 
+ /** Patches plugin */
+ 
+-export type PatchPath = (string | number)[]
++export type PatchPath = any[]
+diff --git a/website/docs/api.md b/website/docs/api.md
+index 53e911c..3397d43 100644
+--- a/website/docs/api.md
++++ b/website/docs/api.md
+@@ -32,7 +32,6 @@ title: API overview
+ | `produceWithPatches` | Works the same as `produce`, but instead of just returning the produced object, it returns a tuple, consisting of `[result, patches, inversePatches]`. | [Patches](./patches.mdx) |
+ | `setAutoFreeze` | Enables / disables automatic freezing of the trees produces. By default enabled. | [Freezing](./freezing.mdx) |
+ | `setUseStrictShallowCopy` | Can be used to enable strict shallow copy. If enable, immer copies non-enumerable properties as much as possible. | [Classes](./complex-objects.md) |
+-| `setUseStrictIteration` | Controls iteration behavior: pass `false` for loose iteration (enumerable properties only, better performance) or `true` for strict iteration (includes symbols and non-enumerable properties). By default disabled (loose iteration). |  |
+ 
+ ## Importing immer
+ 
+diff --git a/website/docs/array-methods.md b/website/docs/array-methods.md
+index e2c0d94..cb54b91 100644
+--- a/website/docs/array-methods.md
++++ b/website/docs/array-methods.md
+@@ -98,35 +98,40 @@ console.log(result.items[1].value) // 999
+ console.log(result.items[2].value) // 888
+ ```
+ 
+-### Transform Operations (Return Base Values)
++### Transform Operations (Not Overridden)
+ 
+-These methods create **new arrays** that may include external items or restructured data. They return **base values**, NOT drafts. **Mutations to returned items will NOT track back to the draft state.**
++`concat()` and `flat()` are **not** intercepted by this plugin. They build a new array out of the elements they are handed, and the plugin cannot hand them base values without handing you your own base objects to write to. They read through the draft like any unoverridden method, so the elements they return are **draft proxies**, and mutations to those elements track back to the draft state - exactly as they do without the plugin loaded.
+ 
+-| Method     | Returns             | Drafts? |
+-| ---------- | ------------------- | ------- |
+-| `concat()` | New combined array  | ❌ No   |
+-| `flat()`   | New flattened array | ❌ No   |
++| Method     | Returns                               | Drafts? |
++| ---------- | ------------------------------------- | ------- |
++| `concat()` | New combined array of draft elements  | ✅ Yes  |
++| `flat()`   | New flattened array of draft elements | ✅ Yes  |
+ 
+ ```javascript
+ const base = {items: [{id: 1, value: 10}]}
+ 
+ const result = produce(base, draft => {
+-	// concat returns base values - mutations DON'T track
++	// concat returns drafts of the elements it took from the draft
+ 	const concatenated = draft.items.concat([{id: 2, value: 20}])
+-	concatenated[0].value = 999 // This will NOT affect draft.items[0]
++	concatenated[0].value = 999 // this DOES affect draft.items[0]
++})
++
++console.log(result.items[0].value) // 999
++console.log(base.items[0].value) // 10 - the base is never touched
++```
+ 
+-	// To actually use concat results, assign them:
++The array `concat()` returns is a plain array, so assign it if you want it in the state:
++
++```javascript
++produce(base, draft => {
+ 	draft.items = draft.items.concat([{id: 2, value: 20}])
+ })
+-
+-// Original unchanged because concat result wasn't assigned
+-console.log(result.items[0].value) // 10 (unchanged)
+ ```
+ 
+ **Why the distinction?**
+ 
+-- **Subset operations** (`filter`, `slice`, `find`) select items that exist in the original array. Returning drafts allows mutations to propagate back to the source.
+-- **Transform operations** (`concat`, `flat`) create new data structures that may include external items or restructured data, making draft tracking impractical.
++- **Subset operations** (`filter`, `slice`, `find`) select items that exist in the original array, and the plugin returns drafts for them so mutations propagate back to the source.
++- **Transform operations** (`concat`, `flat`) may include external items or restructure the data, so the plugin leaves them to the draft's own get trap rather than intercepting them.
+ 
+ ### Primitive-Returning Methods
+ 
+@@ -170,12 +175,16 @@ The following methods are **not** intercepted by the plugin and work through sta
+ 
+ | Method          | Description                       |
+ | --------------- | --------------------------------- |
++| `concat()`      | Combine with other arrays         |
++| `flat()`        | Flatten nested arrays             |
+ | `map()`         | Transform each element            |
+ | `flatMap()`     | Map then flatten                  |
+ | `forEach()`     | Execute callback for each element |
+ | `reduce()`      | Reduce to single value            |
+ | `reduceRight()` | Reduce from right to left         |
+ 
++Because `concat()` and `flat()` return drafts, a result you store and read after the producer has finished refers to revoked proxies and throws. Read it inside the producer, or assign it into the draft.
++
+ ```javascript
+ const base = {
+ 	items: [
+@@ -204,6 +213,12 @@ console.log(result.items[0].nested.count) // 999
+ 
+ For overridden methods, callbacks receive **base values** (not drafts). This is the core optimization - it avoids creating proxies for every element during iteration.
+ 
++> **A callback argument is your base state, so do not write to it.** Because it is a base value and not a draft, `item.value = 999` inside one of these callbacks mutates the object your state already holds. Immer's guarantee that a producer never touches the base does not cover it, nothing reports the write, and the change is visible outside the producer. Read from callback arguments only, and make changes through the draft - `draft.items[i]` - or through the drafts these methods return.
++
++The promise holds while nothing in the array has been modified, which is the whole of a read-only pass. Mutating the array moves callbacks onto its current members, which may be drafts, and so does mutating any element in it - a change to an element marks the array itself modified, and the callbacks then have to see that change rather than the base value it replaced. An intervening `filter`, `find` or `slice` does not change what later callbacks receive, even though it creates drafts for the items it returns.
++
++`indexOf`, `lastIndexOf` and `includes` take no callback and are the exception: they compare the value you pass against the draft's own members, so pass a draft you obtained from the array rather than an object from the base state. A base object is not guaranteed to match, exactly as it is not without this plugin.
++
+ ```javascript
+ const base = {
+ 	items: [
+@@ -218,8 +233,9 @@ produce(base, draft => {
+ 		// Reading properties works fine
+ 		return item.value > 15
+ 
+-		// But direct mutation here won't be tracked:
+-		// item.value = 999  // ❌ Won't affect draft
++		// Do NOT write here: `item` is your base object, so this would
++		// mutate the state you already hold, outside immer's guarantee.
++		// item.value = 999  // mutates base state
+ 	})
+ 
+ 	// Instead, use the returned draft:
+@@ -233,7 +249,7 @@ produce(base, draft => {
+ | Category | Methods | Returns | Mutations Track? |
+ | --- | --- | --- | --- |
+ | **Subset** | `filter`, `slice`, `find`, `findLast` | Draft proxies | ✅ Yes |
+-| **Transform** | `concat`, `flat` | Base values | ❌ No |
++| **Transform** (not overridden) | `concat`, `flat` | Draft proxies | ✅ Yes |
+ | **Primitive** | `indexOf`, `includes`, `some`, `every`, `findIndex`, `findLastIndex`, `lastIndexOf`, `join`, `toString`, `toLocaleString` | Primitives | N/A |
+ | **Mutating** | `push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse` | Various | ✅ Yes (modifies draft) |
+ | **Not Overridden** | `map`, `flatMap`, `forEach`, `reduce`, `reduceRight` | Standard behavior | ✅ Yes (callbacks get drafts) |
+diff --git a/website/docs/patches.mdx b/website/docs/patches.mdx
+index bda37aa..92be20d 100644
+--- a/website/docs/patches.mdx
++++ b/website/docs/patches.mdx
+@@ -118,7 +118,7 @@ expect(state).toEqual({
+ })
+ ```
+ 
+-The generated patches are similar (but not the same) to the [RFC-6902 JSON patch standard](https://datatracker.ietf.org/doc/html/rfc6902/#section-4.1), except that the `path` property is an array, rather than a string. This makes processing patches easier. If you want to normalize to the official specification, use `patch.path = "/" + patch.path.join("/")` so the result is a JSON Pointer with a leading `/` (and escape `~` / `/` in path tokens per [RFC-6901](https://datatracker.ietf.org/doc/html/rfc6901) when needed). Anyway, this is what a bunch of patches and their inverse could look like:
++The generated patches are similar (but not the same) to the [RFC-6902 JSON patch standard](https://datatracker.ietf.org/doc/html/rfc6902/#section-4.1), except that the `path` property is an array, rather than a string. This makes processing patches easier. If every element of the path is a string or a number, you can normalize to the official specification with `patch.path = "/" + patch.path.join("/")` so the result is a JSON Pointer with a leading `/` (and escape `~` / `/` in path tokens per [RFC-6901](https://datatracker.ietf.org/doc/html/rfc6901) when needed). Not every path is like that - see [Not every patch can be serialized](#not-every-patch-can-be-serialized) below, and check before you normalize. Anyway, this is what a bunch of patches and their inverse could look like:
+ 
+ ```json
+ [
+@@ -138,6 +138,27 @@ The generated patches are similar (but not the same) to the [RFC-6902 JSON patch
+ ]
+ ```
+ 
++For a `Set`, the last element of `path` is the member's position in the set rather than a key: a `remove` names the position the member had, and an `add` reinserts the value at that position instead of appending it. That is what lets the inverse patches of a removal restore the set's iteration order, and it means the reinsertions in a generated inverse patch list are ordered by ascending index. A `Set` patch's `value` is what identifies the member on removal; the index alone does not.
++
++### Not every patch can be serialized
++
++A patch's `path` names the route to the changed value, and what a path element is depends on the container it indexes. A plain object's string key gives a string and an array index gives a number, and those are the paths that survive a round trip through JSON. Three other shapes do not:
++
++- A symbol-keyed property gives a **symbol** path element. `JSON.stringify` writes it as `null`, so the parsed patch applies to the string key `"null"` and the symbol property keeps its old value. The RFC-6901 normalization above throws `TypeError: Cannot convert a Symbol value to a string`.
++- A `Map` key gives **the key itself**, whatever it is - one path element, even when the key is an array. A Map keyed by objects produces a path element that serializes to a plain object, and applying the parsed patch adds a second, structurally equal key rather than updating the original.
++- Any path built on those, including nested ones.
++
++Immer does not refuse these patches, because applying them **in the same process is correct** - the symbol and the key object are still the same values, so `applyPatches` finds exactly the right slot. It is only serializing them, or normalizing them to a JSON Pointer, that loses the information, and it does so without an error. This is why `Patch["path"]` is typed `any[]` rather than `(string | number)[]`: the narrower type was a promise Immer could not keep.
++
++So if you send patches over a wire, persist them, or normalize them, check them first:
++
++```javascript
++const isSerializable = patch =>
++	patch.path.every(p => typeof p === "string" || typeof p === "number")
++```
++
++State that is plain objects and arrays always passes. If yours holds symbol keys or a `Map` with non-primitive keys, keep those parts out of the patched subtree, or key the `Map` by a string or number instead.
++
+ ⚠ Note: The set of patches generated by Immer should be correct, that is, applying them to an equal base object should result in the same end state. However Immer does not guarantee the generated set of patches will be optimal, that is, the minimum set of patches possible. It depends often on the use case what is considered 'optimal', and generating the optimal set of patches is potentially computationally very expensive. So in cases you might want to post process the generated patches, or compress them as explained below.
+ 
+ ### `produceWithPatches`
+diff --git a/website/docs/performance.mdx b/website/docs/performance.mdx
+index 863e860..a5162f8 100644
+--- a/website/docs/performance.mdx
++++ b/website/docs/performance.mdx
+@@ -80,19 +80,6 @@ enableArrayMethods()
+ 
+ This plugin optimizes array operations like `filter`, `find`, `some`, `every`, and `slice` by avoiding proxy creation for every element during iteration. Without the plugin, iterating a 1000-element array creates 1000+ proxies. With the plugin, callbacks receive base values, and proxies are only created for elements you actually mutate.
+ 
+-### Use loose iteration for better performance
+-
+-By default, Immer uses loose iteration which only processes enumerable string properties. This is faster than strict iteration which includes symbols and non-enumerable properties. For most use cases, the default is optimal:
+-
+-```javascript
+-import {setUseStrictIteration} from "immer"
+-
+-// Default: false (loose iteration for better performance)
+-setUseStrictIteration(false)
+-```
+-
+-Only enable strict iteration if you specifically need to track symbol or non-enumerable properties.
+-
+ ### Pre-freeze data
+ 
+ When adding a large data set to the state tree in an Immer producer (for example data received from a JSON endpoint), it is worth to call `freeze(json)` on the root of the data that is being added first. To _shallowly_ freeze it. This will allow Immer to add the new data to the tree faster, as it will avoid the need to _recursively_ scan and freeze the new data.
+diff --git a/website/docs/pitfalls.md b/website/docs/pitfalls.md
+index 999df37..36e0065 100644
+--- a/website/docs/pitfalls.md
++++ b/website/docs/pitfalls.md
+@@ -77,7 +77,7 @@ Draft objects in Immer are wrapped in `Proxy`, so you cannot use `==` or `===` t
+ 
+ ```javascript
+ const remove = produce((list, element) => {
+-	const index = list.indexOf(element) // this won't work!
++	// const index = list.indexOf(element) // this won't work: list is a draft
+ 	const index = original(list).indexOf(element) // do this instead
+ 	if (index > -1) list.splice(index, 1)
+ })
+@@ -90,7 +90,11 @@ If possible, it's recommended to perform the comparison outside the `produce` fu
+ 
+ ### Array Methods Plugin: Callbacks receive base values
+ 
+-When using the [Array Methods Plugin](./array-methods.md) (`enableArrayMethods()`), callbacks for overridden methods like `filter`, `find`, `some`, `every`, and `slice` receive **base values** (not drafts). This is the core performance optimization - it avoids creating proxies for every element during iteration.
++When using the [Array Methods Plugin](./array-methods.md) (`enableArrayMethods()`), callbacks for overridden methods like `filter`, `find`, `some`, and `every` receive **base values** (not drafts). This is the core performance optimization - it avoids creating proxies for every element during iteration.
++
++This holds while nothing in the array has been modified, which is the whole of a read-only pass. Mutating the array moves callbacks onto its current members, which may be drafts, and so does mutating any element in it - a change to an element marks the array itself modified, and the callbacks then have to see that change rather than the base value it replaced. An intervening `filter`, `find` or `slice` does not change what later callbacks receive, even though it creates drafts for the items it returns.
++
++> **A callback argument is your base state, so do not write to it.** Because it is a base value and not a draft, `item.value = 999` inside one of these callbacks mutates the object your state already holds. Immer's guarantee that a producer never touches the base does not cover it, nothing reports the write, and the change is visible outside the producer. Read from callback arguments only, and make changes through the draft - `draft.items[i]` - or through the drafts these methods return.
+ 
+ ```javascript
+ import {enableArrayMethods, produce} from "immer"
+@@ -102,8 +106,9 @@ produce(state, draft => {
+ 		// Reading works fine:
+ 		return item.value > 10
+ 
+-		// But direct mutation here won't be tracked:
+-		// item.value = 999  // ❌ Won't affect the draft!
++		// Do NOT write here: `item` is your base object, so this would
++		// mutate the state you already hold, outside immer's guarantee.
++		// item.value = 999  // mutates base state
+ 	})
+ 
+ 	// Instead, use the returned result (which contains drafts):
+diff --git a/website/docs/update-patterns.md b/website/docs/update-patterns.md
+index 913b85f..ecf424c 100644
+--- a/website/docs/update-patterns.md
++++ b/website/docs/update-patterns.md
+@@ -37,16 +37,17 @@ const updatedTodosObj = produce(todosObj, draft => {
+ })
+ 
+ // replace & update in bulk
+-const updatedTodosObj = produce(todosObj, draft => {
++const bulkUpdatedTodosObj = produce(todosObj, draft => {
+ 	Object.assign(draft, {
+ 		id1: {done: true, body: "Take out the trash"},
+ 		id2: {done: true, body: "Check Email"},
+ 		id3: {done: true, body: "Feed my cat"}
+ 	})
++})
+ 
+ // reset/clear/empty
+-const emptyTodo = produce(todosObj, () => {
+-	return {};
++const emptyTodosObj = produce(todosObj, () => {
++	return {}
+ })
+ ```
+ 
+@@ -68,49 +69,49 @@ const addedTodosArray = produce(todosArray, draft => {
+ })
+ 
+ // delete by index
+-const deletedTodosArray = produce(todosArray, draft => {
+-	draft.splice(3 /*the index */, 1)
++const deletedByIndexTodosArray = produce(todosArray, draft => {
++	draft.splice(1 /*the index */, 1)
+ })
+ 
+ // update by index
+ const updatedTodosArray = produce(todosArray, draft => {
+-	draft[3].done = true
++	draft[1].done = true
+ })
+ 
+ // insert at index
+-const updatedTodosArray = produce(todosArray, draft => {
+-	draft.splice(3, 0, {id: "id3", done: false, body: "Buy bananas"})
++const insertedTodosArray = produce(todosArray, draft => {
++	draft.splice(1, 0, {id: "id3", done: false, body: "Buy bananas"})
+ })
+ 
+ // remove last item
+-const updatedTodosArray = produce(todosArray, draft => {
++const poppedTodosArray = produce(todosArray, draft => {
+ 	draft.pop()
+ })
+ 
+ // remove first item
+-const updatedTodosArray = produce(todosArray, draft => {
++const shiftedTodosArray = produce(todosArray, draft => {
+ 	draft.shift()
+ })
+ 
+ // add item at the beginning of the array
+-const addedTodosArray = produce(todosArray, draft => {
++const unshiftedTodosArray = produce(todosArray, draft => {
+ 	draft.unshift({id: "id3", done: false, body: "Buy bananas"})
+ })
+ 
+ // delete by id
+-const deletedTodosArray = produce(todosArray, draft => {
++const deletedByIdTodosArray = produce(todosArray, draft => {
+ 	const index = draft.findIndex(todo => todo.id === "id1")
+ 	if (index !== -1) draft.splice(index, 1)
+ })
+ 
+ // update by id
+-const updatedTodosArray = produce(todosArray, draft => {
++const updatedByIdTodosArray = produce(todosArray, draft => {
+ 	const index = draft.findIndex(todo => todo.id === "id1")
+ 	if (index !== -1) draft[index].done = true
+ })
+ 
+ // filtering items
+-const updatedTodosArray = produce(todosArray, draft => {
++const filteredTodosArray = produce(todosArray, draft => {
+ 	// creating a new state is simpler in this example
+ 	// (note that we don't need produce in this case,
+ 	// but as shown below, if the filter is not on the top
+@@ -119,15 +120,19 @@ const updatedTodosArray = produce(todosArray, draft => {
+ })
+ 
+ // reset/clear/empty
+-const emptyTodo = produce(todosArray, () => {
++const emptyTodosArray = produce(todosArray, () => {
+ 	return []
+ })
+ ```
+ 
+ ### Nested data structures
+ 
++_The example below uses a `Map`, so it needs [`enableMapSet()`](./installation.mdx#pick-your-immer-version) called once when starting your application._
++
+ ```javascript
+-import {produce} from "immer"
++import {produce, enableMapSet} from "immer"
++
++enableMapSet()
+ 
+ // example complex data structure
+ const store = {
+@@ -153,7 +158,7 @@ const nextStore = produce(store, draft => {
+ })
+ 
+ // filtering out all unfinished todo's
+-const nextStore = produce(store, draft => {
++const filteredStore = produce(store, draft => {
+ 	const user = draft.users.get("17")
+ 	// when filtering, creating a fresh collection is simpler than
+ 	// removing irrelevant items

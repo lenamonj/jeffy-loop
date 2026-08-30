@@ -17,21 +17,22 @@ from playwright.sync_api import sync_playwright
 root = pathlib.Path(__file__).resolve().parent.parent
 readme = (root / "README.md").read_text(encoding="utf-8")
 
-# Receipts table rows look like:
-#   | [name](evals/x/REPORT.md) | 1,570 | Rust | 30 | [PR open](...) | ... |
+# Scorecard rows look like:
+#   | bat | Rust | [details](evals/bat/REPORT.md) - security flag no-op piped - [PR merged](...) | Fixed |
 #
-# The iterations cell is what marks a row converged: a converged run has an
-# iteration count, anything else carries an italic status instead (PapaParse
-# is *audit*). That replaced a literal **converged** column, dropped when the
-# table was widened; validate.sh check J classifies rows the same way and
-# faults on any row that is neither, so a new shape cannot slip past silently.
+# A converged row is a Fixed row whose details cell does not open with the
+# italic *audit* tag (PapaParse); validate.sh check J classifies rows the same
+# way and faults on any row whose result cell is neither Fixed nor Failed, so
+# a new shape cannot slip past silently.
 ROW = re.compile(
-    r"^\|\s*\[[^\]]+\]\(evals/[^)]+\)\s*\|[^|]*\|\s*([^|]+?)\s*\|\s*\d+\s*\|",
+    r"^\|\s*[^|]+?\s*\|\s*([^|]+?)\s*\|\s*(\[details\]\([^)]*\)[^|]*)\|\s*Fixed\s*\|",
     re.M,
 )
 
 counts = {}
-for language in ROW.findall(readme):
+for language, details in ROW.findall(readme):
+    if details.strip().startswith("[details]") and " - *audit" in details:
+        continue
     counts[language] = counts.get(language, 0) + 1
 
 total = sum(counts.values())

@@ -1,0 +1,1066 @@
+diff --git a/.gitignore b/.gitignore
+index 54088d5..9d5faf6 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,3 @@
+ target
+ .DS_Store
++.claude/jeffy-loop.local.md
+diff --git a/Cargo.toml b/Cargo.toml
+index d8a879f..209ec25 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -10,7 +10,14 @@ license = "MIT"
+ repository = "https://github.com/console-rs/indicatif"
+ documentation = "https://docs.rs/indicatif"
+ readme = "README.md"
+-exclude = ["screenshots/*"]
++exclude = [
++    "screenshots/*",
++    "/.jeffy",
++    "/PLAN.md",
++    "/BACKLOG.md",
++    "/JOURNAL.md",
++    "/JOURNAL-archive.md",
++]
+ 
+ [dependencies]
+ console = { version = "0.16.4", default-features = false, features = ["ansi-parsing", "std"] }
+diff --git a/src/draw_target.rs b/src/draw_target.rs
+index 6e7fe18..32aa3b4 100644
+--- a/src/draw_target.rs
++++ b/src/draw_target.rs
+@@ -576,7 +576,14 @@ impl DrawState {
+ 
+             // clear the line and keep the cursor on the right terminal side so that
+             // future writes/prints will happen on the next line
+-            let line_filler = term_width - metrics.last_line_width;
++            //
++            // Saturating: `last_line_width` can exceed `term_width` when the last
++            // visual row cannot fit even one character - a zero-width terminal, or a
++            // two-column character on a one-column terminal. The cursor is then
++            // already at or past the end of the row, so no filler is due. A plain
++            // subtraction underflows there, which panics in debug and wraps to a
++            // ~1.8e19 `" ".repeat()` allocation in release.
++            let line_filler = term_width.saturating_sub(metrics.last_line_width);
+             term.write_str(&" ".repeat(line_filler))?;
+         }
+ 
+@@ -744,8 +751,10 @@ struct Metrics {
+ 
+ #[cfg(test)]
+ mod tests {
+-    use crate::draw_target::{LineType, TargetKind};
+-    use crate::{MultiProgress, ProgressBar, ProgressDrawTarget};
++    use std::sync::{Arc, Mutex};
++
++    use crate::draw_target::{DrawState, LineType, TargetKind, VisualLines};
++    use crate::{MultiProgress, ProgressBar, ProgressDrawTarget, TermLike};
+     use console::Term;
+ 
+     #[test]
+@@ -874,6 +883,185 @@ mod tests {
+         assert!(multi_draw_target.is_stderr());
+     }
+ 
++    #[test]
++    fn rate_limiter_allows_a_burst_then_one_per_interval() {
++        use std::time::{Duration, Instant};
++
++        use super::{RateLimiter, MAX_BURST};
++
++        // 20 hz is a 50 ms interval. The limiter opens with MAX_BURST credit,
++        // so exactly that many calls are allowed before any time has passed.
++        let mut rl = RateLimiter::new(20);
++        let t = Instant::now();
++        let burst = (0..MAX_BURST as usize + 10).filter(|_| rl.allow(t)).count();
++        assert_eq!(
++            burst, MAX_BURST as usize,
++            "the opening burst must be exactly MAX_BURST"
++        );
++
++        // With the burst spent, nothing is allowed until a full interval has
++        // elapsed, and then exactly one call is.
++        assert!(
++            !rl.allow(t + Duration::from_millis(49)),
++            "49 ms is under 50"
++        );
++        assert!(
++            rl.allow(t + Duration::from_millis(50)),
++            "50 ms buys one credit"
++        );
++        assert!(
++            !rl.allow(t + Duration::from_millis(50)),
++            "that credit is spent"
++        );
++
++        // Time accumulates into credit: 200 ms is four intervals.
++        let allowed = (0..10)
++            .filter(|_| rl.allow(t + Duration::from_millis(250)))
++            .count();
++        assert_eq!(allowed, 4, "200 ms of unclaimed time is four credits");
++    }
++
++    #[test]
++    fn rate_limiter_interval_follows_the_requested_rate() {
++        use std::time::{Duration, Instant};
++
++        use super::{RateLimiter, MAX_BURST};
++
++        // The same elapsed time buys more credit at a higher rate. 100 ms is
++        // two intervals at 20 hz and twenty-five at 250 hz - the rate is a u8,
++        // so 250 is near the top of the expressible range - and the credit is
++        // capped at MAX_BURST either way.
++        let spend_burst = |rl: &mut RateLimiter, t: Instant| {
++            for _ in 0..MAX_BURST {
++                rl.allow(t);
++            }
++        };
++
++        let mut slow = RateLimiter::new(20);
++        let t = Instant::now();
++        spend_burst(&mut slow, t);
++        let slow_credits = (0..40)
++            .filter(|_| slow.allow(t + Duration::from_millis(100)))
++            .count();
++
++        let mut fast = RateLimiter::new(250);
++        let t = Instant::now();
++        spend_burst(&mut fast, t);
++        let fast_credits = (0..40)
++            .filter(|_| fast.allow(t + Duration::from_millis(100)))
++            .count();
++
++        assert_eq!(slow_credits, 2, "100 ms is two intervals at 20 hz");
++        // Twenty-five intervals, but the call that claims the first one also
++        // caps what it banks at MAX_BURST, so the total is that cap plus the
++        // claiming call itself.
++        assert_eq!(
++            fast_credits,
++            MAX_BURST as usize + 1,
++            "100 ms at 250 hz banks MAX_BURST and spends one claiming it"
++        );
++        assert!(
++            fast_credits > slow_credits,
++            "the refresh rate must be a live parameter"
++        );
++    }
++
++    #[test]
++    fn rate_limiter_refuses_a_clock_that_went_backwards() {
++        use std::time::{Duration, Instant};
++
++        use super::RateLimiter;
++
++        let mut rl = RateLimiter::new(20);
++        let t = Instant::now();
++        assert!(rl.allow(t), "a first call at the current time is allowed");
++        assert!(
++            !rl.allow(t - Duration::from_secs(1)),
++            "a time before the last one must be refused, not counted"
++        );
++    }
++
++    #[test]
++    fn draw_to_term_narrower_than_its_content() {
++        // A line whose last visual row is wider than the terminal must not
++        // underflow the trailing-filler subtraction. Two ways in: a terminal that
++        // reports zero columns, and a two-column character with one column left.
++        // Before the fix both panicked with "attempt to subtract with overflow" in
++        // debug and aborted release builds with "capacity overflow" from
++        // `" ".repeat(usize::MAX - n)`.
++        #[derive(Debug)]
++        struct NarrowTerm {
++            width: u16,
++            written: Mutex<Vec<String>>,
++        }
++
++        impl TermLike for NarrowTerm {
++            fn width(&self) -> u16 {
++                self.width
++            }
++            fn height(&self) -> u16 {
++                10
++            }
++            fn move_cursor_up(&self, _: usize) -> std::io::Result<()> {
++                Ok(())
++            }
++            fn move_cursor_down(&self, _: usize) -> std::io::Result<()> {
++                Ok(())
++            }
++            fn move_cursor_right(&self, _: usize) -> std::io::Result<()> {
++                Ok(())
++            }
++            fn move_cursor_left(&self, _: usize) -> std::io::Result<()> {
++                Ok(())
++            }
++            fn write_line(&self, s: &str) -> std::io::Result<()> {
++                self.written.lock().unwrap().push(s.into());
++                Ok(())
++            }
++            fn write_str(&self, s: &str) -> std::io::Result<()> {
++                self.written.lock().unwrap().push(s.into());
++                Ok(())
++            }
++            fn clear_line(&self) -> std::io::Result<()> {
++                Ok(())
++            }
++            fn flush(&self) -> std::io::Result<()> {
++                Ok(())
++            }
++        }
++
++        for (width, message) in [(0_u16, "ok"), (1, "\u{56fd}")] {
++            let term = Arc::new(NarrowTerm {
++                width,
++                written: Mutex::new(Vec::new()),
++            });
++
++            let mut state = DrawState {
++                lines: vec![LineType::Bar(message.to_string())],
++                ..Default::default()
++            };
++            let mut bar_count = VisualLines::default();
++            state
++                .draw_to_term(term.as_ref(), &mut bar_count)
++                .expect("drawing to a terminal narrower than its content must not fail");
++
++            // No run of filler spaces may exceed the terminal width.
++            let widest_filler = term
++                .written
++                .lock()
++                .unwrap()
++                .iter()
++                .filter(|s| !s.is_empty() && s.chars().all(|c| c == ' '))
++                .map(|s| s.len())
++                .max()
++                .unwrap_or(0);
++            assert!(
++                widest_filler <= usize::from(width),
++                "width {width}: wrote {widest_filler} columns of filler"
++            );
++        }
++    }
++
+     #[test]
+     fn wrapped_height_cjk_at_the_end_wrap() {
+         // Although the text is 20 columns (18 ASCII and 1 wide), when the width
+diff --git a/src/iter.rs b/src/iter.rs
+index d486d03..8a03f04 100644
+--- a/src/iter.rs
++++ b/src/iter.rs
+@@ -498,4 +498,77 @@ mod test {
+         }
+         assert_eq!(max.max(), 99);
+     }
++
++    #[test]
++    fn max_ring_buf_holds_the_maximum_of_its_window() {
++        use crate::iter::MaxRingBuf;
++
++        // Rising input: the maximum is always the newest value.
++        let mut buf = MaxRingBuf::<4>::default();
++        for v in [3_u64, 7, 11, 15] {
++            buf.update(v);
++        }
++        assert_eq!(buf.max(), 15);
++
++        // Falling input: the maximum stays until the entry holding it is
++        // overwritten, then drops to the largest value still in the window.
++        let mut buf = MaxRingBuf::<4>::default();
++        for v in [100_u64, 40, 30, 20] {
++            buf.update(v);
++        }
++        assert_eq!(buf.max(), 100, "the peak is still inside the window");
++        buf.update(10);
++        assert_eq!(buf.max(), 40, "the peak was evicted; 40 is the new maximum");
++
++        // A repeated maximum survives one eviction of its duplicate.
++        let mut buf = MaxRingBuf::<4>::default();
++        for v in [50_u64, 50, 1, 1] {
++            buf.update(v);
++        }
++        assert_eq!(buf.max(), 50);
++        buf.update(0);
++        assert_eq!(buf.max(), 50, "the second 50 still holds the maximum");
++
++        // The window is exactly HISTORY wide, so a value HISTORY updates old
++        // is gone and one HISTORY-1 old is not.
++        let mut buf = MaxRingBuf::<4>::default();
++        buf.update(u64::MAX);
++        for _ in 0..3 {
++            buf.update(1);
++        }
++        assert_eq!(buf.max(), u64::MAX);
++        buf.update(1);
++        assert_eq!(buf.max(), 1);
++    }
++
++    #[test]
++    fn seek_max_holds_the_high_water_mark_only_after_a_seek() {
++        use crate::iter::SeekMax;
++
++        // With no seek recorded, sequential reads report the running total and
++        // nothing is remembered: this is the fast path for a plain stream.
++        let mut sm = SeekMax::<5, 10>::default();
++        assert_eq!(sm.update_seq(0, 10), 10);
++        assert_eq!(sm.update_seq(10, 5), 15);
++        assert_eq!(sm.update_seq(15, 0), 15);
++
++        // After a seek, the reported position is the high-water mark, so a
++        // backwards seek does not make the bar jump backwards.
++        let mut sm = SeekMax::<5, 10>::default();
++        assert_eq!(sm.update_seek(500), 500);
++        assert_eq!(sm.update_seek(100), 500, "a backward seek holds the peak");
++        assert_eq!(sm.update_seek(700), 700, "a forward seek raises it");
++
++        // Enough consecutive sequential operations drop the history again, and
++        // the position becomes the running total rather than the peak. RESET is
++        // 5 here, so the fifth sequential update after a seek clears it.
++        let mut sm = SeekMax::<5, 10>::default();
++        assert_eq!(sm.update_seek(900), 900);
++        let reported: Vec<u64> = (0..5_u64).map(|pos| sm.update_seq(pos, 1)).collect();
++        assert_eq!(
++            reported,
++            vec![900, 900, 900, 900, 5],
++            "history is dropped on the fifth sequential update"
++        );
++    }
+ }
+diff --git a/src/lib.rs b/src/lib.rs
+index 0378f09..50ddb2b 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -141,12 +141,16 @@
+ //!
+ //! ```text
+ //! <^>             for an optional alignment specification (left, center and right respectively)
+-//! WIDTH           an optional width as positive integer
++//! WIDTH           an optional width as positive integer, at most 65535
+ //! !               an optional exclamation mark to enable truncation
+ //! .STYLE          an optional dot separated style string
+ //! /STYLE          an optional dot separated alternative style string
+ //! ```
+ //!
++//! A placeholder must be closed. A template that ends before its `}` - `{msg`,
++//! `{msg:5`, `{msg:.red` - is a parse error, not a silently truncated
++//! placeholder, and a width above 65535 is a parse error too.
++//!
+ //! For the style component see [`Style::from_dotted_str`](https://docs.rs/console/0.7.5/console/struct.Style.html#method.from_dotted_str)
+ //! for more information. Indicatif uses the `console` base crate for all
+ //! colorization and formatting options.
+diff --git a/src/multi.rs b/src/multi.rs
+index 09f611e..3a9d8d2 100644
+--- a/src/multi.rs
++++ b/src/multi.rs
+@@ -282,7 +282,25 @@ impl MultiProgress {
+         self.state.write().unwrap().remove_idx(idx);
+     }
+ 
++    /// Is this bar already drawing into our own `MultiState`?
++    ///
++    /// Taken and released before any write lock on `self.state`: the bar's own lock and
++    /// the multi lock must never be held at the same time.
++    fn is_member(&self, pb: &ProgressBar) -> bool {
++        match pb.state().draw_target.remote() {
++            Some((state, _)) => Arc::ptr_eq(state, &self.state),
++            None => false,
++        }
++    }
++
+     fn internalize(&self, location: InsertLocation, pb: ProgressBar) -> ProgressBar {
++        // Re-adding a bar that is already a member is documented to have no effect.
++        // Allocating a second member for it would leak an `ordering` entry that no
++        // `free_set` path ever reclaims, shifting every later positional insert.
++        if self.is_member(&pb) {
++            return pb;
++        }
++
+         let mut state = self.state.write().unwrap();
+         let idx = state.insert(location);
+         drop(state);
+@@ -657,6 +675,63 @@ mod tests {
+         pb.finish();
+     }
+ 
++    #[test]
++    fn re_adding_a_member_is_a_no_op() {
++        // The docs promise re-adding "will have no effect". It used to allocate a second
++        // member and a second `ordering` entry that no `free_set` path reclaimed, so every
++        // later positional insert landed one row off.
++        let mp = MultiProgress::new();
++        let pb = mp.add(ProgressBar::new(1));
++        let idx = pb.index().unwrap();
++
++        // Every public entry point into internalize, not just add.
++        let other = mp.add(ProgressBar::new(1));
++        mp.add(pb.clone());
++        mp.insert(0, pb.clone());
++        mp.insert_from_back(0, pb.clone());
++        mp.insert_before(&other, pb.clone());
++        mp.insert_after(&other, pb.clone());
++
++        let state = mp.state.read().unwrap();
++        assert_eq!(state.len(), 2, "re-adding must not add a member");
++        assert_eq!(
++            state.ordering.len(),
++            2,
++            "re-adding must not add an ordering entry"
++        );
++        assert_eq!(pb.index().unwrap(), idx, "re-adding must not move the bar");
++    }
++
++    #[test]
++    fn re_adding_leaves_positional_inserts_unshifted() {
++        let plain = MultiProgress::new();
++        let a = plain.add(ProgressBar::new(1));
++        plain.insert(1, ProgressBar::new(1));
++        let want = plain.state.read().unwrap().ordering.clone();
++
++        let doubled = MultiProgress::new();
++        let a2 = doubled.add(ProgressBar::new(1));
++        doubled.add(a2.clone());
++        doubled.insert(1, ProgressBar::new(1));
++        let got = doubled.state.read().unwrap().ordering.clone();
++
++        assert_eq!(
++            got, want,
++            "a documented no-op must not shift a later insert"
++        );
++        let _ = (a, a2);
++    }
++
++    #[test]
++    fn a_bar_from_another_multiprogress_is_still_adopted() {
++        // The no-op is keyed on this MultiProgress, not on membership in general.
++        let first = MultiProgress::new();
++        let second = MultiProgress::new();
++        let pb = first.add(ProgressBar::new(1));
++        second.add(pb.clone());
++        assert_eq!(second.state.read().unwrap().len(), 1);
++    }
++
+     #[test]
+     fn multi_progress_modifications() {
+         let mp = MultiProgress::new();
+diff --git a/src/rayon.rs b/src/rayon.rs
+index 0d63561..2436c11 100644
+--- a/src/rayon.rs
++++ b/src/rayon.rs
+@@ -95,15 +95,62 @@ struct ProgressProducer<T> {
+     progress: ProgressBar,
+ }
+ 
++/// The sequential iterator a [`ProgressProducer`] hands to rayon for one split
++/// chunk.
++///
++/// Deliberately not [`ProgressBarIter`]: that type finishes the progress bar
++/// when its inner iterator runs out, which is right for a sequential wrap and
++/// wrong here, because for a producer "runs out" means the end of one split
++/// chunk rather than the end of the work. Finishing there set the position to
++/// the bar's full length partway through, and every later chunk then
++/// incremented on top of it, so a bar chained with a producer-driven combinator
++/// such as `zip` or `rev` reported both a position past its own length and
++/// `is_finished` while the work was still running.
++struct ProgressProducerIter<T> {
++    base: T,
++    progress: ProgressBar,
++}
++
++impl<T: Iterator> Iterator for ProgressProducerIter<T> {
++    type Item = T::Item;
++
++    fn next(&mut self) -> Option<Self::Item> {
++        let item = self.base.next();
++        if item.is_some() {
++            self.progress.inc(1);
++        }
++        item
++    }
++
++    fn size_hint(&self) -> (usize, Option<usize>) {
++        self.base.size_hint()
++    }
++}
++
++impl<T: DoubleEndedIterator> DoubleEndedIterator for ProgressProducerIter<T> {
++    fn next_back(&mut self) -> Option<Self::Item> {
++        let item = self.base.next_back();
++        if item.is_some() {
++            self.progress.inc(1);
++        }
++        item
++    }
++}
++
++impl<T: ExactSizeIterator> ExactSizeIterator for ProgressProducerIter<T> {
++    fn len(&self) -> usize {
++        self.base.len()
++    }
++}
++
+ impl<T, P: Producer<Item = T>> Producer for ProgressProducer<P> {
+     type Item = T;
+-    type IntoIter = ProgressBarIter<P::IntoIter>;
++    type IntoIter = ProgressProducerIter<P::IntoIter>;
+ 
+     fn into_iter(self) -> Self::IntoIter {
+-        ProgressBarIter {
+-            it: self.base.into_iter(),
++        ProgressProducerIter {
++            base: self.base.into_iter(),
+             progress: self.progress,
+-            seek_max: SeekMax::default(),
+         }
+     }
+ 
+@@ -213,9 +260,73 @@ impl<S: Send, T: ParallelIterator<Item = S>> ParallelIterator for ProgressBarIte
+ 
+ #[cfg(test)]
+ mod test {
+-    use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+-
+-    use crate::{ParallelProgressIterator, ProgressBar, ProgressBarIter, ProgressStyle};
++    use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
++
++    use crate::{
++        ParallelProgressIterator, ProgressBar, ProgressBarIter, ProgressDrawTarget, ProgressStyle,
++    };
++
++    /// Every adapter must count each item exactly once and leave the bar
++    /// unfinished, whichever plumbing path rayon picks. `sum`, `collect` and
++    /// `enumerate` drive the consumer path; `zip` and `rev` drive the producer
++    /// path, which used to finish the bar at the end of the first split chunk
++    /// and then count past the bar's own length.
++    ///
++    /// The pool is pinned to one thread so the split geometry - and therefore
++    /// the number this asserts - is a measurement rather than a race.
++    #[test]
++    fn every_adapter_counts_each_item_once() {
++        let pool = rayon::ThreadPoolBuilder::new()
++            .num_threads(1)
++            .build()
++            .expect("building a single-threaded pool must succeed");
++
++        pool.install(|| {
++            for n in [1_u64, 2, 4, 10, 100] {
++                let v: Vec<u64> = (0..n).collect();
++                let bar = || ProgressBar::with_draw_target(Some(n), ProgressDrawTarget::hidden());
++
++                let pb = bar();
++                let _: u64 = v.par_iter().copied().progress_with(pb.clone()).sum();
++                assert_eq!(pb.position(), n, "sum, n={n}");
++                assert!(!pb.is_finished(), "sum finished the bar, n={n}");
++
++                let pb = bar();
++                let _: Vec<u64> = v.par_iter().copied().progress_with(pb.clone()).collect();
++                assert_eq!(pb.position(), n, "collect, n={n}");
++
++                let pb = bar();
++                let _: Vec<u64> = v
++                    .par_iter()
++                    .copied()
++                    .progress_with(pb.clone())
++                    .enumerate()
++                    .map(|(_, x)| x)
++                    .collect();
++                assert_eq!(pb.position(), n, "enumerate, n={n}");
++
++                let pb = bar();
++                let _: Vec<(u64, u64)> = v
++                    .par_iter()
++                    .copied()
++                    .progress_with(pb.clone())
++                    .zip(v.par_iter().copied())
++                    .collect();
++                assert_eq!(pb.position(), n, "zip, n={n}");
++                assert!(!pb.is_finished(), "zip finished the bar, n={n}");
++
++                let pb = bar();
++                let _: Vec<u64> = v
++                    .par_iter()
++                    .copied()
++                    .progress_with(pb.clone())
++                    .rev()
++                    .collect();
++                assert_eq!(pb.position(), n, "rev, n={n}");
++                assert!(!pb.is_finished(), "rev finished the bar, n={n}");
++            }
++        });
++    }
+ 
+     #[test]
+     fn it_can_wrap_a_parallel_iterator() {
+diff --git a/src/state.rs b/src/state.rs
+index 92bac64..1f4daf4 100644
+--- a/src/state.rs
++++ b/src/state.rs
+@@ -322,10 +322,13 @@ impl ProgressState {
+ 
+     /// The number of steps per second
+     pub fn per_sec(&self) -> f64 {
+-        if let Status::InProgress = self.status {
+-            self.est.steps_per_second(Instant::now())
+-        } else {
+-            self.pos() as f64 / self.started.elapsed().as_secs_f64()
++        match self.status {
++            Status::InProgress => self.est.steps_per_second(Instant::now()),
++            // Once finished the rate is fixed: divide by the duration stored at finish, not by
++            // elapsed time, which keeps growing and would make the reported rate decay.
++            Status::DoneVisible(duration) | Status::DoneHidden(duration) => {
++                self.pos() as f64 / duration.as_secs_f64()
++            }
+         }
+     }
+ 
+@@ -589,12 +592,22 @@ impl AtomicPosition {
+         self.prev.store(elapsed, Ordering::Release);
+     }
+ 
++    // Saturating, like the length family on `ProgressState`: a bar driven one step
++    // past either end reports that end, never a position wrapped to the far side.
+     pub(crate) fn inc(&self, delta: u64) {
+-        self.pos.fetch_add(delta, Ordering::SeqCst);
++        let _ = self
++            .pos
++            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |pos| {
++                Some(pos.saturating_add(delta))
++            });
+     }
+ 
+     pub(crate) fn dec(&self, delta: u64) {
+-        self.pos.fetch_sub(delta, Ordering::SeqCst);
++        let _ = self
++            .pos
++            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |pos| {
++                Some(pos.saturating_sub(delta))
++            });
+     }
+ 
+     pub(crate) fn set(&self, pos: u64) {
+@@ -842,6 +855,29 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn test_per_sec_frozen_after_finish() {
++        let duration = Duration::from_millis(200);
++        let now = Instant::now();
++
++        let mut state = state_started_at(now - duration);
++        state.state.pos.set(100);
++        state.finish_using_style(now, ProgressFinish::AndLeave);
++
++        let first = state.state.per_sec();
++        std::thread::sleep(Duration::from_millis(300));
++        let second = state.state.per_sec();
++
++        assert_eq!(
++            first, second,
++            "per_sec on a finished bar must not change with wall-clock time: {first} then {second}"
++        );
++        assert!(
++            (first - 500.0).abs() < 1e-9,
++            "expected 100 steps over 200 ms to report 500/s, got {first}"
++        );
++    }
++
+     fn state_started_at(started: Instant) -> BarState {
+         BarState {
+             draw_target: ProgressDrawTarget::hidden(),
+@@ -871,6 +907,176 @@ mod tests {
+         atomic_position.allow(later);
+     }
+ 
++    #[test]
++    fn atomic_position_allows_a_burst_then_one_per_interval() {
++        // The draw throttle behind ProgressBar::inc: MAX_BURST credits up
++        // front, then one more per INTERVAL of elapsed time.
++        let pos = AtomicPosition::new();
++        let t = pos.start;
++
++        let burst = (0..MAX_BURST as usize + 10)
++            .filter(|_| pos.allow(t))
++            .count();
++        assert_eq!(
++            burst, MAX_BURST as usize,
++            "the opening burst must be exactly MAX_BURST"
++        );
++
++        let just_under = Duration::from_nanos(INTERVAL - 1);
++        assert!(
++            !pos.allow(t + just_under),
++            "under one interval buys nothing"
++        );
++        assert!(
++            pos.allow(t + Duration::from_nanos(INTERVAL)),
++            "one interval buys one credit"
++        );
++
++        // Unclaimed time accumulates: five intervals is five credits.
++        let allowed = (0..10)
++            .filter(|_| pos.allow(t + Duration::from_nanos(INTERVAL * 6)))
++            .count();
++        assert_eq!(allowed, 5, "five unclaimed intervals are five credits");
++    }
++
++    #[test]
++    fn atomic_position_refuses_a_time_before_its_start() {
++        let pos = AtomicPosition::new();
++        assert!(
++            !pos.allow(pos.start - Duration::from_secs(1)),
++            "a time before the start must be refused, not counted"
++        );
++    }
++
++    #[test]
++    fn atomic_position_tracks_increments_exactly() {
++        let pos = AtomicPosition::new();
++        pos.set(10);
++        assert_eq!(pos.pos.load(Ordering::SeqCst), 10);
++        pos.inc(5);
++        assert_eq!(pos.pos.load(Ordering::SeqCst), 15);
++        pos.dec(4);
++        assert_eq!(pos.pos.load(Ordering::SeqCst), 11);
++        pos.set(0);
++        assert_eq!(pos.pos.load(Ordering::SeqCst), 0);
++    }
++
++    #[test]
++    fn atomic_position_saturates_at_both_ends() {
++        // The length family on ProgressState already saturates; the position used to
++        // wrap, so dec(1) at 0 reported u64::MAX and inc(1) at u64::MAX reported 0.
++        let pos = AtomicPosition::new();
++        pos.set(0);
++        pos.dec(1);
++        assert_eq!(
++            pos.pos.load(Ordering::SeqCst),
++            0,
++            "dec below zero must clamp"
++        );
++        pos.dec(u64::MAX);
++        assert_eq!(pos.pos.load(Ordering::SeqCst), 0);
++
++        pos.set(u64::MAX);
++        pos.inc(1);
++        assert_eq!(
++            pos.pos.load(Ordering::SeqCst),
++            u64::MAX,
++            "inc past the maximum must clamp"
++        );
++        pos.inc(u64::MAX);
++        assert_eq!(pos.pos.load(Ordering::SeqCst), u64::MAX);
++
++        // Clamping must not disturb ordinary arithmetic in between.
++        pos.set(10);
++        pos.inc(5);
++        pos.dec(4);
++        assert_eq!(pos.pos.load(Ordering::SeqCst), 11);
++    }
++
++    #[test]
++    fn bar_state_length_mutators_saturate_at_both_ends() {
++        let mut state = BarState::new(
++            Some(10),
++            ProgressDrawTarget::hidden(),
++            Arc::new(AtomicPosition::new()),
++        );
++        let now = Instant::now();
++
++        state.set_length(now, 25);
++        assert_eq!(state.state.len(), Some(25));
++        state.inc_length(now, 5);
++        assert_eq!(state.state.len(), Some(30));
++        state.dec_length(now, 7);
++        assert_eq!(state.state.len(), Some(23));
++
++        state.set_length(now, 5);
++        state.dec_length(now, 10);
++        assert_eq!(state.state.len(), Some(0), "dec_length must stop at zero");
++
++        state.set_length(now, u64::MAX);
++        state.inc_length(now, 10);
++        assert_eq!(
++            state.state.len(),
++            Some(u64::MAX),
++            "inc_length must stop at u64::MAX"
++        );
++
++        // Without a length the whole family is a no-op until one is set again.
++        state.unset_length(now);
++        assert_eq!(state.state.len(), None);
++        state.inc_length(now, 5);
++        state.dec_length(now, 5);
++        assert_eq!(state.state.len(), None);
++        state.set_length(now, 3);
++        assert_eq!(state.state.len(), Some(3));
++    }
++
++    #[test]
++    fn bar_state_tick_and_reset_move_the_expected_fields() {
++        let pos = Arc::new(AtomicPosition::new());
++        let mut state = BarState::new(Some(10), ProgressDrawTarget::hidden(), pos.clone());
++        let now = Instant::now();
++
++        state.tick(now);
++        state.tick(now);
++        assert_eq!(state.state.tick, 2, "each tick increments the counter once");
++
++        pos.set(7);
++        state.finish_using_style(now, ProgressFinish::Abandon);
++        assert!(state.state.is_finished());
++        assert_eq!(state.state.pos(), 7, "Abandon leaves the position alone");
++
++        state.reset(now, Reset::All);
++        assert!(!state.state.is_finished(), "a full reset clears the status");
++        assert_eq!(state.state.pos(), 0, "a full reset clears the position");
++        assert_eq!(state.state.len(), Some(10), "a full reset keeps the length");
++    }
++
++    #[test]
++    fn tab_expanded_string_expands_only_when_it_must() {
++        // No tab: stored verbatim, and the expanded form is the original.
++        let plain = TabExpandedString::new("no tabs here".into(), 4);
++        assert!(matches!(plain, TabExpandedString::NoTabs(_)));
++        assert_eq!(plain.expanded(), "no tabs here");
++
++        // With tabs: expanded at the configured width, and re-expanded when the
++        // width changes rather than serving the cached string.
++        let mut tabbed = TabExpandedString::new("a	b".into(), 4);
++        assert_eq!(tabbed.expanded(), "a    b");
++        tabbed.set_tab_width(2);
++        assert_eq!(
++            tabbed.expanded(),
++            "a  b",
++            "a width change must invalidate the cache"
++        );
++        tabbed.set_tab_width(2);
++        assert_eq!(
++            tabbed.expanded(),
++            "a  b",
++            "setting the same width changes nothing"
++        );
++    }
++
+     #[test]
+     fn test_atomic_position_reset() {
+         const ELAPSE_TIME: Duration = Duration::from_millis(20);
+diff --git a/src/style.rs b/src/style.rs
+index 4051a03..b6e3c9d 100644
+--- a/src/style.rs
++++ b/src/style.rs
+@@ -45,6 +45,9 @@ impl ProgressStyle {
+     /// Sets the template string for the progress bar
+     ///
+     /// Review the [list of template keys](../index.html#templates) for more information.
++    ///
++    /// Returns an error if the template does not parse: an unexpected character, a
++    /// placeholder left unclosed, or a width above 65535.
+     pub fn with_template(template: &str) -> Result<Self, TemplateError> {
+         Ok(Self::new(Template::from_str(template)?))
+     }
+@@ -115,7 +118,7 @@ impl ProgressStyle {
+         // Format bar will panic with some potentially confusing message, better to panic here
+         // with a message explicitly informing of the problem
+         assert!(
+-            self.progress_chars.len() >= 2,
++            self.tick_strings.len() >= 2,
+             "at least 2 tick strings required"
+         );
+         self
+@@ -146,6 +149,9 @@ impl ProgressStyle {
+     /// Sets the template string for the progress bar
+     ///
+     /// Review the [list of template keys](../index.html#templates) for more information.
++    ///
++    /// Returns an error if the template does not parse: an unexpected character, a
++    /// placeholder left unclosed, or a width above 65535.
+     pub fn template(mut self, s: &str) -> Result<Self, TemplateError> {
+         self.template = Template::from_str(s)?;
+         Ok(self)
+@@ -563,7 +569,11 @@ impl FromStr for Template {
+                 (FirstStyle, c) => (FirstStyle, Some(c)),
+                 (AltStyle, '}') => (Literal, None),
+                 (AltStyle, c) => (AltStyle, Some(c)),
+-                (st, c) => return Err(TemplateError { next: c, state: st }),
++                (st, c) => {
++                    return Err(TemplateError {
++                        kind: TemplateErrorKind::UnexpectedChar { state: st, next: c },
++                    })
++                }
+             };
+ 
+             match (state, new.0) {
+@@ -581,8 +591,13 @@ impl FromStr for Template {
+                     });
+                 }
+                 (Width, FirstStyle | Literal) if !buf.is_empty() => {
++                    // The state machine only feeds ASCII digits into `buf` here, so the only
++                    // way this parse fails is a width that overflows `u16`.
++                    let parsed = buf.parse::<u16>().map_err(|_| TemplateError {
++                        kind: TemplateErrorKind::WidthOverflow { width: buf.clone() },
++                    })?;
+                     if let Some(TemplatePart::Placeholder { width, .. }) = parts.last_mut() {
+-                        *width = Some(buf.parse().unwrap());
++                        *width = Some(parsed);
+                         buf.clear();
+                     }
+                 }
+@@ -607,7 +622,17 @@ impl FromStr for Template {
+             }
+         }
+ 
+-        if matches!(state, Literal | DoubleClose) && !buf.is_empty() {
++        // Any state but these two means the template ran out mid-placeholder: the
++        // opening brace was never closed. Silently keeping what parsed so far would
++        // discard the rest of the placeholder, which is what a missing brace looks
++        // like to a caller - the key vanishes, or its width and style do.
++        if !matches!(state, Literal | DoubleClose) {
++            return Err(TemplateError {
++                kind: TemplateErrorKind::UnterminatedPlaceholder { state },
++            });
++        }
++
++        if !buf.is_empty() {
+             parts.push(TemplatePart::Literal(TabExpandedString::new(
+                 buf.into(),
+                 tab_width,
+@@ -620,17 +645,33 @@ impl FromStr for Template {
+ 
+ #[derive(Debug)]
+ pub struct TemplateError {
+-    state: State,
+-    next: char,
++    kind: TemplateErrorKind,
++}
++
++#[derive(Debug)]
++enum TemplateErrorKind {
++    UnexpectedChar { state: State, next: char },
++    WidthOverflow { width: String },
++    UnterminatedPlaceholder { state: State },
+ }
+ 
+ impl fmt::Display for TemplateError {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+-        write!(
+-            f,
+-            "TemplateError: unexpected character {:?} in state {:?}",
+-            self.next, self.state
+-        )
++        match &self.kind {
++            TemplateErrorKind::UnexpectedChar { state, next } => write!(
++                f,
++                "TemplateError: unexpected character {next:?} in state {state:?}"
++            ),
++            TemplateErrorKind::WidthOverflow { width } => write!(
++                f,
++                "TemplateError: width {width} exceeds the maximum of {}",
++                u16::MAX
++            ),
++            TemplateErrorKind::UnterminatedPlaceholder { state } => write!(
++                f,
++                "TemplateError: unterminated placeholder, missing '}}' (ended in state {state:?})"
++            ),
++        }
+     }
+ }
+ 
+@@ -998,6 +1039,97 @@ mod tests {
+         assert_eq!(&buf[0], "XXX", "colors should be disabled");
+     }
+ 
++    #[test]
++    fn unterminated_template_is_an_error() {
++        // Each of these used to parse Ok and silently discard part of itself.
++        for bad in [
++            "{",
++            "{msg",
++            "abc{msg",
++            "{msg:",
++            "{msg:5",
++            "{msg:.red",
++            "{msg:.red/blue",
++            "{msg:>",
++            "{msg:5!",
++        ] {
++            let err = ProgressStyle::with_template(bad)
++                .err()
++                .unwrap_or_else(|| panic!("{bad:?} should not parse"));
++            assert!(
++                err.to_string().contains("unterminated placeholder"),
++                "{bad:?} gave the wrong error: {err}"
++            );
++        }
++
++        // The well-formed counterparts still parse, including the whitespace
++        // backtrack, which turns an unclosed brace into a literal by design.
++        for good in [
++            "{msg}",
++            "abc{msg}",
++            "{msg:5}",
++            "{msg:.red}",
++            "{msg:.red/blue}",
++            "{msg:>5!}",
++            "{ msg",
++            "{{",
++            "}}",
++            "a}",
++            "plain",
++            "",
++        ] {
++            assert!(
++                ProgressStyle::with_template(good).is_ok(),
++                "{good:?} should still parse"
++            );
++        }
++    }
++
++    #[test]
++    #[should_panic(expected = "at least 2 tick strings required")]
++    fn tick_strings_guard_rejects_a_single_string() {
++        // The guard used to read progress_chars.len(), which defaults to 2, so it never
++        // fired and a one-string set reached a divisor-of-zero panic in get_tick_str.
++        let _ = ProgressStyle::default_spinner().tick_strings(&["x"]);
++    }
++
++    #[test]
++    #[should_panic(expected = "at least 2 tick strings required")]
++    fn tick_strings_guard_rejects_an_empty_set() {
++        let _ = ProgressStyle::default_spinner().tick_strings(&[]);
++    }
++
++    #[test]
++    fn tick_strings_guard_accepts_two_and_they_are_used() {
++        let style = ProgressStyle::default_spinner().tick_strings(&["a", "b"]);
++        // With two strings the non-final cycle has period 1, so every tick is "a"
++        // and the final tick string is "b".
++        assert_eq!(style.get_tick_str(0), "a");
++        assert_eq!(style.get_tick_str(7), "a");
++        assert_eq!(style.get_final_tick_str(), "b");
++    }
++
++    #[test]
++    fn template_width_overflow_is_an_error_not_a_panic() {
++        // u16::MAX is the largest width the parser can hold, and it still parses.
++        assert!(ProgressStyle::with_template("{msg:65535}").is_ok());
++
++        for template in [
++            "{msg:65536}",
++            "{msg:99999}",
++            "{msg:>99999}",
++            "{msg:99999.red}",
++        ] {
++            let err = ProgressStyle::with_template(template)
++                .err()
++                .unwrap_or_else(|| panic!("{template} should not parse"));
++            assert!(
++                err.to_string().contains("exceeds the maximum of 65535"),
++                "{template} gave the wrong error: {err}"
++            );
++        }
++    }
++
+     #[test]
+     fn align_truncation() {
+         const WIDTH: u16 = 10;

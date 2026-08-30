@@ -55,6 +55,8 @@ loss rather than hiding it.
 | heck | 2 | 17 | converged | evaluator countersigned | 0 |
 | humanize | 3 | 30 | converged | evaluator countersigned | 0 |
 | Humanizer | 4 | 32 | **not converged** | n/a | 0 |
+| immer | 3 | 31 | **not converged** | n/a | 1 |
+| indicatif | 2 | 20 | converged | evaluator countersigned | 0 |
 | itoa | 2 | 16 | converged | evaluator countersigned | 1 |
 | itsdangerous | 3 | 31 | **not converged** | n/a | 0 |
 | image-rs (attempt 1) | 2 | 10 | **not converged** | n/a | 2 |
@@ -97,6 +99,7 @@ loss rather than hiding it.
 | testify | 4 | 40 | **not converged** | n/a | 2 |
 | thor | 2 | 20 | **not converged** | n/a | 0 |
 | underscore | 2 | 20 | converged | evaluator countersigned | 0 |
+| urfave-cli | 2 | 18 | converged | evaluator countersigned | 0 |
 | validator | 4 | 31 | converged | evaluator countersigned | 1 |
 | validator.js | 2 | 20 | **not converged** | n/a | 0 |
 | vavr | 2 | 13 | converged | evaluator countersigned | 0 |
@@ -116,13 +119,13 @@ loss rather than hiding it.
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 50 brownfield convergences:
+The engine tightened over time. Of the 54 brownfield convergences:
 
-- **45** were countersigned by the adversarial evaluator, the current standard.
-  Eighteen of those met the empty-ledger rule, `FluentValidation` being the most recent;
+- **49** were countersigned by the adversarial evaluator, the current standard.
+  Nineteen of those met the empty-ledger rule, `urfave-cli` being the most recent;
   `cJSON`, `swift-algorithms`,
   `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow`, `more-itertools`, `underscore`, `js-uuid`, `phpdotenv`, `vavr`, `itoa` and `qs` met
+  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow`, `more-itertools`, `underscore`, `js-uuid`, `phpdotenv`, `vavr`, `itoa`, `qs` and `indicatif` met
   the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
   the empty-ledger rule would have refused.
 - **1** (`ta`) records the evaluator as `unavailable` - that session carried a
@@ -132,7 +135,7 @@ The engine tightened over time. Of the 50 brownfield convergences:
   entirely and converged under the earlier standard: a clean closing audit and
   an empty backlog.
 
-Every receipt names the standard its own run met. Pooling all 50 as one number
+Every receipt names the standard its own run met. Pooling all 54 as one number
 would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
@@ -146,14 +149,14 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 46 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **21 of the 50 convergences above predate v1.9.0 and met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
 `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
 `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp` and `godotenv`, and each receipt names what it
 carried - three Lows
 for `cJSON`, three for `swift-algorithms`, five for `magic_enum`, two for
 `commander.js`, four for `claude-code-action`, three for
-`claude-agent-sdk-python`, two for `validator`, six for `clap`, six for `zod`, five for `go-cmp`, five for `godotenv`, and in
+`claude-agent-sdk-python`, two for `validator`, six for `clap`, six for `zod`, five for `go-cmp`, five for `godotenv`, three for `indicatif`, and in
 `path-to-regexp`'s case no Low at all but one open Medium, blocked with its
 reason recorded.** That last one is the
 floor's edge and is worth stating plainly: `PTR-2` is a security finding, rated
