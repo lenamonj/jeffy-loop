@@ -608,12 +608,14 @@ fi
 
 # J. Counts the README states are derived, never transcribed - the class
 #    that produced three drift incidents in one day across two codebases.
-#    Source of truth is the eval table: one row per evals/*/REPORT.md, a
-#    numeric Iters cell marks the row converged, the Language column feeds
-#    the distinct count. A row whose Iters cell is neither a number nor an
-#    italic status is unclassifiable and faults rather than being dropped
-#    from the tally in silence - that silence is what the old **converged**
-#    grep allowed, where a typo'd marker just stopped counting.
+#    Source of truth is the scorecard table: one row per project,
+#    `| Project | Language | [details](...) ... | Fixed/Failed |`. A Fixed row
+#    whose details link an evals/*/REPORT.md is one receipt; a Fixed row whose
+#    details open with an italic *audit* tag is counted as fixed but not as a
+#    loop convergence. A row whose result cell is neither Fixed nor Failed is
+#    unclassifiable and faults rather than being dropped from the tally in
+#    silence - that silence is what the old **converged** grep allowed, where
+#    a typo'd marker just stopped counting.
 #    On failure, remember the surfaces grep cannot see: the GitHub About
 #    text, release bodies, and any live article state the same numbers.
 receipts=0
@@ -622,39 +624,42 @@ for receipt in evals/*/REPORT.md; do
   # makes an empty evals/ count zero rather than one.
   if [ -f "$receipt" ]; then receipts=$((receipts + 1)); fi
 done
-tbl_rows="$(grep -c '^| \[.*(evals/.*/REPORT\.md)' README.md)"
-tbl_conv="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) c++ } END { print c+0 }' README.md)"
-tbl_langs="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 } }' README.md | sort -u | wc -l | tr -d ' ')"
-tbl_odd="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/^[ \t]+|[ \t]+$/, "", i); if (i !~ /^[0-9]+$/ && i !~ /^\*[a-z]+\*$/) print $2 }' README.md | wc -l | tr -d ' ')"
+tbl_rows="$(grep -cE '^\| [^|]+ \| [^|]+ \| \[details\]\(' README.md)"
+tbl_receipts="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' README.md | grep -c '\[details\](evals/[^)]*/REPORT\.md)')"
+tbl_fixed="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed") c++ } END { print c+0 }' README.md)"
+tbl_failed="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Failed") c++ } END { print c+0 }' README.md)"
+tbl_conv="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed" && $4 !~ /\[details\]\([^)]*\) - \*audit/) c++ } END { print c+0 }' README.md)"
+tbl_langs="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed") { gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3 } }' README.md | sort -u | wc -l | tr -d ' ')"
+tbl_odd="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r != "Fixed" && r != "Failed") print $2 }' README.md | wc -l | tr -d ' ')"
+tbl_merged="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' README.md | grep -o '\[PR merged\](' | wc -l | tr -d ' ')"
+tbl_issues="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' README.md | grep -o '\[issue filed\](' | wc -l | tr -d ' ')"
 # Every marker of each kind, not the first: a second one is free to state a
-# different number, and the count:converged pair in this file is exactly that
-# shape. Reading them all means the message names the defect rather than
-# blaming the eval table for a number the README disagrees with itself
-# about. (M1)
-# Extracted with grep -o rather than a sed carrying a leading .*, because that
-# .* is greedy and runs to the last match on a line, so the sed yielded one
-# value per line where the claim is one per site. README.md already ships two
-# count:converged markers on a single line, and rewriting the first of that
-# pair was reproduced leaving this check green. Every extractor of a repeatable
-# site in this file reads with grep -o for that reason. (G1)
-claim_conv="$(grep -o '<!-- count:converged -->[0-9][0-9]*<!-- /count -->' README.md \
-  | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-claim_langs="$(grep -o '<!-- count:languages -->[0-9][0-9]*<!-- /count -->' README.md \
-  | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-if [ "$tbl_rows" != "$receipts" ]; then
-  fault "README eval table has $tbl_rows rows but evals/ holds $receipts REPORT.md receipts; a new eval landed without its row (and the About text and live articles need the same edit)"
+# different number. Reading them all means the message names the defect
+# rather than blaming the table for a number the README disagrees with itself
+# about. (M1) Extracted with grep -o, never a sed with a leading greedy .*,
+# because README.md ships two markers of one kind on a single line. (G1)
+marker() { grep -o "<!-- count:$1 -->[0-9][0-9]*<!-- /count -->" README.md   | tr -dc '0-9
+' | grep -v '^$' | sort -u | tr '
+' ' ' | sed 's/ $//'; }
+claim_conv="$(marker converged)"; claim_langs="$(marker languages)"
+claim_tested="$(marker tested)"; claim_fixed="$(marker fixed)"; claim_failed="$(marker failed)"
+claim_merged="$(marker merged)"; claim_issues="$(marker issues)"
+count_bad=""
+for pair in "converged:$claim_conv:$tbl_conv" "languages:$claim_langs:$tbl_langs"             "tested:$claim_tested:$tbl_rows" "fixed:$claim_fixed:$tbl_fixed"             "failed:$claim_failed:$tbl_failed" "merged:$claim_merged:$tbl_merged"             "issues:$claim_issues:$tbl_issues"; do
+  k="${pair%%:*}"; rest="${pair#*:}"; c="${rest%%:*}"; t="${rest#*:}"
+  if [ -z "$c" ]; then count_bad="${count_bad}no <!-- count:$k --> marker; "
+  elif [ "${c#* }" != "$c" ]; then count_bad="${count_bad}count:$k markers disagree [$c]; "
+  elif [ "$c" != "$t" ]; then count_bad="${count_bad}count:$k claims $c but the scorecard derives $t; "
+  fi
+done
+if [ "$tbl_receipts" != "$receipts" ]; then
+  fault "README scorecard links $tbl_receipts REPORT.md receipts but evals/ holds $receipts; a new eval landed without its row (and the About text and live articles need the same edit)"
 elif [ "$tbl_odd" != "0" ]; then
-  fault "README eval table has $tbl_odd row(s) whose Iters cell is neither an iteration count nor an italic status; such a row is silently absent from every derived count"
-elif [ -z "$claim_conv" ] || [ -z "$claim_langs" ]; then
-  fault "README prose counts are not marker-anchored (<!-- count:converged --> / <!-- count:languages -->); an unanchored count is an untracked claim"
-elif [ "${claim_conv#* }" != "$claim_conv" ] || [ "${claim_langs#* }" != "$claim_langs" ]; then
-  fault "README's own count markers disagree (converged [$claim_conv], languages [$claim_langs]); no single number is published for a check to derive"
-elif [ "$claim_conv" != "$tbl_conv" ]; then
-  fault "README claims $claim_conv converged but the eval table shows $tbl_conv (and the About text and live articles need the same edit)"
-elif [ "$claim_langs" != "$tbl_langs" ]; then
-  fault "README claims $claim_langs languages but the converged rows span $tbl_langs"
+  fault "README scorecard has $tbl_odd row(s) whose result cell is neither Fixed nor Failed; such a row is silently absent from every derived count"
+elif [ -n "$count_bad" ]; then
+  fault "README counts are not derived from the scorecard: ${count_bad%; }"
 else
-  pass "README counts are derived from the eval table ($tbl_conv converged of $receipts, $tbl_langs languages)"
+  pass "README counts are derived from the scorecard ($tbl_rows tested, $tbl_fixed fixed, $tbl_conv converged, $tbl_failed failed, $tbl_langs languages, $tbl_merged merged)"
 fi
 
 # N. Corpus-position claims are queries over the receipts table (P2-39): a
@@ -694,9 +699,9 @@ ord_num() { # ordinal word (lowercased) -> number, 0 when unclassifiable
     nineteenth) echo 19 ;; twentieth) echo 20 ;; *) echo 0 ;;
   esac
 }
-ord_counts="$(awk -F'|' '/^\| \[.*\(evals\/.*\/REPORT\.md\)/ { i=$5; gsub(/[ \t]/, "", i); if (i ~ /^[0-9]+$/) { gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4 } }' README.md | sort | uniq -c | awk '{print $1, $2}')"
+ord_counts="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed" && $4 !~ /\[details\]\([^)]*\) - \*audit/) { gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3 } }' README.md | sort | uniq -c | awk '{print $1, $2}')"
 if [ -z "$ord_counts" ]; then
-  ord_bad="the receipts table yielded no converged row this check could read, so no ordinal was compared against anything; the extractor takes the language from column 4 and the iteration count from column 5, and a table reshape blinds it while this check goes on reporting agreement; "
+  ord_bad="the receipts table yielded no converged row this check could read, so no ordinal was compared against anything; the extractor takes the language from column 3 and the result from column 5, and a table reshape blinds it while this check goes on reporting agreement; "
 fi
 # U3's discriminator, derived rather than believed. The locator below matches
 # `<ordinal> <word> target` by position, so an innocent sentence naming a

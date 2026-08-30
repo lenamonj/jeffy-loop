@@ -53,6 +53,7 @@ loss rather than hiding it.
 | goldmark | 5 | 47 | **not converged** | n/a | 0 |
 | gson | 1 | 2 | converged | evaluator countersigned | 0 |
 | heck | 2 | 17 | converged | evaluator countersigned | 0 |
+| humanize | 3 | 30 | converged | evaluator countersigned | 0 |
 | Humanizer | 4 | 32 | **not converged** | n/a | 0 |
 | itoa | 2 | 16 | converged | evaluator countersigned | 1 |
 | itsdangerous | 3 | 31 | **not converged** | n/a | 0 |
@@ -62,12 +63,14 @@ loss rather than hiding it.
 | jsoncpp | 1 | 10 | converged | evaluator countersigned | 0 |
 | lz4 | 2 | 15 | converged | evaluator countersigned | 0 |
 | magic_enum | 2 | 19 | converged | evaluator countersigned | 0 |
+| mapstructure | 3 | 25 | converged | evaluator countersigned | 0 |
 | marshmallow | 1 | 10 | converged | evaluator countersigned | 0 |
 | more-itertools | 2 | 16 | converged | evaluator countersigned | 0 |
 | moshi | 5 | 49 | converged | evaluator countersigned | 1 |
 | mruby (attempt 1) | 5 | 50 | **not converged** | n/a | 0 |
 | mruby (attempt 2) | 5 | 63 | **not converged** | n/a | 1 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
+| nanoid | 3 | 30 | **not converged** | n/a | 3 |
 | node-semver | 4 | 30 | **not converged** | n/a | 0 |
 | path-to-regexp | 3 | 27 | converged | evaluator countersigned | 1 |
 | PHP-Parser | 3 | 29 | converged | evaluator countersigned | 0 |
@@ -109,9 +112,6 @@ loss rather than hiding it.
 |---|---:|---:|---|---:|
 | TOML decoder | 1 | 11 | converged | 0 |
 | gitignore matcher | 5 | 42 | converged | 3 |
-| humanize | 3 | 30 | converged | evaluator countersigned | 0 |
-| mapstructure | 3 | 25 | converged | evaluator countersigned | 0 |
-| nanoid | 3 | 30 | **not converged** | n/a | 3 |
 | TOML-M (mutated spec) | 1 | 14 | converged, with a disclosed process violation | 0 |
 
 ## The convergence standard is not uniform, and here is the split

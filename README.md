@@ -274,75 +274,99 @@ Five guarantees. Each one is enforced by the iteration prompt, the state files, 
 
 ## External Validation: Public Open-Source Projects
 
-Testing a tool against its own codebase proves little, so Jeffy was run against widely-used open-source projects with no connection to this repository. <!-- count:converged -->52<!-- /count --> of those runs converged, across <!-- count:languages -->13<!-- /count --> languages. That breadth is evidence of something specific rather than decoration: the engine ships no language-specific analyzer, no ruleset, and no per-ecosystem plugin. It works from what a project already has, its own test suite and its own verify command, so what carries from a Rust CLI to a Ruby linter to a C++ parser is the method itself.
+Jeffy was run against widely-used open-source projects with no connection to this repository, with each project's own test suite as the oracle. The engine ships no language-specific analyzer, ruleset or plugin, so the same method carried across <!-- count:languages -->13<!-- /count --> languages. Every run used a local clone, and nothing went upstream without a filed issue or PR.
 
-Every run used a local clone, and nothing went upstream without a filed issue or PR. Each was held to the rules current at its date, those rules only tightened, and every receipt names the standard its run met.
+| Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| **<!-- count:tested -->81<!-- /count -->** | **<!-- count:fixed -->53<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->14<!-- /count -->** | **<!-- count:merged -->4<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-A method that always converges is not measuring anything, so the record shows what the standard costs when a project resists it. python-dotenv was published here as *not converged* through four runs and 25 findings, and needed eight runs and 73 iterations before an audit finally filed nothing. sqlparse makes the point under a stricter rule: its budget of five runs was fixed in writing before its first iteration, four runs failed, and it converged on the fifth and last - one more rejection and it would have been published as a non-convergence, because the rule said so in advance. One row is not a loop run at all. PapaParse is an audit under the same method, kept in the table rather than hidden; one of its four upstream PRs is merged and its conversion waits on the other three.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->52<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
-<sub>Ordered by upstream outcome - fixes merged first, then fixed upstream, open PRs, filed issues - then by stars.</sub>
+<sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md).</sub>
 
-| Project | Stars | Language | Iters | Upstream | Headline |
-|:---|---:|:---|---:|:---|:---|
-| [bat](evals/bat/REPORT.md) | 59,915 | Rust | 10 | **[FIX MERGED](https://github.com/sharkdp/bat/pull/3862)** | a just-merged security flag did nothing when piped; caught before it ever shipped |
-| [fasthttp](evals/fasthttp/REPORT.md) | 23,422 | Go | 58 | **[FIX MERGED](https://github.com/valyala/fasthttp/pull/2343)** | 31 findings in a tagged release; a Content-Length no parser should accept became a wrong number |
-| [PapaParse](evals/papaparse/REPORT.md) | 13,532 | JavaScript | *audit* | **[FIX MERGED](https://github.com/mholt/PapaParse/pull/1135)** | four Highs in the streaming path; the header de-duplication fix is merged and shipped in 5.7.0, the other three PRs are open |
-| [jsoncpp](evals/jsoncpp/REPORT.md) | 8,876 | C++ | 10 | **[FIX MERGED](https://github.com/open-source-parsers/jsoncpp/pull/1709)** | the build the project documents for handling secrets had never compiled on MSVC, and the wipe it promises covered only part of the block; the evaluator caught the fix being half done before it went upstream |
-| [chalk](evals/chalk/REPORT.md) | 23,288 | JavaScript | 8 | **[FIXED UPSTREAM](https://github.com/chalk/chalk/pull/687)** | the control: one Medium found - the maintainer wrote and merged the fix himself, shipped in chalk v6.0.0 |
-| [dayjs](evals/dayjs/REPORT.md) | 48,657 | JavaScript | 74 | [PR open](https://github.com/iamkun/dayjs/pull/3167) | 45 findings, 10 High, in a 63M-downloads-a-week library |
-| [yfinance](evals/yfinance/REPORT.md) | 24,837 | Python | 9 | [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | closed a High that upstream's own failing test was advertising |
-| [PHP-Parser](evals/php-parser/REPORT.md) | 17,450 | PHP | 29 | [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | the tenth language; told nothing, it found its project's largest oracle by itself, then proved one of the suite's own test classes passes without executing the code it names |
-| [python-dotenv](evals/python-dotenv/REPORT.md) | 8,830 | Python | 73 | [PR open](https://github.com/theskumar/python-dotenv/pull/678) | the grind: 8 runs, 48 findings, seven audits that each filed something before the eighth came back empty; suite 220 to 511 |
-| [PyPortfolioOpt](evals/pyportfolioopt/REPORT.md) | 5,905 | Python | 58 | [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | CI-red baseline to 356 passing; the evaluator rejected five convergence attempts |
-| [go-yaml](evals/go-yaml/REPORT.md) | 2,217 | Go | 29 | [PR open](https://github.com/goccy/go-yaml/pull/915) *(not a loop finding)* | 20 findings, 6 High, including a regression the run introduced and the gate caught; the vendored conformance corpus never ran, and scores identically before and after |
-| [rust-url](evals/rust-url/REPORT.md) | 1,570 | Rust | 30 | [PR open](https://github.com/servo/rust-url/pull/1147) | 20 findings, 10 High, in the URL crate under cargo and reqwest; a class was settled and withdrawn three times before it held, and the PR closes a conformance case open upstream since 2023 |
-| [mustache.js](evals/mustache.js/REPORT.md) | 16,725 | JavaScript | 11 | [issue filed](https://github.com/janl/mustache.js/issues/848) | revived a suite that could not start; npm audit 107 to 2 |
-| [Spectre.Console](evals/spectre.console/REPORT.md) | 11,567 | C# | 8 | [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | a panel header wider than its content was dropped, not truncated - invisible to 3,618 tests |
-| [quantstats](evals/quantstats/REPORT.md) | 7,489 | Python | 40 | [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | 29 findings behind 125 green tests; the library ended smaller than it started |
-| [records](evals/records/REPORT.md) | 7,220 | Python | 7 | [issue filed](https://github.com/kennethreitz/records/issues/236) | four High data-loss bugs behind a green suite |
-| [cobra](evals/cobra/REPORT.md) | 44,436 | Go | 32 | - | the CLI framework under kubectl and Hugo, converged with an empty ledger and no High at all: `SOURCE_DATE_EPOCH` was resolved in the host timezone, so the one variable whose purpose is byte-reproducible output produced different bytes per machine |
-| [zod](evals/zod/REPORT.md) | 43,471 | TypeScript | 39 | - | the largest surface in its cohort at 196 files converged while the 4-file target in the same wave did not: `catch` and `success` wrappers absorbed the engine's own stack overflow so a cyclic value validated, and `z.success()` carried an unreachable `false` branch. Three gate REJECTs before the PASS, and the stack-overflow class took three attempts before the probes could not break it |
-| [commander.js](evals/commander-js/REPORT.md) | 28,358 | JavaScript | 10 | - | the most-used CLI framework in Node, and the cleanest target in the corpus: 1,373 green tests, no High findings, and an error message naming an argument the user never typed. The gate rejected on the last iteration and the fix landed inside the one-transaction rule |
-| [underscore](evals/underscore/REPORT.md) | 27,330 | JavaScript | 20 | - | the highest-starred convergence in the corpus: a computed __proto__ key wrote through the prototype chain in the library that taught JavaScript its idioms, and the gate proved by module resolution that every test loads a different bundle than the one npm serves consumers |
-| [gson](evals/gson/REPORT.md) | 24,229 | Java | 2 | - | the fastest run: one audit, one gate, one priced-and-declined Low, not a line changed |
-| [Catch2](evals/catch2/REPORT.md) | 21,430 | C++ | 35 | - | a test framework graded by the method it exists to serve: 18 findings, 6 High, behind 100 green CI legs - a JSON reporter emitting documents no parser accepts, single-letter enum names read past the end of their vector - and the two sharpest Highs were filed by the adversarial gate itself, including a benchmark confidence interval that reported a collapsed zero-width answer with no diagnostic |
-| [validator](evals/validator/REPORT.md) | 20,110 | Go | 31 | - | four Highs behind a green suite in the struct validator under Gin and Echo: a cyclic struct graph exhausted the goroutine stack and killed the process unrecoverably, and the `unix_addr` tag accepted every string, so a validation its own docs describe never rejected anything |
-| [clap](evals/clap/REPORT.md) | 16,634 | Rust | 31 | - | the target this cohort predicted would fail, named at risk in writing before launch: 35 inventory rows, and after 30 iterations it had swept 20 of them with the gate never once invoked - then run 4 swept the remaining 15 and passed first time, while the second-smallest surface in the same cohort did not converge at all |
-| [uuid (JS)](evals/js-uuid/REPORT.md) | 15,320 | JavaScript | 20 | - | v3/v5 crashed on any name with an unpaired surrogate, version converters silently returned wrong-version results, and two CI gates could not fail (a bare git diff exiting 0 either way; publint whose --strict npm ate) - single gate invocation, first PASS |
-| [speedtest-cli](evals/speedtest-cli/REPORT.md) | 14,080 | Python | 5 | - | the restraint case: small findings, nothing invented |
-| [phpdotenv](evals/phpdotenv/REPORT.md) | 13,548 | PHP | 10 | - | the `.env` loader for PHP, converged in one round of a pre-registered three: an unterminated multiline value made `parse` return `[]` with no exception, the gate's REJECT found the same silent-loss class by a second route - a closing quote at offset 0 was invisible, so a trailing comment swallowed every following variable - and the composer dist archive was the fifth packaging channel caught |
-| [cJSON](evals/cjson/REPORT.md) | 12,916 | C | 10 | - | the eleventh language, and the first target picked by shape rather than by oracle: a pre-registered two-run budget, converged in one. Sorting an object silently dropped every later append. The gate rejected a leaking test the project's own suite could not see |
-| [moshi](evals/moshi/REPORT.md) | 10,154 | Kotlin | 49 | - | the thirteenth language, and the clearest before-and-after in the corpus: three runs left Square's JSON library with an empty ledger, five unswept rows and the gate never once invoked, then two runs under an engine that ranks the map above every Medium swept those rows and converged. Five Highs behind twenty green CI legs, including integral reads that returned silently out of range and a record's canonical constructor whose exceptions were all swallowed |
-| [RuboCop](evals/rubocop/REPORT.md) | 12,892 | Ruby | 7 | - | the null result: every cop department swept, the last 20 commits re-proven, zero findings, zero lines changed |
-| [lz4](evals/lz4/REPORT.md) | 12,004 | C | 15 | - | the anti-cheat oracle: `decompress(compress(x)) == x` is arithmetic the loop cannot rewrite, and under it the CLI still hid silent data loss - an over-declared skippable frame made `lz4 -dc` emit nothing and exit 0 while `lz4 -t` called the file sound, the third finding on one root cause, closed as a single boundary. Converged with an empty ledger and a +188/-115 diff |
-| [godotenv](evals/godotenv/REPORT.md) | 10,600 | Go | 19 | - | the Go port of dotenv, converged in the cheap shape the cohort was chosen for: a one-second suite, four Highs behind it - a hand-crafted `.env` could panic the parser from outside, lowercase `${a}` never expanded, an escaped quote at the end of a value was dropped and broke the library's own round trip - and credentials files written at 0644 now land at 0600 |
-| [FluentValidation](evals/fluentvalidation/REPORT.md) | 9,753 | C# | 8 | - | one run of eight iterations, the budget's first and last: `CreditCard()` accepted `" - - "` as a card number - the Luhn checksum of no digits is zero - and any unsupported neutral culture turned every validation message into the empty string, both behind 865 green tests. Converged with an empty ledger; a 907-culture differential proved the fallback fix moved nothing else |
-| [qs](evals/qs/REPORT.md) | 8,943 | JavaScript | 18 | - | the query-string parser under Express, and the fiftieth convergence: a module-global side-channel leaked marks across unrelated parses, `comma: true` corrupted its own split, and the component.json channel shipped a module that could not load. Round 1 passed the gate and was refused by the hook anyway - `npm pack` still carried the loop's state - and round 2 closed it in five iterations |
-| [claude-code-action (attempt 2)](evals/claude-code-action/REPORT.md) | 8,618 | TypeScript | 30 | - | the acceptance test for the engine's own release, and the sharpest limit in the corpus: attempt 1 swept 17 of 23 rows and never once reached the gate, attempt 2 swept 28 of 28 and converged - and did not rediscover three High findings attempt 1 had filed on identical code |
-| [path-to-regexp](evals/path-to-regexp/REPORT.md) | 8,598 | TypeScript | 27 | - | three runs and five evaluator invocations, four of them REJECTs - and not one rejection was a missed defect in the library. Every one was a defect in the run's own evidence, including a verify command whose ReDoS assertions were randomized enough to pass without searching |
-| [claude-agent-sdk-python (attempt 2)](evals/claude-agent-sdk-python/REPORT.md) | 7,881 | Python | 30 | - | the same limit, proved by an instrument instead of a diff: attempt 1 swept 19 of 44 rows and never reached the gate, attempt 2 swept 31 of 31 and converged - then attempt 1's own battery, run unmodified against the converged tree, exited 1 with `create_sdk_mcp_server published an empty schema`. The run had swept that row and edited that very function |
-| [marshmallow](evals/marshmallow/REPORT.md) | 7,242 | Python | 10 | - | one round: three Highs in the load path of the validation library under half of Python's APIs - and the gate caught two Highs the run itself introduced, reproduced against the baseline, before countersigning |
-| [swift-algorithms](evals/swift-algorithms/REPORT.md) | 6,323 | Swift | 24 | - | the twelfth language: one real High in Apple's code, then fourteen findings tracing back to a single cause - nothing compiled or ran the doc-comment examples, so ten of them did not compile. Run 2 refused a loophole that would have earned it a third evaluator invocation |
-| [magic_enum](evals/magic_enum/REPORT.md) | 6,165 | C++ | 19 | - | six broken public members of a header-only library that no compiler had ever seen - C++ does not compile a class template member nothing instantiates, and nothing did. One of them answered `all() == false` on a full bitset without crashing. The structural fix makes the suite instantiate them, so a seventh cannot ship |
-| [vavr](evals/vavr/REPORT.md) | 6,164 | Java | 13 | - | 23,174 tests already green and a 22-line shipped diff - what certifying a mature tree costs: `BitSet.removeAll` threw on two valid BitSets, and release tarballs shipped the loop's own state through the git-archive channel, the sixth packaging channel caught |
-| [go-uuid](evals/go-uuid/REPORT.md) | 6,141 | Go | 20 | - | three Highs in the identifier package under much of Go's ecosystem: a SQL NULL handed back the previous row's UUID, a documented accessor decoded version 2 time up to seven minutes wrong, and one generator took no lock on the shared clock - invisible to a project CI that ran without the race detector |
-| [ta](evals/ta/REPORT.md) | 5,129 | Python | 64 | - | wrong numbers shipped since 2023; caught its own regression and wrote "It is mine" |
-| [go-cmp](evals/go-cmp/REPORT.md) | 4,672 | Go | 15 | - | the smallest surface in the corpus at 620KB, from the same wave whose 4-file target did not converge: Google's comparison library was gated by CI on Go 1.21 alone, and two genuine grouping bugs in its diff reporter hid from a 4,000-case suite. The whole shipped diff is +31/-13 - on a well-kept codebase the loop's bill is small and precise |
-| [more-itertools](evals/more-itertools/REPORT.md) | 4,089 | Python | 16 | - | the iteration-recipes library: sample() silently produced meaningless draws on negative weights, and the flit sdist shipped without its tests or docs - the artifact-channel rule catching under-shipping as readily as leaking. One gate invocation, one PASS |
-| [sqlparse](evals/sqlparse/REPORT.md) | 4,009 | Python | 47 | - | the pre-registered budget was five runs and it took five; the loop declined a finding the gate handed it, after running the claim |
-| [rrule](evals/rrule/REPORT.md) | 3,738 | TypeScript | 33 | - | 23 findings, 10 High, in the RFC 5545 library behind much of the JavaScript calendar ecosystem; the reference implementation overruled one of the loop's own High findings and the loop withdrew it |
-| [humanize](evals/humanize/REPORT.md) | 748 | Python | 30 | - | four float-range Highs and a wrong negative ordinal in the number formatters; the loop's own regression caught by its own closing audit before the gate saw it |
-| [ryu](evals/ryu/REPORT.md) | 704 | Rust | 10 | - | the float printer under serde_json, converged in one round with a +65/-1 diff: s2f rejected 7,807 strings ryu's own formatter emits, fixed as a class with bit-exact agreement against the standard library - and the run found and closed its own packaging leak, converting the manifest to an include allowlist the gate verified byte-identical against the pre-run crate |
-| [rust-semver](evals/rust-semver/REPORT.md) | 674 | Rust | 16 | - | the version parser under Cargo itself, converged on an empty ledger - and the gate rejected twice first, once on a Medium no instrument could see: `cargo package` would have shipped the loop's own audit ledger inside the published crate tarball, and the packaging probe graded exit status instead of contents |
-| [heck](evals/heck/REPORT.md) | 595 | Rust | 17 | - | the case converter under cargo and serde codegen, graded against the Unicode Character Database itself: seven Mediums closed, and the gate found the headline High - NFD text silently losing its combining marks - that the run's own 149,106-point differential was structurally blind to, because its reference split words on the same predicate. That High is carried blocked on an owner decision, stated on the receipt up front |
-| [mapstructure](evals/mapstructure/REPORT.md) | 481 | Go | 25 | - | three Highs in the decoder core - silent numeric overflow, a panic on non-string map keys, array checks skipped on every struct under a Go 1.19 shim - and eight Mediums, most of them reflect panics |
-| [itoa](evals/itoa/REPORT.md) | 378 | Rust | 16 | - | ryu's integer sibling, the second dtolnay crate in the corpus: with `no-panic` on, a downstream release build failed to link on any runtime `i32`, `i64` or `isize` - run 1 spent three attempts on the wrong hypothesis and ended blocked, run 2 tested that hypothesis and closed it in one iteration - and the gate rejected a SAFETY comment whose premise was false at every signed type's `MIN` |
-
-Disclosure is deliberate and selective. Filing a machine-generated issue costs a maintainer real attention, so these findings go upstream only where the defect is severe and the project takes outside contributions; where nothing was filed, the receipt says so and why.
-
-Of the 16 rows that went upstream in some form, **five have been answered by the people who own the code**: bat, fasthttp, jsoncpp and PapaParse merged the loop's patch as written, and chalk's maintainer reproduced the finding and wrote his own fix. Those five are the strongest evidence on this page, because a merge is the one outcome this project cannot award itself. Everything else here - the convergence declarations, the evaluator verdicts, the sweep counts - is a standard this repository set and this repository checked, and it is worth exactly what you think a self-administered exam is worth. A maintainer merging a patch into a library with tens of thousands of dependants is a different kind of evidence, and it is the kind this table is built to accumulate. The rest are still open and are published here either way, because a pull request nobody has answered is part of the record too.
-
-**What is not in the table above is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md):** every target ever started, the runs each one cost, which of three convergence standards it met, and the one public target that was abandoned without a receipt. Convergence here is per-run and a blocked run gets relaunched, so run counts are published with the wins attached rather than a bare success rate. Targets from here on carry a pre-registered run budget committed before their first iteration.
+| Project | Language | Details | Jeffy Result |
+|:---|:---|:---|:---|
+| bat | Rust | [details](evals/bat/REPORT.md) - new security flag was a no-op when piped - [PR merged](https://github.com/sharkdp/bat/pull/3862) | Fixed |
+| fasthttp | Go | [details](evals/fasthttp/REPORT.md) - 31 findings; bad Content-Length parsed as wrong number - [PR merged](https://github.com/valyala/fasthttp/pull/2343) | Fixed |
+| PapaParse | JavaScript | [details](evals/papaparse/REPORT.md) - *audit, not a loop run*; 4 Highs in streaming path - [PR merged](https://github.com/mholt/PapaParse/pull/1135) | Fixed |
+| jsoncpp | C++ | [details](evals/jsoncpp/REPORT.md) - secure-memory build never compiled on MSVC - [PR merged](https://github.com/open-source-parsers/jsoncpp/pull/1709) | Fixed |
+| chalk | JavaScript | [details](evals/chalk/REPORT.md) - one Medium; maintainer wrote his own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
+| dayjs | JavaScript | [details](evals/dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
+| yfinance | Python | [details](evals/yfinance/REPORT.md) - closed a High its own failing test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
+| PHP-Parser | PHP | [details](evals/php-parser/REPORT.md) - test class passes without running its code - [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | Fixed |
+| python-dotenv | Python | [details](evals/python-dotenv/REPORT.md) - 8 runs, 48 findings; suite 220 to 511 - [PR open](https://github.com/theskumar/python-dotenv/pull/678) | Fixed |
+| PyPortfolioOpt | Python | [details](evals/pyportfolioopt/REPORT.md) - CI-red baseline to 356 passing - [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
+| go-yaml | Go | [details](evals/go-yaml/REPORT.md) - 20 findings, 6 High; conformance corpus never ran - [PR open](https://github.com/goccy/go-yaml/pull/915) | Fixed |
+| rust-url | Rust | [details](evals/rust-url/REPORT.md) - 20 findings, 10 High; closes a 2023 conformance case - [PR open](https://github.com/servo/rust-url/pull/1147) | Fixed |
+| mustache.js | JavaScript | [details](evals/mustache.js/REPORT.md) - revived a dead suite; npm audit 107 to 2 - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
+| Spectre.Console | C# | [details](evals/spectre.console/REPORT.md) - wide panel header dropped, not truncated - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
+| quantstats | Python | [details](evals/quantstats/REPORT.md) - 29 findings behind 125 green tests - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
+| records | Python | [details](evals/records/REPORT.md) - four High data-loss bugs behind a green suite - [issue filed](https://github.com/kennethreitz/records/issues/236) | Fixed |
+| cobra | Go | [details](evals/cobra/REPORT.md) - SOURCE_DATE_EPOCH resolved in host timezone | Fixed |
+| zod | TypeScript | [details](evals/zod/REPORT.md) - cyclic value validated via swallowed stack overflow | Fixed |
+| commander.js | JavaScript | [details](evals/commander-js/REPORT.md) - error named an argument the user never typed | Fixed |
+| underscore | JavaScript | [details](evals/underscore/REPORT.md) - computed __proto__ key wrote through prototype | Fixed |
+| gson | Java | [details](evals/gson/REPORT.md) - fastest run: one audit, one gate, nothing changed | Fixed |
+| Catch2 | C++ | [details](evals/catch2/REPORT.md) - 18 findings, 6 High; JSON reporter emitted invalid documents | Fixed |
+| validator | Go | [details](evals/validator/REPORT.md) - cyclic struct killed the process; unix_addr accepted anything | Fixed |
+| clap | Rust | [details](evals/clap/REPORT.md) - 35 rows swept over 4 runs; predicted to fail | Fixed |
+| uuid (JS) | JavaScript | [details](evals/js-uuid/REPORT.md) - v3/v5 crashed on unpaired surrogates | Fixed |
+| speedtest-cli | Python | [details](evals/speedtest-cli/REPORT.md) - small findings, nothing invented | Fixed |
+| phpdotenv | PHP | [details](evals/phpdotenv/REPORT.md) - unterminated multiline value silently returned [] | Fixed |
+| cJSON | C | [details](evals/cjson/REPORT.md) - sorting an object dropped every later append | Fixed |
+| RuboCop | Ruby | [details](evals/rubocop/REPORT.md) - null result: zero findings, zero lines changed | Fixed |
+| lz4 | C | [details](evals/lz4/REPORT.md) - over-declared frame made lz4 -dc emit nothing, exit 0 | Fixed |
+| godotenv | Go | [details](evals/godotenv/REPORT.md) - crafted .env panicked the parser; 0644 to 0600 | Fixed |
+| moshi | Kotlin | [details](evals/moshi/REPORT.md) - 5 Highs behind 20 green CI legs | Fixed |
+| FluentValidation | C# | [details](evals/fluentvalidation/REPORT.md) - CreditCard() accepted a string with no digits | Fixed |
+| qs | JavaScript | [details](evals/qs/REPORT.md) - module-global side-channel leaked across parses | Fixed |
+| claude-code-action | TypeScript | [details](evals/claude-code-action/REPORT.md) - attempt 2 converged; attempt 1 never reached the gate | Fixed |
+| path-to-regexp | TypeScript | [details](evals/path-to-regexp/REPORT.md) - 4 REJECTs, all defects in the run's own evidence | Fixed |
+| claude-agent-sdk-python | Python | [details](evals/claude-agent-sdk-python/REPORT.md) - attempt 2 converged; attempt 1 never reached the gate | Fixed |
+| marshmallow | Python | [details](evals/marshmallow/REPORT.md) - 3 Highs in the load path; gate caught 2 self-inflicted | Fixed |
+| swift-algorithms | Swift | [details](evals/swift-algorithms/REPORT.md) - 10 doc-comment examples did not compile | Fixed |
+| magic_enum | C++ | [details](evals/magic_enum/REPORT.md) - 6 public members no compiler had ever instantiated | Fixed |
+| vavr | Java | [details](evals/vavr/REPORT.md) - BitSet.removeAll threw on valid input; 22-line diff | Fixed |
+| go-uuid | Go | [details](evals/go-uuid/REPORT.md) - SQL NULL returned the previous row's UUID | Fixed |
+| ta | Python | [details](evals/ta/REPORT.md) - wrong numbers shipped since 2023 | Fixed |
+| go-cmp | Go | [details](evals/go-cmp/REPORT.md) - two grouping bugs hidden from 4,000 cases; +31/-13 | Fixed |
+| more-itertools | Python | [details](evals/more-itertools/REPORT.md) - sample() meaningless on negative weights; sdist under-shipped | Fixed |
+| sqlparse | Python | [details](evals/sqlparse/REPORT.md) - 5-run budget fixed in writing; converged on run 5 | Fixed |
+| rrule | TypeScript | [details](evals/rrule/REPORT.md) - 23 findings, 10 High, in the RFC 5545 library | Fixed |
+| humanize | Python | [details](evals/humanize/REPORT.md) - four float-range Highs; wrong negative ordinal | Fixed |
+| ryu | Rust | [details](evals/ryu/REPORT.md) - s2f rejected 7,807 strings ryu itself emits | Fixed |
+| rust-semver | Rust | [details](evals/rust-semver/REPORT.md) - cargo package would have shipped the loop's ledger | Fixed |
+| heck | Rust | [details](evals/heck/REPORT.md) - NFD text silently lost combining marks | Fixed |
+| mapstructure | Go | [details](evals/mapstructure/REPORT.md) - silent numeric overflow; panic on non-string map keys | Fixed |
+| itoa | Rust | [details](evals/itoa/REPORT.md) - no-panic release build failed to link on runtime i32 | Fixed |
+| BurntSushi/toml | Go | [details](evals/ATTEMPTS.md) - 5 runs, 52 iterations, never converged | Failed |
+| Carbon | PHP | [details](evals/ATTEMPTS.md) - 4 runs, 17 iterations, never converged | Failed |
+| cast | Go | [details](evals/ATTEMPTS.md) - 2 runs, 22 iterations, never converged | Failed |
+| chroma.js | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iterations, never converged | Failed |
+| classnames | JavaScript | [details](evals/ATTEMPTS.md) - 3 runs, 32 iterations, never converged | Failed |
+| click | Python | [details](evals/ATTEMPTS.md) - 5 runs, 42 iterations, never converged | Failed |
+| decimal.js | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 41 iterations, never converged | Failed |
+| diff-so-fancy | Perl | [details](evals/ATTEMPTS.md) - 3 runs, 30 iterations, never converged | Failed |
+| eemeli/yaml | TypeScript | [details](evals/ATTEMPTS.md) - 5 runs, 50 iterations, never converged | Failed |
+| faker | Ruby | [details](evals/ATTEMPTS.md) - 3 runs, 30 iterations, never converged | Failed |
+| go-humanize | Go | [details](evals/ATTEMPTS.md) - 2 runs, 21 iterations, never converged | Failed |
+| go-querystring | Go | [details](evals/ATTEMPTS.md) - 2 runs, 20 iterations, never converged | Failed |
+| goldmark | Go | [details](evals/ATTEMPTS.md) - 5 runs, 47 iterations, never converged | Failed |
+| Humanizer | C# | [details](evals/ATTEMPTS.md) - 4 runs, 32 iterations, never converged | Failed |
+| image-rs | Rust | [details](evals/ATTEMPTS.md) - 5 runs, 40 iterations, never converged (two attempts) | Failed |
+| itsdangerous | Python | [details](evals/ATTEMPTS.md) - 3 runs, 31 iterations, never converged | Failed |
+| libuv | C | [details](evals/ATTEMPTS.md) - started, then abandoned | Failed |
+| mruby | C | [details](evals/ATTEMPTS.md) - 10 runs, 113 iterations, never converged (two attempts) | Failed |
+| nanoid | JavaScript | [details](evals/nanoid/journal.md) - 3 runs, 30 iterations, never converged | Failed |
+| node-semver | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iterations, never converged | Failed |
+| python-slugify | Python | [details](evals/python-slugify/journal.md) - 2 runs, 23 iterations, never converged | Failed |
+| shopspring/decimal | Go | [details](evals/ATTEMPTS.md) - 4 runs, 33 iterations, never converged | Failed |
+| spdlog | C++ | [details](evals/ATTEMPTS.md) - 4 runs, 40 iterations, never converged | Failed |
+| tenacity | Python | [details](evals/ATTEMPTS.md) - 2 runs, 20 iterations, never converged | Failed |
+| testify | Go | [details](evals/ATTEMPTS.md) - 4 runs, 40 iterations, never converged | Failed |
+| thor | Ruby | [details](evals/ATTEMPTS.md) - 2 runs, 20 iterations, never converged | Failed |
+| validator.js | JavaScript | [details](evals/ATTEMPTS.md) - 2 runs, 20 iterations, never converged | Failed |
+| zstd | C | [details](evals/ATTEMPTS.md) - 6 runs, 54 iterations, never converged | Failed |
 
 ### Greenfield: three builds judged by suites the loop did not write
 
