@@ -286,87 +286,87 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Project | Language | Details | Jeffy Result |
 |:---|:---|:---|:---|
-| bat | Rust | [details](evals/bat/REPORT.md) - new security flag was a no-op when piped - [PR merged](https://github.com/sharkdp/bat/pull/3862) | Fixed |
-| fasthttp | Go | [details](evals/fasthttp/REPORT.md) - 31 findings; bad Content-Length parsed as wrong number - [PR merged](https://github.com/valyala/fasthttp/pull/2343) | Fixed |
-| PapaParse | JavaScript | [details](evals/papaparse/REPORT.md) - *audit, not a loop run*; 4 Highs in streaming path - [PR merged](https://github.com/mholt/PapaParse/pull/1135) | Fixed |
-| jsoncpp | C++ | [details](evals/jsoncpp/REPORT.md) - secure-memory build never compiled on MSVC - [PR merged](https://github.com/open-source-parsers/jsoncpp/pull/1709) | Fixed |
-| chalk | JavaScript | [details](evals/chalk/REPORT.md) - one Medium; maintainer wrote his own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
+| bat | Rust | [details](evals/bat/REPORT.md) - security flag no-op piped - [PR merged](https://github.com/sharkdp/bat/pull/3862) | Fixed |
+| fasthttp | Go | [details](evals/fasthttp/REPORT.md) - bad Content-Length accepted - [PR merged](https://github.com/valyala/fasthttp/pull/2343) | Fixed |
+| PapaParse | JavaScript | [details](evals/papaparse/REPORT.md) - *audit*; 4 Highs in streaming - [PR merged](https://github.com/mholt/PapaParse/pull/1135) | Fixed |
+| jsoncpp | C++ | [details](evals/jsoncpp/REPORT.md) - secure build never compiled - [PR merged](https://github.com/open-source-parsers/jsoncpp/pull/1709) | Fixed |
+| chalk | JavaScript | [details](evals/chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](evals/dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
-| yfinance | Python | [details](evals/yfinance/REPORT.md) - closed a High its own failing test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
-| PHP-Parser | PHP | [details](evals/php-parser/REPORT.md) - test class passes without running its code - [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | Fixed |
-| python-dotenv | Python | [details](evals/python-dotenv/REPORT.md) - 8 runs, 48 findings; suite 220 to 511 - [PR open](https://github.com/theskumar/python-dotenv/pull/678) | Fixed |
-| PyPortfolioOpt | Python | [details](evals/pyportfolioopt/REPORT.md) - CI-red baseline to 356 passing - [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
-| go-yaml | Go | [details](evals/go-yaml/REPORT.md) - 20 findings, 6 High; conformance corpus never ran - [PR open](https://github.com/goccy/go-yaml/pull/915) | Fixed |
-| rust-url | Rust | [details](evals/rust-url/REPORT.md) - 20 findings, 10 High; closes a 2023 conformance case - [PR open](https://github.com/servo/rust-url/pull/1147) | Fixed |
-| mustache.js | JavaScript | [details](evals/mustache.js/REPORT.md) - revived a dead suite; npm audit 107 to 2 - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
-| Spectre.Console | C# | [details](evals/spectre.console/REPORT.md) - wide panel header dropped, not truncated - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
-| quantstats | Python | [details](evals/quantstats/REPORT.md) - 29 findings behind 125 green tests - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
-| records | Python | [details](evals/records/REPORT.md) - four High data-loss bugs behind a green suite - [issue filed](https://github.com/kennethreitz/records/issues/236) | Fixed |
-| cobra | Go | [details](evals/cobra/REPORT.md) - SOURCE_DATE_EPOCH resolved in host timezone | Fixed |
-| zod | TypeScript | [details](evals/zod/REPORT.md) - cyclic value validated via swallowed stack overflow | Fixed |
-| commander.js | JavaScript | [details](evals/commander-js/REPORT.md) - error named an argument the user never typed | Fixed |
-| underscore | JavaScript | [details](evals/underscore/REPORT.md) - computed __proto__ key wrote through prototype | Fixed |
-| gson | Java | [details](evals/gson/REPORT.md) - fastest run: one audit, one gate, nothing changed | Fixed |
-| Catch2 | C++ | [details](evals/catch2/REPORT.md) - 18 findings, 6 High; JSON reporter emitted invalid documents | Fixed |
-| validator | Go | [details](evals/validator/REPORT.md) - cyclic struct killed the process; unix_addr accepted anything | Fixed |
-| clap | Rust | [details](evals/clap/REPORT.md) - 35 rows swept over 4 runs; predicted to fail | Fixed |
-| uuid (JS) | JavaScript | [details](evals/js-uuid/REPORT.md) - v3/v5 crashed on unpaired surrogates | Fixed |
-| speedtest-cli | Python | [details](evals/speedtest-cli/REPORT.md) - small findings, nothing invented | Fixed |
-| phpdotenv | PHP | [details](evals/phpdotenv/REPORT.md) - unterminated multiline value silently returned [] | Fixed |
-| cJSON | C | [details](evals/cjson/REPORT.md) - sorting an object dropped every later append | Fixed |
-| RuboCop | Ruby | [details](evals/rubocop/REPORT.md) - null result: zero findings, zero lines changed | Fixed |
-| lz4 | C | [details](evals/lz4/REPORT.md) - over-declared frame made lz4 -dc emit nothing, exit 0 | Fixed |
-| godotenv | Go | [details](evals/godotenv/REPORT.md) - crafted .env panicked the parser; 0644 to 0600 | Fixed |
-| moshi | Kotlin | [details](evals/moshi/REPORT.md) - 5 Highs behind 20 green CI legs | Fixed |
-| FluentValidation | C# | [details](evals/fluentvalidation/REPORT.md) - CreditCard() accepted a string with no digits | Fixed |
-| qs | JavaScript | [details](evals/qs/REPORT.md) - module-global side-channel leaked across parses | Fixed |
-| claude-code-action | TypeScript | [details](evals/claude-code-action/REPORT.md) - attempt 2 converged; attempt 1 never reached the gate | Fixed |
-| path-to-regexp | TypeScript | [details](evals/path-to-regexp/REPORT.md) - 4 REJECTs, all defects in the run's own evidence | Fixed |
-| claude-agent-sdk-python | Python | [details](evals/claude-agent-sdk-python/REPORT.md) - attempt 2 converged; attempt 1 never reached the gate | Fixed |
-| marshmallow | Python | [details](evals/marshmallow/REPORT.md) - 3 Highs in the load path; gate caught 2 self-inflicted | Fixed |
-| swift-algorithms | Swift | [details](evals/swift-algorithms/REPORT.md) - 10 doc-comment examples did not compile | Fixed |
-| magic_enum | C++ | [details](evals/magic_enum/REPORT.md) - 6 public members no compiler had ever instantiated | Fixed |
-| vavr | Java | [details](evals/vavr/REPORT.md) - BitSet.removeAll threw on valid input; 22-line diff | Fixed |
-| go-uuid | Go | [details](evals/go-uuid/REPORT.md) - SQL NULL returned the previous row's UUID | Fixed |
-| ta | Python | [details](evals/ta/REPORT.md) - wrong numbers shipped since 2023 | Fixed |
-| go-cmp | Go | [details](evals/go-cmp/REPORT.md) - two grouping bugs hidden from 4,000 cases; +31/-13 | Fixed |
-| more-itertools | Python | [details](evals/more-itertools/REPORT.md) - sample() meaningless on negative weights; sdist under-shipped | Fixed |
-| sqlparse | Python | [details](evals/sqlparse/REPORT.md) - 5-run budget fixed in writing; converged on run 5 | Fixed |
-| rrule | TypeScript | [details](evals/rrule/REPORT.md) - 23 findings, 10 High, in the RFC 5545 library | Fixed |
-| humanize | Python | [details](evals/humanize/REPORT.md) - four float-range Highs; wrong negative ordinal | Fixed |
-| ryu | Rust | [details](evals/ryu/REPORT.md) - s2f rejected 7,807 strings ryu itself emits | Fixed |
-| rust-semver | Rust | [details](evals/rust-semver/REPORT.md) - cargo package would have shipped the loop's ledger | Fixed |
-| heck | Rust | [details](evals/heck/REPORT.md) - NFD text silently lost combining marks | Fixed |
-| mapstructure | Go | [details](evals/mapstructure/REPORT.md) - silent numeric overflow; panic on non-string map keys | Fixed |
-| itoa | Rust | [details](evals/itoa/REPORT.md) - no-panic release build failed to link on runtime i32 | Fixed |
-| BurntSushi/toml | Go | [details](evals/ATTEMPTS.md) - 5 runs, 52 iterations, never converged | Failed |
-| Carbon | PHP | [details](evals/ATTEMPTS.md) - 4 runs, 17 iterations, never converged | Failed |
-| cast | Go | [details](evals/ATTEMPTS.md) - 2 runs, 22 iterations, never converged | Failed |
-| chroma.js | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iterations, never converged | Failed |
-| classnames | JavaScript | [details](evals/ATTEMPTS.md) - 3 runs, 32 iterations, never converged | Failed |
-| click | Python | [details](evals/ATTEMPTS.md) - 5 runs, 42 iterations, never converged | Failed |
-| decimal.js | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 41 iterations, never converged | Failed |
-| diff-so-fancy | Perl | [details](evals/ATTEMPTS.md) - 3 runs, 30 iterations, never converged | Failed |
-| eemeli/yaml | TypeScript | [details](evals/ATTEMPTS.md) - 5 runs, 50 iterations, never converged | Failed |
-| faker | Ruby | [details](evals/ATTEMPTS.md) - 3 runs, 30 iterations, never converged | Failed |
-| go-humanize | Go | [details](evals/ATTEMPTS.md) - 2 runs, 21 iterations, never converged | Failed |
-| go-querystring | Go | [details](evals/ATTEMPTS.md) - 2 runs, 20 iterations, never converged | Failed |
-| goldmark | Go | [details](evals/ATTEMPTS.md) - 5 runs, 47 iterations, never converged | Failed |
-| Humanizer | C# | [details](evals/ATTEMPTS.md) - 4 runs, 32 iterations, never converged | Failed |
-| image-rs | Rust | [details](evals/ATTEMPTS.md) - 5 runs, 40 iterations, never converged (two attempts) | Failed |
-| itsdangerous | Python | [details](evals/ATTEMPTS.md) - 3 runs, 31 iterations, never converged | Failed |
+| yfinance | Python | [details](evals/yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
+| PHP-Parser | PHP | [details](evals/php-parser/REPORT.md) - test class ran no code - [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | Fixed |
+| python-dotenv | Python | [details](evals/python-dotenv/REPORT.md) - 8 runs, 48 findings - [PR open](https://github.com/theskumar/python-dotenv/pull/678) | Fixed |
+| PyPortfolioOpt | Python | [details](evals/pyportfolioopt/REPORT.md) - CI-red to 356 passing - [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
+| go-yaml | Go | [details](evals/go-yaml/REPORT.md) - 20 findings, 6 High - [PR open](https://github.com/goccy/go-yaml/pull/915) | Fixed |
+| rust-url | Rust | [details](evals/rust-url/REPORT.md) - 20 findings, 10 High - [PR open](https://github.com/servo/rust-url/pull/1147) | Fixed |
+| mustache.js | JavaScript | [details](evals/mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
+| Spectre.Console | C# | [details](evals/spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
+| quantstats | Python | [details](evals/quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
+| records | Python | [details](evals/records/REPORT.md) - 4 High data-loss bugs - [issue filed](https://github.com/kennethreitz/records/issues/236) | Fixed |
+| cobra | Go | [details](evals/cobra/REPORT.md) - timezone-dependent build | Fixed |
+| zod | TypeScript | [details](evals/zod/REPORT.md) - cyclic value validated | Fixed |
+| commander.js | JavaScript | [details](evals/commander-js/REPORT.md) - error named wrong argument | Fixed |
+| underscore | JavaScript | [details](evals/underscore/REPORT.md) - __proto__ prototype write | Fixed |
+| gson | Java | [details](evals/gson/REPORT.md) - one audit, nothing changed | Fixed |
+| Catch2 | C++ | [details](evals/catch2/REPORT.md) - 18 findings, 6 High | Fixed |
+| validator | Go | [details](evals/validator/REPORT.md) - cyclic struct killed process | Fixed |
+| clap | Rust | [details](evals/clap/REPORT.md) - 35 rows over 4 runs | Fixed |
+| uuid (JS) | JavaScript | [details](evals/js-uuid/REPORT.md) - crash on unpaired surrogates | Fixed |
+| speedtest-cli | Python | [details](evals/speedtest-cli/REPORT.md) - small findings only | Fixed |
+| phpdotenv | PHP | [details](evals/phpdotenv/REPORT.md) - silent [] on bad multiline | Fixed |
+| cJSON | C | [details](evals/cjson/REPORT.md) - sort dropped later appends | Fixed |
+| RuboCop | Ruby | [details](evals/rubocop/REPORT.md) - null result, zero findings | Fixed |
+| lz4 | C | [details](evals/lz4/REPORT.md) - silent data loss, exit 0 | Fixed |
+| godotenv | Go | [details](evals/godotenv/REPORT.md) - parser panic from .env | Fixed |
+| moshi | Kotlin | [details](evals/moshi/REPORT.md) - 5 Highs behind green CI | Fixed |
+| FluentValidation | C# | [details](evals/fluentvalidation/REPORT.md) - CreditCard() took no digits | Fixed |
+| qs | JavaScript | [details](evals/qs/REPORT.md) - global state leaked | Fixed |
+| claude-code-action | TypeScript | [details](evals/claude-code-action/REPORT.md) - converged on attempt 2 | Fixed |
+| path-to-regexp | TypeScript | [details](evals/path-to-regexp/REPORT.md) - 4 REJECTs on evidence | Fixed |
+| claude-agent-sdk-python | Python | [details](evals/claude-agent-sdk-python/REPORT.md) - converged on attempt 2 | Fixed |
+| marshmallow | Python | [details](evals/marshmallow/REPORT.md) - 3 Highs in load path | Fixed |
+| swift-algorithms | Swift | [details](evals/swift-algorithms/REPORT.md) - doc examples did not compile | Fixed |
+| magic_enum | C++ | [details](evals/magic_enum/REPORT.md) - 6 members never compiled | Fixed |
+| vavr | Java | [details](evals/vavr/REPORT.md) - BitSet.removeAll threw | Fixed |
+| go-uuid | Go | [details](evals/go-uuid/REPORT.md) - SQL NULL returned stale UUID | Fixed |
+| ta | Python | [details](evals/ta/REPORT.md) - wrong numbers since 2023 | Fixed |
+| go-cmp | Go | [details](evals/go-cmp/REPORT.md) - 2 grouping bugs, +31/-13 | Fixed |
+| more-itertools | Python | [details](evals/more-itertools/REPORT.md) - sample() wrong on negatives | Fixed |
+| sqlparse | Python | [details](evals/sqlparse/REPORT.md) - converged on run 5 of 5 | Fixed |
+| rrule | TypeScript | [details](evals/rrule/REPORT.md) - 23 findings, 10 High | Fixed |
+| humanize | Python | [details](evals/humanize/REPORT.md) - 4 float-range Highs | Fixed |
+| ryu | Rust | [details](evals/ryu/REPORT.md) - s2f rejected 7,807 strings | Fixed |
+| rust-semver | Rust | [details](evals/rust-semver/REPORT.md) - ledger nearly shipped | Fixed |
+| heck | Rust | [details](evals/heck/REPORT.md) - NFD lost combining marks | Fixed |
+| mapstructure | Go | [details](evals/mapstructure/REPORT.md) - silent numeric overflow | Fixed |
+| itoa | Rust | [details](evals/itoa/REPORT.md) - no-panic build failed to link | Fixed |
+| BurntSushi/toml | Go | [details](evals/ATTEMPTS.md) - 5 runs, 52 iters, not converged | Failed |
+| Carbon | PHP | [details](evals/ATTEMPTS.md) - 4 runs, 17 iters, not converged | Failed |
+| cast | Go | [details](evals/ATTEMPTS.md) - 2 runs, 22 iters, not converged | Failed |
+| chroma.js | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iters, not converged | Failed |
+| classnames | JavaScript | [details](evals/ATTEMPTS.md) - 3 runs, 32 iters, not converged | Failed |
+| click | Python | [details](evals/ATTEMPTS.md) - 5 runs, 42 iters, not converged | Failed |
+| decimal.js | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 41 iters, not converged | Failed |
+| diff-so-fancy | Perl | [details](evals/ATTEMPTS.md) - 3 runs, 30 iters, not converged | Failed |
+| eemeli/yaml | TypeScript | [details](evals/ATTEMPTS.md) - 5 runs, 50 iters, not converged | Failed |
+| faker | Ruby | [details](evals/ATTEMPTS.md) - 3 runs, 30 iters, not converged | Failed |
+| go-humanize | Go | [details](evals/ATTEMPTS.md) - 2 runs, 21 iters, not converged | Failed |
+| go-querystring | Go | [details](evals/ATTEMPTS.md) - 2 runs, 20 iters, not converged | Failed |
+| goldmark | Go | [details](evals/ATTEMPTS.md) - 5 runs, 47 iters, not converged | Failed |
+| Humanizer | C# | [details](evals/ATTEMPTS.md) - 4 runs, 32 iters, not converged | Failed |
+| image-rs | Rust | [details](evals/ATTEMPTS.md) - 5 runs, 40 iters, not converged | Failed |
+| itsdangerous | Python | [details](evals/ATTEMPTS.md) - 3 runs, 31 iters, not converged | Failed |
 | libuv | C | [details](evals/ATTEMPTS.md) - started, then abandoned | Failed |
-| mruby | C | [details](evals/ATTEMPTS.md) - 10 runs, 113 iterations, never converged (two attempts) | Failed |
-| nanoid | JavaScript | [details](evals/nanoid/journal.md) - 3 runs, 30 iterations, never converged | Failed |
-| node-semver | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iterations, never converged | Failed |
-| python-slugify | Python | [details](evals/python-slugify/journal.md) - 2 runs, 23 iterations, never converged | Failed |
-| shopspring/decimal | Go | [details](evals/ATTEMPTS.md) - 4 runs, 33 iterations, never converged | Failed |
-| spdlog | C++ | [details](evals/ATTEMPTS.md) - 4 runs, 40 iterations, never converged | Failed |
-| tenacity | Python | [details](evals/ATTEMPTS.md) - 2 runs, 20 iterations, never converged | Failed |
-| testify | Go | [details](evals/ATTEMPTS.md) - 4 runs, 40 iterations, never converged | Failed |
-| thor | Ruby | [details](evals/ATTEMPTS.md) - 2 runs, 20 iterations, never converged | Failed |
-| validator.js | JavaScript | [details](evals/ATTEMPTS.md) - 2 runs, 20 iterations, never converged | Failed |
-| zstd | C | [details](evals/ATTEMPTS.md) - 6 runs, 54 iterations, never converged | Failed |
+| mruby | C | [details](evals/ATTEMPTS.md) - 10 runs, 113 iters, not converged | Failed |
+| nanoid | JavaScript | [details](evals/nanoid/journal.md) - 3 runs, 30 iters, not converged | Failed |
+| node-semver | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iters, not converged | Failed |
+| python-slugify | Python | [details](evals/python-slugify/journal.md) - 2 runs, 23 iters, not converged | Failed |
+| shopspring/decimal | Go | [details](evals/ATTEMPTS.md) - 4 runs, 33 iters, not converged | Failed |
+| spdlog | C++ | [details](evals/ATTEMPTS.md) - 4 runs, 40 iters, not converged | Failed |
+| tenacity | Python | [details](evals/ATTEMPTS.md) - 2 runs, 20 iters, not converged | Failed |
+| testify | Go | [details](evals/ATTEMPTS.md) - 4 runs, 40 iters, not converged | Failed |
+| thor | Ruby | [details](evals/ATTEMPTS.md) - 2 runs, 20 iters, not converged | Failed |
+| validator.js | JavaScript | [details](evals/ATTEMPTS.md) - 2 runs, 20 iters, not converged | Failed |
+| zstd | C | [details](evals/ATTEMPTS.md) - 6 runs, 54 iters, not converged | Failed |
 
 ### Greenfield: three builds judged by suites the loop did not write
 
