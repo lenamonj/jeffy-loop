@@ -39,7 +39,7 @@ Five fixes are in other people's code because a maintainer with no stake in this
 
 A sixth is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
-Behind them: **<!-- count:converged -->54<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **32 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+Behind them: **<!-- count:converged -->57<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **32 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#real-world-validation-on-open-source-repositories)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
 
@@ -265,7 +265,7 @@ Five guarantees. Each one is enforced by the iteration prompt, the state files, 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
-  <img src="media/language-pie-light.png" alt="Pie chart of the 54 converged public targets by language: Python 12 at 22.2 percent, Go 9 at 16.7 percent, Rust 8 at 14.8 percent, JavaScript 7 at 13.0 percent, TypeScript 4 at 7.4 percent, C++ 3 at 5.6 percent, C 2 at 3.7 percent, C# 2 at 3.7 percent, Java 2 at 3.7 percent, PHP 2 at 3.7 percent, Kotlin 1 at 1.9 percent, Ruby 1 at 1.9 percent, Swift 1 at 1.9 percent." width="900">
+  <img src="media/language-pie-light.png" alt="Pie chart of the 57 converged public targets by language: Python 13 at 22.8 percent, Go 9 at 15.8 percent, Rust 8 at 14.0 percent, JavaScript 7 at 12.3 percent, C++ 4 at 7.0 percent, TypeScript 4 at 7.0 percent, C 3 at 5.3 percent, C# 2 at 3.5 percent, Java 2 at 3.5 percent, PHP 2 at 3.5 percent, Kotlin 1 at 1.8 percent, Ruby 1 at 1.8 percent, Swift 1 at 1.8 percent." width="900">
 </picture>
 
 <sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
@@ -278,9 +278,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->84<!-- /count -->** | **<!-- count:fixed -->55<!-- /count -->** | **<!-- count:failed -->29<!-- /count -->** | **<!-- count:prs -->14<!-- /count -->** | **<!-- count:merged -->4<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->87<!-- /count -->** | **<!-- count:fixed -->58<!-- /count -->** | **<!-- count:failed -->29<!-- /count -->** | **<!-- count:prs -->15<!-- /count -->** | **<!-- count:merged -->4<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->54<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->57<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
 <sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md).</sub>
 
@@ -293,6 +293,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | chalk | JavaScript | [details](evals/chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](evals/dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](evals/yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
+| typer | Python | [details](evals/typer/REPORT.md) - hash seed chose which app runs - [PR open](https://github.com/fastapi/typer/pull/1946) | Fixed |
 | PHP-Parser | PHP | [details](evals/php-parser/REPORT.md) - test class ran no code - [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | Fixed |
 | python-dotenv | Python | [details](evals/python-dotenv/REPORT.md) - 8 runs, 48 findings - [PR open](https://github.com/theskumar/python-dotenv/pull/678) | Fixed |
 | PyPortfolioOpt | Python | [details](evals/pyportfolioopt/REPORT.md) - CI-red to 356 passing - [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
@@ -314,6 +315,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | uuid (JS) | JavaScript | [details](evals/js-uuid/REPORT.md) - crash on unpaired surrogates | Fixed |
 | speedtest-cli | Python | [details](evals/speedtest-cli/REPORT.md) - small findings only | Fixed |
 | phpdotenv | PHP | [details](evals/phpdotenv/REPORT.md) - silent [] on bad multiline | Fixed |
+| mimalloc | C | [details](evals/mimalloc/REPORT.md) - zalloc returned dirty memory | Fixed |
 | cJSON | C | [details](evals/cjson/REPORT.md) - sort dropped later appends | Fixed |
 | RuboCop | Ruby | [details](evals/rubocop/REPORT.md) - null result, zero findings | Fixed |
 | lz4 | C | [details](evals/lz4/REPORT.md) - silent data loss, exit 0 | Fixed |
@@ -332,6 +334,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | indicatif | Rust | [details](evals/indicatif/REPORT.md) - draw-width underflow panic | Fixed |
 | ta | Python | [details](evals/ta/REPORT.md) - wrong numbers since 2023 | Fixed |
 | go-cmp | Go | [details](evals/go-cmp/REPORT.md) - 2 grouping bugs, +31/-13 | Fixed |
+| CLI11 | C++ | [details](evals/cli11/REPORT.md) - empty strtoX read as a value | Fixed |
 | more-itertools | Python | [details](evals/more-itertools/REPORT.md) - sample() wrong on negatives | Fixed |
 | sqlparse | Python | [details](evals/sqlparse/REPORT.md) - converged on run 5 of 5 | Fixed |
 | rrule | TypeScript | [details](evals/rrule/REPORT.md) - 23 findings, 10 High | Fixed |

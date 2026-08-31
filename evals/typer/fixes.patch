@@ -1,0 +1,454 @@
+diff --git a/.gitignore b/.gitignore
+index 230c8c0..26c59ce 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -12,3 +12,4 @@ htmlcov
+ coverage.xml
+ .coverage*
+ .cache
++.claude/jeffy-loop.local.md
+diff --git a/docs/release-notes.md b/docs/release-notes.md
+index 3c4b743..3ce4f0b 100644
+--- a/docs/release-notes.md
++++ b/docs/release-notes.md
+@@ -2,6 +2,10 @@
+ 
+ ## Latest Changes
+ 
++### Breaking Changes
++
++* Remove the `chain` parameter from `Typer()`, `Typer.callback()` and `Typer.add_typer()`. It was stored on `TyperInfo` and never passed to the group that would have used it, so setting it changed nothing: `app cmd1 cmd2` failed with `Got unexpected extra argument(s)` whatever its value. Passing `chain=` now raises `TypeError` instead of being accepted and ignored.
++
+ ## 0.27.2 (2026-08-28)
+ 
+ ### Refactors
+diff --git a/tests/assets/cli/func_other_name_with_import.py b/tests/assets/cli/func_other_name_with_import.py
+new file mode 100644
+index 0000000..66b0382
+--- /dev/null
++++ b/tests/assets/cli/func_other_name_with_import.py
+@@ -0,0 +1,5 @@
++from pathlib import Path
++
++
++def some_function(name: str = "World"):
++    print(f"Hello {name} from {Path('.').name or 'here'}")
+diff --git a/tests/assets/cli/non_ascii_help.py b/tests/assets/cli/non_ascii_help.py
+new file mode 100644
+index 0000000..6cb2f02
+--- /dev/null
++++ b/tests/assets/cli/non_ascii_help.py
+@@ -0,0 +1,9 @@
++import typer
++
++app = typer.Typer()
++
++
++@app.command()
++def greet(name: str = "World"):
++    """Say hi to someone ✨ with café flair."""
++    typer.echo(f"Hello {name}")  # pragma: no cover
+diff --git a/tests/test_chain_removed.py b/tests/test_chain_removed.py
+new file mode 100644
+index 0000000..3e52e46
+--- /dev/null
++++ b/tests/test_chain_removed.py
+@@ -0,0 +1,23 @@
++import pytest
++
++import typer
++
++
++@pytest.mark.parametrize(
++    "call",
++    [
++        lambda: typer.Typer(chain=True),
++        lambda: typer.Typer().callback(chain=True),
++        lambda: typer.Typer().add_typer(typer.Typer(), chain=True),
++    ],
++    ids=["Typer", "callback", "add_typer"],
++)
++def test_chain_is_rejected(call):
++    """`chain` was accepted and silently ignored; it must not come back quietly.
++
++    It was stored on `TyperInfo` and never passed to the group that would have
++    used it, so `app cmd1 cmd2` failed with `Got unexpected extra argument(s)`
++    whatever its value.
++    """
++    with pytest.raises(TypeError, match="chain"):
++        call()
+diff --git a/tests/test_cli/test_func_other_name_with_import.py b/tests/test_cli/test_func_other_name_with_import.py
+new file mode 100644
+index 0000000..92fb3b9
+--- /dev/null
++++ b/tests/test_cli/test_func_other_name_with_import.py
+@@ -0,0 +1,34 @@
++import os
++import subprocess
++import sys
++
++
++def _run(seed: str, *args: str) -> subprocess.CompletedProcess:
++    env = {**os.environ, "PYTHONHASHSEED": seed}
++    return subprocess.run(
++        [
++            sys.executable,
++            "-m",
++            "coverage",
++            "run",
++            "-m",
++            "typer",
++            "tests/assets/cli/func_other_name_with_import.py",
++            "run",
++            *args,
++        ],
++        capture_output=True,
++        encoding="utf-8",
++        env=env,
++    )
++
++
++def test_script_picks_the_file_function_not_an_import():
++    result = _run("0", "--name", "Camila")
++    assert "Hello Camila" in result.stdout
++
++
++def test_script_selection_does_not_depend_on_the_hash_seed():
++    outputs = {_run(str(seed), "--help").stdout for seed in range(8)}
++    assert len(outputs) == 1
++    assert "--name" in outputs.pop()
+diff --git a/tests/test_cli/test_non_ascii_docs_output.py b/tests/test_cli/test_non_ascii_docs_output.py
+new file mode 100644
+index 0000000..c172ee2
+--- /dev/null
++++ b/tests/test_cli/test_non_ascii_docs_output.py
+@@ -0,0 +1,46 @@
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++from ..utils import skip_if_windows
++
++
++@skip_if_windows
++def test_docs_output_does_not_depend_on_the_locale_encoding(tmp_path: Path):
++    """The written file must not go through the process locale encoding.
++
++    Forcing an ASCII locale here stands in for the cp1252 default on Windows:
++    under the locale encoding this raised UnicodeEncodeError on any help text
++    holding a character that encoding cannot represent.
++    """
++    out_path = tmp_path / "docs.md"
++    env = {
++        **os.environ,
++        "LC_ALL": "C",
++        "PYTHONUTF8": "0",
++        "PYTHONCOERCECLOCALE": "0",
++    }
++    env.pop("LANG", None)
++    env.pop("LC_CTYPE", None)
++    result = subprocess.run(
++        [
++            sys.executable,
++            "-m",
++            "coverage",
++            "run",
++            "-m",
++            "typer",
++            "tests/assets/cli/non_ascii_help.py",
++            "utils",
++            "docs",
++            "--output",
++            str(out_path),
++        ],
++        capture_output=True,
++        encoding="utf-8",
++        env=env,
++    )
++    assert result.returncode == 0, result.stderr
++    assert "✨" in out_path.read_text(encoding="utf-8")
++    assert "café" in out_path.read_text(encoding="utf-8")
+diff --git a/typer/_click/shell_completion.py b/typer/_click/shell_completion.py
+index 4490f18..722d9e1 100644
+--- a/typer/_click/shell_completion.py
++++ b/typer/_click/shell_completion.py
+@@ -247,7 +247,6 @@ def _resolve_context(
+             command = ctx.command
+ 
+             if isinstance(command, TyperGroup):
+-                # if not command.chain:
+                 name, cmd, args = command.resolve_command(ctx, args)
+ 
+                 if cmd is None:
+diff --git a/typer/_completion_shared.py b/typer/_completion_shared.py
+index 4b6d5e4..30e4368 100644
+--- a/typer/_completion_shared.py
++++ b/typer/_completion_shared.py
+@@ -103,19 +103,19 @@ def install_bash(*, prog_name: str, complete_var: str, shell: str) -> Path:
+     rc_path.parent.mkdir(parents=True, exist_ok=True)
+     rc_content = ""
+     if rc_path.is_file():
+-        rc_content = rc_path.read_text()
++        rc_content = rc_path.read_text(encoding="utf-8")
+     completion_init_lines = [f"source '{completion_path}'"]
+     for line in completion_init_lines:
+         if line not in rc_content:  # pragma: no cover
+             rc_content += f"\n{line}"
+     rc_content += "\n"
+-    rc_path.write_text(rc_content)
++    rc_path.write_text(rc_content, encoding="utf-8")
+     # Install completion
+     completion_path.parent.mkdir(parents=True, exist_ok=True)
+     script_content = get_completion_script(
+         prog_name=prog_name, complete_var=complete_var, shell=shell
+     )
+-    completion_path.write_text(script_content)
++    completion_path.write_text(script_content, encoding="utf-8")
+     return completion_path
+ 
+ 
+@@ -125,7 +125,7 @@ def install_zsh(*, prog_name: str, complete_var: str, shell: str) -> Path:
+     zshrc_path.parent.mkdir(parents=True, exist_ok=True)
+     zshrc_content = ""
+     if zshrc_path.is_file():
+-        zshrc_content = zshrc_path.read_text()
++        zshrc_content = zshrc_path.read_text(encoding="utf-8")
+     completion_line = "fpath+=~/.zfunc; autoload -Uz compinit; compinit"
+     if completion_line not in zshrc_content:
+         zshrc_content += f"\n{completion_line}\n"
+@@ -136,14 +136,14 @@ def install_zsh(*, prog_name: str, complete_var: str, shell: str) -> Path:
+     if "zstyle" not in zshrc_content:
+         zshrc_content += f"\n{style_line}\n"
+     zshrc_content = f"{zshrc_content.strip()}\n"
+-    zshrc_path.write_text(zshrc_content)
++    zshrc_path.write_text(zshrc_content, encoding="utf-8")
+     # Install completion under ~/.zfunc/
+     path_obj = Path.home() / f".zfunc/_{prog_name}"
+     path_obj.parent.mkdir(parents=True, exist_ok=True)
+     script_content = get_completion_script(
+         prog_name=prog_name, complete_var=complete_var, shell=shell
+     )
+-    path_obj.write_text(script_content)
++    path_obj.write_text(script_content, encoding="utf-8")
+     return path_obj
+ 
+ 
+@@ -154,7 +154,7 @@ def install_fish(*, prog_name: str, complete_var: str, shell: str) -> Path:
+     script_content = get_completion_script(
+         prog_name=prog_name, complete_var=complete_var, shell=shell
+     )
+-    path_obj.write_text(f"{script_content}\n")
++    path_obj.write_text(f"{script_content}\n", encoding="utf-8")
+     return path_obj
+ 
+ 
+@@ -196,7 +196,7 @@ def install_powershell(*, prog_name: str, complete_var: str, shell: str) -> Path
+     script_content = get_completion_script(
+         prog_name=prog_name, complete_var=complete_var, shell=shell
+     )
+-    with path_obj.open(mode="a") as f:
++    with path_obj.open(mode="a", encoding="utf-8") as f:
+         f.write(f"{script_content}\n")
+     return path_obj
+ 
+diff --git a/typer/cli.py b/typer/cli.py
+index 98f9f4e..4db90af 100644
+--- a/typer/cli.py
++++ b/typer/cli.py
+@@ -1,4 +1,5 @@
+ import importlib.util
++import inspect
+ import re
+ import sys
+ from pathlib import Path
+@@ -86,18 +87,21 @@ def get_typer_from_module(module: Any) -> typer.Typer | None:
+         sub_app = typer.Typer()
+         sub_app.command()(func_obj)
+         return sub_app
+-    # Iterate and get a default object to use as CLI
+-    local_names = dir(module)
+-    local_names_set = set(local_names)
++    # Iterate and get a default object to use as CLI, in the order the file
++    # bound the names. A module's __dict__ preserves that order, while dir()
++    # sorts and a set of names has no order at all, so iterating a set made
++    # the choice depend on the process hash seed.
++    local_names = [name for name in vars(module) if not name.startswith("__")]
+     # Try to get a default Typer app
+     for name in default_app_names:
+-        if name in local_names_set:
+-            obj = getattr(module, name, None)
+-            if isinstance(obj, typer.Typer):
+-                return obj
+-    # Try to get any Typer app
+-    for name in local_names_set - set(default_app_names):
+-        obj = getattr(module, name)
++        obj = getattr(module, name, None)
++        if isinstance(obj, typer.Typer):
++            return obj
++    # Try to get the first Typer app in the file, with any name
++    for name in local_names:
++        if name in default_app_names:
++            continue
++        obj = getattr(module, name, None)
+         if isinstance(obj, typer.Typer):
+             return obj
+     # Try to get a default function
+@@ -107,10 +111,15 @@ def get_typer_from_module(module: Any) -> typer.Typer | None:
+             sub_app = typer.Typer()
+             sub_app.command()(func_obj)
+             return sub_app
+-    # Try to get any func app
+-    for func_name in local_names_set - set(default_func_names):
+-        func_obj = getattr(module, func_name)
+-        if callable(func_obj):
++    # Try to get the first function in the file, with any name. Only functions
++    # defined in this file qualify: an imported callable is not "a function in
++    # the file", and picking one gave the user a CLI built from, say,
++    # pathlib.Path instead of their own function.
++    for func_name in local_names:
++        if func_name in default_func_names:
++            continue
++        func_obj = getattr(module, func_name, None)
++        if inspect.isfunction(func_obj) and func_obj.__module__ == module.__name__:
+             sub_app = typer.Typer()
+             sub_app.command()(func_obj)
+             return sub_app
+@@ -307,7 +316,7 @@ def docs(
+     docs = get_docs_for_click(obj=click_obj, ctx=ctx, name=name, title=title)
+     clean_docs = f"{docs.strip()}\n"
+     if output:
+-        output.write_text(clean_docs)
++        output.write_text(clean_docs, encoding="utf-8")
+         typer.echo(f"Docs saved to: {output}")
+     else:
+         typer.echo(clean_docs)
+diff --git a/typer/core.py b/typer/core.py
+index 97f96d8..dec373d 100644
+--- a/typer/core.py
++++ b/typer/core.py
+@@ -1094,11 +1094,9 @@ class TyperGroup(_click.Command):
+         if not ctx._protected_args:
+             if self.invoke_without_command:
+                 # No subcommand was invoked, so the result callback is
+-                # invoked with the group return value for regular
+-                # groups, or an empty list for chained groups.
++                # invoked with the group return value.
+                 with ctx:
+                     rv = super().invoke(ctx)
+-                    # return _process_result([] if self.chain else rv)
+                     return _process_result(rv)
+             ctx.fail(_("Missing command."))
+ 
+diff --git a/typer/main.py b/typer/main.py
+index 700648d..074b460 100644
+--- a/typer/main.py
++++ b/typer/main.py
+@@ -214,19 +214,6 @@ class Typer:
+                 """
+             ),
+         ] = Default(None),
+-        chain: Annotated[
+-            bool,
+-            Doc(
+-                """
+-                **Note**: you probably shouldn't use this parameter, it is inherited
+-                from Click and supported for compatibility.
+-
+-                ---
+-
+-                Allow passing more than one subcommand argument.
+-                """
+-            ),
+-        ] = Default(False),
+         result_callback: Annotated[
+             Callable[..., Any] | None,
+             Doc(
+@@ -530,7 +517,6 @@ class Typer:
+             invoke_without_command=invoke_without_command,
+             no_args_is_help=no_args_is_help,
+             subcommand_metavar=subcommand_metavar,
+-            chain=chain,
+             result_callback=result_callback,
+             context_settings=context_settings,
+             callback=callback,
+@@ -587,19 +573,6 @@ class Typer:
+                 """
+             ),
+         ] = Default(None),
+-        chain: Annotated[
+-            bool,
+-            Doc(
+-                """
+-                **Note**: you probably shouldn't use this parameter, it is inherited
+-                from Click and supported for compatibility.
+-
+-                ---
+-
+-                Allow passing more than one subcommand argument.
+-                """
+-            ),
+-        ] = Default(False),
+         result_callback: Annotated[
+             Callable[..., Any] | None,
+             Doc(
+@@ -731,8 +704,7 @@ class Typer:
+                 invoke_without_command=invoke_without_command,
+                 no_args_is_help=no_args_is_help,
+                 subcommand_metavar=subcommand_metavar,
+-                chain=chain,
+-                result_callback=result_callback,
++                    result_callback=result_callback,
+                 context_settings=context_settings,
+                 callback=f,
+                 help=help,
+@@ -964,19 +936,6 @@ class Typer:
+                 """
+             ),
+         ] = Default(None),
+-        chain: Annotated[
+-            bool,
+-            Doc(
+-                """
+-                **Note**: you probably shouldn't use this parameter, it is inherited
+-                from Click and supported for compatibility.
+-
+-                ---
+-
+-                Allow passing more than one subcommand argument.
+-                """
+-            ),
+-        ] = Default(False),
+         result_callback: Annotated[
+             Callable[..., Any] | None,
+             Doc(
+@@ -1113,8 +1072,7 @@ class Typer:
+                 invoke_without_command=invoke_without_command,
+                 no_args_is_help=no_args_is_help,
+                 subcommand_metavar=subcommand_metavar,
+-                chain=chain,
+-                result_callback=result_callback,
++                    result_callback=result_callback,
+                 context_settings=context_settings,
+                 callback=callback,
+                 help=help,
+diff --git a/typer/models.py b/typer/models.py
+index 00385c3..ec11c5d 100644
+--- a/typer/models.py
++++ b/typer/models.py
+@@ -242,7 +242,6 @@ class TyperInfo:
+         invoke_without_command: bool = Default(False),
+         no_args_is_help: bool = Default(False),
+         subcommand_metavar: str | None = Default(None),
+-        chain: bool = Default(False),
+         result_callback: Callable[..., Any] | None = Default(None),
+         # Command
+         context_settings: dict[Any, Any] | None = Default(None),
+@@ -263,7 +262,6 @@ class TyperInfo:
+         self.invoke_without_command = invoke_without_command
+         self.no_args_is_help = no_args_is_help
+         self.subcommand_metavar = subcommand_metavar
+-        self.chain = chain
+         self.result_callback = result_callback
+         self.context_settings = context_settings
+         self.callback = callback

@@ -1,0 +1,746 @@
+diff --git a/.gitattributes b/.gitattributes
+index 0332e031..12b355c9 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -10,3 +10,13 @@
+ *.dll binary
+ *.lib binary
+ *.exe binary
++
++# The loop's working notes are not part of the published project: keep them out of
++# `git archive`, which is what produces both GitHub's source tarball and the archive
++# the release workflow attaches.
++/PLAN.md            export-ignore
++/BACKLOG.md         export-ignore
++/JOURNAL.md         export-ignore
++/JOURNAL-archive.md export-ignore
++/.jeffy             export-ignore
++/.claude            export-ignore
+diff --git a/.gitignore b/.gitignore
+index bcedbc3f..e94a62ae 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -11,3 +11,4 @@ docs/
+ *.gz
+ .vscode
+ .DS_STore
++.claude/jeffy-loop.local.md
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index cd915e3a..f5daca36 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -933,8 +933,15 @@ foreach(item IN LISTS mi_libraries)
+ endforeach()
+ 
+ include("cmake/JoinPaths.cmake")
+-join_paths(mi_pc_includedir "\${prefix}" "${CMAKE_INSTALL_INCLUDEDIR}")
++# these must follow the directories we actually install to, not the standard ones:
++# with the default (versioned) layout the headers go to `mi_install_incdir` and the
++# static library and object file to `mi_install_objdir`, so a .pc file naming
++# ${CMAKE_INSTALL_INCLUDEDIR} hands out an include path with no mimalloc.h in it.
++# The shared library and its symlinks do land directly in ${CMAKE_INSTALL_LIBDIR},
++# so `libdir` keeps naming that and `objdir` is added for the static link.
++join_paths(mi_pc_includedir "\${prefix}" "${mi_install_incdir}")
+ join_paths(mi_pc_libdir "\${prefix}" "${CMAKE_INSTALL_LIBDIR}")
++join_paths(mi_pc_objdir "\${prefix}" "${mi_install_objdir}")
+ 
+ configure_file(mimalloc.pc.in mimalloc.pc @ONLY)
+ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/mimalloc.pc"
+diff --git a/doc/mimalloc-doc.h b/doc/mimalloc-doc.h
+index 7dc6f654..c46084b1 100644
+--- a/doc/mimalloc-doc.h
++++ b/doc/mimalloc-doc.h
+@@ -315,8 +315,14 @@ size_t mi_good_size(size_t size);
+ /// @see [posix_memalign](https://linux.die.net/man/3/posix_memalign) (on Posix, with switched arguments!)
+ /// @see [memalign](https://linux.die.net/man/3/posix_memalign) (on Linux, with switched arguments!)
+ void* mi_malloc_aligned(size_t size, size_t alignment);
++/// Allocate zero-initialized \a size bytes aligned by \a alignment.
++/// @see mi_malloc_aligned()
+ void* mi_zalloc_aligned(size_t size, size_t alignment);
++/// Allocate zero-initialized \a count elements of \a size bytes aligned by \a alignment.
++/// @see mi_malloc_aligned()
+ void* mi_calloc_aligned(size_t count, size_t size, size_t alignment);
++/// Re-allocate \a p to \a newsize bytes aligned by \a alignment.
++/// @see mi_malloc_aligned()
+ void* mi_realloc_aligned(void* p, size_t newsize, size_t alignment);
+ 
+ /// Allocate \a size bytes aligned by \a alignment at a specified \a offset.
+@@ -331,8 +337,14 @@ void* mi_realloc_aligned(void* p, size_t newsize, size_t alignment);
+ ///
+ /// @see [_aligned_offset_malloc](https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/aligned-offset-malloc?view=vs-2017) (on Windows)
+ void* mi_malloc_aligned_at(size_t size, size_t alignment, size_t offset);
++/// Allocate zero-initialized \a size bytes aligned by \a alignment at \a offset.
++/// @see mi_malloc_aligned_at()
+ void* mi_zalloc_aligned_at(size_t size, size_t alignment, size_t offset);
++/// Allocate zero-initialized \a count elements of \a size bytes aligned by \a alignment at \a offset.
++/// @see mi_malloc_aligned_at()
+ void* mi_calloc_aligned_at(size_t count, size_t size, size_t alignment, size_t offset);
++/// Re-allocate \a p to \a newsize bytes aligned by \a alignment at \a offset.
++/// @see mi_malloc_aligned_at()
+ void* mi_realloc_aligned_at(void* p, size_t newsize, size_t alignment, size_t offset);
+ 
+ /// \}
+@@ -423,10 +435,25 @@ void* mi_realloc_aligned_at(void* p, size_t newsize, size_t alignment, size_t of
+ /// @see mi_malloc()
+ void* mi_malloc_csize(size_t size);
+ 
++/// @brief Allocate a zero-initialized constant size object.
++/// @param size A (compile-time) constant size.
++/// @return A pointer to an allocated block of size \a size bytes, zero initialized.
++/// @see mi_free_csize()
++/// @see mi_zalloc()
+ void* mi_zalloc_csize(size_t size);
+ 
++/// @brief Allocate a constant size object in a specific theap.
++/// @param theap The theap to allocate in.
++/// @param size A (compile-time) constant size.
++/// @return A pointer to an allocated block of size \a size bytes.
++/// @see mi_theap_malloc()
+ void* mi_theap_malloc_csize(mi_theap_t* theap, size_t size);
+ 
++/// @brief Allocate a zero-initialized constant size object in a specific theap.
++/// @param theap The theap to allocate in.
++/// @param size A (compile-time) constant size.
++/// @return A pointer to an allocated block of size \a size bytes, zero initialized.
++/// @see mi_theap_zalloc()
+ void* mi_theap_zalloc_csize(mi_theap_t* theap, size_t size);
+ 
+ /// @brief Free a pointer with a known constant size.
+@@ -460,20 +487,41 @@ void mi_free_csize(void* p, size_t size);
+ /// @see [recallocarray()](http://man.openbsd.org/reallocarray) (on BSD).
+ void* mi_recalloc(void* p, size_t count, size_t size);
+ 
++/// Re-allocate \a p to \a newsize bytes, zero-initializing any bytes past the original size.
++/// @see mi_realloc()
+ void* mi_rezalloc(void* p, size_t newsize);
++/// Re-allocate \a p to \a newcount elements of \a size bytes, zero-initializing any bytes past
++/// the original size. Declared twice in this file; both declare the same function.
++/// @see mi_rezalloc()
+ void* mi_recalloc(void* p, size_t newcount, size_t size) ;
+ 
++/// Like mi_rezalloc(), aligned by \a alignment.
++/// @see mi_malloc_aligned()
+ void* mi_rezalloc_aligned(void* p, size_t newsize, size_t alignment);
++/// Like mi_rezalloc(), aligned by \a alignment at \a offset.
++/// @see mi_malloc_aligned_at()
+ void* mi_rezalloc_aligned_at(void* p, size_t newsize, size_t alignment, size_t offset);
++/// Like mi_recalloc(), aligned by \a alignment.
++/// @see mi_malloc_aligned()
+ void* mi_recalloc_aligned(void* p, size_t newcount, size_t size, size_t alignment);
++/// Like mi_recalloc(), aligned by \a alignment at \a offset.
++/// @see mi_malloc_aligned_at()
+ void* mi_recalloc_aligned_at(void* p, size_t newcount, size_t size, size_t alignment, size_t offset);
+ 
++/// Like mi_rezalloc(), in a specific \a heap.
++/// @see mi_heap_realloc()
+ void* mi_heap_rezalloc(mi_heap_t* heap, void* p, size_t newsize);
++/// Like mi_recalloc(), in a specific \a heap.
++/// @see mi_heap_realloc()
+ void* mi_heap_recalloc(mi_heap_t* heap, void* p, size_t newcount, size_t size);
+ 
++/// Like mi_rezalloc(), in a specific \a heap and aligned by \a alignment.
+ void* mi_heap_rezalloc_aligned(mi_heap_t* heap, void* p, size_t newsize, size_t alignment);
++/// Like mi_rezalloc(), in a specific \a heap and aligned by \a alignment at \a offset.
+ void* mi_heap_rezalloc_aligned_at(mi_heap_t* heap, void* p, size_t newsize, size_t alignment, size_t offset);
++/// Like mi_recalloc(), in a specific \a heap and aligned by \a alignment.
+ void* mi_heap_recalloc_aligned(mi_heap_t* heap, void* p, size_t newcount, size_t size, size_t alignment);
++/// Like mi_recalloc(), in a specific \a heap and aligned by \a alignment at \a offset.
+ void* mi_heap_recalloc_aligned_at(mi_heap_t* heap, void* p, size_t newcount, size_t size, size_t alignment, size_t offset);
+ 
+ /// \}
+@@ -652,17 +700,33 @@ char* mi_heap_strndup(mi_heap_t* heap, const char* s, size_t n);
+ /// @see mi_realpath()
+ char* mi_heap_realpath(mi_heap_t* heap, const char* fname, char* resolved_name);
+ 
++/// Re-allocate \a p to \a newsize bytes in a specific \a heap.
++/// @see mi_realloc()
+ void* mi_heap_realloc(mi_heap_t* heap, void* p, size_t newsize);
++/// Re-allocate \a p to \a count elements of \a size bytes in a specific \a heap.
++/// @see mi_reallocn()
+ void* mi_heap_reallocn(mi_heap_t* heap, void* p, size_t count, size_t size);
++/// Re-allocate \a p in a specific \a heap, freeing \a p on failure.
++/// @see mi_reallocf()
+ void* mi_heap_reallocf(mi_heap_t* heap, void* p, size_t newsize);
+ 
++/// Allocate \a size bytes in a specific \a heap, aligned by \a alignment.
++/// @see mi_malloc_aligned()
+ void* mi_heap_malloc_aligned(mi_heap_t* heap, size_t size, size_t alignment);
++/// Allocate \a size bytes in a specific \a heap, aligned by \a alignment at \a offset.
++/// @see mi_malloc_aligned_at()
+ void* mi_heap_malloc_aligned_at(mi_heap_t* heap, size_t size, size_t alignment, size_t offset);
++/// Allocate zero-initialized \a size bytes in a specific \a heap, aligned by \a alignment.
+ void* mi_heap_zalloc_aligned(mi_heap_t* heap, size_t size, size_t alignment);
++/// Allocate zero-initialized \a size bytes in a specific \a heap, aligned by \a alignment at \a offset.
+ void* mi_heap_zalloc_aligned_at(mi_heap_t* heap, size_t size, size_t alignment, size_t offset);
++/// Allocate zero-initialized \a count elements of \a size bytes in a specific \a heap, aligned by \a alignment.
+ void* mi_heap_calloc_aligned(mi_heap_t* heap, size_t count, size_t size, size_t alignment);
++/// Allocate zero-initialized \a count elements of \a size bytes in a specific \a heap, aligned by \a alignment at \a offset.
+ void* mi_heap_calloc_aligned_at(mi_heap_t* heap, size_t count, size_t size, size_t alignment, size_t offset);
++/// Re-allocate \a p to \a newsize bytes in a specific \a heap, aligned by \a alignment.
+ void* mi_heap_realloc_aligned(mi_heap_t* heap, void* p, size_t newsize, size_t alignment);
++/// Re-allocate \a p to \a newsize bytes in a specific \a heap, aligned by \a alignment at \a offset.
+ void* mi_heap_realloc_aligned_at(mi_heap_t* heap, void* p, size_t newsize, size_t alignment, size_t offset);
+ 
+ /// \}
+@@ -1282,9 +1346,9 @@ typedef enum mi_option_e {
+ 
+   // guard pages
+   mi_option_guarded_min,              ///< only used when building with MI_GUARDED: minimal rounded object size for guarded objects (=0)
+-  mi_option_guarded_max,              ///< only used when building with MI_GUARDED: maximal rounded object size for guarded objects (=0)
++  mi_option_guarded_max,              ///< only used when building with MI_GUARDED: maximal rounded object size for guarded objects (=1 GiB)
+   mi_option_guarded_precise,          ///< disregard minimal alignment requirement to always place guarded blocks exactly in front of a guard page (=0)
+-  mi_option_guarded_sample_rate,      ///< 1 out of N allocations in the min/max range will be guarded (=1000)
++  mi_option_guarded_sample_rate,      ///< 1 out of N allocations in the min/max range will be guarded (=0, so no guarded allocation; 4000 when building with MI_GUARDED and NDEBUG)
+   mi_option_guarded_sample_seed,      ///< can be set to allow for a (more) deterministic re-execution when a guard page is triggered (=0)
+ 
+   // experimental options
+@@ -1292,27 +1356,27 @@ typedef enum mi_option_e {
+   mi_option_eager_commit_delay,       ///< __v2__: the first N segments per thread are not eagerly committed (but per page in the segment on demand)
+   mi_option_arena_eager_commit,       ///< eager commit arenas? Use 2 to enable just on overcommit systems (=2)
+   mi_option_abandoned_page_purge,     ///< __v1__,__v2__: immediately purge delayed purges on thread termination
+-  mi_option_purge_delay,              ///< memory purging is delayed by N milli seconds; use 0 for immediate purging or -1 for no purging at all. (=10)
++  mi_option_purge_delay,              ///< memory purging is delayed by N milli seconds; use 0 for immediate purging or -1 for no purging at all. (=1000)
+   mi_option_use_numa_nodes,           ///< 0 = use all available numa nodes, otherwise use at most N nodes.
+   mi_option_disallow_os_alloc,        ///< 1 = do not use OS memory for allocation (but only programmatically reserved arenas)  
+   mi_option_max_segment_reclaim,        ///< __v2__: max. percentage of the abandoned segments can be reclaimed per try (=10%)
+   mi_option_destroy_on_exit,            ///< if set, release all memory on exit; sometimes used for dynamic unloading but can be unsafe
+-  mi_option_arena_purge_mult,           ///< multiplier for `purge_delay` for the purging delay for arenas (=10)
++  mi_option_arena_purge_mult,           ///< multiplier for `purge_delay` for the purging delay for arenas (=4)
+   mi_option_abandoned_reclaim_on_free,  ///< __v1__,__v2__: allow to reclaim an abandoned segment on a free (=1)
+   mi_option_purge_extend_delay,         ///< __v1__,__v2__: extend purge delay on each subsequent delay (=1)
+   mi_option_disallow_arena_alloc,       ///< 1 = do not use arena's for allocation (except if using specific arena id's)
+-  mi_option_visit_abandoned,            ///< allow visiting heap blocks from abandoned threads (=0)
++  mi_option_visit_abandoned,            ///< __v1__,__v2__: allow visiting heap blocks from abandoned threads (=0). In __v3__ this option is `mi_option_deprecated_visit_abandoned`.
+   mi_option_target_segments_per_thread, ///< __v1__,__v2__: experimental (=0)
+ 
+   // v3 options
+   mi_option_page_reclaim_on_free,       ///< __v3__: reclaim abandoned pages on a free (=0). -1 disallowr always, 0 allows if the page originated from the current theap, 1 allow always
+   mi_option_page_full_retain,           ///< __v3__: retain N full (small) pages per size class (=2). Use -1 for infinite (as in __v1__,__v2__).
+   mi_option_page_max_candidates,        ///< __v3__: max candidate pages to consider for allocation (=4)
+-  mi_option_max_vabits,                 ///< __v3__: max user space virtual address bits to consider (=48)
++  mi_option_max_vabits,                 ///< __v3__: max user space virtual address bits to consider (=0, so the OS reported address bits are used)
+   mi_option_pagemap_commit,             ///< __v3__: commit the full pagemap (to always catch invalid pointer uses) (=0)
+   mi_option_page_commit_on_demand,      ///< __v3__: commit page memory on-demand (=0)
+   mi_option_page_max_reclaim,           ///< __v3__: don't reclaim pages of the same originating theap if we already own N pages (in that size class) (=-1 (unlimited))
+-  mi_option_page_cross_thread_max_reclaim, ///< __v3__: don't reclaim pages across threads if we already own N pages (in that size class) (=16)
++  mi_option_page_cross_thread_max_reclaim, ///< __v3__: don't reclaim pages across threads if we already own N pages (in that size class) (=32)
+   mi_option_minimal_purge_size,         ///< __v3__: set minimal purge size (in KiB) (=0). By default set to either 64 or 2048 if THP is enabled. (internal value is in KiB so use mi_option_get_size())
+   mi_option_arena_max_object_size,      ///< __v3__: set maximal object size that can be allocated in an arena (in KiB) (=2GiB on 64-bit). 
+   
+@@ -1320,17 +1384,31 @@ typedef enum mi_option_e {
+ } mi_option_t;
+ 
+ 
++/// Is \a option enabled? Reads the option as a boolean, where any non-zero value is enabled.
+ bool  mi_option_is_enabled(mi_option_t option);
++/// Enable \a option, setting its value to 1.
+ void  mi_option_enable(mi_option_t option);
++/// Disable \a option, setting its value to 0.
+ void  mi_option_disable(mi_option_t option);
++/// Set \a option to 1 or 0 according to \a enable.
+ void  mi_option_set_enabled(mi_option_t option, bool enable);
++/// Set the default of \a option to 1 or 0 according to \a enable, leaving an
++/// initialized option and any `MIMALLOC_` environment setting alone.
+ void  mi_option_set_enabled_default(mi_option_t option, bool enable);
+ 
++/// Get the current value of \a option, initializing it from the environment on first use.
+ long   mi_option_get(mi_option_t option);
++/// Get the current value of \a option clamped to the range \a min to \a max inclusive.
+ long   mi_option_get_clamp(mi_option_t option, long min, long max);
++/// Get the current value of \a option as a size in bytes, clamping a negative value to 0.
++/// The options whose value is in KiB are scaled to bytes; every other option is returned
++/// unchanged.
+ size_t mi_option_get_size(mi_option_t option);
+ 
++/// Set \a option to \a value.
+ void  mi_option_set(mi_option_t option, long value);
++/// Set the default of \a option to \a value, leaving an initialized option and any
++/// `MIMALLOC_` environment setting alone.
+ void  mi_option_set_default(mi_option_t option, long value);
+ 
+ /// \}
+@@ -1393,8 +1471,14 @@ void* mi_theap_zalloc(mi_theap_t* theap, size_t size);
+ /// @see mi_zalloc_small()
+ void* mi_theap_zalloc_small(mi_theap_t* theap, size_t size);
+ 
++/// Allocate zero-initialized \a count elements of \a size bytes in a specific theap.
++/// @see mi_calloc()
+ void* mi_theap_calloc(mi_theap_t* theap, size_t count, size_t size);
++/// Allocate \a size bytes in a specific theap, aligned by \a alignment.
++/// @see mi_malloc_aligned()
+ void* mi_theap_malloc_aligned(mi_theap_t* theap, size_t size, size_t alignment);
++/// Re-allocate \a p to \a newsize bytes in a specific theap.
++/// @see mi_realloc()
+ void* mi_theap_realloc(mi_theap_t* theap, void* p, size_t newsize);
+ 
+ /// \}
+@@ -1409,22 +1493,49 @@ void* mi_theap_realloc(mi_theap_t* theap, void* p, size_t newsize);
+ /// Checked `free`: just as `mi_free` but always checks if the pointer `p` belongs to our heap
+ /// and is safe to use when a pointer might be invalid or allocated by another allocator.
+ void  mi_cfree(void* p);
++/// Corresponds to [_expand](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/expand)
++/// on Windows: resize \a p in place, returning \a NULL and setting `errno` when it cannot.
++/// @see mi_expand()
+ void* mi__expand(void* p, size_t newsize);
+ 
++/// Corresponds to `malloc_size` on macOS: the usable size of the block at \a p.
++/// @see mi_usable_size()
+ size_t mi_malloc_size(const void* p);
++/// Corresponds to `malloc_good_size` on macOS: the size actually allocated for a
++/// request of \a size bytes.
++/// @see mi_good_size()
+ size_t mi_malloc_good_size(size_t size);
++/// Corresponds to `malloc_usable_size` on Linux: the usable size of the block at \a p.
++/// @see mi_usable_size()
+ size_t mi_malloc_usable_size(const void *p);
+ 
++/// Corresponds to [posix_memalign](https://linux.die.net/man/3/posix_memalign): store an
++/// allocation of \a size bytes aligned by \a alignment in `*p`. Returns 0, `EINVAL` for an
++/// alignment that is not a power of two multiple of `sizeof(void*)`, or `ENOMEM`.
+ int mi_posix_memalign(void** p, size_t alignment, size_t size);
+-int mi__posix_memalign(void** p, size_t alignment, size_t size);
++/// Corresponds to [memalign](https://linux.die.net/man/3/posix_memalign): allocate
++/// \a size bytes aligned by \a alignment.
++/// @see mi_malloc_aligned()
+ void* mi_memalign(size_t alignment, size_t size);
++/// Corresponds to [valloc](https://linux.die.net/man/3/valloc): allocate \a size bytes
++/// aligned to the OS page size.
+ void* mi_valloc(size_t size);
++/// Corresponds to [pvalloc](https://linux.die.net/man/3/valloc): allocate \a size bytes
++/// rounded up to a whole number of OS pages and aligned to the page size.
+ void* mi_pvalloc(size_t size);
++/// Corresponds to [aligned_alloc](https://en.cppreference.com/w/c/memory/aligned_alloc)
++/// in C11: allocate \a size bytes aligned by \a alignment, with the arguments switched
++/// relative to mi_malloc_aligned().
+ void* mi_aligned_alloc(size_t alignment, size_t size);
+ 
++/// Corresponds to `_wcsdup` on Windows: a copy of the wide string \a s, to be freed with mi_free().
+ unsigned short* mi_wcsdup(const unsigned short* s);
++/// Corresponds to `_mbsdup` on Windows: a copy of the multi-byte string \a s, to be freed with mi_free().
+ unsigned char*  mi_mbsdup(const unsigned char* s);
++/// Corresponds to `_dupenv_s` on Windows: store a copy of the environment variable
++/// \a name in `*buf` and its length in `*size`. Returns 0, or `EINVAL` for a null argument.
+ int mi_dupenv_s(char** buf, size_t* size, const char* name);
++/// Corresponds to `_wdupenv_s` on Windows: the wide-string form of mi_dupenv_s().
+ int mi_wdupenv_s(unsigned short** buf, size_t* size, const unsigned short* name);
+ 
+ /// Correspond s to [reallocarray](https://www.freebsd.org/cgi/man.cgi?query=reallocarray&sektion=3&manpath=freebsd-release-ports)
+@@ -1434,7 +1545,9 @@ void* mi_reallocarray(void* p, size_t count, size_t size);
+ /// Corresponds to [reallocarr](https://man.netbsd.org/reallocarr.3) in NetBSD.
+ int   mi_reallocarr(void* p, size_t count, size_t size);
+ 
++/// Corresponds to `_aligned_recalloc` on Windows; defers to mi_recalloc_aligned().
+ void* mi_aligned_recalloc(void* p, size_t newcount, size_t size, size_t alignment);
++/// Corresponds to `_aligned_offset_recalloc` on Windows; defers to mi_recalloc_aligned_at().
+ void* mi_aligned_offset_recalloc(void* p, size_t newcount, size_t size, size_t alignment, size_t offset);
+ 
+ /// @brief Free an object that was allocated with a known size.
+@@ -1453,6 +1566,10 @@ void mi_free_size(void* p, size_t size);
+ /// Currently just defers to mi_free_size()
+ void mi_free_size_aligned(void* p, size_t size, size_t alignment);
+ 
++/// @brief Free an object that was allocated aligned.
++/// @param p The pointer to the object (or \a NULL )
++/// @param alignment The requested alignment at the allocation.
++/// Currently just defers to mi_free().
+ void mi_free_aligned(void* p, size_t alignment);
+ 
+ /// \}
+diff --git a/include/mimalloc.h b/include/mimalloc.h
+index 229e3948..111b875d 100644
+--- a/include/mimalloc.h
++++ b/include/mimalloc.h
+@@ -212,6 +212,22 @@ mi_decl_export void mi_thread_set_in_threadpool(void) mi_attr_noexcept; // commu
+ 
+ // -----------------------------------------------------------------
+ // Return allocated block size (if the return value is not NULL)
++//
++// `block_size` is the size of the whole heap block the allocation was
++// served from. It is not the number of bytes available at the returned
++// pointer, and the two differ in two cases:
++//
++// - the aligned forms may place the returned pointer inside a larger
++//   block, so part of `block_size` lies *before* the pointer. For
++//   example `mi_umalloc_aligned(100, 512, &block_size)` can report 640
++//   while only 256 bytes are available at the pointer it returns.
++// - when built with padding (`MI_PADDING`, on by default in debug
++//   builds) `block_size` includes the padding bytes, which are reserved
++//   for overflow detection and must not be written.
++//
++// Use `mi_usable_size(p)` for the number of bytes that may be written at
++// `p`; `block_size` is for accounting, and `mi_ufree` reports the same
++// figure for a block that the allocating call did, so the two balance.
+ // -----------------------------------------------------------------
+ 
+ mi_decl_nodiscard mi_decl_export mi_decl_restrict void* mi_umalloc(size_t size, size_t* block_size)  mi_attr_noexcept mi_attr_malloc mi_attr_alloc_size(1);
+@@ -405,7 +421,7 @@ static inline mi_decl_restrict void* mi_theap_malloc_csize(mi_theap_t* theap, si
+   if (size <= MI_SMALL_SIZE_MAX) { return mi_theap_malloc_small(theap,size); } else { return mi_theap_malloc(theap,size); }
+ }
+ static inline mi_decl_restrict void* mi_theap_zalloc_csize(mi_theap_t* theap, size_t size) mi_attr_noexcept {
+-  if (size <= MI_SMALL_SIZE_MAX) { return mi_theap_zalloc_small(theap,size); } else { return mi_theap_malloc(theap,size); }
++  if (size <= MI_SMALL_SIZE_MAX) { return mi_theap_zalloc_small(theap,size); } else { return mi_theap_zalloc(theap,size); }
+ }
+ static inline void mi_free_csize(void* p, size_t size) mi_attr_noexcept {
+   if (size <= MI_SMALL_SIZE_MAX) { mi_free_small(p); } else { mi_free(p); }
+@@ -447,7 +463,6 @@ mi_decl_nodiscard mi_decl_export bool mi_is_in_heap_region(const void* p) mi_att
+ mi_decl_export bool mi_theap_visit_blocks(const mi_theap_t* theap, bool visit_blocks, mi_block_visit_fun* visitor, void* arg);
+ 
+ mi_decl_export int  mi_reserve_huge_os_pages(size_t pages, double max_secs, size_t* pages_reserved) mi_attr_noexcept;
+-mi_decl_export void mi_collect_reduce(size_t target_thread_owned) mi_attr_noexcept;
+ 
+ mi_decl_export void mi_stats_reset(void)      mi_attr_noexcept;
+ mi_decl_export void mi_stats_merge(void)      mi_attr_noexcept;
+@@ -478,7 +493,7 @@ typedef enum mi_option_e {
+   mi_option_deprecated_abandoned_page_purge,
+   mi_option_deprecated_segment_reset,
+   mi_option_deprecated_eager_commit_delay, 
+-  mi_option_purge_delay,                // memory purging is delayed by N milli seconds; use 0 for immediate purging or -1 for no purging at all. (=10)
++  mi_option_purge_delay,                // memory purging is delayed by N milli seconds; use 0 for immediate purging or -1 for no purging at all. (=1000)
+   mi_option_use_numa_nodes,             // 0 = use all available numa nodes, otherwise use at most N nodes.
+   mi_option_disallow_os_alloc,          // 1 = do not use OS memory for allocation (but only programmatically reserved arenas)
+   mi_option_os_tag,                     // tag used for OS logging (macOS only for now) (=100)
+@@ -487,25 +502,25 @@ typedef enum mi_option_e {
+   mi_option_deprecated_max_segment_reclaim,  // max. percentage of the abandoned segments can be reclaimed per try (=10%)
+   mi_option_destroy_on_exit,            // if set, release all memory on exit; sometimes used for dynamic unloading but can be unsafe
+   mi_option_arena_reserve,              // initial memory size for arena reservation (= 1 GiB on 64-bit) (internally, this value is in KiB; use `mi_option_get_size`)
+-  mi_option_arena_purge_mult,           // multiplier for `purge_delay` for the purging delay for arenas (=10)
++  mi_option_arena_purge_mult,           // multiplier for `purge_delay` for the purging delay for arenas (=4)
+   mi_option_deprecated_purge_extend_delay,
+   mi_option_disallow_arena_alloc,       // 1 = do not use arena's for allocation (except if using specific arena id's)
+   mi_option_retry_on_oom,               // retry on out-of-memory for N milli seconds (=400), set to 0 to disable retries. (only on windows)
+-  mi_option_deprecated_visit_abandoned, // allow visiting theap blocks from abandoned threads (=0)
++  mi_option_deprecated_visit_abandoned, // allow visiting theap blocks from abandoned threads (=1)
+   mi_option_guarded_min,                // only used when building with MI_GUARDED: minimal rounded object size for guarded objects (=0)
+-  mi_option_guarded_max,                // only used when building with MI_GUARDED: maximal rounded object size for guarded objects (=0)
++  mi_option_guarded_max,                // only used when building with MI_GUARDED: maximal rounded object size for guarded objects (=1 GiB)
+   mi_option_guarded_precise,            // disregard minimal alignment requirement to always place guarded blocks exactly in front of a guard page (=0)
+-  mi_option_guarded_sample_rate,        // 1 out of N allocations in the min/max range will be guarded (=1000)
++  mi_option_guarded_sample_rate,        // 1 out of N allocations in the min/max range will be guarded (=0, so no guarded allocation; 4000 when building with MI_GUARDED and NDEBUG)
+   mi_option_guarded_sample_seed,        // can be set to allow for a (more) deterministic re-execution when a guard page is triggered (=0)
+   mi_option_generic_collect,            // collect theaps every N (=10000) generic allocation calls
+   mi_option_page_reclaim_on_free,       // reclaim abandoned pages on a free (=0). -1 disallowr always, 0 allows if the page originated from the current theap, 1 allow always
+   mi_option_page_full_retain,           // retain N full (small) pages per size class (=2)
+   mi_option_page_max_candidates,        // max candidate pages to consider for allocation (=4)
+-  mi_option_max_vabits,                 // max user space virtual address bits to consider (=48)
++  mi_option_max_vabits,                 // max user space virtual address bits to consider (=0, so the OS reported address bits are used)
+   mi_option_pagemap_commit,             // commit the full pagemap (to always catch invalid pointer uses) (=0)
+   mi_option_page_commit_on_demand,      // commit page memory on-demand
+   mi_option_page_max_reclaim,           // don't reclaim pages of the same originating theap if we already own N pages (in that size class) (=-1 (unlimited))
+-  mi_option_page_cross_thread_max_reclaim, // don't reclaim pages across threads if we already own N pages (in that size class) (=16)
++  mi_option_page_cross_thread_max_reclaim, // don't reclaim pages across threads if we already own N pages (in that size class) (=32)
+   mi_option_allow_thp,                  // allow transparent huge pages? (=1) (on Android =0 by default). Set to 0 to disable THP for the process.
+   mi_option_minimal_purge_size,         // set minimal purge size (in KiB) (=0). By default set to either 64 or 2048 if THP is enabled.
+   mi_option_arena_max_object_size,      // set maximal object size that can be allocated in an arena (in KiB) (=2GiB on 64-bit). 
+@@ -565,8 +580,12 @@ mi_decl_export int mi_wdupenv_s(wchar_t** buf, size_t* size, const wchar_t* name
+ mi_decl_nodiscard mi_decl_export mi_decl_restrict wchar_t* mi_wcsdup(const wchar_t* s)  mi_attr_noexcept mi_attr_malloc;
+ mi_decl_nodiscard mi_decl_export mi_decl_restrict unsigned char* mi_mbsdup(const unsigned char* s)  mi_attr_noexcept mi_attr_malloc;
+ 
+-// The `mi_new` wrappers implement C++ semantics on out-of-memory instead of directly returning `NULL`.
+-// (and call `std::get_new_handler` and potentially raise a `std::bad_alloc` exception).
++// The `mi_new` wrappers implement C++ semantics on out-of-memory instead of directly returning `NULL`:
++// they call `std::get_new_handler` and, when the library itself is built as C++
++// (`-DMI_USE_CXX=ON`), raise a `std::bad_alloc` when no handler resolves the shortage.
++// `MI_USE_CXX` is off by default, and a library built as plain C cannot throw: with a
++// handler installed it calls the handler, and with none it reports the error and aborts.
++// Link a C++-built mimalloc if a catchable `std::bad_alloc` is required.
+ mi_decl_nodiscard mi_decl_export mi_decl_restrict void* mi_new(size_t size)                   mi_attr_malloc mi_attr_alloc_size(1);
+ mi_decl_nodiscard mi_decl_export mi_decl_restrict void* mi_new_aligned(size_t size, size_t alignment) mi_attr_malloc mi_attr_alloc_size(1) mi_attr_alloc_align(2);
+ mi_decl_nodiscard mi_decl_export mi_decl_restrict void* mi_new_nothrow(size_t size)           mi_attr_noexcept mi_attr_malloc mi_attr_alloc_size(1);
+diff --git a/mimalloc.pc.in b/mimalloc.pc.in
+index 80922256..c4eb2ad6 100644
+--- a/mimalloc.pc.in
++++ b/mimalloc.pc.in
+@@ -1,11 +1,12 @@
+ prefix=@CMAKE_INSTALL_PREFIX@
+ libdir=@mi_pc_libdir@
++objdir=@mi_pc_objdir@
+ includedir=@mi_pc_includedir@
+ 
+ Name: @PROJECT_NAME@
+ Description: A compact general purpose allocator with excellent performance
+ Version: @PACKAGE_VERSION@
+ URL: https://github.com/microsoft/mimalloc/
+-Libs: -L${libdir} -l@mi_libname@
++Libs: -L${libdir} -L${objdir} -l@mi_libname@
+ Libs.private: @mi_pc_libraries@
+ Cflags: -I${includedir}
+diff --git a/readme.md b/readme.md
+index a92903b2..a19b3adc 100644
+--- a/readme.md
++++ b/readme.md
+@@ -267,7 +267,7 @@ mimalloc uses only safe OS calls (`mmap` and `VirtualAlloc`) and can co-exist
+ with other allocators linked to the same program.
+ If you use `cmake`, you can simply use:
+ ```
+-find_package(mimalloc 1.8 REQUIRED)
++find_package(mimalloc REQUIRED)
+ ```
+ in your `CMakeLists.txt` to find a locally installed mimalloc. Then use either:
+ ```
+diff --git a/src/alloc.c b/src/alloc.c
+index bb98facb..2b55f7ea 100644
+--- a/src/alloc.c
++++ b/src/alloc.c
+@@ -726,10 +726,16 @@ static bool mi_try_new_handler(bool nothrow) {
+ typedef void (*std_new_handler_t)(void);
+ 
+ #if (defined(__GNUC__) || (defined(__clang__) && !defined(_MSC_VER)))  // exclude clang-cl, see issue #631
+-std_new_handler_t __attribute__((weak)) _ZSt15get_new_handlerv(void) {
+-  return NULL;
+-}
++// Declare `std::get_new_handler()` weakly rather than defining a weak stub for it.
++// A weak *definition* is exported from the static archive and preempts the standard
++// library's for the whole program, so a C++ program linking libmimalloc.a saw its own
++// `std::get_new_handler()` return NULL right after `std::set_new_handler` installed one,
++// and mimalloc never found an installed handler either. A weak *declaration* binds to
++// libstdc++'s definition when the program has one and stays null in a plain C program,
++// which is the case this was reaching for.
++extern std_new_handler_t _ZSt15get_new_handlerv(void) __attribute__((weak));
+ static std_new_handler_t mi_get_new_handler(void) {
++  if (&_ZSt15get_new_handlerv == NULL) return NULL;  // no C++ runtime linked in
+   return _ZSt15get_new_handlerv();
+ }
+ #else
+diff --git a/src/bitmap.c b/src/bitmap.c
+index 01de1999..6c3e0cc0 100644
+--- a/src/bitmap.c
++++ b/src/bitmap.c
+@@ -1081,7 +1081,10 @@ static void mi_bchunks_unsafe_setN(mi_bchunk_t* chunks, mi_bchunkmap_t* cmap, si
+   // start chunk and index
+   size_t chunk_idx = idx / MI_BCHUNK_BITS;
+   const size_t cidx = idx % MI_BCHUNK_BITS;
+-  const size_t ccount = _mi_divide_up(n, MI_BCHUNK_BITS);
++  // the range spans from `cidx` within the first chunk, so the chunk count is measured
++  // from there and not from `n` alone: a range starting part-way into a chunk reaches
++  // one chunk further than its length suggests
++  const size_t ccount = _mi_divide_up(cidx + n, MI_BCHUNK_BITS);
+ 
+   // first update the chunkmap
+   mi_bchunk_setN(cmap, chunk_idx, ccount, NULL);
+diff --git a/src/free.c b/src/free.c
+index 82ecf260..eeee5f2f 100644
+--- a/src/free.c
++++ b/src/free.c
+@@ -15,7 +15,7 @@ terms of the MIT license. A copy of the license can be found in the file
+ // forward declarations
+ mi_decl_nodiscard static bool mi_check_padding_on_free(const mi_page_t* page, const mi_block_t* block, bool is_guarded, size_t* usable_size);
+ static size_t mi_page_usable_size_of(const mi_page_t* page, const mi_block_t* block, bool was_guarded);
+-static void   mi_stat_free(const mi_page_t* page, const mi_block_t* block);
++static void   mi_stat_free(const mi_page_t* page, const mi_block_t* block, size_t usable_size);
+ // static bool   mi_check_is_double_free(const mi_page_t* page, const mi_block_t* block);
+ 
+ 
+@@ -33,7 +33,7 @@ static inline void mi_free_block_local(mi_page_t* page, mi_block_t* block, bool
+   // if mi_unlikely(!mi_check_is_double_free(page,block)) return;  // checked with padding
+ 
+   if (track_stats) { 
+-    mi_stat_free(page, block);    
++    mi_stat_free(page, block, usable_size);
+     mi_track_free_size(block, usable_size); 
+   }
+   #if (MI_DEBUG>0) && !MI_TRACK_ENABLED  && !MI_TSAN
+@@ -66,7 +66,7 @@ static inline void mi_free_block_mt(mi_page_t* page, mi_block_t* block, bool was
+   if mi_unlikely(!mi_check_padding_on_free(page, block, was_guarded, &usable_size)) return;    // checking padding is safe for mt
+   
+   // adjust stats (after padding check )
+-  mi_stat_free(page, block);    // stat_free may access the padding
++  mi_stat_free(page, block, usable_size);    // stat_free may access the padding
+   mi_track_free_size(block, usable_size);
+ 
+   // _mi_padding_shrink(page, block, sizeof(mi_block_t));
+@@ -743,9 +743,10 @@ mi_decl_nodiscard static bool mi_check_padding_on_free(const mi_page_t* page, co
+ 
+ // only maintain stats for smaller objects if requested
+ #if (MI_STAT>0)
+-static void mi_stat_free(const mi_page_t* page, const mi_block_t* block) {
+-  MI_UNUSED(block);  
++static void mi_stat_free(const mi_page_t* page, const mi_block_t* block, size_t usable_size) {
++  MI_UNUSED(block); MI_UNUSED(usable_size);  
+   mi_theap_t* theap = _mi_theap_default();
++  mi_heap_t* const pheap = mi_page_heap(page);  // fallback accounting; updated atomically
+   mi_lock_t* lock = NULL;
+   mi_subproc_t* const subproc = mi_page_subproc(page);
+   mi_theap_t* const theap_meta = subproc->theap_meta;
+@@ -756,21 +757,33 @@ static void mi_stat_free(const mi_page_t* page, const mi_block_t* block) {
+     lock = &subproc->theap_meta_lock;
+     mi_lock_acquire(lock);
+   }
++  else {
++    // The matching increase in `alloc.c` was recorded on the theap the block was
++    // allocated from. That is this thread's default theap only for the default heap:
++    // for a block from a first-class heap, or one freed by another thread, it is a
++    // different theap, and decreasing the wrong one leaves `current` stuck at its peak.
++    // So attribute the decrease to the theap that owns the page when it belongs to this
++    // thread, and otherwise to the owning heap - whose counters are updated atomically,
++    // which a foreign theap's are not, and which `mi_heap_stats_get` merges into.
++    mi_theap_t* const owner = _mi_page_associated_theap_peek((mi_page_t*)page);
++    theap = (owner != NULL && mi_theap_matches_thread(owner) ? owner : NULL);
++  }
+ 
+   const size_t bsize = mi_page_usable_block_size(page);
+-  // #if (MI_STAT>1)
+-  // const size_t usize = mi_page_usable_size_of(page, block);
+-  // mi_theap_stat_decrease(theap, malloc_requested, usize);
+-  // #endif
+   if (bsize <= MI_LARGE_MAX_OBJ_SIZE) {
+-    mi_theap_stat_decrease(theap, malloc_normal, bsize);
++    mi_theapx_stat_decrease(pheap, theap, malloc_normal, bsize);
+     #if (MI_STAT > 1)
+-    mi_theap_stat_decrease(theap, malloc_bins[_mi_bin(bsize)], 1);
++    mi_theapx_stat_decrease(pheap, theap, malloc_bins[_mi_bin(bsize)], 1);
++    // matches the increase in `alloc.c`, which is inside this same size branch: a huge
++    // block never adds to malloc_requested, so it must not subtract from it either.
++    // The caller already decoded the usable size; decoding the padding a second time
++    // here is both wasted work and unsound once the block is on the free path.
++    mi_theapx_stat_decrease(pheap, theap, malloc_requested, usable_size);
+     #endif
+   }
+   else {
+     const size_t bpsize = mi_page_block_size(page);  // match stat in page.c:mi_huge_page_alloc
+-    mi_theap_stat_decrease(theap, malloc_huge, bpsize);
++    mi_theapx_stat_decrease(pheap, theap, malloc_huge, bpsize);
+   }
+ 
+   if mi_unlikely(lock!=NULL) {
+@@ -778,8 +791,8 @@ static void mi_stat_free(const mi_page_t* page, const mi_block_t* block) {
+   }
+ }
+ #else
+-void mi_stat_free(const mi_page_t* page, const mi_block_t* block) {
+-  MI_UNUSED(page); MI_UNUSED(block);
++void mi_stat_free(const mi_page_t* page, const mi_block_t* block, size_t usable_size) {
++  MI_UNUSED(page); MI_UNUSED(block); MI_UNUSED(usable_size);
+ }
+ #endif
+ 
+diff --git a/src/libc.c b/src/libc.c
+index 17dd1d1d..6de249da 100644
+--- a/src/libc.c
++++ b/src/libc.c
+@@ -346,6 +346,7 @@ int _mi_vsnprintf(char* buf, size_t bufsize, const char* fmt, va_list args) {
+       if (c == '+' || c == ' ') { numplus = c; MI_NEXTC(); }
+       if (c == '-') { alignright = false; MI_NEXTC(); }
+       if (c == '0') { fill = '0'; MI_NEXTC(); }
++      if (!alignright) { fill = ' '; }  // the left-align flag overrides zero fill
+       if (c >= '1' && c <= '9') {
+         width = (c - '0'); MI_NEXTC();
+         while (c >= '0' && c <= '9') {
+@@ -411,6 +412,15 @@ int _mi_vsnprintf(char* buf, size_t bufsize, const char* fmt, va_list args) {
+         else if (numplus != 0) {
+           pre = numplus;
+         }
++        if (pre != 0 && fill == '0' && alignright) {
++          // zero padding goes between the sign and the digits ("-0001"), while space
++          // padding goes before the sign ("   -1"), so emit the sign ahead of the
++          // padded field and shorten the field by it
++          mi_outc(pre, &out, end);
++          start = out;
++          if (width > 0) { width--; }
++          pre = 0;
++        }
+         mi_out_num((uintmax_t)x, 10, pre, &out, end);
+       }
+       else if (c >= ' ' && c <= '~') {
+diff --git a/src/options.c b/src/options.c
+index a35661ec..b5663509 100644
+--- a/src/options.c
++++ b/src/options.c
+@@ -184,6 +184,34 @@ static bool mi_option_has_size_in_kib(mi_option_t option) {
+           option == mi_option_minimal_purge_size || option == mi_option_arena_max_object_size);
+ }
+ 
++// Options whose domain is boolean, so that an empty environment value spells "on".
++// Everything else - a count, a size, a rate, a delay - takes an empty value as the
++// invalid value it is, and warns. The set is exactly the options the library reads
++// through `mi_option_is_enabled`, which is what makes it checkable rather than a
++// judgement: `.jeffy/probes/options-api/empty-value.sh` sets each option to an empty
++// value in turn and reports any option outside this set whose value moves.
++static bool mi_option_is_boolean(mi_option_t option) {
++  switch (option) {
++    case mi_option_allow_large_os_pages:
++    case mi_option_allow_thp:
++    case mi_option_arena_is_numa_local:
++    case mi_option_destroy_on_exit:
++    case mi_option_disallow_arena_alloc:
++    case mi_option_disallow_os_alloc:
++    case mi_option_guarded_precise:
++    case mi_option_pagemap_commit:
++    case mi_option_purge_decommits:
++    case mi_option_reserve_huge_os_pages:
++    case mi_option_reserve_os_memory:
++    case mi_option_show_errors:
++    case mi_option_show_stats:
++    case mi_option_verbose:
++      return true;
++    default:
++      return false;
++  }
++}
++
+ void _mi_options_init(void) {
+   // called on process load
+   for(int i = 0; i < _mi_option_last; i++ ) {
+@@ -642,7 +670,14 @@ static void mi_option_init(mi_option_desc_t* desc) {
+       buf[i] = _mi_toupper(s[i]);
+     }
+     buf[len] = 0;
+-    if (buf[0] == 0 || _mi_streq(buf,"1") || _mi_streq(buf,"TRUE") || _mi_streq(buf,"YES") || _mi_streq(buf,"ON")) {
++    // An empty value is the boolean "on" spelling, and only a boolean option has that
++    // spelling. Reading it as 1 on a count, a size or a rate silently replaces the
++    // option's scale - `MIMALLOC_ARENA_RESERVE=` collapsed a gigabyte reservation to one
++    // kilobyte with no diagnostic at all, while every other unparseable value warns.
++    // Elsewhere an empty value falls through to the numeric path below, which refuses a
++    // parse that consumed no characters.
++    const bool empty_is_on = (buf[0] == 0 && mi_option_is_boolean(desc->option));
++    if (empty_is_on || _mi_streq(buf,"1") || _mi_streq(buf,"TRUE") || _mi_streq(buf,"YES") || _mi_streq(buf,"ON")) {
+       desc->value = 1;
+       desc->init = MI_OPTION_INITIALIZED;
+     }
+@@ -669,7 +704,9 @@ static void mi_option_init(mi_option_desc_t* desc) {
+         if (overflow || size > (MI_MAX_ALLOC_SIZE / MI_KiB)) { size = (MI_MAX_ALLOC_SIZE / MI_KiB); }
+         value = (size > LONG_MAX ? LONG_MAX : (long)size);
+       }
+-      if (errno==0 && *end == 0) {
++      // `end != buf` rejects a parse that consumed nothing: strtol leaves `*end == 0`
++      // on an empty string, which would otherwise read as a successful parse of zero
++      if (errno==0 && *end == 0 && end != buf) {
+         mi_option_set(desc->option, value);
+       }
+       else {
+diff --git a/src/page-queue.c b/src/page-queue.c
+index c10c0925..bd08ebe0 100644
+--- a/src/page-queue.c
++++ b/src/page-queue.c
+@@ -86,7 +86,9 @@ static size_t mi_bin(size_t size) {
+     wsize--;
+     // find the highest bit
+     const size_t b = (MI_SIZE_BITS - 1 - mi_clz(wsize));  // note: wsize != 0
+-    // and use the top 3 bits to determine the bin (~12.5% worst internal fragmentation).
++    // and use the top 3 bits to determine the bin: four size classes per power of
++    // two, so past the first eight exactly-binned sizes the worst internal
++    // fragmentation is 1 in 4 of the requested size.
+     // - adjust with 3 because we use do not round the first 8 sizes
+     //   which each get an exact bin
+     const size_t bin = ((b << 2) + ((wsize >> (b - 2)) & 0x03)) - 3;
+diff --git a/src/stats.c b/src/stats.c
+index 9220bfec..04cd049d 100644
+--- a/src/stats.c
++++ b/src/stats.c
+@@ -476,6 +476,17 @@ void mi_stats_reset(void) mi_attr_noexcept {
+   mi_heap_stats_merge_to_subproc(heap_main);
+ }
+ 
++// deprecated: merge the calling thread's statistics into the process-wide statistics
++// and reset them, which is what this did in v1 and v2. In v3 a thread's statistics live
++// in its theap, so the merge runs theap into heap and then heap into subproc; each step
++// goes through `_mi_stats_merge_into`, which zeroes the source, giving the reset.
++void mi_stats_merge(void) mi_attr_noexcept {
++  mi_theap_t* theap = _mi_theap_default();
++  if (theap == NULL || !mi_theap_is_initialized(theap)) return;
++  mi_stats_merge_theap_to_heap(theap);
++  mi_heap_stats_merge_to_subproc(_mi_theap_heap(theap));
++}
++
+ 
+ void mi_heap_stats_print_out(mi_heap_t* heap, mi_output_fun* out, void* arg) mi_attr_noexcept {
+   if (heap==NULL) { heap = mi_heap_main(); }

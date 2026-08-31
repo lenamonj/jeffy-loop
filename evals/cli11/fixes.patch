@@ -1,0 +1,188 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 077b1b7..a416416 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -263,7 +263,12 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+   set(CPACK_SOURCE_IGNORE_FILES
+       /.git
+       /dist
+-      /.*build.*
++      # Anchored on a trailing slash so it excludes build *directories* -
++      # build/, cmake-build-debug/, out-build/ - without also matching the file
++      # meson.build, which the source release needs. .gitignore hits the same
++      # collision and answers it with an explicit !/meson.build negation;
++      # CPACK_SOURCE_IGNORE_FILES has no negation, so the pattern is narrowed.
++      /[^/]*build[^/]*/
+       /\\\\.DS_Store
+       /.*\\\\.egg-info
+       /var
+@@ -276,7 +281,16 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+       /.travis.yml
+       .swp
+       /.all-contributorsrc
+-      /.pre-commit.*yaml)
++      /.pre-commit.*yaml
++      # Local tooling and agent state that can sit in a working tree. The list
++      # above is what CPack keeps out of the published CLI11-Source archive, and
++      # anything not named here ships, so working-tree scratch belongs in it.
++      /.claude
++      /.jeffy
++      /PLAN.md
++      /BACKLOG.md
++      /JOURNAL.md
++      /JOURNAL-archive.md)
+ 
+   set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "all")
+   set(CPACK_DEBIAN_COMPRESSION_TYPE "xz")
+diff --git a/include/CLI/TypeTools.hpp b/include/CLI/TypeTools.hpp
+index 66fd412..bedea3f 100644
+--- a/include/CLI/TypeTools.hpp
++++ b/include/CLI/TypeTools.hpp
+@@ -1005,6 +1005,13 @@ bool integral_conversion(const std::string &input, T &output) noexcept {
+         if(errno == ERANGE) {
+             return false;
+         }
++        if(val == input.c_str() + 2) {
++            // strtoX consumed nothing, so the prefix carries no digits. For an
++            // input that is only the prefix, that start pointer is also
++            // one-past-the-end, and the check below would report a successful
++            // conversion to zero. The floating point path guards the same way.
++            return false;
++        }
+         output = static_cast<T>(output_ll);
+         return (val == (input.c_str() + input.size()) && static_cast<std::uint64_t>(output) == output_ll);
+     }
+@@ -1018,6 +1025,13 @@ bool integral_conversion(const std::string &input, T &output) noexcept {
+         if(errno == ERANGE) {
+             return false;
+         }
++        if(val == input.c_str() + 2) {
++            // strtoX consumed nothing, so the prefix carries no digits. For an
++            // input that is only the prefix, that start pointer is also
++            // one-past-the-end, and the check below would report a successful
++            // conversion to zero. The floating point path guards the same way.
++            return false;
++        }
+         output = static_cast<T>(output_ll);
+         return (val == (input.c_str() + input.size()) && static_cast<std::uint64_t>(output) == output_ll);
+         // LCOV_EXCL_STOP
+@@ -1067,6 +1081,13 @@ bool integral_conversion(const std::string &input, T &output) noexcept {
+         if(errno == ERANGE) {
+             return false;
+         }
++        if(val == input.c_str() + 2) {
++            // strtoX consumed nothing, so the prefix carries no digits. For an
++            // input that is only the prefix, that start pointer is also
++            // one-past-the-end, and the check below would report a successful
++            // conversion to zero. The floating point path guards the same way.
++            return false;
++        }
+         output = static_cast<T>(output_ll);
+         return (val == (input.c_str() + input.size()) && static_cast<std::int64_t>(output) == output_ll);
+     }
+@@ -1080,6 +1101,13 @@ bool integral_conversion(const std::string &input, T &output) noexcept {
+         if(errno == ERANGE) {
+             return false;
+         }
++        if(val == input.c_str() + 2) {
++            // strtoX consumed nothing, so the prefix carries no digits. For an
++            // input that is only the prefix, that start pointer is also
++            // one-past-the-end, and the check below would report a successful
++            // conversion to zero. The floating point path guards the same way.
++            return false;
++        }
+         output = static_cast<T>(output_ll);
+         return (val == (input.c_str() + input.size()) && static_cast<std::int64_t>(output) == output_ll);
+         // LCOV_EXCL_STOP
+diff --git a/include/CLI/impl/TypeTools_inl.hpp b/include/CLI/impl/TypeTools_inl.hpp
+index 399f4ab..cda51a4 100644
+--- a/include/CLI/impl/TypeTools_inl.hpp
++++ b/include/CLI/impl/TypeTools_inl.hpp
+@@ -69,7 +69,10 @@ CLI11_INLINE std::int64_t to_flag_value(std::string val) noexcept {
+     } else {
+         char *loc_ptr{nullptr};
+         ret = std::strtoll(val.c_str(), &loc_ptr, 0);
+-        if(loc_ptr != (val.c_str() + val.size()) && errno == 0) {
++        // loc_ptr still at the start means strtoll consumed nothing. For the
++        // empty string that is also one-past-the-end, so the end check alone
++        // would accept it and report a flag value of zero.
++        if((loc_ptr == val.c_str() || loc_ptr != (val.c_str() + val.size())) && errno == 0) {
+             errno = EINVAL;
+         }
+     }
+diff --git a/tests/HelpersTest.cpp b/tests/HelpersTest.cpp
+index 2ec2b74..5f2f25c 100644
+--- a/tests/HelpersTest.cpp
++++ b/tests/HelpersTest.cpp
+@@ -272,6 +272,12 @@ TEST_CASE("StringTools: flagValues", "[helpers]") {
+     CHECK(-1 == CLI::detail::to_flag_value("false"));
+     CHECK(1 == CLI::detail::to_flag_value("YES"));
+     errno = 0;
++    // The empty string reaches the strtoll fallback, which consumes nothing and
++    // leaves its end pointer at the start. That is also one-past-the-end here,
++    // so without an explicit check it reported a flag value of zero.
++    CLI::detail::to_flag_value("");
++    CHECK(errno == EINVAL);
++    errno = 0;
+     CLI::detail::to_flag_value("frog");
+     CHECK(errno == EINVAL);
+     errno = 0;
+diff --git a/tests/NumericTypeTest.cpp b/tests/NumericTypeTest.cpp
+index d0c5249..e7be391 100644
+--- a/tests/NumericTypeTest.cpp
++++ b/tests/NumericTypeTest.cpp
+@@ -191,6 +191,54 @@ TEST_CASE_METHOD(TApp, "intConversions", "[optiontype]") {
+     CHECK(val == test_data.second);
+ }
+ 
++TEST_CASE_METHOD(TApp, "intConversionsPrefixWithNoDigits", "[optiontype]") {
++
++    // A base prefix with no digits after it must be rejected, the way 0x with no
++    // digits already is. strtoll consumes nothing there and leaves its end
++    // pointer at the start of the digit region, which for these inputs is also
++    // one-past-the-end, so an end-of-input check on its own reports a successful
++    // conversion to zero.
++    std::int64_t val{-1};
++    app.add_option("--val", val);
++
++    for(const char *prefix_only : {"0b", "0B", "0o", "0O", "0x", "0X"}) {
++        args = {"--val", prefix_only};
++        CHECK_THROWS_AS(run(), CLI::ParseError);
++    }
++
++    // The same prefixes with digits still convert, including with separators.
++    args = {"--val", "0b1011"};
++    run();
++    CHECK(val == 11);
++
++    args = {"--val", "0o17"};
++    run();
++    CHECK(val == 15);
++
++    args = {"--val", "0x1f"};
++    run();
++    CHECK(val == 31);
++}
++
++TEST_CASE_METHOD(TApp, "uintConversionsPrefixWithNoDigits", "[optiontype]") {
++
++    std::uint64_t val{99};
++    app.add_option("--val", val);
++
++    for(const char *prefix_only : {"0b", "0B", "0o", "0O", "0x", "0X"}) {
++        args = {"--val", prefix_only};
++        CHECK_THROWS_AS(run(), CLI::ParseError);
++    }
++
++    args = {"--val", "0b1011"};
++    run();
++    CHECK(val == 11U);
++
++    args = {"--val", "0o17"};
++    run();
++    CHECK(val == 15U);
++}
++
+ TEST_CASE_METHOD(TApp, "intConversionsErange", "[optiontype]") {
+ 
+     std::int64_t val{0};
