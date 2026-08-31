@@ -1,0 +1,946 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 00000000..4ffbb63b
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,6 @@
++# Agent state files: kept in the repository as working notes, never shipped.
++PLAN.md            export-ignore
++BACKLOG.md         export-ignore
++JOURNAL.md         export-ignore
++JOURNAL-archive.md export-ignore
++.jeffy/            export-ignore
+diff --git a/.gitignore b/.gitignore
+index 9c610042..14e26a83 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -12,3 +12,4 @@ doc
+ /.yardoc
+ /coverage
+ /external
++.claude/jeffy-loop.local.md
+diff --git a/.rdoc_options b/.rdoc_options
+index 271180f5..3a250ecf 100644
+--- a/.rdoc_options
++++ b/.rdoc_options
+@@ -2,3 +2,7 @@
+ autolink_excluded_words:
+ - Rack
+ - CGI
++exclude:
++- PLAN\.md
++- BACKLOG\.md
++- JOURNAL(-archive)?\.md
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 666ae39d..553abfa7 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -31,9 +31,24 @@ All notable changes to this project will be documented in this file. For info on
+ 
+ ### Fixed
+ 
++- `Rack::Directory` listings now open with a `<!DOCTYPE html>` and an `<html lang="en">` element, so a browser renders them in standards mode and a screen reader has a language to announce. `Rack::ShowStatus` and `Rack::ShowExceptions` already emitted both.
++- `Rack::QueryParser` and `Rack::MediaType.split` now raise `ArgumentError` for an empty separator instead of letting the empty character class they build surface as a bare `RegexpError`. `Rack::MediaType.split` previously disagreed with itself on this input, refusing it on the quote-free path while returning the whole header on the quoted one.
+ - `Rack::Multipart::UploadedFile` now delegates keyword arguments to the wrapped tempfile. Calls such as `uploaded_file.readlines(chomp: true)` raised `TypeError` on Ruby 3.0+. ([#2481](https://github.com/rack/rack/issues/2481), [#2499](https://github.com/rack/rack/pull/2499), [@SeanLF](https://github.com/SeanLF))
+ - Multipart parser: limit MIME header size check to the unread buffer region to avoid false `multipart mime part header too large` errors when previously read data accumulates in the scan buffer. ([#2392](https://github.com/rack/rack/pull/2392), [@alpaca-tc](https://github.com/alpaca-tc), [@willnet](https://github.com/willnet), [@krororo](https://github.com/krororo))
+ - Multipart parser: add nil guards to prevent `NoMethodError` crashes when handling `Content-Disposition` without parameters and `Content-Type` parameters without '='. ([@haruki0409](https://github.com/haruki0409))
++- Multipart parser: `multipart_file_limit` and `multipart_total_part_limit` are now inclusive bounds, as documented. A request carrying exactly the configured number of parts is accepted; previously it was rejected and only `limit - 1` parts were admitted.
++- `Rack::Multipart.build_multipart` now handles arrays of scalars, which previously raised `NoMethodError`, and no longer drops parts that share a name, so an array of hashes round trips through the parser with every record intact.
++- `Rack::MediaType.params` no longer raises `NoMethodError` on a content type carrying an empty parameter segment, such as `text/plain;;charset=utf-8`, which reached applications through `Rack::Request#media_type_params` and `#content_charset`.
++- `Rack::MediaType.params` and `Rack::MediaType.type` honour quoted parameter values, so a separator inside quotes no longer splits the parameter list. `Rack::MediaType::SPLIT_PATTERN` is replaced by `Rack::MediaType.split`.
++- The multipart boundary parameter may be a quoted string containing a comma, which RFC 2046 allows; previously such a boundary was truncated at the comma and the request failed with `EmptyContentError`.
++- `Rack::Utils.q_values` and `Rack::Request#accept_encoding`/`#accept_language` honour quoted parameter values, so a comma or semicolon inside quotes no longer produces a spurious extra entry; `q_values` now skips empty entries instead of returning `[nil, 1.0]` for them.
++- The multipart parser no longer reads a part's `charset` out of the inside of a quoted parameter value, which could force a part body to an unrelated encoding and fail the request.
++- `Rack::QueryParser#new_depth_limit` carries `bytesize_limit` and `params_limit` across to the derived parser instead of resetting them to the defaults, and `Rack::Utils.param_depth_limit=` installs the result frozen, so setting a depth limit no longer discards a configured limit or costs Ractor shareability.
++- A query separator is now treated as a literal set of characters. Previously it was interpolated into a regular expression character class unescaped, so `"^"` raised a bare `RegexpError`, `"]"` and a repeated character emitted Ruby warnings, and `"a-z"` was silently read as a character range.
++- `Rack::Reloader.new(app, nil)` now builds a reloader that never reloads, which is what `Reloader#call`'s own `if @cooldown` guard implies. Previously the constructor computed `Time.now - cooldown` before that guard could apply and raised `TypeError` at boot.
++- Media type and Accept header parsing takes a plain split when the header contains no double quote, so honouring quoted parameter values costs the character scanner only on headers that actually carry one.
++- `Rack::MediaType.type` and `.params` handle a separator-only `Content-Type` such as `;` without raising, returning `""` and `{}` as they always did; `Rack::Request#media_type`, `#form_data?`, `#parseable_data?` and `#POST` are reachable with such a header.
++- The multipart parser no longer raises `NoMethodError` on a part whose `Content-Type` ends in a separator, such as `text/plain;`.
+ 
+ ## [3.2.6] - 2026-04-01
+ 
+diff --git a/lib/rack/directory.rb b/lib/rack/directory.rb
+index 7557f662..ea0a941e 100644
+--- a/lib/rack/directory.rb
++++ b/lib/rack/directory.rb
+@@ -24,7 +24,8 @@ module Rack
+   class Directory
+     DIR_FILE = "<tr><td class='name'><a href='./%s'>%s</a></td><td class='size'>%s</td><td class='type'>%s</td><td class='mtime'>%s</td></tr>\n"
+     DIR_PAGE_HEADER = <<-PAGE
+-<html><head>
++<!DOCTYPE html>
++<html lang="en"><head>
+   <title>%s</title>
+   <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+   <style type='text/css'>
+diff --git a/lib/rack/media_type.rb b/lib/rack/media_type.rb
+index 29ad1179..ec4888bc 100644
+--- a/lib/rack/media_type.rb
++++ b/lib/rack/media_type.rb
+@@ -4,9 +4,74 @@ module Rack
+   # Rack::MediaType parse media type and parameters out of content_type string
+ 
+   class MediaType
+-    SPLIT_PATTERN = /[;,]/
++    SPLIT_PATTERNS = Hash.new { |h, separators| h[separators] = /[#{Regexp.escape(separators)}]/ }.
++      merge!(';,' => /[;,]/, ';' => /;/, ',' => /,/)
++    private_constant :SPLIT_PATTERNS
+ 
+     class << self
++      # Splits a header value on the given separator characters, ignoring any
++      # separator inside a quoted string, so "a/b;c=\"1;2\"" is two segments
++      # rather than three and a quoted-pair does not end the quoted string it
++      # appears in. Accept-style headers are a two level grammar and split in
++      # two passes: "," for the entries, then ";" within one entry.
++      #
++      # A header with no double quote in it cannot contain a quoted separator,
++      # so it takes a plain split; only a quoted header needs the scanner. The
++      # limit of -1 keeps trailing empty fields, which String#split drops by
++      # default - without it a separator-only header splits to [] and callers
++      # taking the first segment get nil instead of "".
++      #
++      # An empty separator set names no character to split on: it builds an
++      # empty character class Ruby refuses on the plain path while the scanner
++      # silently returned the whole header, so it is rejected on both.
++      def split(header, separators = ';,')
++        raise ArgumentError, "separators cannot be empty" if separators.empty?
++
++        unless header.include?('"')
++          return [+''] if header.empty?
++          return header.split(SPLIT_PATTERNS[separators], -1)
++        end
++
++        segments = []
++        segment = +''
++        quoted = escaped = false
++
++        header.each_char do |char|
++          if escaped
++            escaped = false
++          elsif quoted && char == '\\'
++            escaped = true
++          elsif char == '"'
++            quoted = !quoted
++          elsif !quoted && separators.include?(char)
++            segments << segment
++            segment = +''
++            next
++          end
++          segment << char
++        end
++
++        segments << segment
++      end
++
++      # Splits one entry of an Accept-style header into its value and the rest
++      # of its parameters as a single string, or nil when it carries none. The
++      # quoted-string-aware equivalent of entry.split(';', 2).map(&:strip).
++      def split_parameters(entry)
++        unless entry.include?('"')
++          value, parameters = entry.split(';', 2)
++          parameters = parameters&.strip
++          # nil rather than "" for a trailing separator, so both paths agree.
++          parameters = nil if parameters&.empty?
++          return [value ? value.strip : +'', parameters]
++        end
++
++        value, *parameters = split(entry, ';')
++        value.strip!
++        parameters = parameters.join(';').strip
++        [value, parameters.empty? ? nil : parameters]
++      end
++
+       # The media type (type/subtype) portion of the CONTENT_TYPE header
+       # without any media type parameters. e.g., when CONTENT_TYPE is
+       # "text/plain;charset=utf-8", the media-type is "text/plain".
+@@ -15,7 +80,7 @@ module Rack
+       # http://www.w3.org/Protocols/rfc2616/rfc2616-sec3.html#sec3.7
+       def type(content_type)
+         return nil unless content_type && !content_type.empty?
+-        type = content_type.split(SPLIT_PATTERN, 2).first
++        type = split(content_type).first
+         type.rstrip!
+         type.downcase!
+         type
+@@ -34,8 +99,9 @@ module Rack
+       def params(content_type)
+         return {} if content_type.nil? || content_type.empty?
+ 
+-        content_type.split(SPLIT_PATTERN)[1..-1].each_with_object({}) do |s, hsh|
++        split(content_type)[1..-1].each_with_object({}) do |s, hsh|
+           s.strip!
++          next if s.empty?
+           k, v = s.split('=', 2)
+           k.downcase!
+           hsh[k] = strip_doublequotes(v)
+diff --git a/lib/rack/multipart/generator.rb b/lib/rack/multipart/generator.rb
+index 30d7f51d..630517aa 100644
+--- a/lib/rack/multipart/generator.rb
++++ b/lib/rack/multipart/generator.rb
+@@ -49,28 +49,29 @@ module Rack
+         @params.values.any?(&query)
+       end
+ 
++      # Returns [name, value] pairs rather than a Hash, because two parts of a
++      # request may legitimately share a name: that is how a repeated field or
++      # an array of records is sent, and a Hash silently keeps only the last.
+       def flattened_params
+         @flattened_params ||= begin
+-          h = Hash.new
++          pairs = []
+           @params.each do |key, value|
+-            k = @first ? key.to_s : "[#{key}]"
+-
+-            case value
+-            when Array
+-              value.map { |v|
+-                Multipart.build_multipart(v, false).each { |subkey, subvalue|
+-                  h["#{k}[]#{subkey}"] = subvalue
+-                }
+-              }
+-            when Hash
+-              Multipart.build_multipart(value, false).each { |subkey, subvalue|
+-                h[k + subkey] = subvalue
+-              }
+-            else
+-              h[k] = value
+-            end
++            flatten_value(pairs, @first ? key.to_s : "[#{key}]", value)
+           end
+-          h
++          pairs
++        end
++      end
++
++      def flatten_value(pairs, key, value)
++        case value
++        when Array
++          value.each { |v| flatten_value(pairs, "#{key}[]", v) }
++        when Hash
++          Multipart.build_multipart(value, false).each { |subkey, subvalue|
++            pairs << [key + subkey, subvalue]
++          }
++        else
++          pairs << [key, value]
+         end
+       end
+ 
+diff --git a/lib/rack/multipart/parser.rb b/lib/rack/multipart/parser.rb
+index 6a8871ec..ba6fd212 100644
+--- a/lib/rack/multipart/parser.rb
++++ b/lib/rack/multipart/parser.rb
+@@ -33,7 +33,9 @@ module Rack
+     EOL = "\r\n"
+     FWS = /[ \t]+(?:\r\n[ \t]+)?/ # whitespace with optional folding
+     HEADER_VALUE = "(?:[^\r\n]|\r\n[ \t])*" # anything but a non-folding CRLF
+-    MULTIPART = %r|\Amultipart/.*?boundary(\s*)=\"?([^\";,]+)\"?|ni
++    # A quoted boundary may contain the separators that end an unquoted one:
++    # comma is in RFC 2046 bcharsnospace, so `boundary="a,b"` is one boundary.
++    MULTIPART = %r{\Amultipart/.*?boundary(\s*)=(?:"([^"]+)"|"?([^";,]+)"?)}ni
+     MULTIPART_CONTENT_TYPE = /^Content-Type:#{FWS}?(#{HEADER_VALUE})/ni
+     MULTIPART_CONTENT_DISPOSITION = /^Content-Disposition:#{FWS}?(#{HEADER_VALUE})/ni
+     MULTIPART_CONTENT_ID = /^Content-ID:#{FWS}?(#{HEADER_VALUE})/ni
+@@ -131,7 +133,7 @@ module Rack
+           raise BoundaryTooLongError, "multiple boundary parameters found in multipart content type"
+         end
+ 
+-        data[2]
++        data[2] || data[3]
+       end
+ 
+       def self.parse(io, content_length, content_type, tmpfile, bufsize, qp)
+@@ -236,7 +238,7 @@ module Rack
+           file_limit = Utils.multipart_file_limit
+ 
+           if file_limit && file_limit > 0
+-            if (@open_files + 1) >= file_limit
++            if (@open_files + 1) > file_limit
+               @mime_parts.each(&:close)
+               raise MultipartPartLimitError, 'Maximum file multiparts in content reached'
+             end
+@@ -247,7 +249,7 @@ module Rack
+           part_limit = Utils.multipart_total_part_limit
+ 
+           if part_limit && part_limit > 0
+-            if (@mime_parts.size + 1) >= part_limit
++            if (@mime_parts.size + 1) > part_limit
+               @mime_parts.each(&:close)
+               raise MultipartTotalPartLimitError, 'Maximum total multiparts in content reached'
+             end
+@@ -569,12 +571,17 @@ module Rack
+         return if filename
+ 
+         if content_type
+-          list         = content_type.split(';')
++          list         = MediaType.split(content_type, ';')
+           type_subtype = list.first
+           type_subtype.strip!
+           if TEXT_PLAIN == type_subtype
+             rest = list.drop 1
+             rest.each do |param|
++              # An empty segment carries no parameter, and a header may end in
++              # a separator, so skip it the way the other segment-list
++              # consumers do rather than splitting nil out of it.
++              next if param.strip.empty?
++
+               k, v = param.split('=', 2)
+               k.strip!
+               next unless v
+diff --git a/lib/rack/query_parser.rb b/lib/rack/query_parser.rb
+index 568c85d6..fb2a171a 100644
+--- a/lib/rack/query_parser.rb
++++ b/lib/rack/query_parser.rb
+@@ -204,7 +204,8 @@ module Rack
+     end
+ 
+     def new_depth_limit(param_depth_limit)
+-      self.class.new @params_class, param_depth_limit
++      self.class.new(@params_class, param_depth_limit,
++                     bytesize_limit: @bytesize_limit, params_limit: @params_limit)
+     end
+ 
+     private
+@@ -232,29 +233,44 @@ module Rack
+         raise QueryLimitError, "total query size exceeds limit (#{@bytesize_limit})"
+       end
+ 
+-      sep = separator ? (COMMON_SEP[separator] || /[#{separator}] */n) : DEFAULT_SEP
+-      pairs = @params_limit ? qs.split(sep, @params_limit + 1) : qs.split(sep)
+-
+-      if @params_limit && pairs.size > @params_limit
+-        param_count = pairs.size + pairs.last.count(separator || "&")
+-        raise QueryLimitError, "total number of query parameters (#{param_count}) exceeds limit (#{@params_limit})"
+-      end
+-
+-      if unescaper
+-        pairs.each do |p|
+-          next if p.empty?
+-          k, v = p.split('=', 2).map!(&unescaper)
+-          yield k, v
++      # An empty separator names no character to split on, and Ruby refuses the
++      # empty character class it would build. It is rejected here rather than
++      # inside the conversion below, because the separator is the application's
++      # own argument and not the client's data: marking it BadRequest would turn
++      # an application bug into a 400 the client has no way to fix.
++      raise ArgumentError, "separator cannot be empty" if separator && separator.empty?
++
++      begin
++        # The separator is a set of characters, so it is deduplicated and escaped
++        # before going into the character class: unescaped, "^" is a negation,
++        # "-" is a range and "]" closes the class early, and a character listed
++        # twice draws a duplicated-range warning while meaning nothing extra.
++        sep = separator ? (COMMON_SEP[separator] || /[#{Regexp.escape(separator.chars.uniq.join)}] */n) : DEFAULT_SEP
++        pairs = @params_limit ? qs.split(sep, @params_limit + 1) : qs.split(sep)
++
++        if @params_limit && pairs.size > @params_limit
++          # Counted with the same pattern the split used, because String#count
++          # has a second character-set mini-language with the same pitfalls.
++          param_count = pairs.size + pairs.last.scan(sep).size
++          raise QueryLimitError, "total number of query parameters (#{param_count}) exceeds limit (#{@params_limit})"
+         end
+-      else
+-        pairs.each do |p|
+-          next if p.empty?
+-          k, v = p.split('=', 2).map! { |s| unescape(s) }
+-          yield k, v
++
++        if unescaper
++          pairs.each do |p|
++            next if p.empty?
++            k, v = p.split('=', 2).map!(&unescaper)
++            yield k, v
++          end
++        else
++          pairs.each do |p|
++            next if p.empty?
++            k, v = p.split('=', 2).map! { |s| unescape(s) }
++            yield k, v
++          end
+         end
++      rescue ArgumentError => e
++        raise InvalidParameterError, e.message, e.backtrace
+       end
+-    rescue ArgumentError => e
+-      raise InvalidParameterError, e.message, e.backtrace
+     end
+ 
+     def unescape(string, encoding = Encoding::UTF_8)
+diff --git a/lib/rack/reloader.rb b/lib/rack/reloader.rb
+index a15064ac..a37ab6d2 100644
+--- a/lib/rack/reloader.rb
++++ b/lib/rack/reloader.rb
+@@ -21,11 +21,14 @@ module Rack
+   #
+   # It is performing a check/reload cycle at the start of every request, but
+   # also respects a cool down time, during which nothing will be done.
++  #
++  # A +cooldown+ of +nil+ disables reloading entirely: requests are passed
++  # straight through to the application.
+   class Reloader
+     def initialize(app, cooldown = 10, backend = Stat)
+       @app = app
+       @cooldown = cooldown
+-      @last = (Time.now - cooldown)
++      @last = (Time.now - cooldown) if cooldown
+       @cache = {}
+       @mtimes = {}
+       @reload_mutex = Mutex.new
+diff --git a/lib/rack/request.rb b/lib/rack/request.rb
+index 71b17539..15c54b8f 100644
+--- a/lib/rack/request.rb
++++ b/lib/rack/request.rb
+@@ -747,13 +747,11 @@ module Rack
+       end
+ 
+       def parse_http_accept_header(header)
+-        header.to_s.split(',').filter_map do |part|
++        MediaType.split(header.to_s, ',').filter_map do |part|
+           part.strip!
+           next if part.empty?
+ 
+-          attribute, parameters = part.split(';', 2)
+-          attribute.strip!
+-          parameters&.strip!
++          attribute, parameters = MediaType.split_parameters(part)
+           quality = 1.0
+           if parameters and /\Aq=([\d.]+)/ =~ parameters
+             quality = $1.to_f
+diff --git a/lib/rack/utils.rb b/lib/rack/utils.rb
+index 1c1cad2e..2f8a0db9 100644
+--- a/lib/rack/utils.rb
++++ b/lib/rack/utils.rb
+@@ -9,6 +9,7 @@ require 'time'
+ require 'erb'
+ 
+ require_relative 'query_parser'
++require_relative 'media_type'
+ require_relative 'mime'
+ require_relative 'constants'
+ 
+@@ -83,7 +84,9 @@ module Rack
+     end
+ 
+     def self.param_depth_limit=(v)
+-      self.default_query_parser = self.default_query_parser.new_depth_limit(v)
++      # Frozen to match the parser installed above, so setting the depth limit
++      # does not cost Ractor shareability.
++      self.default_query_parser = self.default_query_parser.new_depth_limit(v).freeze
+     end
+ 
+     if defined?(Process::CLOCK_MONOTONIC)
+@@ -135,8 +138,11 @@ module Rack
+     end
+ 
+     def q_values(q_value_header)
+-      q_value_header.to_s.split(',').map do |part|
+-        value, parameters = part.split(';', 2).map(&:strip)
++      MediaType.split(q_value_header.to_s, ',').filter_map do |part|
++        part.strip!
++        next if part.empty?
++
++        value, parameters = MediaType.split_parameters(part)
+         quality = 1.0
+         if parameters && (md = /\Aq=([\d.]+)/.match(parameters))
+           quality = md[1].to_f
+diff --git a/test/spec_directory.rb b/test/spec_directory.rb
+index eead55db..0ffdca8d 100644
+--- a/test/spec_directory.rb
++++ b/test/spec_directory.rb
+@@ -45,7 +45,7 @@ describe Rack::Directory do
+       get("/")
+ 
+     res.must_be :ok?
+-    assert_includes(res.body, '<html><head>')
++    assert_includes(res.body, %Q{<!DOCTYPE html>\n<html lang="en"><head>})
+     assert_includes(res.body, "href='./cgi")
+   end
+ 
+@@ -54,7 +54,7 @@ describe Rack::Directory do
+       get("/cgi/")
+ 
+     res.must_be :ok?
+-    assert_includes(res.body, '<html><head>')
++    assert_includes(res.body, %Q{<!DOCTYPE html>\n<html lang="en"><head>})
+     assert_includes(res.body, "rackup_stub.rb")
+   end
+ 
+@@ -77,7 +77,7 @@ describe Rack::Directory do
+         get("/cgi/")
+ 
+       res.must_be :ok?
+-      assert_match(res, /<html><head>/)
++      assert_match(res, /<!DOCTYPE html>\n<html lang="en"><head>/)
+     ensure
+       File.delete('test/cgi/foo')
+     end
+@@ -109,7 +109,7 @@ describe Rack::Directory do
+       get("/%63%67%69/") # "/cgi/test"
+ 
+     res.must_be :ok?
+-    assert_match(res, /<html><head>/)
++    assert_match(res, /<!DOCTYPE html>\n<html lang="en"><head>/)
+ 
+     res = Rack::MockRequest.new(Rack::Lint.new(app)).
+       get("/cgi/%74%65%73%74") # "/cgi/test"
+diff --git a/test/spec_media_type.rb b/test/spec_media_type.rb
+index 595a47e6..82052e48 100644
+--- a/test/spec_media_type.rb
++++ b/test/spec_media_type.rb
+@@ -80,4 +80,91 @@ describe Rack::MediaType do
+       Rack::MediaType.params(@content_type)['charset'].must_equal ''
+     end
+   end
++
++  describe 'when content_type carries an empty parameter segment' do
++    before { @content_type = 'application/text;;CHARSET=utf-8' }
++
++    it '#type is application/text' do
++      Rack::MediaType.type(@content_type).must_equal 'application/text'
++    end
++
++    it '#params skips the empty segment' do
++      Rack::MediaType.params(@content_type).must_equal 'charset' => 'utf-8'
++    end
++  end
++
++  describe 'the quote-free fast path' do
++    # A header with no double quote takes a plain split instead of the
++    # character scanner. The two are compared against an independent reference
++    # scanner written here rather than against each other on doctored input,
++    # so the degenerate shapes - all separator, all empty - are covered too.
++    # Those are exactly where the two implementations diverged before.
++    def reference_split(header, separators = ';,')
++      segments = []
++      segment = +''
++      quoted = escaped = false
++
++      header.each_char do |char|
++        if escaped
++          escaped = false
++        elsif quoted && char == '\\'
++          escaped = true
++        elsif char == '"'
++          quoted = !quoted
++        elsif !quoted && separators.include?(char)
++          segments << segment
++          segment = +''
++          next
++        end
++        segment << char
++      end
++
++      segments << segment
++    end
++
++    SHAPES = ['', ';', ',', ';;', ',,', ';,', ',;', ';;;', ' ', ' ; ', 'a/b', 'a/b;', ';a/b',
++              'a/b;c=1', 'a/b;c=1;d=2', 'a/b,c/d', 'a/b;;c=1', 'a/b;c="1;2"', 'a/b;c="1,2";d=3'].freeze
++
++    it 'splits exactly as the character scanner does, on every separator set' do
++      [';,', ';', ','].each do |separators|
++        SHAPES.each do |shape|
++          Rack::MediaType.split(shape, separators).must_equal reference_split(shape, separators)
++        end
++      end
++    end
++
++    it 'returns an empty media type rather than nil for a separator-only header' do
++      [';', ',', ';;', ',,', ';,', ',;', ';;;'].each do |header|
++        Rack::MediaType.type(header).must_equal ''
++        Rack::MediaType.params(header).must_equal({})
++      end
++    end
++
++    it 'refuses an empty separator set on both paths' do
++      ['a/b;c=1', 'a/b;c="1;2"'].each do |header|
++        error = proc { Rack::MediaType.split(header, '') }.must_raise ArgumentError
++        error.message.must_equal 'separators cannot be empty'
++      end
++    end
++
++    it 'reports an empty parameter list as nil on both paths' do
++      Rack::MediaType.split_parameters('a/b;').last.must_be_nil
++      Rack::MediaType.split_parameters('a/b;x="1;2"').last.must_equal 'x="1;2"'
++    end
++  end
++
++  describe 'when a parameter value is quoted' do
++    it 'does not split on a separator inside the quotes' do
++      Rack::MediaType.params('a/b;c="1;2"').must_equal 'c' => '1;2'
++      Rack::MediaType.params('a/b;c="1,2";d=3').must_equal 'c' => '1,2', 'd' => '3'
++    end
++
++    it 'does not end the quoted string on an escaped quote' do
++      Rack::MediaType.params('a/b;c="x\\";y";d=3').must_equal 'c' => 'x\\";y', 'd' => '3'
++    end
++
++    it 'still splits on unquoted separators' do
++      Rack::MediaType.params('a/b;c=1;d=2').must_equal 'c' => '1', 'd' => '2'
++    end
++  end
+ end
+diff --git a/test/spec_multipart.rb b/test/spec_multipart.rb
+index 5ad90b90..0611d7e6 100644
+--- a/test/spec_multipart.rb
++++ b/test/spec_multipart.rb
+@@ -46,6 +46,79 @@ describe Rack::Multipart do
+     Rack::Multipart.parse_multipart(env).must_be_nil
+   end
+ 
++  it "accepts a quoted boundary containing a comma" do
++    boundary = "a,b"
++    body = "--#{boundary}\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\n1\r\n--#{boundary}--\r\n"
++    env = Rack::MockRequest.env_for("/",
++      "REQUEST_METHOD" => "POST",
++      "CONTENT_TYPE" => "multipart/form-data; boundary=\"#{boundary}\"",
++      "CONTENT_LENGTH" => body.bytesize.to_s,
++      :input => body)
++
++    Rack::Multipart::Parser.parse_boundary(env["CONTENT_TYPE"]).must_equal boundary
++    Rack::Multipart.parse_multipart(env).must_equal "x" => "1"
++  end
++
++  it "does not read a part charset out of a quoted parameter value" do
++    boundary = "AaB03x"
++    body = "--#{boundary}\r\nContent-Disposition: form-data; name=\"a\"\r\n" \
++           "Content-Type: text/plain;x=\"a;charset=utf-16;b\"\r\n\r\nvalue\r\n--#{boundary}--\r\n"
++    env = Rack::MockRequest.env_for("/",
++      "REQUEST_METHOD" => "POST",
++      "CONTENT_TYPE" => "multipart/form-data; boundary=#{boundary}",
++      "CONTENT_LENGTH" => body.bytesize.to_s,
++      :input => body)
++
++    params = Rack::Multipart.parse_multipart(env)
++    params["a"].must_equal "value"
++    params["a"].encoding.must_equal Encoding::UTF_8
++  end
++
++  it "does not crash on a part content type ending in a separator" do
++    ["text/plain;", "text/plain;;", "text/plain; "].each do |type|
++      boundary = "AaB03x"
++      body = "--#{boundary}\r\nContent-Disposition: form-data; name=\"a\"\r\n" \
++             "Content-Type: #{type}\r\n\r\nvalue\r\n--#{boundary}--\r\n"
++      env = Rack::MockRequest.env_for("/",
++        "REQUEST_METHOD" => "POST",
++        "CONTENT_TYPE" => "multipart/form-data; boundary=#{boundary}",
++        "CONTENT_LENGTH" => body.bytesize.to_s,
++        :input => body)
++
++      Rack::Multipart.parse_multipart(env)["a"].must_equal "value"
++    end
++  end
++
++  it "reads a real part charset even when the header ends in a separator" do
++    boundary = "AaB03x"
++    body = "--#{boundary}\r\nContent-Disposition: form-data; name=\"a\"\r\n" \
++           "Content-Type: text/plain;charset=iso-8859-1;\r\n\r\nvalue\r\n--#{boundary}--\r\n"
++    env = Rack::MockRequest.env_for("/",
++      "REQUEST_METHOD" => "POST",
++      "CONTENT_TYPE" => "multipart/form-data; boundary=#{boundary}",
++      "CONTENT_LENGTH" => body.bytesize.to_s,
++      :input => body)
++
++    Rack::Multipart.parse_multipart(env)["a"].encoding.must_equal Encoding::ISO_8859_1
++  end
++
++  it "still reads a real part charset" do
++    boundary = "AaB03x"
++    body = "--#{boundary}\r\nContent-Disposition: form-data; name=\"a\"\r\n" \
++           "Content-Type: text/plain;charset=iso-8859-1\r\n\r\nvalue\r\n--#{boundary}--\r\n"
++    env = Rack::MockRequest.env_for("/",
++      "REQUEST_METHOD" => "POST",
++      "CONTENT_TYPE" => "multipart/form-data; boundary=#{boundary}",
++      "CONTENT_LENGTH" => body.bytesize.to_s,
++      :input => body)
++
++    Rack::Multipart.parse_multipart(env)["a"].encoding.must_equal Encoding::ISO_8859_1
++  end
++
++  it "stops an unquoted boundary at the next parameter" do
++    Rack::Multipart::Parser.parse_boundary("multipart/form-data; boundary=a;x=1").must_equal "a"
++  end
++
+   it "raises an exception if boundary is too long" do
+     env = Rack::MockRequest.env_for("/", multipart_fixture(:content_type_and_no_filename, "A"*71))
+     lambda {
+@@ -1074,6 +1147,49 @@ content-type: image/jpeg\r
+     params["people"][0]["files"][:tempfile].read.must_equal "contents"
+   end
+ 
++  it "builds multipart body from an array of scalar values" do
++    files = Rack::Multipart::UploadedFile.new(multipart_file("file1.txt"))
++    data  = Rack::Multipart.build_multipart("files" => files, "list" => ["x", "y"])
++
++    options = {
++      "CONTENT_TYPE" => "multipart/form-data; boundary=AaB03x",
++      "CONTENT_LENGTH" => data.length.to_s,
++      :input => StringIO.new(data)
++    }
++    env = Rack::MockRequest.env_for("/", options)
++    params = Rack::Multipart.parse_multipart(env)
++    params["list"].must_equal ["x", "y"]
++    params["files"][:filename].must_equal "file1.txt"
++  end
++
++  it "keeps every record of an array of hashes" do
++    files = Rack::Multipart::UploadedFile.new(multipart_file("file1.txt"))
++    data  = Rack::Multipart.build_multipart("files" => files, "people" => [{ "name" => "Larry" }, { "name" => "Curly" }])
++
++    options = {
++      "CONTENT_TYPE" => "multipart/form-data; boundary=AaB03x",
++      "CONTENT_LENGTH" => data.length.to_s,
++      :input => StringIO.new(data)
++    }
++    env = Rack::MockRequest.env_for("/", options)
++    params = Rack::Multipart.parse_multipart(env)
++    params["people"].must_equal [{ "name" => "Larry" }, { "name" => "Curly" }]
++  end
++
++  it "builds nested arrays the same way build_nested_query does" do
++    files = Rack::Multipart::UploadedFile.new(multipart_file("file1.txt"))
++    data  = Rack::Multipart.build_multipart("files" => files, "n" => [["1", "2"]])
++
++    options = {
++      "CONTENT_TYPE" => "multipart/form-data; boundary=AaB03x",
++      "CONTENT_LENGTH" => data.length.to_s,
++      :input => StringIO.new(data)
++    }
++    env = Rack::MockRequest.env_for("/", options)
++    params = Rack::Multipart.parse_multipart(env)
++    params["n"].must_equal Rack::Utils.parse_nested_query(Rack::Utils.build_nested_query("n" => [["1", "2"]]))["n"]
++  end
++
+   it "builds nested multipart body using hash" do
+     files = Rack::Multipart::UploadedFile.new(multipart_file("file1.txt"))
+     data  = Rack::Multipart.build_multipart("people" => { "foo" => { "submit-name" => "Larry", "files" => files } })
+@@ -1189,11 +1305,27 @@ content-type: image/jpeg\r
+     end
+   end
+ 
+-  it "reaches a multipart file limit" do
++  it "accepts exactly the multipart file limit" do
+     begin
+       previous_limit = Rack::Utils.multipart_part_limit
+       Rack::Utils.multipart_part_limit = 3
+ 
++      env = Rack::MockRequest.env_for '/', multipart_fixture(:three_files_three_fields)
++      params = Rack::Multipart.parse_multipart(env)
++      params['reply'].must_equal 'yes'
++      params['fileupload1'].wont_equal nil
++      params['fileupload2'].wont_equal nil
++      params['fileupload3'].wont_equal nil
++    ensure
++      Rack::Utils.multipart_part_limit = previous_limit
++    end
++  end
++
++  it "reaches a multipart file limit" do
++    begin
++      previous_limit = Rack::Utils.multipart_part_limit
++      Rack::Utils.multipart_part_limit = 2
++
+       env = Rack::MockRequest.env_for '/', multipart_fixture(:three_files_three_fields)
+       lambda { Rack::Multipart.parse_multipart(env) }.must_raise Rack::Multipart::MultipartPartLimitError
+     ensure
+@@ -1201,6 +1333,21 @@ content-type: image/jpeg\r
+     end
+   end
+ 
++  it "accepts exactly the multipart total limit" do
++    begin
++      previous_limit = Rack::Utils.multipart_total_part_limit
++      Rack::Utils.multipart_total_part_limit = 6
++
++      env = Rack::MockRequest.env_for '/', multipart_fixture(:three_files_three_fields)
++      params = Rack::Multipart.parse_multipart(env)
++      params['reply'].must_equal 'yes'
++      params['to'].must_equal 'people'
++      params['from'].must_equal 'others'
++    ensure
++      Rack::Utils.multipart_total_part_limit = previous_limit
++    end
++  end
++
+   it "reaches a multipart total limit" do
+     begin
+       previous_limit = Rack::Utils.multipart_total_part_limit
+diff --git a/test/spec_query_parser.rb b/test/spec_query_parser.rb
+index b623de4b..469c7885 100644
+--- a/test/spec_query_parser.rb
++++ b/test/spec_query_parser.rb
+@@ -56,6 +56,56 @@ describe Rack::QueryParser do
+     query_parser.parse_nested_query("a=a&b=b&c=c").must_equal({"a" => "a", "b" => "b", "c" => "c"})
+   end
+ 
++  it "treats every separator character literally" do
++    query_parser = Rack::QueryParser.make_default(32)
++
++    ["^", "]", "-", "\\", "|", "$", "."].each do |separator|
++      query_parser.parse_query("a=1#{separator}b=2", separator).must_equal({"a" => "1", "b" => "2"})
++    end
++  end
++
++  it "treats a multi-character separator as a set of characters" do
++    query_parser = Rack::QueryParser.make_default(32)
++
++    query_parser.parse_query("a=1;b=2,c=3", ";,").must_equal({"a" => "1", "b" => "2", "c" => "3"})
++    query_parser.parse_query("a=1-b=2", "a-z").must_equal({"" => "1", "b" => "2"})
++  end
++
++  it "counts parameters past the limit with the separator it split on" do
++    query_parser = Rack::QueryParser.make_default(32, params_limit: 2)
++
++    error = proc { query_parser.parse_query("a=1^b=2^c=3^d=4", "^") }.must_raise Rack::QueryParser::QueryLimitError
++    error.message.must_include "(4)"
++  end
++
++  it "carries the other limits through new_depth_limit" do
++    query_parser = Rack::QueryParser.make_default(32, params_limit: 2, bytesize_limit: 100)
++    derived = query_parser.new_depth_limit(8)
++
++    derived.param_depth_limit.must_equal 8
++    derived.bytesize_limit.must_equal 100
++    proc { derived.parse_query("a=a&b=b&c=c") }.must_raise Rack::QueryParser::QueryLimitError
++  end
++
++  it "carries disabled limits through new_depth_limit" do
++    derived = Rack::QueryParser.make_default(32, params_limit: nil, bytesize_limit: nil).new_depth_limit(8)
++
++    derived.bytesize_limit.must_be_nil
++    derived.parse_query("a=a&b=b&c=c").must_equal({"a" => "a", "b" => "b", "c" => "c"})
++  end
++
++  it "refuses an empty separator instead of building an empty character class" do
++    query_parser = Rack::QueryParser.make_default(32)
++
++    [:parse_query, :parse_query_pairs, :parse_nested_query].each do |method|
++      error = proc { query_parser.public_send(method, "a=1&b=2", "") }.must_raise ArgumentError
++      error.message.must_equal "separator cannot be empty"
++      # The separator is the application's argument, not the client's data, so
++      # it must not be marked as a bad request.
++      error.wont_be_kind_of Rack::BadRequest
++    end
++  end
++
+   it "raises when normalizing params with incompatible encoding such as UTF-16LE" do
+     query_parser = Rack::QueryParser.make_default(8)
+     name = "utf-16le".dup.force_encoding("UTF-16LE")
+diff --git a/test/spec_reloader.rb b/test/spec_reloader.rb
+new file mode 100644
+index 00000000..e533c836
+--- /dev/null
++++ b/test/spec_reloader.rb
+@@ -0,0 +1,52 @@
++# frozen_string_literal: true
++
++require_relative 'helper'
++
++separate_testing do
++  require_relative '../lib/rack/reloader'
++  require_relative '../lib/rack/mock_request'
++end
++
++describe Rack::Reloader do
++  # Counts rotations rather than reloading anything, so the cooldown can be
++  # observed without touching the filesystem.
++  module CountingBackend
++    def rotation
++      @rotations = rotations + 1
++    end
++
++    def rotations
++      @rotations || 0
++    end
++  end
++
++  before do
++    @app = lambda { |_env| [200, { 'content-type' => 'text/plain' }, ['ok']] }
++  end
++
++  it "reloads on every request when the cooldown has elapsed" do
++    reloader = Rack::Reloader.new(@app, 0, CountingBackend)
++    3.times { reloader.call(Rack::MockRequest.env_for("/")) }
++
++    reloader.rotations.must_equal 3
++  end
++
++  it "reloads once and then waits out the cooldown" do
++    reloader = Rack::Reloader.new(@app, 100, CountingBackend)
++    3.times { reloader.call(Rack::MockRequest.env_for("/")) }
++
++    # The constructor backdates the clock by one cooldown, so the first
++    # request always reloads and the rest fall inside the window.
++    reloader.rotations.must_equal 1
++  end
++
++  it "treats a nil cooldown as reloading disabled rather than raising" do
++    reloader = Rack::Reloader.new(@app, nil, CountingBackend)
++    status, _headers, body = reloader.call(Rack::MockRequest.env_for("/"))
++
++    status.must_equal 200
++    body.must_equal ['ok']
++    reloader.call(Rack::MockRequest.env_for("/"))
++    reloader.rotations.must_equal 0
++  end
++end
+diff --git a/test/spec_request.rb b/test/spec_request.rb
+index 908b6bfd..fe2215cc 100644
+--- a/test/spec_request.rb
++++ b/test/spec_request.rb
+@@ -2023,6 +2023,7 @@ EOF
+ 
+     parser.call("gzip ; q=0.9").must_equal [["gzip", 0.9]]
+     parser.call("gzip ; deflate").must_equal [["gzip", 1.0]]
++    parser.call('gzip;x="a,b", deflate').must_equal [["gzip", 1.0], ["deflate", 1.0]]
+ 
+     parser.call(", ").must_equal []
+     parser.call(", gzip").must_equal [["gzip", 1.0]]
+diff --git a/test/spec_utils.rb b/test/spec_utils.rb
+index de26d93a..8de6a7f4 100644
+--- a/test/spec_utils.rb
++++ b/test/spec_utils.rb
+@@ -139,6 +139,23 @@ describe Rack::Utils do
+     Rack::Utils.parse_nested_query("foo#{"[a]" * (len - 1)}=bar")
+   end
+ 
++  it "keeps the default parser frozen and its other limits when the depth limit is set" do
++    previous = Rack::Utils.default_query_parser
++    begin
++      Rack::Utils.default_query_parser =
++        Rack::QueryParser.make_default(32, params_limit: 2, bytesize_limit: 100).freeze
++      Rack::Utils.param_depth_limit = 8
++
++      parser = Rack::Utils.default_query_parser
++      parser.param_depth_limit.must_equal 8
++      parser.bytesize_limit.must_equal 100
++      parser.frozen?.must_equal true
++      proc { Rack::Utils.parse_query("a=1&b=2&c=3") }.must_raise Rack::QueryParser::QueryLimitError
++    ensure
++      Rack::Utils.default_query_parser = previous
++    end
++  end
++
+   it "parse nested query strings correctly" do
+     Rack::Utils.parse_nested_query("foo").
+       must_equal "foo" => nil
+@@ -411,6 +428,20 @@ describe Rack::Utils do
+     ]
+   end
+ 
++  it "does not split q-values on a separator inside a quoted parameter" do
++    Rack::Utils.q_values('text/html;q=0.9, text/plain;level="1,2"').must_equal [
++      [ 'text/html', 0.9 ],
++      [ 'text/plain', 1.0 ]
++    ]
++  end
++
++  it "skips empty q-value entries" do
++    Rack::Utils.q_values("foo,,bar").must_equal [
++      [ 'foo', 1.0 ],
++      [ 'bar', 1.0 ]
++    ]
++  end
++
+   it "parses RFC 7239 Forwarded header" do
+     Rack::Utils.forwarded_values('for=3.4.5.6').must_equal({
+       for: [ '3.4.5.6' ],

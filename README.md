@@ -29,17 +29,18 @@ Jeffy Loop is an autonomous engineering system built around a simple principle: 
 
 ## The receipts
 
-Five fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Four are patches this loop wrote, merged as written; the fifth is a finding a maintainer found convincing enough to fix himself:
+Six fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Five are patches this loop wrote, merged as written; the sixth is a finding a maintainer found convincing enough to fix himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
 - **[jsoncpp](https://github.com/open-source-parsers/jsoncpp/pull/1709) - merged.** The build the project documents for handling secrets had never compiled on MSVC, and the memory it promises to wipe was only partly wiped. Merged 2026-08-20.
 - **[PapaParse](https://github.com/mholt/PapaParse/pull/1135) - merged.** Header de-duplication re-ran on every row after a resume, rewriting data in place: `"foo, bar"` came back as `"foo, bar_1"`. Merged 2026-08-24, shipped in PapaParse 5.7.0.
+- **[mimalloc](https://github.com/microsoft/mimalloc/pull/1385) - merged.** `mi_theap_zalloc_csize` delegated its large-size branch to the plain malloc path, so a documented zeroing allocator returned uninitialized heap memory for every size above the small-size threshold. Merged 2026-08-31 by the library's author.
 - **[chalk](https://github.com/chalk/chalk/pull/687) - fixed upstream.** The maintainer reproduced the finding, then wrote and merged his own fix, shipped in v6.0.0.
 
-A sixth is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
+One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
-Behind them: **<!-- count:converged -->57<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **32 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+Behind them: **<!-- count:converged -->62<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **32 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#real-world-validation-on-open-source-repositories)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
 
@@ -265,7 +266,7 @@ Five guarantees. Each one is enforced by the iteration prompt, the state files, 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
-  <img src="media/language-pie-light.png" alt="Pie chart of the 57 converged public targets by language: Python 13 at 22.8 percent, Go 9 at 15.8 percent, Rust 8 at 14.0 percent, JavaScript 7 at 12.3 percent, C++ 4 at 7.0 percent, TypeScript 4 at 7.0 percent, C 3 at 5.3 percent, C# 2 at 3.5 percent, Java 2 at 3.5 percent, PHP 2 at 3.5 percent, Kotlin 1 at 1.8 percent, Ruby 1 at 1.8 percent, Swift 1 at 1.8 percent." width="900">
+  <img src="media/language-pie-light.png" alt="Pie chart of the 62 converged public targets by language: Python 14 at 22.6 percent, Go 10 at 16.1 percent, Rust 8 at 12.9 percent, JavaScript 7 at 11.3 percent, C++ 5 at 8.1 percent, TypeScript 4 at 6.5 percent, C 3 at 4.8 percent, Ruby 3 at 4.8 percent, C# 2 at 3.2 percent, Java 2 at 3.2 percent, PHP 2 at 3.2 percent, Kotlin 1 at 1.6 percent, Swift 1 at 1.6 percent." width="900">
 </picture>
 
 <sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
@@ -278,9 +279,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->87<!-- /count -->** | **<!-- count:fixed -->58<!-- /count -->** | **<!-- count:failed -->29<!-- /count -->** | **<!-- count:prs -->15<!-- /count -->** | **<!-- count:merged -->4<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->92<!-- /count -->** | **<!-- count:fixed -->63<!-- /count -->** | **<!-- count:failed -->29<!-- /count -->** | **<!-- count:prs -->17<!-- /count -->** | **<!-- count:merged -->5<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->57<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->62<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
 <sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md).</sub>
 
@@ -308,6 +309,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | commander.js | JavaScript | [details](evals/commander-js/REPORT.md) - error named wrong argument | Fixed |
 | underscore | JavaScript | [details](evals/underscore/REPORT.md) - __proto__ prototype write | Fixed |
 | gson | Java | [details](evals/gson/REPORT.md) - one audit, nothing changed | Fixed |
+| rack | Ruby | [details](evals/rack/REPORT.md) - multipart limits off by one | Fixed |
 | urfave/cli | Go | [details](evals/urfave-cli/REPORT.md) - a lone - ended flag parsing | Fixed |
 | Catch2 | C++ | [details](evals/catch2/REPORT.md) - 18 findings, 6 High | Fixed |
 | validator | Go | [details](evals/validator/REPORT.md) - cyclic struct killed process | Fixed |
@@ -315,9 +317,11 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | uuid (JS) | JavaScript | [details](evals/js-uuid/REPORT.md) - crash on unpaired surrogates | Fixed |
 | speedtest-cli | Python | [details](evals/speedtest-cli/REPORT.md) - small findings only | Fixed |
 | phpdotenv | PHP | [details](evals/phpdotenv/REPORT.md) - silent [] on bad multiline | Fixed |
-| mimalloc | C | [details](evals/mimalloc/REPORT.md) - zalloc returned dirty memory | Fixed |
+| mimalloc | C | [details](evals/mimalloc/REPORT.md) - zalloc returned dirty memory - [PR merged](https://github.com/microsoft/mimalloc/pull/1385) | Fixed |
 | cJSON | C | [details](evals/cjson/REPORT.md) - sort dropped later appends | Fixed |
+| nlohmann/json | C++ | [details](evals/json/REPORT.md) - Bazel header list omitted a dep | Fixed |
 | RuboCop | Ruby | [details](evals/rubocop/REPORT.md) - null result, zero findings | Fixed |
+| rouge | Ruby | [details](evals/rouge/REPORT.md) - unknown theme crashed the CLI - [PR open](https://github.com/rouge-ruby/rouge/pull/2332) | Fixed |
 | lz4 | C | [details](evals/lz4/REPORT.md) - silent data loss, exit 0 | Fixed |
 | godotenv | Go | [details](evals/godotenv/REPORT.md) - parser panic from .env | Fixed |
 | moshi | Kotlin | [details](evals/moshi/REPORT.md) - 5 Highs behind green CI | Fixed |
@@ -331,11 +335,13 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | magic_enum | C++ | [details](evals/magic_enum/REPORT.md) - 6 members never compiled | Fixed |
 | vavr | Java | [details](evals/vavr/REPORT.md) - BitSet.removeAll threw | Fixed |
 | go-uuid | Go | [details](evals/go-uuid/REPORT.md) - SQL NULL returned stale UUID | Fixed |
+| pflag | Go | [details](evals/pflag/REPORT.md) - deprecated flag field ignored - [PR open](https://github.com/spf13/pflag/pull/507) | Fixed |
 | indicatif | Rust | [details](evals/indicatif/REPORT.md) - draw-width underflow panic | Fixed |
 | ta | Python | [details](evals/ta/REPORT.md) - wrong numbers since 2023 | Fixed |
 | go-cmp | Go | [details](evals/go-cmp/REPORT.md) - 2 grouping bugs, +31/-13 | Fixed |
 | CLI11 | C++ | [details](evals/cli11/REPORT.md) - empty strtoX read as a value | Fixed |
 | more-itertools | Python | [details](evals/more-itertools/REPORT.md) - sample() wrong on negatives | Fixed |
+| idna | Python | [details](evals/idna/REPORT.md) - empty label raised IndexError | Fixed |
 | sqlparse | Python | [details](evals/sqlparse/REPORT.md) - converged on run 5 of 5 | Fixed |
 | rrule | TypeScript | [details](evals/rrule/REPORT.md) - 23 findings, 10 High | Fixed |
 | humanize | Python | [details](evals/humanize/REPORT.md) - 4 float-range Highs | Fixed |

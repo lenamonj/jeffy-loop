@@ -1,0 +1,187 @@
+diff --git a/.gitignore b/.gitignore
+index 03fe8147e..9165f1cac 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -45,3 +45,4 @@ nlohmann_json.spdx
+ 
+ # Bazel-related
+ MODULE.bazel.lock
++.claude/jeffy-loop.local.md
+diff --git a/BUILD.bazel b/BUILD.bazel
+index de0ff7145..ae2b9dbe3 100644
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -49,6 +49,7 @@ cc_library(
+         "include/nlohmann/detail/meta/detected.hpp",
+         "include/nlohmann/detail/meta/identity_tag.hpp",
+         "include/nlohmann/detail/meta/is_sax.hpp",
++        "include/nlohmann/detail/meta/logic.hpp",
+         "include/nlohmann/detail/meta/std_fs.hpp",
+         "include/nlohmann/detail/meta/type_traits.hpp",
+         "include/nlohmann/detail/meta/void_t.hpp",
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9669946a5..20e4a294a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -234,5 +234,36 @@ if(JSON_Install)
+         FILES "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.pc"
+         DESTINATION ${NLOHMANN_JSON_PKGCONFIG_INSTALL_DIR}
+     )
++    # CPack's source package would otherwise carry the whole working tree,
++    # because the default CPACK_SOURCE_IGNORE_FILES excludes only VCS metadata.
++    # An in-source build directory alone takes the archive from a few megabytes
++    # to several hundred. The VCS defaults are repeated here because setting the
++    # variable replaces them rather than adding to them. Patterns that could
++    # match a distributed path - docs/mkdocs/docs/integration/build2 is the one
++    # that bites - are anchored at the project root.
++    set(CPACK_SOURCE_IGNORE_FILES
++        "/CVS/" "/\\.svn/" "/\\.bzr/" "/\\.hg/" "/\\.git/" "\\.swp$" "\\.#" "/#"
++        "^${PROJECT_SOURCE_DIR}/build.*/"
++        "^${PROJECT_SOURCE_DIR}/cmake-build-.*/"
++        "^${PROJECT_SOURCE_DIR}/out/"
++        "^${PROJECT_SOURCE_DIR}/\\.build/"
++        "^${PROJECT_SOURCE_DIR}/\\.cache/"
++        "^${PROJECT_SOURCE_DIR}/\\.idea/"
++        "^${PROJECT_SOURCE_DIR}/\\.vs/"
++        "^${PROJECT_SOURCE_DIR}/\\.vscode/"
++        "/venv/"
++        "^${PROJECT_SOURCE_DIR}/docs/mkdocs/site/"
++        "^${PROJECT_SOURCE_DIR}/docs/docset/.*\\.docset/"
++        "^${PROJECT_SOURCE_DIR}/tests/corpus_"
++        # working records kept in the tree but not part of the distribution;
++        # these patterns simply match nothing in a checkout without them
++        "^${PROJECT_SOURCE_DIR}/\\.jeffy/"
++        "^${PROJECT_SOURCE_DIR}/\\.claude/"
++        "^${PROJECT_SOURCE_DIR}/PLAN\\.md$"
++        "^${PROJECT_SOURCE_DIR}/BACKLOG\\.md$"
++        "^${PROJECT_SOURCE_DIR}/JOURNAL\\.md$"
++        "^${PROJECT_SOURCE_DIR}/JOURNAL-archive\\.md$"
++        "\\.dSYM/" "\\.o$" "\\.gcda$" "\\.gcno$" "\\.DS_Store$"
++    )
+     include(CPack)
+ endif()
+diff --git a/docs/mkdocs/docs/features/binary_formats/cbor.md b/docs/mkdocs/docs/features/binary_formats/cbor.md
+index 670a23455..eca02a72b 100644
+--- a/docs/mkdocs/docs/features/binary_formats/cbor.md
++++ b/docs/mkdocs/docs/features/binary_formats/cbor.md
+@@ -19,10 +19,10 @@ The library uses the following mapping from JSON values types to CBOR types acco
+ | null            | `null`                                     | Null                              | 0xF6       |
+ | boolean         | `true`                                     | True                              | 0xF5       |
+ | boolean         | `false`                                    | False                             | 0xF4       |
+-| number_integer  | -9223372036854775808..-2147483649          | Negative integer (8 bytes follow) | 0x3B       |
+-| number_integer  | -2147483648..-32769                        | Negative integer (4 bytes follow) | 0x3A       |
+-| number_integer  | -32768..-129                               | Negative integer (2 bytes follow) | 0x39       |
+-| number_integer  | -128..-25                                  | Negative integer (1 byte follow)  | 0x38       |
++| number_integer  | -9223372036854775808..-4294967297          | Negative integer (8 bytes follow) | 0x3B       |
++| number_integer  | -4294967296..-65537                        | Negative integer (4 bytes follow) | 0x3A       |
++| number_integer  | -65536..-257                               | Negative integer (2 bytes follow) | 0x39       |
++| number_integer  | -256..-25                                  | Negative integer (1 byte follow)  | 0x38       |
+ | number_integer  | -24..-1                                    | Negative integer                  | 0x20..0x37 |
+ | number_integer  | 0..23                                      | Integer                           | 0x00..0x17 |
+ | number_integer  | 24..255                                    | Unsigned integer (1 byte follow)  | 0x18       |
+@@ -60,6 +60,14 @@ The library uses the following mapping from JSON values types to CBOR types acco
+ Binary values with subtype are mapped to tagged values (0xD8..0xDB) depending on the subtype, followed by a byte string,
+ see "binary" cells in the table above.
+ 
++!!! note "Negative integer ranges"
++
++    CBOR encodes a negative integer `n` as the unsigned argument `-1-n`, so the
++    head byte changes where that argument crosses 24, 256, 65536 and 2^32 - not
++    where `n` itself crosses a signed-type boundary. That is why the negative
++    ranges above are not the mirror image of the positive ones: `-200` is one
++    argument byte, the same as `-100`.
++
+ !!! success "Complete mapping"
+ 
+     The mapping is **complete** in the sense that any JSON value type can be converted to a CBOR value.
+diff --git a/docs/mkdocs/docs/home/exceptions.md b/docs/mkdocs/docs/home/exceptions.md
+index 7c7d22e23..63d223a70 100644
+--- a/docs/mkdocs/docs/home/exceptions.md
++++ b/docs/mkdocs/docs/home/exceptions.md
+@@ -280,6 +280,13 @@ In a JSON Pointer, only `~0` and `~1` are valid escape sequences.
+ 
+ A JSON Pointer array index must be a number.
+ 
++A reference token whose first character cannot begin an array index is reported
++here whatever its length. A token that begins like a number but does not convert
++to one in full, such as `1x` or `10e`, or that names an index too large for
++`size_type`, is instead reported as
++[`out_of_range.404`](#jsonexceptionout_of_range404), because it addresses an
++element that cannot be resolved rather than failing to be a number at all.
++
+ !!! failure "Example messages"
+ 
+     ```
+@@ -288,6 +295,9 @@ A JSON Pointer array index must be a number.
+     ```
+     [json.exception.parse_error.109] parse error: array index '+1' is not a number
+     ```
++    ```
++    [json.exception.parse_error.109] parse error: array index 'x' is not a number
++    ```
+ 
+ ### json.exception.parse_error.110
+ 
+diff --git a/include/nlohmann/detail/json_pointer.hpp b/include/nlohmann/detail/json_pointer.hpp
+index 576ba62cc..4cc080db1 100644
+--- a/include/nlohmann/detail/json_pointer.hpp
++++ b/include/nlohmann/detail/json_pointer.hpp
+@@ -260,7 +260,11 @@ class json_pointer
+         }
+ 
+         // error condition (cf. RFC 6901, Sect. 4)
+-        if (JSON_HEDLEY_UNLIKELY(s.size() > 1 && !(s[0] >= '1' && s[0] <= '9')))
++        // A token whose first character cannot begin an array index is not a
++        // number at all; a token that begins like one but does not convert is
++        // an unresolved reference and reaches out_of_range.404 below. The only
++        // single-character token that may begin with '0' is "0" itself.
++        if (JSON_HEDLEY_UNLIKELY(s.empty() || !((s[0] >= '1' && s[0] <= '9') || (s.size() == 1 && s[0] == '0'))))
+         {
+             JSON_THROW(detail::parse_error::create(109, 0, detail::concat("array index '", s, "' is not a number"), nullptr));
+         }
+diff --git a/single_include/nlohmann/json.hpp b/single_include/nlohmann/json.hpp
+index 4c346b412..cee26ac15 100644
+--- a/single_include/nlohmann/json.hpp
++++ b/single_include/nlohmann/json.hpp
+@@ -15841,7 +15841,11 @@ class json_pointer
+         }
+ 
+         // error condition (cf. RFC 6901, Sect. 4)
+-        if (JSON_HEDLEY_UNLIKELY(s.size() > 1 && !(s[0] >= '1' && s[0] <= '9')))
++        // A token whose first character cannot begin an array index is not a
++        // number at all; a token that begins like one but does not convert is
++        // an unresolved reference and reaches out_of_range.404 below. The only
++        // single-character token that may begin with '0' is "0" itself.
++        if (JSON_HEDLEY_UNLIKELY(s.empty() || !((s[0] >= '1' && s[0] <= '9') || (s.size() == 1 && s[0] == '0'))))
+         {
+             JSON_THROW(detail::parse_error::create(109, 0, detail::concat("array index '", s, "' is not a number"), nullptr));
+         }
+diff --git a/tests/src/unit-json_pointer.cpp b/tests/src/unit-json_pointer.cpp
+index a8ed4a89e..a8cd3c81b 100644
+--- a/tests/src/unit-json_pointer.cpp
++++ b/tests/src/unit-json_pointer.cpp
+@@ -312,6 +312,24 @@ TEST_CASE("JSON pointers")
+             CHECK_THROWS_WITH_AS(j_const["/1+1"_json_pointer] == 1,
+                                  "[json.exception.out_of_range.404] unresolved reference token '1+1'", json::out_of_range&);
+ 
++            // a token whose first character cannot begin an array index is not
++            // a number whatever its length: a one-character token reports the
++            // same error as a longer one (before 3.12.1 these reported
++            // out_of_range.404 instead, purely because of a length guard)
++            CHECK_THROWS_WITH_AS(j["/x"_json_pointer] = 1,
++                                 "[json.exception.parse_error.109] parse error: array index 'x' is not a number", json::parse_error&);
++            CHECK_THROWS_WITH_AS(j_const["/x"_json_pointer] == 1,
++                                 "[json.exception.parse_error.109] parse error: array index 'x' is not a number", json::parse_error&);
++            CHECK_THROWS_WITH_AS(j["/+"_json_pointer] = 1,
++                                 "[json.exception.parse_error.109] parse error: array index '+' is not a number", json::parse_error&);
++            CHECK_THROWS_WITH_AS(j["/ "_json_pointer] = 1,
++                                 "[json.exception.parse_error.109] parse error: array index ' ' is not a number", json::parse_error&);
++            CHECK_THROWS_WITH_AS(j["//"_json_pointer] = 1,
++                                 "[json.exception.parse_error.109] parse error: array index '' is not a number", json::parse_error&);
++
++            // the single-character token "0" is still a valid index
++            CHECK(j_const["/0"_json_pointer] == 1);
++
+             {
+                 auto too_large_index = std::to_string((std::numeric_limits<unsigned long long>::max)()) + "1";
+                 json::json_pointer const jp(std::string("/") + too_large_index);

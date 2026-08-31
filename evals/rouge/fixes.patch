@@ -1,0 +1,290 @@
+diff --git a/ =>  b/ => 
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/.gitignore b/.gitignore
+index bbf91d90..9f1dfb07 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -20,3 +20,4 @@ rouge-memory.tmp
+ # RVM/rbenv configuration files
+ .ruby-version
+ .ruby-gemset
++.claude/jeffy-loop.local.md
+diff --git a/lib/rouge/cli.rb b/lib/rouge/cli.rb
+index a4f95960..33dc4402 100644
+--- a/lib/rouge/cli.rb
++++ b/lib/rouge/cli.rb
+@@ -13,8 +13,11 @@ module Rouge
+       @input = input
+     end
+ 
++    # The handle this reader reads from.  Opened at most once: #read closes
++    # the handle it actually read, so re-opening here would both leak that
++    # handle and raise a second time for a path that cannot be opened.
+     def file
+-      case input
++      @file ||= case input
+       when '-'
+         IO.new($stdin.fileno, 'rt:bom|utf-8')
+       when String
+@@ -31,7 +34,7 @@ module Rouge
+         $stderr.puts "unable to open #{input}: #{e.message}"
+         exit 1
+       ensure
+-        file.close
++        @file&.close
+       end
+     end
+   end
+@@ -191,14 +194,14 @@ module Rouge
+         yield %[--theme|-t <theme>           specify the theme to use for highlighting]
+         yield %[                             the file. (only applies to some formatters)]
+         yield %[]
++        yield %[--css-class|-c <class>       the css class for the html-pygments]
++        yield %[                             formatter. (default: codehilite)]
++        yield %[]
+         yield %[--mimetype|-m <mimetype>     specify a mimetype for lexer guessing]
+         yield %[]
+         yield %[--lexer-opts|-L <opts>       specify lexer options in CGI format]
+         yield %[                             (opt1=val1&opt2=val2)]
+         yield %[]
+-        yield %[--formatter-opts|-F <opts>   specify formatter options in CGI format]
+-        yield %[                             (opt1=val1&opt2=val2)]
+-        yield %[]
+         yield %[--require|-r <filename>      require a filename or library before]
+         yield %[                             highlighting]
+         yield %[]
+@@ -228,7 +231,6 @@ module Rouge
+           :css_class => 'codehilite',
+           :input_file => '-',
+           :lexer_opts => {},
+-          :formatter_opts => {},
+           :requires => [],
+         }
+ 
+@@ -255,7 +257,10 @@ module Rouge
+             opts[:escape] = ['<!', '!>']
+           when '--escape-with'
+             opts[:escape] = [argv.shift, argv.shift]
+-          when /^--/
++          when '-'
++            # the documented spelling for stdin as a positional argument
++            opts[:input_file] = arg
++          when /^-/
+             error! "unknown option #{arg.inspect}"
+           else
+             opts[:input_file] = arg
+@@ -322,7 +327,9 @@ module Rouge
+ 
+         @lexer_opts = opts[:lexer_opts]
+ 
+-        theme = Theme.find(opts[:theme]).new or error! "unknown theme #{opts[:theme]}"
++        theme_class = Theme.find(opts[:theme]) \
++          or error! "unknown theme #{opts[:theme]}"
++        theme = theme_class.new
+ 
+         # TODO: document this in --help
+         @formatter = case opts[:formatter]
+diff --git a/lib/rouge/formatters/html_table.rb b/lib/rouge/formatters/html_table.rb
+index 52f79789..b54d3353 100644
+--- a/lib/rouge/formatters/html_table.rb
++++ b/lib/rouge/formatters/html_table.rb
+@@ -45,10 +45,12 @@ module Rouge
+           formatted << @inner.span(tok, val)
+         end
+ 
+-        # add an extra line for non-newline-terminated strings
++        # add an extra line for non-newline-terminated strings. It belongs in
++        # the code cell with the rest of the formatted output: yielding it here
++        # would put it in the stream before the table element is opened.
+         if last_val[-1] != "\n"
+           num_lines += 1
+-          yield @inner.span(Token::Tokens::Text::Whitespace, "\n")
++          formatted << @inner.span(Token::Tokens::Text::Whitespace, "\n")
+         end
+ 
+         # generate a string of newline-separated line numbers for the gutter>
+diff --git a/lib/rouge/lexers/lua.rb b/lib/rouge/lexers/lua.rb
+index 92085442..9a6b9b3f 100644
+--- a/lib/rouge/lexers/lua.rb
++++ b/lib/rouge/lexers/lua.rb
+@@ -18,10 +18,11 @@ module Rouge
+         require_relative 'lua/keywords'
+       end
+ 
+-      def initialize(opts={})
+-        @function_highlighting = opts.delete(:function_highlighting) { true }
+-        @disabled_modules = opts.delete(:disabled_modules) { [] }
+-        super(opts)
++      def initialize(*)
++        super
++
++        @function_highlighting = bool_option(:function_highlighting) { true }
++        @disabled_modules = list_option(:disabled_modules)
+ 
+         self.class.eager_load! if @function_highlighting
+       end
+diff --git a/spec/cli_spec.rb b/spec/cli_spec.rb
+index d74e0767..63026236 100644
+--- a/spec/cli_spec.rb
++++ b/spec/cli_spec.rb
+@@ -52,6 +52,50 @@ describe Rouge::CLI do
+       }
+     end
+ 
++    describe 'an unknown flag' do
++      let(:argv) { %w(highlight -Z file.rb) }
++      it 'reports it rather than treating it as the input file' do
++        error = assert_raises(Rouge::CLI::Error) { subject }
++        assert_equal 'unknown option "-Z"', error.message
++      end
++    end
++
++    describe 'a bare dash' do
++      let(:argv) { %w(highlight -l ruby -) }
++      it 'is still read as stdin' do
++        assert_equal '-', subject.input_file
++      end
++    end
++
++    describe 'the help text' do
++      it 'lists exactly the long options the parser accepts' do
++        documented = Rouge::CLI::Highlight.doc.to_a.join("\n").scan(/--[a-z-]+/).uniq.sort
++        rejected = documented.reject do |flag|
++          begin
++            Rouge::CLI::Highlight.parse_opts([flag, 'x=1'])
++            true
++          rescue Rouge::CLI::Error
++            false
++          end
++        end
++        assert_empty rejected
++      end
++    end
++
++    describe 'an unknown theme' do
++      let(:argv) { %w(highlight -l ruby -t nosuchtheme) }
++      it 'raises a CLI error rather than crashing' do
++        error = assert_raises(Rouge::CLI::Error) { subject }
++        assert_equal 'unknown theme nosuchtheme', error.message
++        assert_equal 1, error.status
++      end
++    end
++
++    describe 'a theme with a mode' do
++      let(:argv) { %w(highlight -l ruby -t base16.light) }
++      it('parses') { assert { Rouge::CLI::Highlight === subject } }
++    end
++
+     describe 'escaping by default' do
+       let(:argv) { %w(highlight --escape -l ruby) }
+       it('parses') {
+@@ -73,6 +117,23 @@ describe Rouge::CLI do
+     end
+   end
+ 
++  describe Rouge::FileReader do
++    it 'closes the handle it read from' do
++      reader = Rouge::FileReader.new('lib/rouge/version.rb')
++      reader.read
++      assert { reader.file.closed? }
++    end
++
++    it 'reports an unreadable path once and exits' do
++      reader = Rouge::FileReader.new('no-such-file-in-rouge-specs')
++      out, err = capture_io do
++        assert_raises(SystemExit) { reader.read }
++      end
++      assert_empty out
++      assert_includes err, 'unable to open no-such-file-in-rouge-specs'
++    end
++  end
++
+   describe Rouge::CLI::List do
+     describe 'list' do
+       let(:argv) { %w(list) }
+diff --git a/spec/formatters/html_table_spec.rb b/spec/formatters/html_table_spec.rb
+new file mode 100644
+index 00000000..cc639200
+--- /dev/null
++++ b/spec/formatters/html_table_spec.rb
+@@ -0,0 +1,42 @@
++# -*- coding: utf-8 -*- #
++# frozen_string_literal: true
++
++describe Rouge::Formatters::HTMLTable do
++  let(:subject) { Rouge::Formatters::HTMLTable.new(Rouge::Formatters::HTML.new) }
++
++  def format(source)
++    subject.format(Rouge::Lexers::Ruby.new.lex(source).to_a)
++  end
++
++  def code_cell(output)
++    output[%r{<td class="rouge-code"><pre>(.*?)</pre>}m, 1]
++  end
++
++  def gutter(output)
++    output[%r{<pre class="lineno">(.*?)</pre>}m, 1]
++  end
++
++  it 'starts with the table for newline-terminated input' do
++    assert format("a = 1\n").start_with?('<table')
++  end
++
++  it 'starts with the table when the input has no trailing newline' do
++    assert format('a = 1').start_with?('<table')
++  end
++
++  it 'starts with the table for empty input' do
++    assert subject.format([]).start_with?('<table')
++  end
++
++  it 'puts the made-up last line inside the code cell' do
++    assert code_cell(format('a = 1')).end_with?(%(<span class="w">\n</span>))
++  end
++
++  it 'numbers one line for a single line with no trailing newline' do
++    assert_equal "1\n", gutter(format('a = 1'))
++  end
++
++  it 'numbers every line of newline-terminated input' do
++    assert_equal "1\n2\n3\n", gutter(format("a\nb\nc\n"))
++  end
++end
+diff --git a/spec/lexers/lua_spec.rb b/spec/lexers/lua_spec.rb
+index 15c94e3b..2d0d938e 100644
+--- a/spec/lexers/lua_spec.rb
++++ b/spec/lexers/lua_spec.rb
+@@ -4,6 +4,32 @@
+ describe Rouge::Lexers::Lua do
+   let(:subject) { Rouge::Lexers::Lua.new }
+ 
++  describe 'options' do
++    let(:source) { "print(math.floor(1.5))\n" }
++
++    def builtins(lexer)
++      lexer.lex(source).to_a
++           .select { |tok, _| tok.qualname.start_with?('Name.Builtin') }
++           .map(&:last)
++    end
++
++    it 'highlights builtins by default' do
++      assert_equal %w(print math.floor), builtins(subject)
++    end
++
++    it 'honours function_highlighting through the CGI option form' do
++      assert_empty builtins(Rouge::Lexer.find_fancy('lua?function_highlighting=false'))
++    end
++
++    it 'honours function_highlighting given a string key' do
++      assert_empty builtins(Rouge::Lexers::Lua.new('function_highlighting' => false))
++    end
++
++    it 'honours disabled_modules through the CGI option form' do
++      assert_equal %w(print), builtins(Rouge::Lexer.find_fancy('lua?disabled_modules=math'))
++    end
++  end
++
+   describe 'guessing' do
+     include Support::Guessing
+ 

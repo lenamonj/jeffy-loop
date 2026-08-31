@@ -24,7 +24,11 @@ converged** at `41ad01a66dbea484eb9ecd06ae978afdc2016275`, in round 3 of a
 - **`H1` (High)** - `mi_theap_zalloc_csize` delegated its large-size branch
   to the plain malloc path, so a **documented zeroing allocator returned
   uninitialized heap memory** for every size above the small-size
-  threshold.
+  threshold. **Filed upstream and MERGED**:
+  [microsoft/mimalloc#1385](https://github.com/microsoft/mimalloc/pull/1385),
+  merged 2026-08-31 by the library's author, whose review comment was
+  "Yikes -- terrible. Thanks for the PR." One token of shipped code, plus a
+  `test-api` regression check proven red without the fix.
 - **`H3` (High)** - `mi_stats_merge` and `mi_collect_reduce` were declared
   `mi_decl_export` in the public header but absent from the library: any
   program calling either fails to link.

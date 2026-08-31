@@ -1,0 +1,219 @@
+diff --git a/.gitignore b/.gitignore
+index c3da290..f26e487 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,3 @@
+ .idea/*
+ 
++.claude/jeffy-loop.local.md
+diff --git a/count.go b/count.go
+index 521b5d2..877f541 100644
+--- a/count.go
++++ b/count.go
+@@ -1,6 +1,9 @@
+ package pflag
+ 
+-import "strconv"
++import (
++	"errors"
++	"strconv"
++)
+ 
+ // -- count Value
+ type countValue int
+@@ -17,8 +20,11 @@ func (i *countValue) Set(s string) error {
+ 		return nil
+ 	}
+ 	v, err := strconv.ParseInt(s, 0, 0)
++	if err != nil {
++		return errors.New("must be an integer")
++	}
+ 	*i = countValue(v)
+-	return err
++	return nil
+ }
+ 
+ func (i *countValue) Type() string {
+diff --git a/count_test.go b/count_test.go
+index 3785d37..e613667 100644
+--- a/count_test.go
++++ b/count_test.go
+@@ -1,6 +1,7 @@
+ package pflag
+ 
+ import (
++	"io/ioutil"
+ 	"os"
+ 	"testing"
+ )
+@@ -54,3 +55,34 @@ func TestCount(t *testing.T) {
+ 		}
+ 	}
+ }
++
++// A rejected value must leave the counter where it was, as every other scalar
++// value type in this package does. Before this was fixed, countValue.Set
++// assigned the zero ParseInt returns on failure and then handed back the error,
++// so a caller that handled the error still read a clobbered count.
++func TestCountInvalidValuePreservesValue(t *testing.T) {
++	f := NewFlagSet("count", ContinueOnError)
++	f.SetOutput(ioutil.Discard)
++	c := f.CountP("verbose", "v", "verbosity")
++
++	if err := f.Parse([]string{"-vv"}); err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if *c != 2 {
++		t.Fatalf("got %d, want 2", *c)
++	}
++
++	err := f.Set("verbose", "abc")
++	if err == nil {
++		t.Fatal("expected an error setting an invalid count")
++	}
++	if *c != 2 {
++		t.Fatalf("count clobbered to %d by a rejected value, want 2", *c)
++	}
++
++	// The message must match the one every sibling scalar returns.
++	want := `invalid argument "abc" for "-v, --verbose" flag: must be an integer`
++	if err.Error() != want {
++		t.Errorf("got %q, want %q", err.Error(), want)
++	}
++}
+diff --git a/flag.go b/flag.go
+index e8cecc9..4b77256 100644
+--- a/flag.go
++++ b/flag.go
+@@ -374,7 +374,7 @@ func (f *FlagSet) getUnknownFlagsHandling() UnknownFlagsHandling {
+ 	// then, check deprecated ParseErrorsWhitelist:
+ 	// if UnknownFlagsHandling is set, use it
+ 	if f.ParseErrorsWhitelist.UnknownFlagsHandling != ErrorOnUnknownFlag {
+-		return f.ParseErrorsAllowlist.UnknownFlagsHandling
++		return f.ParseErrorsWhitelist.UnknownFlagsHandling
+ 	}
+ 
+ 	if f.ParseErrorsWhitelist.UnknownFlags {
+diff --git a/flag_test.go b/flag_test.go
+index 82fcd48..afac1f9 100644
+--- a/flag_test.go
++++ b/flag_test.go
+@@ -786,6 +786,8 @@ func TestInvalidArgumentMessages(t *testing.T) {
+ 			`invalid argument "x" for "--float64" flag: must be a number`},
+ 		{"duration", func(f *FlagSet) { f.Duration("duration", 0, "") }, "soon",
+ 			`invalid argument "soon" for "--duration" flag: must be a duration like "30s" or "5m"`},
++		{"count", func(f *FlagSet) { f.Count("count", "") }, "x",
++			`invalid argument "x" for "--count" flag: must be an integer`},
+ 	}
+ 	for _, tc := range cases {
+ 		t.Run(tc.flag, func(t *testing.T) {
+@@ -1614,3 +1616,42 @@ func TestVisitFlagOrder(t *testing.T) {
+ 		i++
+ 	})
+ }
++
++// The deprecated ParseErrorsWhitelist is an alias of ParseErrorsAllowlist, so
++// its UnknownFlagsHandling must drive parsing exactly as the current field does
++// for every handling mode, not only for the older UnknownFlags bool.
++func TestParseErrorsWhitelistUnknownFlagsHandling(t *testing.T) {
++	args := []string{"--unknown1", "--known", "kvalue", "--unknown2=uvalue", "-q", "arg0"}
++
++	for _, handling := range []UnknownFlagsHandling{IgnoreUnknownFlag, PassUnknownFlagToArgs} {
++		parse := func(setup func(f *FlagSet)) (string, string, []string) {
++			f := NewFlagSet("test", ContinueOnError)
++			f.SetOutput(ioutil.Discard)
++			setup(f)
++			known := f.String("known", "", "known string flag")
++			err := f.Parse(args)
++			errStr := ""
++			if err != nil {
++				errStr = err.Error()
++			}
++			return errStr, *known, f.Args()
++		}
++
++		wantErr, wantKnown, wantArgs := parse(func(f *FlagSet) {
++			f.ParseErrorsAllowlist.UnknownFlagsHandling = handling
++		})
++		gotErr, gotKnown, gotArgs := parse(func(f *FlagSet) {
++			f.ParseErrorsWhitelist.UnknownFlagsHandling = handling
++		})
++
++		if gotErr != wantErr {
++			t.Errorf("handling %d: deprecated field gave error %q, current field gave %q", handling, gotErr, wantErr)
++		}
++		if gotKnown != wantKnown {
++			t.Errorf("handling %d: deprecated field gave known=%q, current field gave %q", handling, gotKnown, wantKnown)
++		}
++		if !reflect.DeepEqual(gotArgs, wantArgs) {
++			t.Errorf("handling %d: deprecated field gave args %v, current field gave %v", handling, gotArgs, wantArgs)
++		}
++	}
++}
+diff --git a/string_to_string.go b/string_to_string.go
+index 518e136..5ce29d6 100644
+--- a/string_to_string.go
++++ b/string_to_string.go
+@@ -48,8 +48,11 @@ func (s *stringToStringValue) Set(val string) error {
+ 		out[kv[0]] = kv[1]
+ 	}
+ 
+-	// clear out any default flag values
+-	if !s.changed {
++	if *s.value == nil {
++		// a nil default map has no identity to preserve, so allocate one
++		*s.value = make(map[string]string, len(out))
++	} else if !s.changed {
++		// clear out any default flag values
+ 		for k := range *s.value {
+ 			delete(*s.value, k)
+ 		}
+diff --git a/string_to_string_test.go b/string_to_string_test.go
+index d3346d6..257e463 100644
+--- a/string_to_string_test.go
++++ b/string_to_string_test.go
+@@ -398,3 +398,44 @@ func TestS2SCalledTwice(t *testing.T) {
+ 		}
+ 	}
+ }
++
++// A nil default map is the idiomatic zero value for a map flag. Setting such a
++// flag must allocate rather than write into the nil map, and the pointer handed
++// back at definition time must observe the result.
++func TestStringToStringNilDefault(t *testing.T) {
++	t.Run("StringToString", func(t *testing.T) {
++		f := NewFlagSet("nil-default", ContinueOnError)
++		ptr := f.StringToString("m", nil, "map flag with a nil default")
++
++		if err := f.Parse([]string{"--m=a=1"}); err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		if len(*ptr) != 1 || (*ptr)["a"] != "1" {
++			t.Fatalf("got %v, want map[a:1]", *ptr)
++		}
++
++		got, err := f.GetStringToString("m")
++		if err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		if len(got) != 1 || got["a"] != "1" {
++			t.Fatalf("GetStringToString got %v, want map[a:1]", got)
++		}
++		if reflect.ValueOf(*ptr).Pointer() != reflect.ValueOf(got).Pointer() {
++			t.Fatal("pointer mismatch")
++		}
++	})
++
++	t.Run("StringToStringVar", func(t *testing.T) {
++		f := NewFlagSet("nil-default", ContinueOnError)
++		var m map[string]string
++		f.StringToStringVar(&m, "m", nil, "map flag with a nil default")
++
++		if err := f.Parse([]string{"--m=a=1", "--m=b=2"}); err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		if len(m) != 2 || m["a"] != "1" || m["b"] != "2" {
++			t.Fatalf("got %v, want map[a:1 b:2]", m)
++		}
++	})
++}

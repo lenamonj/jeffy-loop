@@ -1,0 +1,173 @@
+diff --git a/.gitignore b/.gitignore
+index 690bd93..0200df8 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -16,3 +16,4 @@ sdist/
+ htmlcov/
+ .DS_Store
+ uv.lock
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index bb06110..d782cb7 100644
+--- a/README.md
++++ b/README.md
+@@ -61,6 +61,52 @@ where a domain is in use, the A-label form can be presented when it
+ is not a valid IDN.
+ 
+ 
++### ASCII labels and case
++
++That rule governs labels this library has to convert. A label that is
++already all-ASCII needs no conversion, so `encode()` checks it and
++returns it as it stands, with its case intact - it neither rejects the
++capitals nor folds them:
++
++```pycon
++>>> import idna
++>>> idna.encode('EXAMPLE.COM')
++b'EXAMPLE.COM'
++>>> idna.encode('EXAMPLE.COM', uts46=True)
++b'example.com'
++```
++
++Folding case is UTS #46's job, so pass `uts46=True` where two spellings
++of one name should encode alike. `idna.check_label()`, by contrast,
++applies IDNA 2008 to the label as given and does reject uppercase, so it
++and `encode()` differ on an all-ASCII label.
++
++
++### Codec
++
++The conversions are also available through the standard codec
++machinery under the name `idna2008`. Importing `idna.codec` is what
++registers it, so that import is required even where the name is the
++only thing used afterwards:
++
++```pycon
++>>> import codecs
++>>> import idna.codec
++>>> codecs.encode('ドメイン.テスト', 'idna2008')
++b'xn--eckwd4c7c.xn--zckzah'
++>>> codecs.decode(b'xn--eckwd4c7c.xn--zckzah', 'idna2008')
++'ドメイン.テスト'
++>>> 'ドメイン.テスト'.encode('idna2008')
++b'xn--eckwd4c7c.xn--zckzah'
++```
++
++The codec also provides the incremental and stream forms of the
++protocol, so a domain arriving in pieces is converted one whole label
++at a time. Only the `strict` error handler is supported; any other
++handler raises `idna.IDNAError` rather than silently dropping or
++replacing characters.
++
++
+ ## Exceptions
+ 
+ All errors raised during conversion derive from the `idna.IDNAError`
+diff --git a/idna/core.py b/idna/core.py
+index d4a6f0e..83a38b8 100644
+--- a/idna/core.py
++++ b/idna/core.py
+@@ -75,9 +75,9 @@ class IDNAError(UnicodeError):
+     need to parse the message:
+ 
+     * ``code`` -- a short, stable identifier for the rule that failed, such
+-      as ``"disallowed_codepoint"`` or ``"bidi_rule_2"``; the full list is
+-      documented in the README. Message wording, by contrast, may change
+-      between releases.
++      as ``"disallowed_codepoint"`` or ``"bidi_rule_2"``; the codes this
++      library raises are enumerated by the ``_ErrorCode`` alias in this
++      module. Message wording, by contrast, may change between releases.
+     * ``text`` -- the label (or, for UTS #46 processing, the domain) that
+       was being validated;
+     * ``codepoint`` -- the offending codepoint, as an ``int``;
+@@ -179,12 +179,20 @@ def check_bidi(label: str, check_ltr: bool = False) -> bool:
+     :param label: The label to validate, as a Unicode string.
+     :param check_ltr: If ``True``, apply the rules even when the label
+         contains no RTL characters.
+-    :returns: ``True`` if the label satisfies the Bidi Rule.
++    :returns: ``True`` if the label satisfies the Bidi Rule. An empty label
++        satisfies it whichever way ``check_ltr`` is set: it has no first
++        character to be of the wrong directionality, no disallowed character
++        and no illegal final one. Emptiness is rejected by
++        :func:`check_label`, not here.
+     :raises IDNABidiError: If any of Bidi Rule conditions 1-6 are violated,
+         or if the directional category of a codepoint cannot be determined.
+     """
+     if len(label) > _max_input_length:
+         raise IDNAError("Label too long", code="input_too_long")
++    if not label:
++        # No character, so no condition can be violated. Without this the
++        # check_ltr path indexes label[0] below and raises IndexError.
++        return True
+     # Bidi rules should only be applied if string contains RTL characters
+     bidi_label = False
+     for idx, cp in enumerate(label, 1):
+@@ -526,8 +534,12 @@ def alabel(label: str) -> bytes:
+ 
+     The result is the ASCII-Compatible Encoding (ACE) form per :rfc:`5891`
+     §4: the label is validated, Punycode-encoded, and prefixed with
+-    ``xn--``. Pure ASCII labels that are already valid IDNA labels are
+-    returned unchanged (as :class:`bytes`).
++    ``xn--``. A label that is already all-ASCII needs no conversion and is
++    returned as it stands (as :class:`bytes`), with its case intact: it is
++    validated the way :func:`ulabel` validates an A-label, which is
++    case-insensitive, so ``ABC`` is accepted here even though
++    :func:`check_label` rejects it under IDNA 2008. Folding case is UTS #46's
++    job, not this function's.
+ 
+     :param label: The label to convert, as a Unicode string.
+     :returns: The A-label as ASCII-encoded :class:`bytes`.
+@@ -744,6 +756,9 @@ def encode(
+     encodes each label with :func:`alabel`, and rejoins them with ``.``.
+     Optionally pre-processes the input through :func:`uts46_remap`.
+ 
++    An all-ASCII label is returned with its case intact (see
++    :func:`alabel`); pass ``uts46=True`` to fold case first.
++
+     :param s: The domain name to encode.
+     :param strict: If ``True``, only ``U+002E`` is recognised as a label
+         separator.
+diff --git a/tests/fuzz_idna_api.py b/tests/fuzz_idna_api.py
+index a694ac4..faa0de1 100755
+--- a/tests/fuzz_idna_api.py
++++ b/tests/fuzz_idna_api.py
+@@ -102,6 +102,7 @@ def fuzz_labels(fdp):
+         idna.valid_label_length,
+     ):
+         _only_idnaerror(fn, label)
++    _only_idnaerror(idna.check_bidi, label, check_ltr=True)
+     _only_idnaerror(idna.ulabel, label.encode("utf-8", "surrogatepass"))
+     _only_idnaerror(idna.check_label, label.encode("utf-8", "surrogatepass"))
+     encoded = _only_idnaerror(idna.alabel, label)
+diff --git a/tests/test_idna.py b/tests/test_idna.py
+index 69c85ac..789ade7 100644
+--- a/tests/test_idna.py
++++ b/tests/test_idna.py
+@@ -179,6 +179,12 @@ class IDNATests(unittest.TestCase):
+         self.assertTrue(idna.check_bidi(la + en + nsm + nsm, check_ltr=True))
+         self.assertRaises(idna.IDNABidiError, idna.check_bidi, la + cs, check_ltr=True)
+ 
++        # An empty label has no character that can violate a condition, and
++        # answers the same way whichever value check_ltr takes. The check_ltr
++        # path used to index label[0] here and raise IndexError.
++        self.assertTrue(idna.check_bidi(""))
++        self.assertTrue(idna.check_bidi("", check_ltr=True))
++
+     def test_check_initial_combiner(self):
+         m = "\u0300"
+         a = "\u0061"
+diff --git a/tests/test_idna_properties.py b/tests/test_idna_properties.py
+index 7def8ec..ba085d7 100644
+--- a/tests/test_idna_properties.py
++++ b/tests/test_idna_properties.py
+@@ -108,6 +108,9 @@ class OnlyIDNAErrorTests(unittest.TestCase):
+             idna.valid_label_length,
+         ):
+             _run(fn, label)
++        # check_bidi's documented parameter, at both values: the rules are
++        # applied to an LTR-only label only when check_ltr is set.
++        _run(idna.check_bidi, label, check_ltr=True)
+         _run(idna.ulabel, label.encode("utf-8", "surrogatepass"))
+ 
+     @given(st.one_of(domains, binary), flags)
