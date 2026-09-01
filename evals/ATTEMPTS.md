@@ -20,10 +20,12 @@ loss rather than hiding it.
 
 | Target | Runs | Iterations | Outcome | Standard met | Runs that ended blocked |
 |---|---:|---:|---|---|---:|
+| ada | 2 | 18 | converged | evaluator countersigned | 0 |
 | bat | 1 | 10 | converged | evaluator countersigned | 0 |
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | Catch2 | 4 | 35 | converged | evaluator countersigned | 1 |
 | Carbon | 4 | 17 | **not converged** | n/a | 1 |
+| casbin | 5 | 46 | **not converged** | n/a | 0 |
 | cast | 2 | 22 | **not converged** | n/a | 0 |
 | chalk | 2 | 8 | converged | pre-evaluator | 0 |
 | cJSON | 1 | 10 | converged | evaluator countersigned | 0 |
@@ -97,6 +99,7 @@ loss rather than hiding it.
 | ryu | 1 | 10 | converged | evaluator countersigned | 0 |
 | shopspring/decimal | 4 | 33 | **not converged** | n/a | 4 |
 | spdlog | 4 | 40 | **not converged** | n/a | 1 |
+| sqlfluff | 4 | 35 | converged | evaluator countersigned | 0 |
 | sqlparse | 5 | 47 | converged | evaluator countersigned | 2 |
 | Spectre.Console | 1 | 8 | converged | evaluator countersigned | 0 |
 | speedtest-cli | 1 | 5 | converged | pre-evaluator | 0 |

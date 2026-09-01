@@ -1,0 +1,631 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 00000000..836908fc
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,9 @@
++# The loop state files and probe scripts are committed so they survive between
++# runs, but they are not part of ada's source. git archive honours
++# export-ignore, and git archive is what produces the "Source code" assets
++# attached to a GitHub release, so these stay out of every published archive.
++/PLAN.md export-ignore
++/BACKLOG.md export-ignore
++/JOURNAL.md export-ignore
++/JOURNAL-archive.md export-ignore
++/.jeffy export-ignore
+diff --git a/.github/workflows/adaparse-cli.yml b/.github/workflows/adaparse-cli.yml
+new file mode 100644
+index 00000000..e3caf3c0
+--- /dev/null
++++ b/.github/workflows/adaparse-cli.yml
+@@ -0,0 +1,88 @@
++name: adaparse CLI
++
++on:
++  pull_request:
++    types: [opened, synchronize, reopened, ready_for_review]
++    paths-ignore:
++      - '**.md'
++      - 'docs/**'
++  push:
++    branches:
++      - main
++    paths-ignore:
++      - '**.md'
++      - 'docs/**'
++
++permissions:
++  contents: read
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.ref }}
++  cancel-in-progress: true
++
++jobs:
++  # ADA_TOOLS defaults to OFF and no other workflow turns it on, so adaparse -
++  # the CLI documented in README.md and docs/cli.md - was never built or run by
++  # CI at all. This job builds it and drives it over real URLs.
++  #
++  # Both input paths are exercised because they are different code: adaparse
++  # reads stdin whenever stdin is not a tty, so under a CI shell it ignores its
++  # argv entirely. The argv path only runs behind a pty, which is what
++  # script(1) supplies here; a check that only piped URLs would leave every
++  # option that argv selects untested.
++  adaparse:
++    name: adaparse
++    runs-on: ubuntu-24.04
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++
++      - name: Configure
++        run: >
++          cmake -S . -B build -DADA_TOOLS=ON -DADA_TESTING=OFF
++          -DCMAKE_BUILD_TYPE=Release
++
++      - name: Build adaparse
++        run: cmake --build build -j4 --target adaparse
++
++      - name: Drive adaparse over URLs
++        run: |
++          adaparse=build/tools/cli/adaparse
++          fail=0
++          check() {
++            local name=$1 expected=$2 want=$3 snippet=$4
++            local out status
++            out=$(bash -c "$snippet" 2>&1) && status=0 || status=$?
++            out=${out//$'\r'/}
++            if [ "$out" = "$expected" ] && [ "$status" = "$want" ]; then
++              echo "ok   $name"
++            else
++              echo "FAIL $name"
++              echo "  got    [$out] status $status"
++              echo "  wanted [$expected] status $want"
++              fail=1
++            fi
++          }
++
++          # Piped: the bulk path docs/cli.md benchmarks against 100k-line files.
++          check 'piped -g host keeps the port and drops credentials' \
++            'example.com:8080' 0 \
++            "echo 'https://user:pass@example.com:8080/a/b?q=1#f' | $adaparse -g host"
++          check 'piped -g href normalizes case and dot segments' \
++            'https://example.com/b' 0 \
++            "echo 'https://EXAMPLE.com/a/../b' | $adaparse -g href"
++          check 'piped invalid URL is reported and does not end the stream' \
++            'Invalid URL: not a url' 0 \
++            "echo 'not a url' | $adaparse -g href"
++
++          # argv: reachable only behind a pty, hence script(1).
++          check 'argv -g host behind a pty' \
++            'example.com:8080' 0 \
++            "script -qec \"$adaparse -g host https://example.com:8080/a\" /dev/null"
++          check 'argv rejects an invalid URL with status 1' \
++            'Invalid URL: notaurl' 1 \
++            "script -qec \"$adaparse -g host notaurl\" /dev/null"
++          check 'argv -o writes the result to the named file' \
++            'https://example.com/a' 0 \
++            "script -qec \"$adaparse -g href -o cli-out.txt https://example.com/a\" /dev/null >/dev/null && cat cli-out.txt"
++
++          exit $fail
+diff --git a/.github/workflows/avx512-compile.yml b/.github/workflows/avx512-compile.yml
+new file mode 100644
+index 00000000..3ccd2f87
+--- /dev/null
++++ b/.github/workflows/avx512-compile.yml
+@@ -0,0 +1,93 @@
++name: AVX-512 compile
++
++on:
++  pull_request:
++    types: [opened, synchronize, reopened, ready_for_review]
++    paths-ignore:
++      - '**.md'
++      - 'docs/**'
++  push:
++    branches:
++      - main
++    paths-ignore:
++      - '**.md'
++      - 'docs/**'
++
++permissions:
++  contents: read
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.ref }}
++  cancel-in-progress: true
++
++jobs:
++  # The AVX-512 kernels in include/ada/checkers-inl.h (IPv4) and
++  # include/ada/url_ip-inl.h (IPv6) are selected by __AVX512BW__/__AVX512VL__
++  # plus VBMI2, and no other job in this repository passes those flags: every
++  # other build uses the default -march, so both kernels are preprocessed away
++  # and a compile error inside them reaches main unseen.
++  #
++  # This job compiles src/ada.cpp under each flag combination that selects a
++  # kernel. It first asserts which kernels the flags actually select, because
++  # a combination that stopped reaching them would otherwise keep passing over
++  # code it no longer compiles. Compile only: GitHub's hosted runners are not
++  # guaranteed to have an AVX-512 CPU, so executing the kernels here would be
++  # a coin flip rather than a check.
++  avx512:
++    name: ${{ matrix.cxx }} ${{ matrix.target.name }}
++    runs-on: ubuntu-24.04
++    strategy:
++      fail-fast: false
++      matrix:
++        cxx: [g++, clang++]
++        target:
++          - name: bw+vl
++            flags: -mavx512bw -mavx512vl
++            ipv4: 'no'
++            ipv6: 'no'
++          - name: bw+vl+vbmi2
++            flags: -mavx512bw -mavx512vl -mavx512vbmi2
++            ipv4: 'yes'
++            ipv6: 'no'
++          - name: bw+vl+vbmi+vbmi2
++            flags: -mavx512bw -mavx512vl -mavx512vbmi -mavx512vbmi2
++            ipv4: 'yes'
++            ipv6: 'yes'
++          - name: x86-64-v4
++            flags: -march=x86-64-v4
++            ipv4: 'no'
++            ipv6: 'no'
++          - name: icelake-server
++            flags: -march=icelake-server
++            ipv4: 'yes'
++            ipv6: 'yes'
++          - name: sapphirerapids
++            flags: -march=sapphirerapids
++            ipv4: 'yes'
++            ipv6: 'yes'
++          - name: znver4
++            flags: -march=znver4
++            ipv4: 'yes'
++            ipv6: 'yes'
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++
++      - name: Assert these flags select the expected kernels
++        run: |
++          printf '#include "ada/url_ip-inl.h"\n' > kernel-probe.cpp
++          ${{ matrix.cxx }} -std=c++20 -E -dM ${{ matrix.target.flags }} \
++            -I include kernel-probe.cpp > macros.txt
++          ipv4=no
++          ipv6=no
++          if grep -q '^#define ADA_AVX512 ' macros.txt &&
++             grep -q '^#define __AVX512VBMI2__ ' macros.txt; then ipv4=yes; fi
++          if grep -q '^#define ADA_AVX512_IPV6 ' macros.txt; then ipv6=yes; fi
++          echo "IPv4 kernel selected: $ipv4 (expected ${{ matrix.target.ipv4 }})"
++          echo "IPv6 kernel selected: $ipv6 (expected ${{ matrix.target.ipv6 }})"
++          test "$ipv4" = '${{ matrix.target.ipv4 }}'
++          test "$ipv6" = '${{ matrix.target.ipv6 }}'
++
++      - name: Compile src/ada.cpp
++        run: >
++          ${{ matrix.cxx }} -std=c++20 -O2 -c ${{ matrix.target.flags }}
++          -I include src/ada.cpp -o ada-avx512.o
+diff --git a/.gitignore b/.gitignore
+index 5df6e74c..9a292c46 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -37,3 +37,4 @@ bazel-*
+ 
+ # gcov coverage data files
+ *.gcov
++.claude/jeffy-loop.local.md
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 126fc05f..34157546 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -10,6 +10,16 @@ set(ADA_LIB_SOVERSION "4" CACHE STRING "ada library soversion")
+ 
+ include(GNUInstallDirs)
+ 
++# Whether ada is being built on its own rather than pulled into another
++# project's build. The status messages and the CPack block below exist for
++# someone building ada itself; an embedder that added us via add_subdirectory
++# or FetchContent should see neither.
++if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
++  set(is_top_project ON)
++else()
++  set(is_top_project OFF)
++endif()
++
+ include(CTest)
+ include(cmake/ada-flags.cmake)
+ 
+@@ -207,5 +217,17 @@ if(is_top_project)
+   set(CPACK_RPM_PACKAGE_LICENSE "${PROJECT_SOURCE_DIR}/LICENSE-MIT")
+   set(CPACK_RESOURCE_FILE_README "${PROJECT_SOURCE_DIR}/README.md")
+   set(CPACK_SOURCE_GENERATOR "TGZ;ZIP")
++  # A source package is the library and its build system, not a copy of the
++  # working tree. Defining this variable replaces CPack's own default list
++  # rather than extending it, so the VCS entries it would have supplied are
++  # repeated here beside the build directories this tree also carries.
++  set(CPACK_SOURCE_IGNORE_FILES
++    "/CVS/" "/\\.svn/" "/\\.bzr/" "/\\.hg/" "/\\.git/" "\\.swp$" "\\.#" "/#"
++    "/build[^/]*/"
++    "/\\.jeffy/"
++    "/PLAN\\.md$"
++    "/BACKLOG\\.md$"
++    "/JOURNAL[^/]*\\.md$"
++  )
+   include(CPack)
+ endif()
+diff --git a/include/ada/url-inl.h b/include/ada/url-inl.h
+index fe13ef18..35fc2fa7 100644
+--- a/include/ada/url-inl.h
++++ b/include/ada/url-inl.h
+@@ -71,15 +71,18 @@ inline std::ostream& operator<<(std::ostream& out, const ada::url& u) {
+         out.host_start += uint32_t(password.size() + 1);
+       }
+ 
+-      out.host_end = uint32_t(out.host_start + host->size());
++      // host_start is the '@' when there are credentials, exactly as
++      // url_aggregator reports it, so the host itself begins one byte later.
++      out.host_end = uint32_t(out.host_start + 1 + host->size());
+     } else {
+       out.username_end = out.host_start;
+ 
+       // Host does not start with "@" if it does not include credentials.
+-      out.host_end = uint32_t(out.host_start + host->size()) - 1;
++      out.host_end = uint32_t(out.host_start + host->size());
+     }
+ 
+-    running_index = out.host_end + 1;
++    // host_end is one past the host, so it is already the next index.
++    running_index = out.host_end;
+   } else {
+     // Update host start and end date to the same index, since it does not
+     // exist.
+diff --git a/include/ada/url_ip-inl.h b/include/ada/url_ip-inl.h
+index 7bfac919..9a8f00ee 100644
+--- a/include/ada/url_ip-inl.h
++++ b/include/ada/url_ip-inl.h
+@@ -216,8 +216,16 @@ ada_really_inline bool try_parse_ipv6_avx512(const char* data, size_t len,
+       32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+       48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63};
+ 
+-  const __mmask64 active =
+-      static_cast<__mmask64>(_bzhi_u64(~0ULL, static_cast<uint32_t>(len)));
++  // BMI1 and BMI2 are not implied by the AVX-512 feature macros that gate
++  // this kernel, so every use of one carries the fallback checkers-inl.h
++  // already uses for its own masked-length constant. Real AVX512VBMI2
++  // hardware always has both; a build naming only the AVX-512 flags does not.
++#if defined(__BMI2__)
++  const uint64_t active_bits = _bzhi_u64(~0ULL, static_cast<uint32_t>(len));
++#else
++  const uint64_t active_bits = ~0ULL >> (64 - len);  // len is in [2, 45]
++#endif
++  const __mmask64 active = static_cast<__mmask64>(active_bits);
+   const __m512i colon = _mm512_set1_epi8(':');
+   // Merging ':' into the tail makes the terminator at `len` a real colon, so
+   // the compress mask below never has to be rebuilt in a general register.
+@@ -267,8 +275,15 @@ ada_really_inline bool try_parse_ipv6_avx512(const char* data, size_t len,
+                         static_cast<uint32_t>(dc > 1);
+   const __mmask16 keep = _mm_cmpgt_epi8_mask(width, _mm_set1_epi8(1));
+   const uint32_t kept = static_cast<uint32_t>(_mm_popcnt_u32(keep));
+-  const __mmask16 slots = static_cast<__mmask16>(
+-      ~(_bzhi_u32(0xFFFFFFFFu, 8 - kept) << head) & 0xFFu);
++#if defined(__BMI2__)
++  const uint32_t gap_bits = _bzhi_u32(0xFFFFFFFFu, 8 - kept);
++#else
++  // kept > 8 wraps 8 - kept past 32, where the intrinsic returns its input.
++  const uint32_t gap_bits =
++      kept <= 8 ? (uint32_t{1} << (8 - kept)) - 1u : 0xFFFFFFFFu;
++#endif
++  const __mmask16 slots =
++      static_cast<__mmask16>(~(gap_bits << head) & 0xFFu);
+   // Inserted groups take prev = -1, so their indices clamp to byte 63, a tail
+   // colon, and read zero.
+   ipv6_gather(_mm_maskz_expand_epi8(slots, _mm_maskz_compress_epi8(keep, comp)),
+@@ -278,7 +293,11 @@ ada_really_inline bool try_parse_ipv6_avx512(const char* data, size_t len,
+ 
+   uint64_t err = _mm512_movepi8_mask(v);    // high-bit bytes
+   err |= _mm512_movepi8_mask(nib) & ~mc;    // non-hex
+-  err |= _blsr_u64(dc);                     // a second "::"
++#if defined(__BMI__)
++  err |= _blsr_u64(dc);  // a second "::"
++#else
++  err |= dc & (dc - 1);  // a second "::"
++#endif
+   err |= static_cast<uint64_t>(kept >= 8);  // "::" elides nothing
+   err |= _mm_cmpgt_epu8_mask(width, _mm_set1_epi8(5)) & keep;  // group > 4
+   err |= (mc & 1ULL) & ~dc;                                // leading lone ':'
+diff --git a/include/ada_c.h b/include/ada_c.h
+index 98e4ce20..21fcbbc7 100644
+--- a/include/ada_c.h
++++ b/include/ada_c.h
+@@ -1,6 +1,8 @@
+ /**
+  * @file ada_c.h
+- * @brief Includes the C definitions for Ada. This is a C file, not C++.
++ * @brief Includes the C definitions for Ada. The declarations carry C
++ * linkage, and the header guards them so it can be included from C++
++ * directly, without wrapping the include in extern "C".
+  */
+ #ifndef ADA_C_H
+ #define ADA_C_H
+@@ -9,6 +11,10 @@
+ #include <stdint.h>
+ #include <stddef.h>
+ 
++#ifdef __cplusplus
++extern "C" {
++#endif
++
+ // This is a reference to ada::url_components::omitted
+ // It represents "uint32_t(-1)"
+ #define ada_url_omitted 0xffffffff
+@@ -206,4 +212,8 @@ typedef struct {
+ const char* ada_get_version();
+ ada_version_components ada_get_version_components();
+ 
++#ifdef __cplusplus
++}  // extern "C"
++#endif
++
+ #endif  // ADA_C_H
+diff --git a/src/checkers.cpp b/src/checkers.cpp
+index c469ab05..6bf62b3f 100644
+--- a/src/checkers.cpp
++++ b/src/checkers.cpp
+@@ -45,7 +45,8 @@ ada_really_inline constexpr bool is_ipv4(std::string_view view) noexcept {
+   // We have 0x followed by some characters, we need to check that they are
+   // hexadecimals.
+   view.remove_prefix(2);
+-  return std::ranges::all_of(view, ada::unicode::is_lowercase_hex);
++  return std::ranges::all_of(
++      view, [](char c) { return ada::unicode::is_lowercase_hex(c); });
+ }
+ 
+ // for use with path_signature, we include all characters that need percent
+diff --git a/src/helpers.cpp b/src/helpers.cpp
+index a66e8dca..69691b12 100644
+--- a/src/helpers.cpp
++++ b/src/helpers.cpp
+@@ -150,7 +150,7 @@ ada_really_inline bool shorten_path(std::string_view& path,
+ ada_really_inline void remove_ascii_tab_or_newline(std::string& input) {
+   // if this ever becomes a performance issue, we could use an approach similar
+   // to has_tabs_or_newline
+-  std::erase_if(input, ada::unicode::is_ascii_tab_or_newline);
++  std::erase_if(input, [](char c) { return ada::unicode::is_ascii_tab_or_newline(c); });
+ }
+ 
+ ada_really_inline constexpr std::string_view substring(std::string_view input,
+diff --git a/src/url.cpp b/src/url.cpp
+index 0ea943ea..7fd7686a 100644
+--- a/src/url.cpp
++++ b/src/url.cpp
+@@ -19,7 +19,9 @@ namespace ada {
+ 
+ bool url::parse_opaque_host(std::string_view input) {
+   ada_log("parse_opaque_host ", input, " [", input.size(), " bytes]");
+-  if (std::ranges::any_of(input, ada::unicode::is_forbidden_host_code_point)) {
++  if (std::ranges::any_of(input, [](char c) {
++        return ada::unicode::is_forbidden_host_code_point(c);
++      })) {
+     return is_valid = false;
+   }
+ 
+@@ -791,7 +793,8 @@ bool url::set_port(const std::string_view input) {
+ 
+   // Find the first non-digit character to determine the length of digits
+   auto first_non_digit =
+-      std::ranges::find_if_not(trimmed, ada::unicode::is_ascii_digit);
++      std::ranges::find_if_not(
++      trimmed, [](char c) { return ada::unicode::is_ascii_digit(c); });
+   std::string_view digits_to_parse =
+       std::string_view(trimmed.data(), first_non_digit - trimmed.begin());
+ 
+@@ -879,7 +882,7 @@ bool url::set_protocol(const std::string_view input) {
+   view.append(":");
+ 
+   std::string::iterator pointer =
+-      std::ranges::find_if_not(view, unicode::is_alnum_plus);
++      std::ranges::find_if_not(view, [](char c) { return unicode::is_alnum_plus(c); });
+ 
+   if (pointer != view.end() && *pointer == ':') {
+     std::optional<url> saved_url;
+diff --git a/src/url_aggregator.cpp b/src/url_aggregator.cpp
+index 348777e3..5d395ee4 100644
+--- a/src/url_aggregator.cpp
++++ b/src/url_aggregator.cpp
+@@ -235,7 +235,7 @@ bool url_aggregator::set_protocol(const std::string_view input) {
+   view.append(":");
+ 
+   std::string::iterator pointer =
+-      std::ranges::find_if_not(view, unicode::is_alnum_plus);
++      std::ranges::find_if_not(view, [](char c) { return unicode::is_alnum_plus(c); });
+ 
+   if (pointer != view.end() && *pointer == ':') {
+     std::optional<url_aggregator> saved_url;
+@@ -336,7 +336,8 @@ bool url_aggregator::set_port(const std::string_view input) {
+ 
+   // Find the first non-digit character to determine the length of digits
+   auto first_non_digit =
+-      std::ranges::find_if_not(trimmed, ada::unicode::is_ascii_digit);
++      std::ranges::find_if_not(
++      trimmed, [](char c) { return ada::unicode::is_ascii_digit(c); });
+   std::string_view digits_to_parse =
+       std::string_view(trimmed.data(), first_non_digit - trimmed.begin());
+ 
+@@ -1269,7 +1270,9 @@ bool url_aggregator::parse_opaque_host(std::string_view input) {
+   ada_log("parse_opaque_host ", input, " [", input.size(), " bytes]");
+   ADA_ASSERT_TRUE(validate());
+   ADA_ASSERT_TRUE(!helpers::overlaps(input, buffer));
+-  if (std::ranges::any_of(input, ada::unicode::is_forbidden_host_code_point)) {
++  if (std::ranges::any_of(input, [](char c) {
++        return ada::unicode::is_forbidden_host_code_point(c);
++      })) {
+     return is_valid = false;
+   }
+ 
+diff --git a/src/url_pattern_helpers.cpp b/src/url_pattern_helpers.cpp
+index 8c11f05f..7ec028a5 100644
+--- a/src/url_pattern_helpers.cpp
++++ b/src/url_pattern_helpers.cpp
+@@ -389,7 +389,8 @@ tl::expected<std::string, errors> canonicalize_port(
+ 
+   // Find the first non-digit character
+   auto first_non_digit =
+-      std::ranges::find_if_not(trimmed, unicode::is_ascii_digit);
++      std::ranges::find_if_not(
++      trimmed, [](char c) { return unicode::is_ascii_digit(c); });
+   std::string_view digits_to_parse =
+       std::string_view(trimmed.data(), first_non_digit - trimmed.begin());
+ 
+@@ -449,7 +450,8 @@ tl::expected<std::string, errors> canonicalize_port_with_protocol(
+ 
+   // Find the first non-digit character
+   auto first_non_digit =
+-      std::ranges::find_if_not(trimmed, unicode::is_ascii_digit);
++      std::ranges::find_if_not(
++      trimmed, [](char c) { return unicode::is_ascii_digit(c); });
+   std::string_view digits_to_parse =
+       std::string_view(trimmed.data(), first_non_digit - trimmed.begin());
+ 
+diff --git a/tests/ada_c.cpp b/tests/ada_c.cpp
+index ab415d59..fb6404dc 100644
+--- a/tests/ada_c.cpp
++++ b/tests/ada_c.cpp
+@@ -1,10 +1,10 @@
+-// gtest is a C++ library so we are in C++.
++// gtest is a C++ library so we are in C++, and ada_c.h carries its own
++// extern "C" guard, so this include needs no wrapper. Keeping it bare is
++// what makes this target the regression test for that guard.
+ #include "gtest/gtest.h"
+ #include "simdjson.h"
+ #include <filesystem>
+-extern "C" {
+ #include "ada_c.h"
+-}
+ 
+ #ifndef WPT_DATA_DIR
+ #define WPT_DATA_DIR "wpt/"
+diff --git a/tests/url_components.cpp b/tests/url_components.cpp
+index 4dfe0006..f894dec8 100644
+--- a/tests/url_components.cpp
++++ b/tests/url_components.cpp
+@@ -109,6 +109,10 @@ TEST(url_components, urltestdata_encoding) {
+         }
+         ASSERT_EQ(href.substr(host_start, url.get_hostname().size()),
+                   url.get_hostname());
++        // host_end is one past the host, so slicing to it is the hostname.
++        // Nothing pinned this before, and it was one byte short.
++        ASSERT_EQ(href.substr(host_start, out.host_end - host_start),
++                  url.get_hostname());
+ 
+         if (url.port.has_value()) {
+           ASSERT_EQ(out.port, url.port.value());
+diff --git a/tools/cli/adaparse.cpp b/tools/cli/adaparse.cpp
+index 5da9449e..3c3cffad 100644
+--- a/tools/cli/adaparse.cpp
++++ b/tools/cli/adaparse.cpp
+@@ -90,6 +90,10 @@ int piped_file(Callable&& adaparse_print, const cxxopts::ParseResult result,
+   size_t offset{0};
+   size_t lines{0};
+   size_t blocks{0};
++  // An unrecognized -g part is a usage error, and the single-URL path already
++  // exits non-zero on it. Piped mode has to agree, or the same typo is a
++  // failure one way and a success the other.
++  bool part_found{true};
+   std::string get_part{};
+   if (result.count("get")) {
+     get_part = result["get"].as<std::string>();
+@@ -122,7 +126,8 @@ int piped_file(Callable&& adaparse_print, const cxxopts::ParseResult result,
+       if (!url) {
+         adaparse_print("Invalid URL: {}\n", line);
+       } else if (!get_part.empty()) {
+-        print_part(adaparse_print, get_part, url.value());
++        part_found = print_part(adaparse_print, get_part, url.value()) &&
++                     part_found;
+       }
+ 
+       lines++;
+@@ -139,7 +144,8 @@ int piped_file(Callable&& adaparse_print, const cxxopts::ParseResult result,
+     if (!url) {
+       adaparse_print("Invalid URL:{}\n", line);
+     } else if (!get_part.empty()) {
+-      print_part(adaparse_print, get_part, url.value());
++      part_found =
++          print_part(adaparse_print, get_part, url.value()) && part_found;
+     }
+ 
+     lines++;
+@@ -159,7 +165,7 @@ int piped_file(Callable&& adaparse_print, const cxxopts::ParseResult result,
+     fmt::print("{} GB/s\n", speed);
+   }
+ 
+-  return EXIT_SUCCESS;
++  return part_found ? EXIT_SUCCESS : EXIT_FAILURE;
+ }
+ 
+ /**
+@@ -234,7 +240,10 @@ int main(int argc, char** argv) {
+     std::string formatted_str = fmt::format(
+         fmt::runtime(format_str), std::forward<decltype(args)>(args)...);
+     if (has_result) {
+-      out.print(fmt::runtime(formatted_str));
++      // "{}" and not fmt::runtime(formatted_str): the string has already been
++      // formatted, and re-formatting it makes any brace in the data a format
++      // specifier - "Invalid URL: not a url {x}" aborted the process here.
++      out.print("{}", formatted_str);
+     } else {
+       fmt::print("{}", formatted_str);
+     }
+@@ -245,17 +254,18 @@ int main(int argc, char** argv) {
+ #else
+   if (!isatty(fileno(stdin))) {
+ #endif
+-    return piped_file(adaparse_print, result, stdin) ? EXIT_SUCCESS
+-                                                     : EXIT_FAILURE;
++    // piped_file returns an exit status, so propagate it. Testing it as a
++    // boolean turned its EXIT_SUCCESS into a failure on every piped run.
++    return piped_file(adaparse_print, result, stdin);
+   }
+ 
+   if (result.count("path")) {
+     auto file_path = result["path"].as<std::string>();
+     auto file = fopen(file_path.c_str(), "r");
+     if (file) {
+-      piped_file(adaparse_print, result, file);
++      const int status = piped_file(adaparse_print, result, file);
+       fclose(file);
+-      return EXIT_SUCCESS;
++      return status;
+     } else {
+       fmt::print(stderr, "Error opening file: {}\n", strerror(errno));
+       return EXIT_FAILURE;
+@@ -277,22 +287,19 @@ int main(int argc, char** argv) {
+     return EXIT_FAILURE;
+   }
+ 
++  // Print through adaparse_print, the same lambda the piped path uses, so
++  // -o writes the file here too; it falls back to stdout when -o is absent.
+   if (result.count("get")) {
+     std::string get_part = result["get"].as<std::string>();
+ 
+-    auto print_lambda = [](const std::string& format_str, auto&&... args) {
+-      fmt::print(fmt::runtime(format_str),
+-                 std::forward<decltype(args)>(args)...);
+-    };
+-
+-    return print_part(print_lambda, get_part, url.value()) ? EXIT_SUCCESS
+-                                                           : EXIT_FAILURE;
+-  };
++    return print_part(adaparse_print, get_part, url.value()) ? EXIT_SUCCESS
++                                                             : EXIT_FAILURE;
++  }
+ 
+   if (to_diagram) {
+-    fmt::print("{}\n", url->to_diagram());
++    adaparse_print("{}\n", url->to_diagram());
+   } else {
+-    fmt::print("{}\n", url->to_string());
++    adaparse_print("{}\n", url->to_string());
+   }
+ 
+   return EXIT_SUCCESS;

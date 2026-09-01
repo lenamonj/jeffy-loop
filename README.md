@@ -29,7 +29,7 @@ Jeffy Loop is an autonomous engineering system built around a simple principle: 
 
 ## The receipts
 
-Six fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Five are patches this loop wrote, merged as written; the sixth is a finding a maintainer found convincing enough to fix himself:
+Seven fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Six are patches this loop wrote, merged as written; the seventh is a finding a maintainer found convincing enough to fix himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
@@ -40,7 +40,7 @@ Six fixes are in other people's code because a maintainer with no stake in this 
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
-Behind them: **<!-- count:converged -->62<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **32 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+Behind them: **<!-- count:converged -->64<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **32 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#real-world-validation-on-open-source-repositories)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
 
@@ -279,9 +279,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->92<!-- /count -->** | **<!-- count:fixed -->63<!-- /count -->** | **<!-- count:failed -->29<!-- /count -->** | **<!-- count:prs -->17<!-- /count -->** | **<!-- count:merged -->5<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->95<!-- /count -->** | **<!-- count:fixed -->65<!-- /count -->** | **<!-- count:failed -->30<!-- /count -->** | **<!-- count:prs -->19<!-- /count -->** | **<!-- count:merged -->6<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->62<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->64<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
 <sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md).</sub>
 
@@ -318,6 +318,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | speedtest-cli | Python | [details](evals/speedtest-cli/REPORT.md) - small findings only | Fixed |
 | phpdotenv | PHP | [details](evals/phpdotenv/REPORT.md) - silent [] on bad multiline | Fixed |
 | mimalloc | C | [details](evals/mimalloc/REPORT.md) - zalloc returned dirty memory - [PR merged](https://github.com/microsoft/mimalloc/pull/1385) | Fixed |
+| ada | C++ | [details](evals/ada/REPORT.md) - host_end truncated the host - [PR merged](https://github.com/ada-url/ada/pull/1244) | Fixed |
 | cJSON | C | [details](evals/cjson/REPORT.md) - sort dropped later appends | Fixed |
 | nlohmann/json | C++ | [details](evals/json/REPORT.md) - Bazel header list omitted a dep | Fixed |
 | RuboCop | Ruby | [details](evals/rubocop/REPORT.md) - null result, zero findings | Fixed |
@@ -343,6 +344,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | more-itertools | Python | [details](evals/more-itertools/REPORT.md) - sample() wrong on negatives | Fixed |
 | idna | Python | [details](evals/idna/REPORT.md) - empty label raised IndexError | Fixed |
 | sqlparse | Python | [details](evals/sqlparse/REPORT.md) - converged on run 5 of 5 | Fixed |
+| sqlfluff | Python | [details](evals/sqlfluff/REPORT.md) - fix commented out the statement | Fixed |
 | rrule | TypeScript | [details](evals/rrule/REPORT.md) - 23 findings, 10 High | Fixed |
 | humanize | Python | [details](evals/humanize/REPORT.md) - 4 float-range Highs | Fixed |
 | ryu | Rust | [details](evals/ryu/REPORT.md) - s2f rejected 7,807 strings | Fixed |
@@ -352,6 +354,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | itoa | Rust | [details](evals/itoa/REPORT.md) - no-panic build failed to link | Fixed |
 | BurntSushi/toml | Go | [details](evals/ATTEMPTS.md) - 5 runs, 52 iters, not converged | Failed |
 | Carbon | PHP | [details](evals/ATTEMPTS.md) - 4 runs, 17 iters, not converged | Failed |
+| casbin | Go | [details](evals/casbin/REPORT.md) - 5 runs, 46 iters, not converged - [PR open](https://github.com/apache/casbin/pull/1753) | Failed |
 | cast | Go | [details](evals/ATTEMPTS.md) - 2 runs, 22 iters, not converged | Failed |
 | chroma.js | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iters, not converged | Failed |
 | classnames | JavaScript | [details](evals/ATTEMPTS.md) - 3 runs, 32 iters, not converged | Failed |

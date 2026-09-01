@@ -1,0 +1,1560 @@
+diff --git a/.gitignore b/.gitignore
+index 7f7b81f93..dbb127f37 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -78,3 +78,4 @@ sqlfluffrs/sqlfluffrs_dialects/src/dialect/mod.rs
+ sqlfluffrs/sqlfluffrs_dialects/src/dialect/*/parser.rs
+ sqlfluffrs/sqlfluffrs_dialects/src/dialect/*/matcher.rs
+ sqlfluffrs/sqlfluffrs_dialects/src/dialect/*/mod.rs
++.claude/jeffy-loop.local.md
+diff --git a/sqlfluffrs/sqlfluffrs_parser/src/parser/table_driven/iterative.rs b/sqlfluffrs/sqlfluffrs_parser/src/parser/table_driven/iterative.rs
+index e3f359a56..7cfec72e9 100644
+--- a/sqlfluffrs/sqlfluffrs_parser/src/parser/table_driven/iterative.rs
++++ b/sqlfluffrs/sqlfluffrs_parser/src/parser/table_driven/iterative.rs
+@@ -176,6 +176,20 @@ impl Parser<'_> {
+ 
+             if iteration_count > max_iterations {
+                 self.handle_table_max_iterations_exceeded(&mut stack, max_iterations, &mut frame);
++                // Report rather than panic, exactly as the max_parse_depth guard
++                // above does. A panic here crosses the PyO3 boundary as a
++                // PanicException, which is a BaseException rather than an
++                // Exception, so callers cannot catch it and the CLI ends in a
++                // traceback instead of a violation.
++                return Err(ParseError::with_context(
++                    format!(
++                        "Parser exceeded maximum iteration limit ({}). This may be \
++                         caused by runaway parser logic or a very complex SQL query.",
++                        max_iterations
++                    ),
++                    Some(frame.pos),
++                    Some(frame.grammar_id),
++                ));
+             }
+ 
+             vdebug!(
+@@ -862,13 +876,16 @@ impl Parser<'_> {
+         Ok(TableFrameResult::Push(frame))
+     }
+ 
++    /// Emit diagnostics for an exceeded iteration limit. The caller turns this
++    /// into a `ParseError`; this function only reports, and reports nothing at
++    /// all unless built with `verbose-debug`.
+     fn handle_table_max_iterations_exceeded(
+         &mut self,
+         _stack: &mut TableParseFrameStack,
+-        max_iterations: usize,
++        _max_iterations: usize,
+         _frame: &mut TableParseFrame,
+-    ) -> ! {
+-        vdebug!("ERROR: Exceeded max iterations ({})", max_iterations);
++    ) {
++        vdebug!("ERROR: Exceeded max iterations ({})", _max_iterations);
+         vdebug!("Last frame: {:?}", _frame.grammar_id);
+         vdebug!("Stack depth: {}", _stack.len());
+         vdebug!("Result pending: {}", _stack.result_pending());
+@@ -902,31 +919,31 @@ impl Parser<'_> {
+             );
+         }
+ 
+-        self.print_cache_stats();
+-
+-        println!("Parser at position: {}", self.pos);
+-
+-        println!("\nTokens around failure point:");
+-        let start = self.pos.saturating_sub(3);
+-        let end = (self.pos + 4).min(self.tokens.len());
+-        for i in start..end {
+-            let marker = if i == self.pos { " <<< HERE" } else { "" };
+-            if let Some(tok) = self.tokens.get(i) {
+-                println!(
+-                    "  [{}]: '{}' (type: {}){}",
+-                    i,
+-                    tok.raw(),
+-                    tok.get_type(),
+-                    marker
+-                );
++        // Gated with the rest of this handler's diagnostics: the caller now
++        // returns a normal parse error here, and a user meeting that error
++        // should not also get parser cache statistics on stdout.
++        #[cfg(feature = "verbose-debug")]
++        {
++            self.print_cache_stats();
++
++            vdebug!("Parser at position: {}", self.pos);
++
++            vdebug!("\nTokens around failure point:");
++            let start = self.pos.saturating_sub(3);
++            let end = (self.pos + 4).min(self.tokens.len());
++            for i in start..end {
++                let marker = if i == self.pos { " <<< HERE" } else { "" };
++                if let Some(tok) = self.tokens.get(i) {
++                    vdebug!(
++                        "  [{}]: '{}' (type: {}){}",
++                        i,
++                        tok.raw(),
++                        tok.get_type(),
++                        marker
++                    );
++                }
+             }
+         }
+-
+-        panic!(
+-            "Parser exceeded maximum iteration limit ({}). This may be caused by \
+-             runaway parser logic or a very complex SQL query.",
+-            max_iterations
+-        );
+     }
+ 
+     /// Logs debug information about the current frame and stack.
+diff --git a/src/sqlfluff/api/simple.py b/src/sqlfluff/api/simple.py
+index f50b2b56e..1cc10afa9 100644
+--- a/src/sqlfluff/api/simple.py
++++ b/src/sqlfluff/api/simple.py
+@@ -137,7 +137,10 @@ def fix(
+             which is only used if a `config` is not already provided.
+             Defaults to None.
+         fix_even_unparsable (:obj:`bool`, optional): Optional override for the
+-            corresponding SQLFluff configuration value.
++            corresponding SQLFluff configuration value. Note that a file whose
++            templating or parsing failed outright - an unclosed bracket, a
++            broken Jinja tag - has no parse tree to fix, and is returned
++            unchanged whatever this is set to.
+ 
+     Returns:
+         :obj:`str` for the fixed SQL if possible.
+@@ -161,7 +164,15 @@ def fix(
+         if num_filtered_errors > 0:
+             should_fix = False
+     if should_fix:
+-        sql = result.paths[0].files[0].fix_string()[0]
++        linted_file = result.paths[0].files[0]
++        # A file whose templating or parsing failed outright carries no tree to
++        # rebuild the source from, and `fix_string` asserts on exactly that.
++        # There is nothing to fix in that case, so hand the input back the way
++        # the `fix_even_unparsable=False` path already does. Both the CLI's
++        # stdin path and `LintedFile.persist_tree` establish this same
++        # precondition before calling `fix_string`.
++        if linted_file.templated_file and linted_file.tree:
++            sql = linted_file.fix_string()[0]
+     return sql
+ 
+ 
+diff --git a/src/sqlfluff/core/default_config.cfg b/src/sqlfluff/core/default_config.cfg
+index 4a32def59..8153fa484 100644
+--- a/src/sqlfluff/core/default_config.cfg
++++ b/src/sqlfluff/core/default_config.cfg
+@@ -287,6 +287,10 @@ spacing_after = any
+ # Snowflake pattern expressions shouldn't have their spacing changed.
+ spacing_within = any
+ 
++# A SOQL LAST_N_* literal is one token to the reader: LAST_N_WEEKS:5.
++[sqlfluff:layout:type:date_n_literal]
++spacing_within = touch
++
+ [sqlfluff:layout:type:bind_variable]
+ spacing_within = touch
+ 
+diff --git a/src/sqlfluff/core/templaters/jinja.py b/src/sqlfluff/core/templaters/jinja.py
+index cc9c23687..8474a4f66 100644
+--- a/src/sqlfluff/core/templaters/jinja.py
++++ b/src/sqlfluff/core/templaters/jinja.py
+@@ -184,14 +184,18 @@ class JinjaTemplater(PythonTemplater):
+             dict: A dictionary containing the extracted macros.
+ 
+         Raises:
+-            ValueError: If a path does not exist.
++            SQLFluffUserError: If a path does not exist. It subclasses
++                ValueError, so callers catching that still do.
+             SQLTemplaterError: If there is an error in the Jinja macro file.
+         """
+         macro_ctx: dict[str, DbtMacroWrapper] = {}
+         for path_entry in path:
+-            # Does it exist? It should as this check was done on config load.
++            # Does it exist? It should as this check was done on config load,
++            # but a `load_macros_from_path` naming a missing directory reaches
++            # here, and that is a mistake in a config file the project owner
++            # wrote - a user error, not a traceback.
+             if not os.path.exists(path_entry):
+-                raise ValueError(f"Path does not exist: {path_entry}")
++                raise SQLFluffUserError(f"Path does not exist: {path_entry}")
+ 
+             if os.path.isfile(path_entry):
+                 if exclude_paths:
+@@ -690,7 +694,23 @@ class JinjaTemplater(PythonTemplater):
+                     f"Late failure to parse jinja template: {err}.",
+                     line_no=err.lineno,
+                 )
+-            return template.render()
++            try:
++                return template.render()
++            except SQLTemplaterError:
++                # Already a templater error with a message for the user - a
++                # builtin refusing to render as a variable, for example.
++                raise
++            except Exception as err:
++                # Rendering runs the template's own code, so anything the
++                # author wrote can raise here: a division by zero, an unbounded
++                # recursive macro, an attribute error inside a macro. Convert
++                # it into the templater's own error type so the user gets a TMP
++                # violation naming the failure instead of a Python traceback.
++                raise SQLTemplaterError(
++                    f"{type(err).__name__}: {err}",
++                    line_no=1,
++                    line_pos=1,
++                ) from err
+ 
+         return env, live_context, render_func
+ 
+diff --git a/src/sqlfluff/core/templaters/placeholder.py b/src/sqlfluff/core/templaters/placeholder.py
+index 1698817bd..e93dbd4f5 100644
+--- a/src/sqlfluff/core/templaters/placeholder.py
++++ b/src/sqlfluff/core/templaters/placeholder.py
+@@ -6,7 +6,7 @@ from typing import Any, Optional
+ import regex
+ 
+ from sqlfluff.core.config import FluffConfig
+-from sqlfluff.core.errors import SQLTemplaterError
++from sqlfluff.core.errors import SQLFluffUserError, SQLTemplaterError
+ from sqlfluff.core.formatter import FormatterInterface
+ from sqlfluff.core.helpers.slice import offset_slice
+ from sqlfluff.core.templaters.base import (
+@@ -91,7 +91,7 @@ class PlaceholderTemplater(RawTemplater):
+         live_context = super().get_context(fname, config)
+ 
+         if "param_regex" in live_context and "param_style" in live_context:
+-            raise ValueError(
++            raise SQLFluffUserError(
+                 "Either param_style or param_regex must be provided, not both"
+             )
+         if "param_regex" in live_context:
+@@ -101,14 +101,14 @@ class PlaceholderTemplater(RawTemplater):
+         elif "param_style" in live_context:
+             param_style = live_context["param_style"]
+             if param_style not in KNOWN_STYLES:
+-                raise ValueError(
++                raise SQLFluffUserError(
+                     'Unknown param_style "{}", available are: {}'.format(
+                         param_style, list(KNOWN_STYLES.keys())
+                     )
+                 )
+             live_context["__bind_param_regex"] = KNOWN_STYLES[param_style]
+         else:
+-            raise ValueError(
++            raise SQLFluffUserError(
+                 "No param_regex nor param_style was provided to the placeholder "
+                 "templater!"
+             )
+diff --git a/src/sqlfluff/dialects/dialect_ansi.py b/src/sqlfluff/dialects/dialect_ansi.py
+index 7e4f73b25..b0d4a3226 100644
+--- a/src/sqlfluff/dialects/dialect_ansi.py
++++ b/src/sqlfluff/dialects/dialect_ansi.py
+@@ -1491,6 +1491,16 @@ class FunctionNameSegment(BaseSegment):
+         OneOf(
+             Ref("FunctionNameIdentifierSegment"),
+             Ref("QuotedIdentifierSegment"),
++            # A fix that unquotes a function name (RF06) replaces the quoted
++            # identifier with a `naked_identifier`, which neither alternative
++            # above can match - `FunctionNameIdentifierSegment` keys on the
++            # raw lexer type `word`. The segment-level revalidation then fails
++            # and the linter refuses its own fix as unparsable. Nothing is
++            # ever lexed as `naked_identifier`, so this alternative cannot
++            # match during a fresh parse and cannot change a parse tree.
++            TypedParser(
++                "naked_identifier", WordSegment, type="function_name_identifier"
++            ),
+             terminators=[Ref("BracketedSegment")],
+         ),
+         allow_gaps=False,
+diff --git a/src/sqlfluff/dialects/dialect_flink.py b/src/sqlfluff/dialects/dialect_flink.py
+index f86b93e8d..ad39583c5 100644
+--- a/src/sqlfluff/dialects/dialect_flink.py
++++ b/src/sqlfluff/dialects/dialect_flink.py
+@@ -180,31 +180,24 @@ flink_dialect.add(
+     ),
+     # Double equals operator for connector options
+     DoubleEqualsSegment=StringParser("==", SymbolSegment, type="double_equals"),
++    # The hyphen inside a property name is part of the name, not arithmetic.
++    # Typing it as a binary operator (which `MinusSegment` does) makes LT01
++    # ask for spaces around it, and `execution.runtime - mode` is not a
++    # property name any more - the linter then refuses its own fix as
++    # unparsable. BigQuery types the hyphen in its own hyphenated names the
++    # same way, for the same reason.
++    FlinkPropertyDashSegment=StringParser("-", SymbolSegment, type="dash"),
+     FlinkPropertyNamePartSegment=Sequence(
+         Ref("SingleIdentifierGrammar"),
+         AnyNumberOf(
+             Sequence(
+-                Ref("MinusSegment"),
++                Ref("FlinkPropertyDashSegment"),
+                 Ref("SingleIdentifierGrammar"),
+                 allow_gaps=False,
+             ),
+-        ),
+-    ),
+-    FlinkPropertyNameSegment=OneOf(
+-        Delimited(
+-            Ref("FlinkPropertyNamePartSegment"),
+-            delimiter=Ref("DotSegment"),
+-            allow_gaps=False,
+-        ),
+-        Ref("QuotedLiteralSegment"),
+-    ),
+-    FlinkPropertyValueSegment=OneOf(
+-        Ref("LiteralGrammar"),
+-        Delimited(
+-            Ref("FlinkPropertyNamePartSegment"),
+-            delimiter=Ref("DotSegment"),
+             allow_gaps=False,
+         ),
++        allow_gaps=False,
+     ),
+     # Connector options for CREATE TABLE
+     CreateTableConnectorOptionsSegment=Sequence(
+@@ -350,6 +343,39 @@ flink_dialect.replace(
+ )
+ 
+ 
++class FlinkPropertyNameSegment(BaseSegment):
++    """A dotted, possibly hyphenated Flink property name.
++
++    Typed `object_reference` so the default layout config's
++    `spacing_within = touch:inline` applies: the dots and hyphens inside a
++    property name are part of the name, and LT01 must not space them apart.
++    """
++
++    type = "object_reference"
++    match_grammar = OneOf(
++        Delimited(
++            Ref("FlinkPropertyNamePartSegment"),
++            delimiter=Ref("DotSegment"),
++            allow_gaps=False,
++        ),
++        Ref("QuotedLiteralSegment"),
++    )
++
++
++class FlinkPropertyValueSegment(BaseSegment):
++    """A Flink property value, which may itself be a dotted name."""
++
++    type = "object_reference"
++    match_grammar = OneOf(
++        Ref("LiteralGrammar"),
++        Delimited(
++            Ref("FlinkPropertyNamePartSegment"),
++            delimiter=Ref("DotSegment"),
++            allow_gaps=False,
++        ),
++    )
++
++
+ class TemporalQuerySegment(BaseSegment):
+     """A segment for `FOR SYSTEM_TIME AS OF`."""
+ 
+diff --git a/src/sqlfluff/rules/layout/LT09.py b/src/sqlfluff/rules/layout/LT09.py
+index 15e03842b..ab9e517e2 100644
+--- a/src/sqlfluff/rules/layout/LT09.py
++++ b/src/sqlfluff/rules/layout/LT09.py
+@@ -37,6 +37,13 @@ class Rule_LT09(BaseRule):
+        ones, to be placed on a new line set ``single_target_policy = new_line``.
+        This gives consistent formatting regardless of the number of select targets.
+ 
++    .. note::
++       A single select target already on its own line is reported but not
++       autofixed when moving it up would push the ``SELECT`` line past
++       ``max_line_length``. Otherwise :sqlfluff:ref:`LT05` would break the line
++       again on the next pass and the two rules would undo each other, so
++       ``sqlfluff fix`` would never reach a fixed point.
++
+     **Anti-pattern**
+ 
+     Multiple select targets on the same line.
+@@ -255,6 +262,48 @@ class Rule_LT09(BaseRule):
+ 
+         return None
+ 
++    @staticmethod
++    def _merge_would_exceed_line_length(
++        context: RuleContext,
++        newline_seg: BaseSegment,
++        insert_prefix: Sequence[BaseSegment],
++        target_seg: BaseSegment,
++    ) -> bool:
++        """Whether pulling the target up to the SELECT line overruns the limit.
++
++        The merged line is everything already on the ``SELECT`` line ahead of
++        the newline this fix replaces, then the segments inserted before the
++        target, then the target's own line from the target onwards.
++        """
++        max_line_length = context.config.get("max_line_length")
++        if not max_line_length:
++            return False
++        target_raws = target_seg.raw_segments
++        if not (newline_seg.pos_marker and target_raws and target_raws[0].pos_marker):
++            return False  # pragma: no cover
++        target_marker = target_raws[0].pos_marker
++        root = context.parent_stack[0] if context.parent_stack else context.segment
++        tail_len = 0
++        for raw in root.raw_segments:
++            if not raw.pos_marker:
++                continue  # pragma: no cover
++            if raw.pos_marker.working_line_no < target_marker.working_line_no:
++                continue
++            if raw.pos_marker.working_line_no > target_marker.working_line_no:
++                break
++            if raw.is_type("newline"):
++                # The line's own newline ends the line rather than joining the
++                # merged one, so counting it makes the computed length one too
++                # long and the check fires at exactly the limit.
++                continue
++            if raw.pos_marker.working_line_pos >= target_marker.working_line_pos:
++                tail_len += len(raw.raw)
++        # `working_line_pos` is 1-indexed, so subtracting one gives the count of
++        # characters already on the SELECT line ahead of the newline.
++        prefix_len = newline_seg.pos_marker.working_line_pos - 1
++        insert_len = sum(len(seg.raw) for seg in insert_prefix)
++        return prefix_len + insert_len + tail_len > max_line_length
++
+     def _eval_single_select_target_element(
+         self, select_targets_info, context: RuleContext
+     ):
+@@ -352,6 +401,23 @@ class Rule_LT09(BaseRule):
+             start_idx = target_idx
+             start_seg = select_children[select_targets_info.first_new_line_idx]
+ 
++        # Would moving the target up onto the SELECT line make that line too
++        # long? If so, report the issue but don't fix it. LT05 would only have
++        # to break the line again on the next pass, and the two rules would
++        # undo each other forever: `sqlfluff fix` would never reach a fixed
++        # point and successive runs would rewrite the file each time.
++        if self._merge_would_exceed_line_length(
++            context,
++            select_children[select_targets_info.first_new_line_idx],
++            insert_buff[:-1],
++            target_seg,
++        ):
++            self.logger.info(
++                "Target at index %s would make the SELECT line too long.",
++                target_idx,
++            )
++            return LintResult(anchor=select_clause.get())
++
+         fixes = [
+             # Insert the select_clause in place of the first newline in the
+             # Select statement
+diff --git a/src/sqlfluff/rules/structure/ST04.py b/src/sqlfluff/rules/structure/ST04.py
+index ee05ce85e..cd052d1f5 100644
+--- a/src/sqlfluff/rules/structure/ST04.py
++++ b/src/sqlfluff/rules/structure/ST04.py
+@@ -209,13 +209,17 @@ class Rule_ST04(BaseRule):
+             start_seg=case1_else_clause_seg,
+             loop_while=sp.not_(sp.is_type("newline")),
+         )
++        first_comment = trailing_end.first(sp.is_comment()).get()
++        if not first_comment:
++            # Nothing to move onto its own line, so leave the spacing alone.
++            # Deleting it here would join the last flattened clause straight
++            # onto the outer `END` when the whole CASE is on one line.
++            return []
+         fixes = trailing_end.select(
+             sp.is_whitespace(), loop_while=sp.not_(sp.is_comment())
+         ).apply(LintFix.delete)
+-        first_comment = trailing_end.first(sp.is_comment()).get()
+-        if first_comment:
+-            segments = [NewlineSegment(), WhitespaceSegment(end_indent_str)]
+-            fixes.append(LintFix.create_before(first_comment, segments, segments))
++        segments = [NewlineSegment(), WhitespaceSegment(end_indent_str)]
++        fixes.append(LintFix.create_before(first_comment, segments, segments))
+         return fixes
+ 
+     def _rebuild_spacing(
+diff --git a/src/sqlfluff/rules/structure/ST07.py b/src/sqlfluff/rules/structure/ST07.py
+index b203ff3f1..3a6a3e20a 100644
+--- a/src/sqlfluff/rules/structure/ST07.py
++++ b/src/sqlfluff/rules/structure/ST07.py
+@@ -6,13 +6,17 @@ from sqlfluff.core.dialects.common import iter_raw_references
+ from sqlfluff.core.parser import (
+     BaseSegment,
+     IdentifierSegment,
++    ImplicitIndent,
+     KeywordSegment,
+     SymbolSegment,
+     WhitespaceSegment,
+ )
+ from sqlfluff.core.rules import BaseRule, LintFix, LintResult, RuleContext
+ from sqlfluff.core.rules.crawlers import SegmentSeekerCrawler
+-from sqlfluff.dialects.dialect_ansi import ColumnReferenceSegment
++from sqlfluff.dialects.dialect_ansi import (
++    ColumnReferenceSegment,
++    JoinOnConditionSegment,
++)
+ from sqlfluff.utils.analysis.select import get_select_statement_info
+ from sqlfluff.utils.functional import FunctionalContext, Segments, sp
+ 
+@@ -89,6 +93,14 @@ class Rule_ST07(BaseRule):
+         if len(using_anchor) == 0:
+             return None
+ 
++        # An ASOF join's USING list is not a list of equalities: the last
++        # attribute in it is an inequality (>=), which is the whole point of
++        # the join. Rewriting it into all-equality ON conditions changes which
++        # rows the query returns, so the rule does not apply here at all - the
++        # same reason clickhouse is excluded above, one dialect further along.
++        if segment.children(sp.is_keyword("asof")):
++            return None
++
+         anchor = using_anchor.get()
+         description = "Found USING statement. Expected only ON statements."
+         # All returns from here out will be some form of linting error.
+@@ -159,14 +171,33 @@ class Rule_ST07(BaseRule):
+         table_b = alias_by_element.get(right_element.uuid) if right_element else None
+         if table_a is None or table_b is None:  # pragma: no cover
+             return unfixable_result
+-        edit_segments = [
+-            KeywordSegment(raw="ON"),
+-            WhitespaceSegment(raw=" "),
+-        ] + _generate_join_conditions(
+-            table_a.ref_str,
+-            table_b.ref_str,
+-            using_cols,
++        # The deleted run carries the USING clause's own indent while the
++        # matching dedent sits after the bracket, outside that run, so deleting
++        # it alone leaves the file's indent balance short from this join
++        # onwards and LT02 then indents everything after it one level too
++        # shallow. A fresh parse of the ON form puts an implicit indent in
++        # exactly this position, so putting the balance back here is also what
++        # keeps the fixed tree in step with a re-parse of its own output.
++        indent_delta = sum(
++            getattr(raw, "indent_val", 0)
++            for seg in to_delete
++            for raw in seg.raw_segments
+         )
++        edit_segments: list[BaseSegment] = [
++            JoinOnConditionSegment(
++                segments=tuple(
++                    [KeywordSegment(raw="ON")]
++                    + [ImplicitIndent() for _ in range(indent_delta)]
++                    + [WhitespaceSegment(raw=" ")]
++                    + _generate_join_conditions(
++                        table_a.ref_str,
++                        table_b.ref_str,
++                        using_cols,
++                    )
++                ),
++                pos_marker=None,
++            )
++        ]
+ 
+         assert table_a.segment
+         assert table_b.segment
+diff --git a/src/sqlfluff/utils/reflow/config.py b/src/sqlfluff/utils/reflow/config.py
+index 42c8391fa..5eb944cad 100644
+--- a/src/sqlfluff/utils/reflow/config.py
++++ b/src/sqlfluff/utils/reflow/config.py
+@@ -2,13 +2,16 @@
+ 
+ # Until we have a proper structure this will work.
+ # TODO: Migrate this to the config file.
+-from dataclasses import dataclass
+-from typing import AbstractSet, Any, Optional, Union
++from dataclasses import dataclass, field
++from typing import TYPE_CHECKING, AbstractSet, Any, Optional, Union
+ 
+ from sqlfluff.core.config import FluffConfig
+ from sqlfluff.core.helpers.string import split_comma_separated_string
+ from sqlfluff.utils.reflow.depthmap import DepthInfo
+ 
++if TYPE_CHECKING:  # pragma: no cover
++    from sqlfluff.core.dialects import Dialect
++
+ ConfigElementType = dict[str, str]
+ ConfigDictType = dict[str, ConfigElementType]
+ 
+@@ -84,6 +87,11 @@ class ReflowConfig:
+     implicit_indents: str = "forbid"
+     trailing_comments: str = "before"
+     ignore_comment_lines: bool = False
++    # The dialect is only used to ask its lexer whether removing a whitespace
++    # would join the characters either side into a different token. It is
++    # excluded from comparison so that adding it does not change how two
++    # ReflowConfigs compare or hash.
++    dialect: Optional["Dialect"] = field(default=None, compare=False)
+ 
+     @classmethod
+     def from_dict(cls, config_dict: ConfigDictType, **kwargs: Any) -> "ReflowConfig":
+@@ -130,6 +138,7 @@ class ReflowConfig:
+             implicit_indents=config.get("implicit_indents", ["indentation"]),
+             trailing_comments=config.get("trailing_comments", ["indentation"]),
+             ignore_comment_lines=config.get("ignore_comment_lines", ["indentation"]),
++            dialect=config.get("dialect_obj"),
+         )
+ 
+     def get_block_config(
+diff --git a/src/sqlfluff/utils/reflow/elements.py b/src/sqlfluff/utils/reflow/elements.py
+index ecdd4b339..0f930f5bc 100644
+--- a/src/sqlfluff/utils/reflow/elements.py
++++ b/src/sqlfluff/utils/reflow/elements.py
+@@ -4,7 +4,7 @@ import logging
+ from collections.abc import Sequence
+ from dataclasses import dataclass, field
+ from itertools import chain
+-from typing import Optional, Union, cast
++from typing import TYPE_CHECKING, Optional, Union, cast
+ 
+ from sqlfluff.core.helpers.slice import slice_overlaps
+ from sqlfluff.core.parser import PositionMarker
+@@ -32,6 +32,9 @@ from sqlfluff.utils.reflow.respace import (
+ # We're in the utils module, but users will expect reflow
+ # logs to appear in the context of rules. Hence it's a subset
+ # of the rules logger.
++if TYPE_CHECKING:  # pragma: no cover
++    from sqlfluff.core.dialects import Dialect
++
+ reflow_logger = logging.getLogger("sqlfluff.rules.reflow")
+ 
+ 
+@@ -695,6 +698,7 @@ class ReflowPoint(ReflowElement):
+         anchor_on: str = "before",
+         indent_unit: str = "space",
+         tab_space_size: int = 4,
++        dialect: Optional["Dialect"] = None,
+     ) -> tuple[list[LintResult], "ReflowPoint"]:
+         """Respace a point based on given constraints.
+ 
+@@ -811,6 +815,7 @@ class ReflowPoint(ReflowElement):
+                 last_whitespace,
+                 indent_unit,
+                 tab_space_size,
++                dialect,
+             )
+             new_results.extend(results)
+         else:
+diff --git a/src/sqlfluff/utils/reflow/rebreak.py b/src/sqlfluff/utils/reflow/rebreak.py
+index a954f796d..973e7e578 100644
+--- a/src/sqlfluff/utils/reflow/rebreak.py
++++ b/src/sqlfluff/utils/reflow/rebreak.py
+@@ -2,7 +2,7 @@
+ 
+ import logging
+ from dataclasses import dataclass
+-from typing import cast
++from typing import TYPE_CHECKING, Optional, cast
+ 
+ from sqlfluff.core.parser import BaseSegment, RawSegment
+ from sqlfluff.core.rules import LintFix, LintResult
+@@ -13,6 +13,9 @@ from sqlfluff.utils.reflow.helpers import (
+     pretty_segment_name,
+ )
+ 
++if TYPE_CHECKING:  # pragma: no cover
++    from sqlfluff.core.dialects import Dialect
++
+ # We're in the utils module, but users will expect reflow
+ # logs to appear in the context of rules. Hence it's a subset
+ # of the rules logger.
+@@ -378,6 +381,7 @@ def rebreak_sequence(
+     root_segment: BaseSegment,
+     indent_unit: str = "space",
+     tab_space_size: int = 4,
++    dialect: Optional["Dialect"] = None,
+ ) -> tuple[ReflowSequenceType, list[LintResult]]:
+     """Reflow line breaks within a sequence.
+ 
+@@ -507,6 +511,7 @@ def rebreak_sequence(
+                     strip_newlines=True,
+                     indent_unit=indent_unit,
+                     tab_space_size=tab_space_size,
++                    dialect=dialect,
+                 )
+ 
+                 # Update the points in the buffer
+@@ -537,6 +542,7 @@ def rebreak_sequence(
+                         anchor_on="after",
+                         indent_unit=indent_unit,
+                         tab_space_size=tab_space_size,
++                        dialect=dialect,
+                     )
+ 
+                     create_anchor = first_create_anchor(
+@@ -634,6 +640,7 @@ def rebreak_sequence(
+                     strip_newlines=True,
+                     indent_unit=indent_unit,
+                     tab_space_size=tab_space_size,
++                    dialect=dialect,
+                 )
+ 
+                 # Update the points in the buffer
+@@ -663,6 +670,7 @@ def rebreak_sequence(
+                         anchor_on="before",
+                         indent_unit=indent_unit,
+                         tab_space_size=tab_space_size,
++                        dialect=dialect,
+                     )
+ 
+                     lead_create_anchor = first_create_anchor(
+@@ -777,6 +785,7 @@ def rebreak_keywords_sequence(
+     root_segment: BaseSegment,
+     indent_unit: str = "space",
+     tab_space_size: int = 4,
++    dialect: Optional["Dialect"] = None,
+ ) -> tuple[ReflowSequenceType, list[LintResult]]:
+     """Reflow line breaks within a sequence.
+ 
+@@ -876,6 +885,7 @@ def rebreak_keywords_sequence(
+                 strip_newlines=True,
+                 indent_unit=indent_unit,
+                 tab_space_size=tab_space_size,
++                dialect=dialect,
+             )
+ 
+             # Update the points in the buffer
+@@ -914,6 +924,7 @@ def rebreak_keywords_sequence(
+                 strip_newlines=True,
+                 indent_unit=indent_unit,
+                 tab_space_size=tab_space_size,
++                dialect=dialect,
+             )
+ 
+             # Update the points in the buffer
+diff --git a/src/sqlfluff/utils/reflow/respace.py b/src/sqlfluff/utils/reflow/respace.py
+index 94cf63ff1..aed0adf7a 100644
+--- a/src/sqlfluff/utils/reflow/respace.py
++++ b/src/sqlfluff/utils/reflow/respace.py
+@@ -15,6 +15,7 @@ from sqlfluff.core.rules import LintFix, LintResult
+ from sqlfluff.utils.reflow.helpers import pretty_segment_name
+ 
+ if TYPE_CHECKING:  # pragma: no cover
++    from sqlfluff.core.dialects import Dialect
+     from sqlfluff.utils.reflow.elements import ReflowBlock
+ 
+ 
+@@ -29,6 +30,61 @@ reflow_logger = logging.getLogger("sqlfluff.rules.reflow")
+ # ---------------------------
+ 
+ 
++# Keyed on the dialect name and the two raws that would meet if the whitespace
++# between them were removed. The answer depends on nothing else, and this runs
++# at every reflow point, so it is worth caching. Capped so that a long session
++# over many files cannot grow it without bound.
++_TOUCH_JOIN_CACHE_LIMIT = 4096
++_touch_join_safety: dict[tuple[str, str, str], bool] = {}
++
++
++def _touch_join_is_safe(
++    prev_block: Optional["ReflowBlock"],
++    next_block: Optional["ReflowBlock"],
++    dialect: Optional["Dialect"],
++) -> bool:
++    """Can the whitespace between these two blocks be removed safely?
++
++    A `touch` constraint removes whitespace, which concatenates the raw text on
++    either side of it. Where the two raws then lex as something other than
++    themselves the result no longer means what the user wrote: `--` and `##`
++    open comments, and `->`, `~~` and `||` are operators in several dialects.
++    Re-parsing the segment tree cannot catch this, because the tree still holds
++    two separate raws either side of the deleted whitespace - the change only
++    exists once the file is written out and lexed again. So ask the dialect's
++    lexer whether the joined text still lexes as those same two raws.
++
++    This is a check on the join itself, not on the whole file: it does not
++    detect a join whose consequence needs later text to appear (`/` and `*` lex
++    as two tokens, and only a `*/` further down the file would turn them into a
++    block comment).
++    """
++    if dialect is None:
++        # No dialect available - reflow is being driven from a bare config,
++        # which happens in unit tests. Keep the historical behaviour.
++        return True
++    prev_raw = prev_block.segments[-1].raw if prev_block else ""
++    next_raw = next_block.segments[0].raw if next_block else ""
++    if not prev_raw or not next_raw:
++        return True
++    key = (dialect.name, prev_raw, next_raw)
++    safe = _touch_join_safety.get(key)
++    if safe is None:
++        # Imported here: the lexer pulls in parser machinery that would
++        # otherwise make this module part of an import cycle.
++        from sqlfluff.core.parser.lexer import PyLexer
++
++        res = PyLexer.lex_match(prev_raw + next_raw, dialect.get_lexer_matchers())
++        safe = not res.forward_string and [elem.raw for elem in res.elements] == [
++            prev_raw,
++            next_raw,
++        ]
++        if len(_touch_join_safety) >= _TOUCH_JOIN_CACHE_LIMIT:
++            _touch_join_safety.clear()
++        _touch_join_safety[key] = safe
++    return safe
++
++
+ def _construct_alignment_whitespace(width: int, indent_unit: str) -> str:
+     """Construct alignment whitespace using tabs or spaces.
+ 
+@@ -633,6 +689,7 @@ def handle_respace__inline_with_space(
+     last_whitespace: RawSegment,
+     indent_unit: str = "space",
+     tab_space_size: int = 4,
++    dialect: Optional["Dialect"] = None,
+ ) -> tuple[list[RawSegment], list[LintResult]]:
+     """Check inline spacing is the right size.
+ 
+@@ -657,7 +714,16 @@ def handle_respace__inline_with_space(
+     # Do we have either side set to "touch"?
+     if "touch" in [pre_constraint, post_constraint]:
+         # In this instance - no whitespace is correct, This
+-        # means we should delete it.
++        # means we should delete it - unless removing it would join the
++        # neighbouring characters into a different token.
++        if not _touch_join_is_safe(prev_block, next_block, dialect):
++            reflow_logger.debug(
++                "    Keeping whitespace: removing it would re-lex %r and %r "
++                "as one token.",
++                prev_block.segments[-1].raw if prev_block else "",
++                next_block.segments[0].raw if next_block else "",
++            )
++            return segment_buffer, []
+         segment_buffer.pop(ws_idx)
+         if next_block:
+             description = (
+diff --git a/src/sqlfluff/utils/reflow/sequence.py b/src/sqlfluff/utils/reflow/sequence.py
+index 880ae95ee..5fdf2c3db 100644
+--- a/src/sqlfluff/utils/reflow/sequence.py
++++ b/src/sqlfluff/utils/reflow/sequence.py
+@@ -520,6 +520,7 @@ class ReflowSequence:
+                 strip_newlines=strip_newlines,
+                 indent_unit=self.reflow_config.indent_unit,
+                 tab_space_size=self.reflow_config.tab_space_size,
++                dialect=self.reflow_config.dialect,
+             )
+             # If filter has been set, optionally unset the returned values.
+             if (
+@@ -581,6 +582,7 @@ class ReflowSequence:
+                 self.root_segment,
+                 self.reflow_config.indent_unit,
+                 self.reflow_config.tab_space_size,
++                self.reflow_config.dialect,
+             )
+         elif rebreak_type == "keywords":
+             elem_buff, lint_results = rebreak_keywords_sequence(
+@@ -588,6 +590,7 @@ class ReflowSequence:
+                 self.root_segment,
+                 self.reflow_config.indent_unit,
+                 self.reflow_config.tab_space_size,
++                self.reflow_config.dialect,
+             )
+         else:  # pragma: no cover
+             raise NotImplementedError(
+diff --git a/test/api/simple_test.py b/test/api/simple_test.py
+index e24127a15..82299df94 100644
+--- a/test/api/simple_test.py
++++ b/test/api/simple_test.py
+@@ -678,3 +678,28 @@ def test__api__parse_exceptions():
+     # Templater success but parsing fail
+     with pytest.raises(APIParsingError):
+         sqlfluff.parse("THIS IS NOT SQL")
++
++
++@pytest.mark.parametrize(
++    "bad_query",
++    [
++        # Parsing aborts on an unclosed bracket, so there is no tree at all.
++        "SELECT  a FROM tbl\nSELECT FROM WHERE (((\n",
++        # Templating fails outright, so there is nothing to parse either.
++        "SELECT  a FROM {{ unclosed \n",
++    ],
++    ids=["unclosed_bracket", "unclosed_jinja_tag"],
++)
++def test__api__fix_string_no_tree_fix_even_unparsable(bad_query):
++    """fix_even_unparsable must not raise when there is no parse tree.
++
++    A file whose templating or parsing failed outright carries no tree to
++    rebuild the source from. It is returned unchanged rather than raising, the
++    same way the `fix_even_unparsable=False` path already returns it.
++    """
++    assert (
++        sqlfluff.fix(bad_query, dialect="ansi", fix_even_unparsable=True) == bad_query
++    )
++    assert (
++        sqlfluff.fix(bad_query, dialect="ansi", fix_even_unparsable=False) == bad_query
++    )
+diff --git a/test/core/parser/rust_parser_iteration_limit_test.py b/test/core/parser/rust_parser_iteration_limit_test.py
+new file mode 100644
+index 000000000..981975c2c
+--- /dev/null
++++ b/test/core/parser/rust_parser_iteration_limit_test.py
+@@ -0,0 +1,65 @@
++"""The Rust parser's iteration limit must report, not panic.
++
++The guard used to call ``panic!``, which crosses the PyO3 boundary as
++``pyo3_runtime.PanicException`` - a ``BaseException``, so an integrating
++caller's ``except Exception`` never caught it and ``sqlfluff lint`` ended in a
++raw traceback. Its sibling guard, ``max_parse_depth``, has always returned a
++normal parse error; this pins that the iteration guard now does too.
++"""
++
++import pytest
++
++from sqlfluff.core import FluffConfig, Linter
++from sqlfluff.core.parser.rust_parser import _HAS_RUST_PARSER
++
++pytestmark = pytest.mark.skipif(
++    not _HAS_RUST_PARSER, reason="sqlfluffrs extension is not installed"
++)
++
++# Small enough that the limit trips in milliseconds rather than minutes.
++_TIGHT_LIMIT = 50
++_SQL = "SELECT a, b, c FROM tbl WHERE a = 1 AND b = 2\n"
++
++
++def _linter(limit: int) -> Linter:
++    return Linter(
++        config=FluffConfig(
++            overrides={
++                "dialect": "ansi",
++                "use_rust_parser": "true",
++                "rust_parser_max_iterations": limit,
++                "rust_parser_warn_threshold": limit,
++            }
++        )
++    )
++
++
++def test_rust_parser_iteration_limit_is_reported_not_raised() -> None:
++    """Exceeding the limit yields a PRS violation, not an exception."""
++    # BaseException rather than Exception: a PanicException is not an Exception,
++    # so `except Exception` here would pass while the defect was live.
++    try:
++        linted = _linter(_TIGHT_LIMIT).lint_string(_SQL)
++    except BaseException as err:  # pragma: no cover - the defect being pinned
++        pytest.fail(f"{type(err).__name__} escaped the parser: {err}")
++
++    codes = [v.rule_code() for v in linted.violations]
++    assert "PRS" in codes
++    assert any(
++        "exceeded maximum iteration limit" in str(v) for v in linted.violations
++    )
++
++
++def test_rust_parser_iteration_limit_reports_a_position() -> None:
++    """The reported violation carries a position, like any other parse error."""
++    linted = _linter(_TIGHT_LIMIT).lint_string(_SQL)
++    prs = [v for v in linted.violations if v.rule_code() == "PRS"]
++    assert prs
++    assert prs[0].line_no >= 1
++    assert prs[0].line_pos >= 1
++
++
++def test_rust_parser_under_the_limit_still_parses() -> None:
++    """A control: the same SQL parses clean when the limit is not tripped."""
++    linted = _linter(3_000_000).lint_string(_SQL)
++    assert [v.rule_code() for v in linted.violations if v.rule_code() == "PRS"] == []
+diff --git a/test/core/templaters/jinja_test.py b/test/core/templaters/jinja_test.py
+index 4e25059b0..6013bb15a 100644
+--- a/test/core/templaters/jinja_test.py
++++ b/test/core/templaters/jinja_test.py
+@@ -702,6 +702,43 @@ def test__templater_jinja_error_catastrophic():
+     assert "Unrecoverable failure in Jinja templating" in str(templater_exception)
+ 
+ 
++@pytest.mark.parametrize(
++    "instr,expected_error",
++    [
++        # Arithmetic that raises. ZeroDivisionError is not a TemplateError, a
++        # TypeError or a ValueError, so before this was handled it escaped the
++        # templater and crashed the CLI with a traceback.
++        ("SELECT {{ 1/0 }} FROM t\n", "ZeroDivisionError"),
++        # The same, with the denominator arriving from the template rather than
++        # written as a literal zero.
++        ("SELECT {% set n = 0 %}{{ 10 / n }} FROM t\n", "ZeroDivisionError"),
++        # An unbounded recursive macro. RecursionError derives from
++        # RuntimeError and escaped the same way.
++        (
++            "SELECT {% macro m() %}{{ m() }}{% endmacro %}{{ m() }} FROM t\n",
++            "RecursionError",
++        ),
++    ],
++)
++def test__templater_jinja_error_runtime_failures_are_templater_errors(
++    instr, expected_error
++):
++    """Any exception raised while rendering is reported, never a traceback.
++
++    Rendering runs the template's own code, so it can raise anything. Whatever
++    it raises must reach the user as a TMP violation naming the failure.
++    """
++    lntr = Linter(
++        config=FluffConfig(
++            overrides={"dialect": "ansi", "templater": "jinja"},
++        )
++    )
++    result = lntr.lint_string(instr)
++    violations = [v for v in result.violations if v.rule_code() == "TMP"]
++    assert violations, f"No TMP violation raised for {instr!r}"
++    assert expected_error in violations[0].description
++
++
+ def test__templater_jinja_error_macro_path_does_not_exist():
+     """Tests that an error is raised if macro path doesn't exist."""
+     with pytest.raises(ValueError) as e:
+diff --git a/test/core/templaters/placeholder_test.py b/test/core/templaters/placeholder_test.py
+index 534dcca2f..08a5a9159 100644
+--- a/test/core/templaters/placeholder_test.py
++++ b/test/core/templaters/placeholder_test.py
+@@ -1,8 +1,10 @@
+ """Tests for templaters."""
+ 
+ import pytest
++import regex
+ 
+ from sqlfluff.core import FluffConfig
++from sqlfluff.core.errors import SQLFluffUserError
+ from sqlfluff.core.templaters import PlaceholderTemplater
+ 
+ 
+@@ -442,3 +444,28 @@ def test__templater_styles():
+     t = PlaceholderTemplater(override_context=dict(param_style="pperccent"))
+     with pytest.raises(ValueError, match=r"Unknown param_style"):
+         t.process(in_str="SELECT 2+2", fname="test")
++
++
++@pytest.mark.parametrize(
++    "context,expected",
++    [
++        ({}, "No param_regex nor param_style was provided"),
++        ({"param_style": "not_a_style"}, 'Unknown param_style "not_a_style"'),
++        (
++            {"param_style": "colon", "param_regex": "__(?P<param_name>[\\w_]+)__"},
++            "Either param_style or param_regex must be provided, not both",
++        ),
++    ],
++)
++def test__templater_config_errors_are_user_errors(context, expected):
++    """A misconfigured placeholder templater is a user error, not a traceback.
++
++    All three of these are mistakes in a config file the project owner wrote,
++    so they must reach the CLI as ``SQLFluffUserError`` - which the CLI prints
++    as a single ``User Error:`` line - rather than as a bare ``ValueError``
++    escaping to a Python traceback. ``SQLFluffUserError`` subclasses
++    ``ValueError``, so callers catching the broader type still do.
++    """
++    templater = PlaceholderTemplater(override_context=dict(context))
++    with pytest.raises(SQLFluffUserError, match=regex.escape(expected)):
++        templater.process(in_str="SELECT 2+2", fname="test")
+diff --git a/test/fixtures/dialects/flink/set_statement.yml b/test/fixtures/dialects/flink/set_statement.yml
+index a8534e56c..c5532c9ec 100644
+--- a/test/fixtures/dialects/flink/set_statement.yml
++++ b/test/fixtures/dialects/flink/set_statement.yml
+@@ -3,47 +3,55 @@
+ # computed by SQLFluff when running the tests. Please run
+ # `python test/generate_parse_fixture_yml.py`  to generate them after adding or
+ # altering SQL files.
+-_hash: 3a6f40ce338ac2d0946bf1204bb9cbc3f2008d55557c5c015d884bce4db1e82b
++_hash: d59a2555522ecdb2400175ee474672fc6f147bf9dbca2e9738e84c08aa5d14e8
+ file:
+ - statement:
+     set_statement:
+     - keyword: SET
+-    - quoted_literal: "'table.exec.state.ttl'"
++    - object_reference:
++        quoted_literal: "'table.exec.state.ttl'"
+     - comparison_operator:
+         raw_comparison_operator: '='
+-    - quoted_literal: "'10d'"
++    - object_reference:
++        quoted_literal: "'10d'"
+ - statement_terminator: ;
+ - statement:
+     set_statement:
+     - keyword: SET
+-    - naked_identifier: execution
+-    - dot: .
+-    - naked_identifier: runtime
+-    - binary_operator: '-'
+-    - naked_identifier: mode
++    - object_reference:
++      - naked_identifier: execution
++      - dot: .
++      - naked_identifier: runtime
++      - dash: '-'
++      - naked_identifier: mode
+     - comparison_operator:
+         raw_comparison_operator: '='
+-    - naked_identifier: streaming
++    - object_reference:
++        naked_identifier: streaming
+ - statement_terminator: ;
+ - statement:
+     set_statement:
+     - keyword: SET
+-    - naked_identifier: pipeline
+-    - dot: .
+-    - naked_identifier: name
++    - object_reference:
++      - naked_identifier: pipeline
++      - dot: .
++      - naked_identifier: name
+     - comparison_operator:
+         raw_comparison_operator: '='
+-    - quoted_literal: "'foo'"
++    - object_reference:
++        quoted_literal: "'foo'"
+ - statement_terminator: ;
+ - statement:
+     set_statement:
+     - keyword: SET
+-    - naked_identifier: execution
+-    - dot: .
+-    - naked_identifier: checkpointing
+-    - dot: .
+-    - naked_identifier: mode
++    - object_reference:
++      - naked_identifier: execution
++      - dot: .
++      - naked_identifier: checkpointing
++      - dot: .
++      - naked_identifier: mode
+     - comparison_operator:
+         raw_comparison_operator: '='
+-    - naked_identifier: EXACTLY_ONCE
++    - object_reference:
++        naked_identifier: EXACTLY_ONCE
+ - statement_terminator: ;
+diff --git a/test/fixtures/rules/std_rule_cases/LT01-operators.yml b/test/fixtures/rules/std_rule_cases/LT01-operators.yml
+index 8e3eb0555..8ae87d7ff 100644
+--- a/test/fixtures/rules/std_rule_cases/LT01-operators.yml
++++ b/test/fixtures/rules/std_rule_cases/LT01-operators.yml
+@@ -181,3 +181,39 @@ fail_oracle_modulo_still_spaced:
+   configs:
+     core:
+       dialect: oracle
++
++# Removing whitespace must not join the neighbouring characters into a
++# different token. `- -` would become `--`, which opens a comment and silently
++# discards the rest of the statement.
++# -------------------
++
++test_pass_adjacent_sign_indicators:
++  # `- -` must keep its space: `--` is a comment marker.
++  pass_str: "SELECT 1 * - -5;\n"
++
++test_fail_adjacent_sign_indicators_only_outer_space_removed:
++  fail_str: "SELECT 1 * - - 5;\n"
++  fix_str: "SELECT 1 * - -5;\n"
++
++test_fail_three_adjacent_sign_indicators:
++  fail_str: "SELECT 1 * - - - 5;\n"
++  fix_str: "SELECT 1 * - - -5;\n"
++
++test_fail_adjacent_plus_signs_still_collapse:
++  # Control: `++` lexes as two tokens in ansi, so the space is still removed.
++  fail_str: "SELECT 1 * + + 5;\n"
++  fix_str: "SELECT 1 * ++5;\n"
++
++test_pass_adjacent_tildes_postgres:
++  # `~~` is the LIKE operator in postgres, so `~ ~` must keep its space.
++  pass_str: "SELECT 'abc' LIKE ~ ~5;\n"
++  configs:
++    core:
++      dialect: postgres
++
++test_fail_adjacent_tildes_postgres:
++  fail_str: "SELECT 'abc' LIKE ~ ~ 5;\n"
++  fix_str: "SELECT 'abc' LIKE ~ ~5;\n"
++  configs:
++    core:
++      dialect: postgres
+diff --git a/test/fixtures/rules/std_rule_cases/ST04.yml b/test/fixtures/rules/std_rule_cases/ST04.yml
+index 93411dd0f..b095776fe 100644
+--- a/test/fixtures/rules/std_rule_cases/ST04.yml
++++ b/test/fixtures/rules/std_rule_cases/ST04.yml
+@@ -368,3 +368,12 @@ test_fail_retain_comments_after_else:
+                 THEN "value2" -- but also here
+         END
+     FROM table;
++
++test_fail_one_line_nested_case:
++  # Issue: with no comment after the nested END, the spacing before the outer
++  # END must survive the flattening, or the fixed SQL no longer parses.
++  fail_str: |
++    SELECT CASE WHEN a = 1 THEN 1 ELSE CASE WHEN b = 2 THEN 2 END END AS x FROM t
++  fix_str: |
++    SELECT CASE WHEN a = 1 THEN 1
++            WHEN b = 2 THEN 2 END AS x FROM t
+diff --git a/test/rules/std_LT01_dialect_name_spacing_test.py b/test/rules/std_LT01_dialect_name_spacing_test.py
+new file mode 100644
+index 000000000..363fc1caf
+--- /dev/null
++++ b/test/rules/std_LT01_dialect_name_spacing_test.py
+@@ -0,0 +1,49 @@
++"""LT01 must not space apart tokens that are one name to the dialect.
++
++Both cases below used to make LT01 emit a fix the linter then refused with
++``Fixes for LT01 not applied, as it would result in an unparsable file``: the
++file parsed clean, LT01 reported a fixable violation, and ``sqlfluff fix``
++changed nothing. The violations were spurious - the spacing was already
++correct - so the fix is that LT01 no longer reports them.
++"""
++
++import pytest
++
++from sqlfluff.core import FluffConfig, Linter
++
++CASES = [
++    # A Flink property name: the dots and the hyphen are part of the name.
++    ("flink", "SET execution.runtime-mode = streaming;\n"),
++    ("flink", "SET execution.checkpointing.mode = EXACTLY_ONCE;\n"),
++    # A SOQL LAST_N_* literal: LAST_N_WEEKS:5 is one token to the reader.
++    ("soql", "SELECT Id FROM Account WHERE CreatedDate = LAST_N_WEEKS:5\n"),
++]
++
++
++def _linter(dialect: str) -> Linter:
++    return Linter(config=FluffConfig(overrides={"dialect": dialect, "rules": "LT01"}))
++
++
++@pytest.mark.parametrize("dialect,sql", CASES)
++def test_lt01_leaves_dialect_names_alone(dialect: str, sql: str) -> None:
++    """LT01 reports nothing, so there is no refused fix."""
++    assert _linter(dialect).lint_string(sql).check_tuples() == []
++
++
++@pytest.mark.parametrize("dialect,sql", CASES)
++def test_fix_is_a_noop_and_output_still_parses(dialect: str, sql: str) -> None:
++    """`fix` leaves the text alone and the result still parses clean."""
++    linter = _linter(dialect)
++    fixed, _ = linter.lint_string(sql, fix=True).fix_string()
++    assert fixed == sql
++    parsed = linter.parse_string(fixed)
++    assert not list(parsed.tree.recursive_crawl("unparsable"))
++
++
++def test_flink_property_name_keeps_its_parts_together() -> None:
++    """The hyphen is a dash inside the name, not a binary operator."""
++    linter = Linter(config=FluffConfig(overrides={"dialect": "flink"}))
++    tree = linter.parse_string("SET execution.runtime-mode = streaming;\n").tree
++    types = [seg.get_type() for seg in tree.raw_segments if seg.raw.strip()]
++    assert "dash" in types
++    assert "binary_operator" not in types
+diff --git a/test/rules/std_LT05_LT09_combo_test.py b/test/rules/std_LT05_LT09_combo_test.py
+index f27e09c79..857934cb3 100644
+--- a/test/rules/std_LT05_LT09_combo_test.py
++++ b/test/rules/std_LT05_LT09_combo_test.py
+@@ -5,6 +5,7 @@ LT09: single selects should be on SELECT line
+ """
+ 
+ import sqlfluff
++from sqlfluff.core import FluffConfig, Linter
+ 
+ 
+ def test__rules__std_LT05_LT09_long_line_lint():
+@@ -32,13 +33,65 @@ def test__rules__std_LT05_LT09_long_line_fix():
+ 
+ 
+ def test__rules__std_LT05_LT09_long_line_fix2():
+-    """Verify clash between LT05 & LT09 does not add multiple newlines (see #1424)."""
++    """A line LT05 has already broken is left alone (see #1424).
++
++    LT09 used to pull the single select target back up onto the ``SELECT``
++    line, which LT05 then broke again on the next pass. `sqlfluff fix` never
++    reached a fixed point and rewrote the file on every invocation.
++    """
+     sql = (
+         "SELECT\n    100000000000000000000000000000000000000000000000000000000000000000"
+         "0000000000000000000000000000000000\n"
+     )
+-    result = sqlfluff.fix(sql)
+-    assert result == (
++    assert sqlfluff.fix(sql) == sql
++
++
++def test__rules__std_LT05_LT09_fix_reaches_a_fixed_point():
++    """Repeated `fix` passes over an LT05/LT09 clash converge."""
++    sql = (
+         "SELECT 10000000000000000000000000000000000000000000000000000000000000000000000"
+         "00000000000000000000000000000\n"
+     )
++    first = sqlfluff.fix(sql)
++    assert first != sql
++    assert sqlfluff.fix(first) == first
++
++
++def test__rules__std_LT05_LT09_fix_fixture_reaches_a_fixed_point():
++    """`fix` converges on a real fixture that used to oscillate forever."""
++    path = "test/fixtures/dialects/mysql/json_value_returning.sql"
++    with open(path) as f:
++        sql = f.read()
++    linter = Linter(
++        config=FluffConfig(overrides={"dialect": "mysql", "rules": "all"})
++    )
++    first, _ = linter.lint_string(sql, fix=True).fix_string()
++    second, _ = linter.lint_string(first, fix=True).fix_string()
++    assert second == first
++
++
++def _boundary_sql(target_len: int) -> str:
++    """`SELECT` + a space + the target is exactly 7 + target_len characters."""
++    return "SELECT\n    " + ("a" * target_len) + "\nFROM t\n"
++
++
++def test__rules__std_LT09_merges_a_target_that_lands_exactly_on_the_limit():
++    """At exactly max_line_length the merge is legal, so it must happen.
++
++    The guard used to count the target line's own newline in the merged
++    length, so it fired one character early and `fix` reported the violation
++    as unfixable.
++    """
++    sql = _boundary_sql(73)
++    merged = "SELECT " + ("a" * 73) + "\nFROM t\n"
++    assert len(merged.split("\n")[0]) == 80
++    assert sqlfluff.fix(sql) == merged
++    # The merged form is what a clean file looks like: nothing left to report.
++    assert sqlfluff.lint(merged) == []
++
++
++def test__rules__std_LT09_leaves_a_target_one_character_over_the_limit():
++    """One character further and the merge would overrun, so it is refused."""
++    sql = _boundary_sql(74)
++    assert sqlfluff.fix(sql) == sql
++    assert "LT09" in [r["code"] for r in sqlfluff.lint(sql)]
+diff --git a/test/rules/std_RF06_function_name_test.py b/test/rules/std_RF06_function_name_test.py
+new file mode 100644
+index 000000000..ff397f0c9
+--- /dev/null
++++ b/test/rules/std_RF06_function_name_test.py
+@@ -0,0 +1,63 @@
++"""RF06 must be able to unquote a function name.
++
++The fix replaces the quoted identifier with a `naked_identifier`, but
++`FunctionNameSegment`'s base-name alternatives keyed on the raw lexer type
++`word`, so the linter's segment-level revalidation could not rematch its own
++fix and refused it with `Fixes for RF06 not applied, as it would result in an
++unparsable file`. `sqlfluff fix` then reported a fixable violation and left
++the file byte-identical.
++"""
++
++import pytest
++
++from sqlfluff.core import FluffConfig, Linter
++
++_QUOTED = """CREATE FUNCTION `testfunction`(var1 int)
++RETURNS int
++DETERMINISTIC
++BEGIN
++RETURN (var1 + 1);
++END~
++"""
++
++_UNQUOTED = """CREATE FUNCTION testfunction(var1 int)
++RETURNS int
++DETERMINISTIC
++BEGIN
++RETURN (var1 + 1);
++END~
++"""
++
++
++def _linter(rules: str = "RF06") -> Linter:
++    return Linter(config=FluffConfig(overrides={"dialect": "mariadb", "rules": rules}))
++
++
++def test_rf06_unquotes_a_function_name() -> None:
++    """The fix is applied rather than refused as unparsable."""
++    fixed, _ = _linter().lint_string(_QUOTED, fix=True).fix_string()
++    assert fixed == _UNQUOTED
++
++
++def test_rf06_fixed_output_parses_clean() -> None:
++    """The fixed text has no parse violation and no unparsable segment."""
++    parsed = _linter().parse_string(_UNQUOTED)
++    assert parsed.violations == []
++    assert not list(parsed.tree.recursive_crawl("unparsable"))
++
++
++def test_rf06_fix_is_a_fixed_point() -> None:
++    """A second pass changes nothing."""
++    linter = _linter()
++    first, _ = linter.lint_string(_QUOTED, fix=True).fix_string()
++    second, _ = linter.lint_string(first, fix=True).fix_string()
++    assert second == first
++
++
++@pytest.mark.parametrize("sql", [_QUOTED, _UNQUOTED])
++def test_function_name_rematches_its_own_shape(sql: str) -> None:
++    """`function_name` still matches a whole re-parse of itself."""
++    tree = _linter("all").parse_string(sql).tree
++    names = list(tree.recursive_crawl("function_name"))
++    assert names
++    assert names[0].raw.strip("`") == "testfunction"
+diff --git a/test/rules/std_ST07_LT02_combo_test.py b/test/rules/std_ST07_LT02_combo_test.py
+new file mode 100644
+index 000000000..e781b5f92
+--- /dev/null
++++ b/test/rules/std_ST07_LT02_combo_test.py
+@@ -0,0 +1,75 @@
++"""Regression test for the ST07 fix leaving the indent balance short.
++
++ST07 rewrites ``USING (col)`` into an ``ON`` condition. The USING form carries
++an indent between the keyword and its bracket while the matching dedent sits
++after the bracket, outside the run ST07 deletes, so the rewrite used to leave
++the file's indent balance one short from that join onwards. LT02 then indented
++everything after it one level too shallow, and a single ``fix`` pass reported
++success over a file that was still not compliant - a second pass fixed it.
++"""
++
++from sqlfluff.core import FluffConfig, Linter
++
++# Two USING joins: the rewrite of the first is what corrupted the second.
++_TWO_USING_JOINS = """SELECT cars.name, cars.manufacturer
++FROM cars SEMI JOIN region
++USING (region_id);
++
++SELECT cars.name, cars.manufacturer
++FROM cars ANTI JOIN region
++USING (region_id);
++"""
++
++_FIXED = """SELECT
++    cars.name,
++    cars.manufacturer
++FROM cars SEMI JOIN region
++    ON cars.region_id = region.region_id;
++
++SELECT
++    cars.name,
++    cars.manufacturer
++FROM cars ANTI JOIN region
++    ON cars.region_id = region.region_id;
++"""
++
++
++def _linter() -> Linter:
++    return Linter(
++        config=FluffConfig(overrides={"dialect": "duckdb", "rules": "all"})
++    )
++
++
++def test_rules_std_ST07_one_fix_pass_is_enough() -> None:
++    """One `fix` pass over consecutive USING joins must leave nothing behind."""
++    linter = _linter()
++    fixed, _ = linter.lint_string(_TWO_USING_JOINS, fix=True).fix_string()
++    assert fixed == _FIXED
++    # The point of the test: the output of a *single* pass is already clean.
++    assert linter.lint_string(fixed).check_tuples() == []
++
++
++def test_rules_std_ST07_fixture_one_fix_pass_is_enough() -> None:
++    """The same, over the shipped fixture that surfaced this."""
++    with open("test/fixtures/dialects/duckdb/anti_semi_join.sql") as f:
++        sql = f.read()
++    linter = _linter()
++    fixed, _ = linter.lint_string(sql, fix=True).fix_string()
++    assert linter.lint_string(fixed).check_tuples() == []
++
++
++def test_rules_std_ST07_fix_keeps_the_indent_balance() -> None:
++    """The rewritten tree carries the same indent metas as a fresh parse."""
++    linter = _linter()
++    fixed_tree = linter.lint_string(_TWO_USING_JOINS, fix=True).tree
++    fresh_tree = linter.parse_string(fixed_tree.raw).tree
++
++    def indents(tree):
++        return [
++            (seg.get_type(), getattr(seg, "indent_val", 0))
++            for seg in tree.raw_segments
++            if getattr(seg, "indent_val", 0)
++        ]
++
++    assert indents(fixed_tree) == indents(fresh_tree)
++    assert sum(v for _, v in indents(fixed_tree)) == 0
+diff --git a/test/rules/std_ST07_asof_join_test.py b/test/rules/std_ST07_asof_join_test.py
+new file mode 100644
+index 000000000..4e8c4c291
+--- /dev/null
++++ b/test/rules/std_ST07_asof_join_test.py
+@@ -0,0 +1,55 @@
++"""ST07 must leave ASOF joins alone.
++
++An ASOF join's ``USING`` list is not a list of equalities: the last attribute
++in it is an inequality, which is what makes the join an ASOF join. Rewriting
++it into all-equality ``ON`` conditions changes which rows the query returns.
++ST07 used to do exactly that on the one-column form, and on the two-column
++form the linter's unparsable-fix guard refused the rewrite, so ``fix``
++reported fixable violations and changed nothing.
++"""
++
++import pytest
++
++from sqlfluff.core import FluffConfig, Linter
++
++ASOF_CASES = [
++    "SELECT * FROM trades ASOF JOIN prices USING (symbol);\n",
++    'SELECT * FROM trades ASOF JOIN prices USING (symbol, "when");\n',
++    'SELECT * FROM trades AS t ASOF LEFT JOIN prices AS p USING (symbol, "when");\n',
++    "SELECT * FROM trades AS t ASOF SEMI JOIN prices AS p USING (symbol);\n",
++]
++
++_PLAIN_USING = "SELECT * FROM trades JOIN prices USING (symbol);\n"
++
++
++def _linter() -> Linter:
++    return Linter(config=FluffConfig(overrides={"dialect": "duckdb", "rules": "ST07"}))
++
++
++@pytest.mark.parametrize("sql", ASOF_CASES)
++def test_st07_ignores_asof_joins(sql: str) -> None:
++    """No violation, and `fix` leaves the text byte-identical."""
++    linter = _linter()
++    result = linter.lint_string(sql, fix=True)
++    assert [v.rule_code() for v in result.violations] == []
++    fixed, _ = result.fix_string()
++    assert fixed == sql
++
++
++def test_st07_still_rewrites_a_plain_using_join() -> None:
++    """The control: a non-ASOF USING join is still rewritten."""
++    fixed, _ = _linter().lint_string(_PLAIN_USING, fix=True).fix_string()
++    assert fixed == (
++        "SELECT * FROM trades JOIN prices ON trades.symbol = prices.symbol;\n"
++    )
++
++
++def test_st07_leaves_the_shipped_asof_fixture_alone() -> None:
++    """The whole fixture is clean, so no fix is refused as unparsable."""
++    with open("test/fixtures/dialects/duckdb/asof_join.sql") as f:
++        sql = f.read()
++    linter = _linter()
++    result = linter.lint_string(sql, fix=True)
++    assert [v.rule_code() for v in result.violations] == []
++    fixed, _ = result.fix_string()
++    assert fixed == sql
+diff --git a/test/utils/testing/rules_test.py b/test/utils/testing/rules_test.py
+new file mode 100644
+index 000000000..0243256f8
+--- /dev/null
++++ b/test/utils/testing/rules_test.py
+@@ -0,0 +1,25 @@
++"""Tests for the rule-testing helpers in sqlfluff.utils.testing.rules."""
++
++import pytest
++
++from sqlfluff.utils.testing.rules import RuleTestCase, rules__test_helper
++
++
++def test__testing__rules_helper_rejects_unparsable_before_fixing():
++    """The helper must reject input that has no parse tree, not try to fix it.
++
++    `rules__test_helper` calls `LintedFile.fix_string()`, which asserts that
++    templating and parsing both succeeded. A test case whose SQL cannot be
++    parsed has to fail at the parse-error check with a message naming the parse
++    error, rather than reaching that assertion.
++    """
++    case = RuleTestCase(
++        rule="LT01",
++        fail_str="SELECT  a FROM tbl\nSELECT FROM WHERE (((\n",
++        configs={"core": {"dialect": "ansi"}},
++    )
++    with pytest.raises(BaseException) as excinfo:
++        rules__test_helper(case)
++    message = str(excinfo.value)
++    assert "Found the following parse errors in test case" in message
++    assert "Fixing a string requires successful templating" not in message
