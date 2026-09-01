@@ -83,9 +83,15 @@ suite, not the reviewer, is what killed it.
 ## AI usage disclosure
 
 ada-url ships `AI_USAGE_POLICY.md`, which requires a human in the loop
-for contributions. This run was local analysis only - nothing was filed
-or pushed upstream - and any upstream contribution drawn from it goes
-through human review, consistent with that policy.
+for contributions: a person who has read and reviewed the work, is
+accountable for it, and can answer questions during review.
+
+`A9` was filed upstream as [PR #1244](https://github.com/ada-url/ada/pull/1244)
+under that policy. The finding and its patch were reviewed by a person
+before filing, the pull request states its provenance, and the review
+questions were answerable by the person who filed it. It was **merged on
+2026-09-01**, about forty minutes after it was opened, by a project
+maintainer. Nothing else from this run was sent upstream.
 
 ## Environment
 

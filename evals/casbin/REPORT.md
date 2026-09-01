@@ -95,6 +95,22 @@ was not launched.
   no grouping rule, so a tenant's access grants survived a call that
   reported success.
 
+## Upstream
+
+`CAS-7` was filed upstream as
+[PR #1753](https://github.com/apache/casbin/pull/1753), with
+[issue #1752](https://github.com/apache/casbin/issues/1752) opened first as
+the project's CONTRIBUTING asks. It was verified against a fresh clone of
+upstream master before filing: the reproduction is red there, green with
+the patch, and the shipped regression test fails without the fix.
+
+A pull request is judged on the finding, not on the run that produced it.
+This run did not converge, and that is what the scorecard records; the
+finding was filed because it passed the same bar every other upstream
+contribution here has to pass. Nothing about the non-convergence touches
+it: the budget ran out during the closing ceremony, not on any doubt
+about this defect.
+
 ## Environment
 
 WSL2 x86_64, Go toolchain, `go test -count=1 ./...` as the verify command.
