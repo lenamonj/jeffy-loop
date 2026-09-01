@@ -29,7 +29,7 @@ Jeffy Loop is an autonomous engineering system built around a simple principle: 
 
 ## The receipts
 
-Eight fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Seven are patches this loop wrote and a maintainer merged; the eighth is a finding a maintainer found convincing enough to fix himself:
+Nine fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Eight are patches this loop wrote and a maintainer merged; the ninth is a finding a maintainer found convincing enough to fix himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
@@ -38,6 +38,7 @@ Eight fixes are in other people's code because a maintainer with no stake in thi
 - **[mimalloc](https://github.com/microsoft/mimalloc/pull/1385) - merged.** `mi_theap_zalloc_csize` delegated its large-size branch to the plain malloc path, so a documented zeroing allocator returned uninitialized heap memory for every size above the small-size threshold. Merged 2026-08-31 by the library's author.
 - **[ada](https://github.com/ada-url/ada/pull/1244) - merged.** `ada::url` reported `host_end` one byte short of the position its own documentation describes, so slicing `href` by `[host_start, host_end)` truncated the host; `ada::url_aggregator` disagreed with it on every URL with a host. Merged 2026-09-01, about forty minutes after it was opened. ada is the URL parser inside Node.js.
 - **[nanoid](https://github.com/ai/nanoid/pull/609) - merged.** `customAlphabet` accepted alphabets it cannot sample from and hung forever in `while (true)`; the maintainer judged the runtime guard too expensive for the reachability and asked for a docs notice instead, which was reworked and merged the same day. Merged 2026-09-01.
+- **[unicode-segmentation](https://github.com/unicode-rs/unicode-segmentation/pull/181) - merged.** `size_hint()` on the three public sentence iterators panicked on the empty string in debug builds, and in release returned a lower bound of `usize::MAX` against an upper bound of 0 - a violation of the `Iterator` contract that a caller sizing a buffer from the hint acts on. Merged 2026-09-01. unicode-segmentation is the UAX #29 implementation under much of the Rust ecosystem.
 - **[chalk](https://github.com/chalk/chalk/pull/687) - fixed upstream.** The maintainer reproduced the finding, then wrote and merged his own fix, shipped in v6.0.0.
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
@@ -281,7 +282,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->101<!-- /count -->** | **<!-- count:fixed -->74<!-- /count -->** | **<!-- count:failed -->27<!-- /count -->** | **<!-- count:prs -->19<!-- /count -->** | **<!-- count:merged -->7<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->101<!-- /count -->** | **<!-- count:fixed -->74<!-- /count -->** | **<!-- count:failed -->27<!-- /count -->** | **<!-- count:prs -->19<!-- /count -->** | **<!-- count:merged -->8<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->73<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
@@ -296,6 +297,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | mimalloc | C | [details](evals/mimalloc/REPORT.md) - zalloc returned dirty memory - [PR merged](https://github.com/microsoft/mimalloc/pull/1385) | Fixed |
 | ada | C++ | [details](evals/ada/REPORT.md) - host_end truncated the host - [PR merged](https://github.com/ada-url/ada/pull/1244) | Fixed |
 | nanoid | JavaScript | [details](evals/nanoid/REPORT.md) - empty alphabet hung the generator - [PR merged](https://github.com/ai/nanoid/pull/609) | Fixed |
+| unicode-segmentation | Rust | [details](evals/unicode-segmentation/REPORT.md) - empty-string size_hint panic - [PR merged](https://github.com/unicode-rs/unicode-segmentation/pull/181) | Fixed |
 | chalk | JavaScript | [details](evals/chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](evals/dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](evals/yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
@@ -307,7 +309,6 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | rust-url | Rust | [details](evals/rust-url/REPORT.md) - 20 findings, 10 High - [PR open](https://github.com/servo/rust-url/pull/1147) | Fixed |
 | rouge | Ruby | [details](evals/rouge/REPORT.md) - unknown theme crashed the CLI - [PR open](https://github.com/rouge-ruby/rouge/pull/2332) | Fixed |
 | pflag | Go | [details](evals/pflag/REPORT.md) - deprecated flag field ignored - [PR open](https://github.com/spf13/pflag/pull/507) | Fixed |
-| unicode-segmentation | Rust | [details](evals/unicode-segmentation/REPORT.md) - empty-string size_hint panic - [PR open](https://github.com/unicode-rs/unicode-segmentation/pull/181) | Fixed |
 | classnames | JavaScript | [details](evals/classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR open](https://github.com/JedWatson/classnames/pull/579) | Fixed |
 | console | Rust | [details](evals/console/REPORT.md) - truncate_str panicked mid-character - [PR open](https://github.com/console-rs/console/pull/296) | Fixed |
 | mustache.js | JavaScript | [details](evals/mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |

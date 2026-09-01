@@ -91,3 +91,5 @@ signature, which the PR points out. The fix was re-proven red-then-green
 on a fresh clone at upstream HEAD before filing, and the PR body
 discloses its provenance. A4, the non-shrinking inner hint, is noted in
 the PR as an offered follow-up rather than bundled in.
+
+**Merged 2026-09-01** by Manishearth.
