@@ -293,6 +293,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | fasthttp | Go | [details](evals/fasthttp/REPORT.md) - bad Content-Length accepted - [PR merged](https://github.com/valyala/fasthttp/pull/2343) | Fixed |
 | PapaParse | JavaScript | [details](evals/papaparse/REPORT.md) - *audit*; 4 Highs in streaming - [PR merged](https://github.com/mholt/PapaParse/pull/1135) | Fixed |
 | jsoncpp | C++ | [details](evals/jsoncpp/REPORT.md) - secure build never compiled - [PR merged](https://github.com/open-source-parsers/jsoncpp/pull/1709) | Fixed |
+| mimalloc | C | [details](evals/mimalloc/REPORT.md) - zalloc returned dirty memory - [PR merged](https://github.com/microsoft/mimalloc/pull/1385) | Fixed |
+| ada | C++ | [details](evals/ada/REPORT.md) - host_end truncated the host - [PR merged](https://github.com/ada-url/ada/pull/1244) | Fixed |
+| nanoid | JavaScript | [details](evals/nanoid/REPORT.md) - empty alphabet hung the generator - [PR merged](https://github.com/ai/nanoid/pull/609) | Fixed |
 | chalk | JavaScript | [details](evals/chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](evals/dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](evals/yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
@@ -302,6 +305,11 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | PyPortfolioOpt | Python | [details](evals/pyportfolioopt/REPORT.md) - CI-red to 356 passing - [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
 | go-yaml | Go | [details](evals/go-yaml/REPORT.md) - 20 findings, 6 High - [PR open](https://github.com/goccy/go-yaml/pull/915) | Fixed |
 | rust-url | Rust | [details](evals/rust-url/REPORT.md) - 20 findings, 10 High - [PR open](https://github.com/servo/rust-url/pull/1147) | Fixed |
+| rouge | Ruby | [details](evals/rouge/REPORT.md) - unknown theme crashed the CLI - [PR open](https://github.com/rouge-ruby/rouge/pull/2332) | Fixed |
+| pflag | Go | [details](evals/pflag/REPORT.md) - deprecated flag field ignored - [PR open](https://github.com/spf13/pflag/pull/507) | Fixed |
+| unicode-segmentation | Rust | [details](evals/unicode-segmentation/REPORT.md) - empty-string size_hint panic - [PR open](https://github.com/unicode-rs/unicode-segmentation/pull/181) | Fixed |
+| classnames | JavaScript | [details](evals/classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR open](https://github.com/JedWatson/classnames/pull/579) | Fixed |
+| console | Rust | [details](evals/console/REPORT.md) - truncate_str panicked mid-character - [PR open](https://github.com/console-rs/console/pull/296) | Fixed |
 | mustache.js | JavaScript | [details](evals/mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](evals/spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](evals/quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
@@ -319,12 +327,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | uuid (JS) | JavaScript | [details](evals/js-uuid/REPORT.md) - crash on unpaired surrogates | Fixed |
 | speedtest-cli | Python | [details](evals/speedtest-cli/REPORT.md) - small findings only | Fixed |
 | phpdotenv | PHP | [details](evals/phpdotenv/REPORT.md) - silent [] on bad multiline | Fixed |
-| mimalloc | C | [details](evals/mimalloc/REPORT.md) - zalloc returned dirty memory - [PR merged](https://github.com/microsoft/mimalloc/pull/1385) | Fixed |
-| ada | C++ | [details](evals/ada/REPORT.md) - host_end truncated the host - [PR merged](https://github.com/ada-url/ada/pull/1244) | Fixed |
 | cJSON | C | [details](evals/cjson/REPORT.md) - sort dropped later appends | Fixed |
 | nlohmann/json | C++ | [details](evals/json/REPORT.md) - Bazel header list omitted a dep | Fixed |
 | RuboCop | Ruby | [details](evals/rubocop/REPORT.md) - null result, zero findings | Fixed |
-| rouge | Ruby | [details](evals/rouge/REPORT.md) - unknown theme crashed the CLI - [PR open](https://github.com/rouge-ruby/rouge/pull/2332) | Fixed |
 | lz4 | C | [details](evals/lz4/REPORT.md) - silent data loss, exit 0 | Fixed |
 | godotenv | Go | [details](evals/godotenv/REPORT.md) - parser panic from .env | Fixed |
 | moshi | Kotlin | [details](evals/moshi/REPORT.md) - 5 Highs behind green CI | Fixed |
@@ -338,8 +343,6 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | magic_enum | C++ | [details](evals/magic_enum/REPORT.md) - 6 members never compiled | Fixed |
 | vavr | Java | [details](evals/vavr/REPORT.md) - BitSet.removeAll threw | Fixed |
 | go-uuid | Go | [details](evals/go-uuid/REPORT.md) - SQL NULL returned stale UUID | Fixed |
-| pflag | Go | [details](evals/pflag/REPORT.md) - deprecated flag field ignored - [PR open](https://github.com/spf13/pflag/pull/507) | Fixed |
-| unicode-segmentation | Rust | [details](evals/unicode-segmentation/REPORT.md) - empty-string size_hint panic - [PR open](https://github.com/unicode-rs/unicode-segmentation/pull/181) | Fixed |
 | indicatif | Rust | [details](evals/indicatif/REPORT.md) - draw-width underflow panic | Fixed |
 | ta | Python | [details](evals/ta/REPORT.md) - wrong numbers since 2023 | Fixed |
 | go-cmp | Go | [details](evals/go-cmp/REPORT.md) - 2 grouping bugs, +31/-13 | Fixed |
@@ -357,10 +360,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | itoa | Rust | [details](evals/itoa/REPORT.md) - no-panic build failed to link | Fixed |
 | cachetools | Python | [details](evals/cachetools/REPORT.md) - held iterator froze the clock | Fixed |
 | memchr | Rust | [details](evals/memchr/REPORT.md) - crate shipped loop state | Fixed |
-| nanoid | JavaScript | [details](evals/nanoid/REPORT.md) - empty alphabet hung the generator - [PR merged](https://github.com/ai/nanoid/pull/609) | Fixed |
-| classnames | JavaScript | [details](evals/classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR open](https://github.com/JedWatson/classnames/pull/579) | Fixed |
 | python-slugify | Python | [details](evals/python-slugify/REPORT.md) - one bad entity voided all decoding | Fixed |
-| console | Rust | [details](evals/console/REPORT.md) - truncate_str panicked mid-character - [PR open](https://github.com/console-rs/console/pull/296) | Fixed |
 | bidict | Python | [details](evals/bidict/REPORT.md) - declared dependency floor could not import | Fixed |
 | unicode-width | Rust | [details](evals/unicode-width/REPORT.md) - published crate lacked its own test corpus | Fixed |
 | BurntSushi/toml | Go | [details](evals/ATTEMPTS.md) - 5 runs, 52 iters, not converged | Failed |
