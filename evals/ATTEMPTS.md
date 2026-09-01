@@ -23,6 +23,7 @@ loss rather than hiding it.
 | ada | 2 | 18 | converged | evaluator countersigned | 0 |
 | bat | 1 | 10 | converged | evaluator countersigned | 0 |
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
+| cachetools | 2 | 18 | converged | evaluator countersigned | 0 |
 | Catch2 | 4 | 35 | converged | evaluator countersigned | 1 |
 | Carbon | 4 | 17 | **not converged** | n/a | 1 |
 | casbin | 5 | 46 | **not converged** | n/a | 0 |
@@ -36,7 +37,8 @@ loss rather than hiding it.
 | claude-agent-sdk-python (attempt 2) | 3 | 30 | converged | evaluator countersigned | 1 |
 | claude-code-action (attempt 1) | 3 | 30 | **not converged** | n/a | 0 |
 | claude-code-action (attempt 2) | 3 | 30 | converged | evaluator countersigned | 0 |
-| classnames | 3 | 32 | **not converged** | n/a | 2 |
+| classnames (attempt 1) | 3 | 32 | **not converged** | n/a | 2 |
+| classnames | 1 | 10 | converged | evaluator countersigned | 0 |
 | click | 5 | 42 | **not converged** | n/a | 0 |
 | cobra | 4 | 32 | converged | evaluator countersigned | 0 |
 | commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
@@ -72,13 +74,15 @@ loss rather than hiding it.
 | magic_enum | 2 | 19 | converged | evaluator countersigned | 0 |
 | mapstructure | 3 | 25 | converged | evaluator countersigned | 0 |
 | marshmallow | 1 | 10 | converged | evaluator countersigned | 0 |
+| memchr | 1 | 8 | converged | evaluator countersigned | 0 |
 | more-itertools | 2 | 16 | converged | evaluator countersigned | 0 |
 | moshi | 5 | 49 | converged | evaluator countersigned | 1 |
 | mimalloc | 3 | 28 | converged | evaluator countersigned | 0 |
 | mruby (attempt 1) | 5 | 50 | **not converged** | n/a | 0 |
 | mruby (attempt 2) | 5 | 63 | **not converged** | n/a | 1 |
 | mustache.js | 2 | 11 | converged | pre-evaluator | 0 |
-| nanoid | 3 | 30 | **not converged** | n/a | 3 |
+| nanoid (attempt 1) | 3 | 30 | **not converged** | n/a | 3 |
+| nanoid | 2 | 16 | converged | evaluator countersigned | 0 |
 | node-semver | 4 | 30 | **not converged** | n/a | 0 |
 | path-to-regexp | 3 | 27 | converged | evaluator countersigned | 1 |
 | pflag | 1 | 11 | converged | evaluator countersigned | 0 |
@@ -86,7 +90,8 @@ loss rather than hiding it.
 | phpdotenv | 1 | 10 | converged | evaluator countersigned | 0 |
 | PyPortfolioOpt | 6 | 58 | converged | evaluator countersigned | 1 |
 | python-dotenv | 8 | 73 | converged | evaluator countersigned | 1 |
-| python-slugify | 2 | 23 | **not converged** | n/a | 3 |
+| python-slugify (attempt 1) | 2 | 23 | **not converged** | n/a | 3 |
+| python-slugify | 2 | 18 | converged | evaluator countersigned | 0 |
 | qs | 2 | 18 | converged | evaluator countersigned | 1 |
 | quantstats | 4 | 40 | converged | evaluator countersigned | 0 |
 | rack | 3 | 26 | converged | evaluator countersigned | 1 |
@@ -110,6 +115,7 @@ loss rather than hiding it.
 | thor | 2 | 20 | **not converged** | n/a | 0 |
 | typer | 1 | 11 | converged | evaluator countersigned | 0 |
 | underscore | 2 | 20 | converged | evaluator countersigned | 0 |
+| unicode-segmentation | 2 | 15 | converged | evaluator countersigned | 0 |
 | urfave-cli | 2 | 18 | converged | evaluator countersigned | 0 |
 | validator | 4 | 31 | converged | evaluator countersigned | 1 |
 | validator.js | 2 | 20 | **not converged** | n/a | 0 |
@@ -1332,7 +1338,7 @@ or on the claims the declaration rests on, never on the loop's notebook -
 and nanoid was re-run on a fresh tree under that engine as a regression test
 of that change, not as a study run: it converged in 12 iterations with two
 Highs and four Mediums closed and the gate passing on the product, and the
-product-only patch from that tree is published here as `nanoid/fixes.patch`.
+product-only patch from that tree is published here as `nanoid/fixes-attempt1-2026-08-26.patch`; the 2026-09-01 re-run (wave 7) converged - see `nanoid/REPORT.md`.
 It is not counted as a convergence and carries no receipt, because an engine
 changed with a target's verdicts in hand cannot be accepted on that target.
 This record stands as it happened.
@@ -1358,4 +1364,4 @@ with the gate's invocation cap spent. Nothing a user of python-slugify runs
 or reads was wrong in either refusal. It is the third target in two days
 lost or delayed by that class (nanoid, python-slugify, mapstructure), and
 engine 1.20.0 removes the check from the declaration path. This record
-stands as it happened: not converged. Journal and product patch at `python-slugify/journal.md` and `python-slugify/fixes.patch`.
+stands as it happened: not converged. Journal and product patch at `python-slugify/journal-attempt1-2026-08-27.md` and `python-slugify/fixes-attempt1-2026-08-27.patch`; the 2026-09-01 re-run (wave 7) converged - see `python-slugify/REPORT.md`.

@@ -1,0 +1,547 @@
+diff --git a/.gitignore b/.gitignore
+index ec1ef20..ab83ab6 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -3,3 +3,4 @@ Cargo.lock
+ scripts/tmp
+ *.pyc
+ *.txt
++.claude/jeffy-loop.local.md
+diff --git a/Cargo.toml b/Cargo.toml
+index ffcb6ed..59724cc 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -18,14 +18,13 @@ according to Unicode Standard Annex #29 rules.
+ rust-version = "1.85.0"
+ 
+ include = [
+-    "COPYRIGHT", 
+-    "LICENSE-MIT", 
+-    "LICENSE-APACHE", 
+-    "Cargo.toml", 
++    "/COPYRIGHT", 
++    "/LICENSE-MIT", 
++    "/LICENSE-APACHE", 
++    "/Cargo.toml", 
+     "src/**/*.rs", 
+-    "README.md",
++    "/README.md",
+     "tests/**/*.rs",
+-    "benches/**/*.rs",
+ ]
+ 
+ [features]
+@@ -33,7 +32,7 @@ no_std = [] # This is a no-op, preserved for backward compatibility only.
+ 
+ [dev-dependencies]
+ quickcheck = "1.0"
+-criterion = "0.5"
++criterion = "0.7"
+ proptest = "1.7.0"
+ 
+ [[bench]]
+diff --git a/README.md b/README.md
+index 1225b8f..a25542c 100644
+--- a/README.md
++++ b/README.md
+@@ -44,6 +44,14 @@ unicode-segmentation = "1"
+ 
+ # Change Log
+ 
++## 1.13.3
++
++* [#172](https://github.com/unicode-rs/unicode-segmentation/pull/172) Fix GB11 case on a chunk boundary
++* [#169](https://github.com/unicode-rs/unicode-segmentation/pull/169) Update couple of mistakes in the changelog
++* [#168](https://github.com/unicode-rs/unicode-segmentation/pull/168) Update lib.rs doc comments
++* [#167](https://github.com/unicode-rs/unicode-segmentation/pull/167) Update some links in Readme
++* [#166](https://github.com/unicode-rs/unicode-segmentation/pull/166) Fix docs link in readme
++
+ ## 1.13.2
+ 
+ * [#164](https://github.com/unicode-rs/unicode-segmentation/pull/164) Set explicit 1.85 MSRV
+diff --git a/benches/chars.rs b/benches/chars.rs
+index 2654a26..49e58e5 100644
+--- a/benches/chars.rs
++++ b/benches/chars.rs
+@@ -5,7 +5,8 @@
+ //! does not consider the complexity of grapheme clusters. The question in this benchmark
+ //! is how much slower full unicode handling is.
+ 
+-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
++use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
++use std::hint::black_box;
+ 
+ use std::fs;
+ use unicode_segmentation::UnicodeSegmentation;
+diff --git a/benches/unicode_word_indices.rs b/benches/unicode_word_indices.rs
+index 4c09404..7a27b70 100644
+--- a/benches/unicode_word_indices.rs
++++ b/benches/unicode_word_indices.rs
+@@ -1,4 +1,5 @@
+-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
++use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
++use std::hint::black_box;
+ 
+ use std::fs;
+ use unicode_segmentation::UnicodeSegmentation;
+diff --git a/benches/word_bounds.rs b/benches/word_bounds.rs
+index f1af7c4..c46dff6 100644
+--- a/benches/word_bounds.rs
++++ b/benches/word_bounds.rs
+@@ -1,4 +1,5 @@
+-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
++use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
++use std::hint::black_box;
+ 
+ use std::fs;
+ use unicode_segmentation::UnicodeSegmentation;
+diff --git a/benches/words.rs b/benches/words.rs
+index 508bc9f..f2f8b7b 100644
+--- a/benches/words.rs
++++ b/benches/words.rs
+@@ -5,7 +5,8 @@
+ //! `UnicodeSegmentation::unicode_words` since it does not consider the complexity of grapheme
+ //! clusters. The question in this benchmark is how much slower full unicode handling is.
+ 
+-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
++use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
++use std::hint::black_box;
+ 
+ use std::fs;
+ use unicode_segmentation::UnicodeSegmentation;
+diff --git a/scripts/unicode.py b/scripts/unicode.py
+index 404b242..bf862ff 100755
+--- a/scripts/unicode.py
++++ b/scripts/unicode.py
+@@ -62,16 +62,23 @@ def is_surrogate(n):
+     return surrogate_codepoints[0] <= n <= surrogate_codepoints[1]
+ 
+ def fetch(f):
+-    if not os.path.exists(os.path.basename(f)):
++    base = os.path.basename(f)
++    if not os.path.exists(base):
+         if "emoji" in f:
+-            os.system("curl -O https://www.unicode.org/Public/%s/ucd/emoji/%s"
+-                      % (UNICODE_VERSION_NUMBER, f))
++            url = "https://www.unicode.org/Public/%s/ucd/emoji/%s" % (UNICODE_VERSION_NUMBER, f)
+         else:
+-            os.system("curl -O https://www.unicode.org/Public/%s/ucd/%s"
+-                      % (UNICODE_VERSION_NUMBER, f))
+-
+-    if not os.path.exists(os.path.basename(f)):
+-        sys.stderr.write("cannot load %s" % f)
++            url = "https://www.unicode.org/Public/%s/ucd/%s" % (UNICODE_VERSION_NUMBER, f)
++        # Without -f, curl writes an HTTP error body to the expected filename and
++        # still exits 0, so the existence check below would accept a 404 page as
++        # UCD data and the generator would parse the error page.
++        if os.system("curl -f -O %s" % url) != 0:
++            if os.path.exists(base):
++                os.remove(base)
++            sys.stderr.write("cannot fetch %s\n" % url)
++            exit(1)
++
++    if not os.path.exists(base):
++        sys.stderr.write("cannot load %s\n" % f)
+         exit(1)
+ 
+ def load_gencats(f):
+diff --git a/src/lib.rs b/src/lib.rs
+index 3c98542..88c478f 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -57,6 +57,14 @@
+ #[cfg(test)]
+ extern crate std;
+ 
++// The README's examples are compiled and run as doc-tests, so a public API change
++// that invalidates one fails the suite instead of leaving a wrong example on the
++// crate's front page. `cfg(doctest)` is set only while rustdoc collects doc-tests,
++// so this item is in no ordinary build and in no rendered page.
++#[cfg(doctest)]
++#[doc = include_str!("../README.md")]
++struct ReadmeDoctests;
++
+ pub use grapheme::{GraphemeCursor, GraphemeIncomplete};
+ pub use grapheme::{GraphemeIndices, Graphemes};
+ pub use sentence::{USentenceBoundIndices, USentenceBounds, UnicodeSentences};
+diff --git a/src/sentence.rs b/src/sentence.rs
+index 4b0729e..653778f 100644
+--- a/src/sentence.rs
++++ b/src/sentence.rs
+@@ -8,7 +8,6 @@
+ // option. This file may not be copied, modified, or distributed
+ // except according to those terms.
+ 
+-use core::cmp;
+ use core::iter::Filter;
+ 
+ // All of the logic for forward iteration over sentences
+@@ -176,9 +175,13 @@ mod fwd {
+ 
+         #[inline]
+         fn size_hint(&self) -> (usize, Option<usize>) {
+-            let slen = self.string.len();
+-            // A sentence could be one character
+-            (cmp::min(slen, 2), Some(slen + 1))
++            // Bounds on the break positions still to come, so they are taken from
++            // the unconsumed remainder and not from the whole string: at most one
++            // position per remaining byte plus the end-of-text position, and at
++            // least one while any byte is left, because end-of-text is always
++            // yielded before the iterator finishes.
++            let remaining = self.string.len() - self.pos;
++            (cmp::min(remaining, 1), Some(remaining + 1))
+         }
+ 
+         #[inline]
+@@ -376,8 +379,18 @@ impl<'a> Iterator for USentenceBounds<'a> {
+ 
+     #[inline]
+     fn size_hint(&self) -> (usize, Option<usize>) {
++        // A sentence spans two break positions and consecutive sentences share
++        // one, so before the first sentence the upper bound loses a position to
++        // the start that opens it, and after that every remaining position closes
++        // a sentence. The lower bound carries over either way: any remaining byte
++        // means at least one more sentence. The subtraction saturates because an
++        // empty string leaves no position to spare and `usize` would underflow.
+         let (lower, upper) = self.iter.size_hint();
+-        (cmp::max(0, lower - 1), upper.map(|u| cmp::max(0, u - 1)))
++        if self.sentence_start.is_some() {
++            (lower, upper)
++        } else {
++            (lower, upper.map(|u| u.saturating_sub(1)))
++        }
+     }
+ 
+     #[inline]
+diff --git a/tests/test.rs b/tests/test.rs
+index 5a89234..b1a3f26 100644
+--- a/tests/test.rs
++++ b/tests/test.rs
+@@ -244,4 +244,327 @@ quickcheck! {
+         let a = s.split_word_bounds().collect::<String>();
+         a == s
+     }
++
++    fn quickcheck_join_sentences(s: String) -> bool {
++        let a = s.split_sentence_bounds().collect::<String>();
++        a == s
++    }
++}
++
++/// Drives the chunked `GraphemeCursor` API forward and backward over every chunk
++/// size from 1 to 6 and asserts it agrees with the contiguous `graphemes()`
++/// iterator, which computes the same segmentation without chunking.
++///
++/// The cursor is where this crate's two most recent grapheme fixes landed - #172
++/// (GB11 across a chunk boundary) and #175 (GB12/GB13 when the RI count is
++/// already known) - and neither is reachable from the iterator tests above,
++/// because the iterator never splits its input.
++#[test]
++fn test_grapheme_cursor_chunked() {
++    use crate::testdata::{TEST_DIFF, TEST_SAME};
++    use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
++
++    /// Byte ranges of `s` cut every `size` bytes, rounded up to char boundaries.
++    fn chunks(s: &str, size: usize) -> Vec<(usize, usize)> {
++        let mut out = vec![];
++        let mut i = 0;
++        while i < s.len() {
++            let mut j = (i + size).min(s.len());
++            while !s.is_char_boundary(j) {
++                j += 1;
++            }
++            out.push((i, j));
++            i = j;
++        }
++        if out.is_empty() {
++            out.push((0, 0));
++        }
++        out
++    }
++
++    fn chunk_of(cs: &[(usize, usize)], off: usize) -> usize {
++        cs.iter()
++            .position(|&(a, b)| off >= a && off < b)
++            .unwrap_or(cs.len() - 1)
++    }
++
++    /// Boundary offsets after 0, walking forward one chunk at a time.
++    fn cursor_forward(s: &str, size: usize, is_extended: bool) -> Vec<usize> {
++        let cs = chunks(s, size);
++        let mut cur = GraphemeCursor::new(0, s.len(), is_extended);
++        let mut out = vec![];
++        loop {
++            let mut ci = chunk_of(&cs, cur.cur_cursor());
++            let res = loop {
++                let (a, b) = cs[ci];
++                match cur.next_boundary(&s[a..b], a) {
++                    Ok(v) => break v,
++                    Err(GraphemeIncomplete::PreContext(n)) => {
++                        let (pa, _) = cs[chunk_of(&cs, n - 1)];
++                        cur.provide_context(&s[pa..n], pa);
++                    }
++                    Err(GraphemeIncomplete::NextChunk) => ci += 1,
++                    Err(e) => panic!(
++                        "next_boundary {e:?} at {} in {s:?} chunk size {size} extended {is_extended}",
++                        cur.cur_cursor()
++                    ),
++                }
++            };
++            match res {
++                Some(x) => out.push(x),
++                None => break,
++            }
++        }
++        out
++    }
++
++    /// Boundary offsets before `len`, walking backward one chunk at a time,
++    /// returned in ascending order.
++    fn cursor_backward(s: &str, size: usize, is_extended: bool) -> Vec<usize> {
++        let cs = chunks(s, size);
++        let mut cur = GraphemeCursor::new(s.len(), s.len(), is_extended);
++        let mut out = vec![];
++        loop {
++            let mut ci = chunk_of(&cs, cur.cur_cursor().saturating_sub(1));
++            let res = loop {
++                let (a, b) = cs[ci];
++                match cur.prev_boundary(&s[a..b], a) {
++                    Ok(v) => break v,
++                    Err(GraphemeIncomplete::PreContext(n)) => {
++                        let (pa, _) = cs[chunk_of(&cs, n - 1)];
++                        cur.provide_context(&s[pa..n], pa);
++                    }
++                    Err(GraphemeIncomplete::PrevChunk) => ci -= 1,
++                    Err(e) => panic!(
++                        "prev_boundary {e:?} at {} in {s:?} chunk size {size} extended {is_extended}",
++                        cur.cur_cursor()
++                    ),
++                }
++            };
++            match res {
++                Some(x) => out.push(x),
++                None => break,
++            }
++        }
++        out.reverse();
++        out
++    }
++
++    // Cases that need context across a chunk boundary: ZWJ before an
++    // Extended_Pictographic (GB11), runs of regional indicators (GB12/GB13),
++    // an InCB=Consonant conjunct (GB9c), Prepend (GB9b) and SpacingMark (GB9a).
++    const EXTRA: &[&str] = &[
++        "\u{1f468}\u{200d}\u{1f467}\u{200d}\u{1f466}",
++        "a\u{1f636}\u{200d}\u{1f32b}\u{fe0f}b",
++        "\u{1f1e6}\u{1f1eb}\u{1f1e6}\u{1f1fd}\u{1f1e6}\u{1f1f1}",
++        "a\u{1f1e6}\u{1f1eb}\u{1f1e6}",
++        "\u{915}\u{94d}\u{915}\u{94d}\u{915}",
++        "\u{600}\u{600}\u{20}",
++        "a\u{903}b\u{903}",
++        "\r\n\r\n",
++        "\u{1F938}\u{1F3FE}\u{1F3FE}",
++    ];
++
++    let corpus = TEST_SAME
++        .iter()
++        .map(|&(s, _)| s)
++        .chain(TEST_DIFF.iter().map(|&(s, _, _)| s))
++        .chain(EXTRA.iter().copied());
++
++    let mut walks = 0usize;
++    for s in corpus {
++        for &is_extended in &[true, false] {
++            // The iterator's own boundaries: cumulative ends walking forward,
++            // cumulative starts walking backward.
++            let mut acc = 0;
++            let ends: Vec<usize> = s
++                .graphemes(is_extended)
++                .map(|g| {
++                    acc += g.len();
++                    acc
++                })
++                .collect();
++            let mut acc = 0;
++            let starts: Vec<usize> = s
++                .graphemes(is_extended)
++                .map(|g| {
++                    let a = acc;
++                    acc += g.len();
++                    a
++                })
++                .collect();
++
++            for size in 1..=6 {
++                assert_eq!(
++                    cursor_forward(s, size, is_extended),
++                    ends,
++                    "forward cursor disagrees with graphemes({is_extended}) on {s:?} at chunk size {size}"
++                );
++                assert_eq!(
++                    cursor_backward(s, size, is_extended),
++                    starts,
++                    "backward cursor disagrees with graphemes({is_extended}) on {s:?} at chunk size {size}"
++                );
++                walks += 2;
++            }
++        }
++    }
++    assert!(walks > 0, "corpus was empty");
++}
++
++/// Pins the three promises the sentence iterators document but `test_sentences`
++/// never drives: that `split_sentence_bounds` pieces concatenate back to the
++/// input, that `split_sentence_bound_indices` reports the prefix sums of those
++/// pieces alongside the pieces themselves, and that `unicode_sentences` is
++/// exactly those pieces filtered by the documented Alphabetic-or-Number
++/// predicate. Before this test the two indices and filtering iterators were
++/// reached only by their rustdoc examples.
++#[test]
++fn test_sentence_bound_indices_and_concatenation() {
++    use crate::testdata::TEST_SENTENCE;
++
++    for &(s, _) in TEST_SENTENCE.iter() {
++        let bounds: Vec<&str> = s.split_sentence_bounds().collect();
++
++        assert_eq!(
++            bounds.concat(),
++            s,
++            "split_sentence_bounds does not concatenate back to {s:?}"
++        );
++        assert!(
++            bounds.iter().all(|p| !p.is_empty()),
++            "split_sentence_bounds yielded an empty piece on {:?}",
++            s
++        );
++
++        // Offsets are the prefix sums of the piece lengths, and each indexed
++        // piece is the piece the bounds iterator reported at that position.
++        let mut acc = 0;
++        let expected: Vec<(usize, &str)> = bounds
++            .iter()
++            .map(|&p| {
++                let start = acc;
++                acc += p.len();
++                (start, p)
++            })
++            .collect();
++        let indices: Vec<(usize, &str)> = s.split_sentence_bound_indices().collect();
++        assert_eq!(
++            indices, expected,
++            "split_sentence_bound_indices disagrees with split_sentence_bounds on {s:?}"
++        );
++
++        // Each offset locates its own piece in the original string.
++        for &(i, piece) in &indices {
++            assert_eq!(
++                &s[i..i + piece.len()],
++                piece,
++                "offset {i} misplaces {piece:?} in {s:?}"
++            );
++        }
++
++        // unicode_sentences is the documented filter over the same pieces:
++        // keep a piece iff it holds an Alphabetic or a General_Category=Number
++        // character. std's own Unicode data supplies the predicate.
++        let expected_words: Vec<&str> = bounds
++            .iter()
++            .copied()
++            .filter(|p| p.chars().any(|c| c.is_alphabetic() || c.is_numeric()))
++            .collect();
++        let got: Vec<&str> = s.unicode_sentences().collect();
++        assert_eq!(
++            got, expected_words,
++            "unicode_sentences is not split_sentence_bounds filtered by Alphabetic-or-Number on {s:?}"
++        );
++    }
++}
++
++/// `Iterator::size_hint` must not panic, must report a lower bound no greater
++/// than its upper bound, and both must bracket the number of items the iterator
++/// has *left* to yield. This drives every public iterator of the crate over a
++/// corpus that leads with the empty string, checking the hint before every
++/// `next()` call rather than only at the start: a hint derived from the whole
++/// input instead of the unconsumed remainder is correct at the first position
++/// and wrong at every later one.
++#[test]
++fn test_size_hint_is_a_valid_bound() {
++    use crate::testdata::{TEST_SAME, TEST_SENTENCE, TEST_WORD};
++
++    fn check<I: Iterator>(label: &str, s: &str, mut it: I, total: usize) {
++        for consumed in 0..=total {
++            let remaining = total - consumed;
++            let (lo, hi) = it.size_hint();
++            assert!(
++                lo <= remaining,
++                "{}: size_hint lower {} exceeds the {} items remaining after {} on {:?}",
++                label,
++                lo,
++                remaining,
++                consumed,
++                s
++            );
++            if let Some(hi) = hi {
++                assert!(
++                    lo <= hi,
++                    "{}: size_hint lower {} exceeds upper {} after {} on {:?}",
++                    label,
++                    lo,
++                    hi,
++                    consumed,
++                    s
++                );
++                assert!(
++                    remaining <= hi,
++                    "{}: the {} items remaining exceed size_hint upper {} after {} on {:?}",
++                    label,
++                    remaining,
++                    hi,
++                    consumed,
++                    s
++                );
++            }
++            if it.next().is_none() {
++                break;
++            }
++        }
++    }
++
++    macro_rules! check {
++        ($label:expr, $s:expr, $mk:expr) => {{
++            let mk = $mk;
++            let total = mk().count();
++            check($label, $s, mk(), total);
++        }};
++    }
++
++    let corpus = [
++        "",
++        " ",
++        "a",
++        "ab",
++        "\r\n",
++        "0",
++        "\u{1f600}",
++        "Mr. Fox jumped. [...] The dog was too lazy.",
++    ]
++    .iter()
++    .copied()
++    .chain(TEST_SAME.iter().map(|&(s, _)| s))
++    .chain(TEST_WORD.iter().map(|&(s, _)| s))
++    .chain(TEST_SENTENCE.iter().map(|&(s, _)| s));
++
++    for s in corpus {
++        check!("graphemes(true)", s, || s.graphemes(true));
++        check!("graphemes(false)", s, || s.graphemes(false));
++        check!("grapheme_indices(true)", s, || s.grapheme_indices(true));
++        check!("split_word_bounds", s, || s.split_word_bounds());
++        check!("split_word_bound_indices", s, || s
++            .split_word_bound_indices());
++        check!("unicode_words", s, || s.unicode_words());
++        check!("unicode_word_indices", s, || s.unicode_word_indices());
++        check!("split_sentence_bounds", s, || s.split_sentence_bounds());
++        check!("split_sentence_bound_indices", s, || s
++            .split_sentence_bound_indices());
++        check!("unicode_sentences", s, || s.unicode_sentences());
++    }
+ }

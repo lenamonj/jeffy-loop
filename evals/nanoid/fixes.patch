@@ -8,66 +8,60 @@ index 11921b1..197eb89 100644
  test/demo/dist/
 +.claude/jeffy-loop.local.md
 diff --git a/.npmignore b/.npmignore
-deleted file mode 100644
-index 97d4cdf..0000000
+index 97d4cdf..9d76d3b 100644
 --- a/.npmignore
-+++ /dev/null
-@@ -1,9 +0,0 @@
--test/
--tsconfig.json
--coverage/
--
--img/
--
--jsr.json
--SECURITY.md
--pnpm-workspace.yaml
++++ b/.npmignore
+@@ -7,3 +7,10 @@ img/
+ jsr.json
+ SECURITY.md
+ pnpm-workspace.yaml
++
++PLAN.md
++BACKLOG.md
++JOURNAL.md
++JOURNAL-archive.md
++.jeffy/
++.claude/
 diff --git a/README.md b/README.md
-index 5d05629..1ab1a4f 100644
+index 5d05629..3235ad8 100644
 --- a/README.md
 +++ b/README.md
-@@ -198,8 +198,9 @@ Check the safety of your custom alphabet and ID size in our
+@@ -198,8 +198,10 @@ Check the safety of your custom alphabet and ID size in our
  [ID collision probability] calculator. For more alphabets, check out the options
  in [`nanoid-dictionary`].
  
 -Alphabet must contain 256 symbols or less.
 -Otherwise, the security of the internal generator algorithm is not guaranteed.
-+Alphabet must contain between 1 and 256 symbols. An alphabet of any other length throws
-+a `RangeError`, because outside that range the internal generator cannot keep
-+every symbol equally likely.
++Alphabet must contain 1 to 256 symbols. A single random byte addresses the
++alphabet, so `nanoid` throws a `RangeError` for anything outside that range.
++`nanoid/non-secure` indexes the alphabet instead, so it has no upper bound
++there and only an empty alphabet is rejected.
  
  In addition to setting a default size, you can change the ID size when calling
  the function:
 diff --git a/bin/nanoid.js b/bin/nanoid.js
-index cc1bec5..a101e14 100755
+index cc1bec5..3ad6a7c 100755
 --- a/bin/nanoid.js
 +++ b/bin/nanoid.js
-@@ -39,26 +39,57 @@ Examples
+@@ -39,26 +39,61 @@ Examples
    process.exit()
  }
  
-+// Every flag this CLI understands. A value that is one of these is a flag the
-+// user forgot to give a value to, never the value itself. Membership is the
-+// test rather than a leading `-`, because `-a -_abc` is a legitimate alphabet.
-+const FLAGS = [
-+  '--size',
-+  '-s',
-+  '--alphabet',
-+  '-a',
-+  '--version',
-+  '-v',
-+  '--help',
-+  '-h'
-+]
++// The tokens the loop below parses. `-v` and `-h` never reach it, since the
++// checks above exit first, so a value equal to one of these is a flag the
++// user meant to pass rather than a value they meant to give.
++const VALUE_TAKING = ['--alphabet', '--size', '-a', '-s']
 +
-+// A flag's value used to be whatever sat at `argv[i + 1]`, unchecked, so a
-+// flag at the end of the line silently took `undefined` and a flag followed by
-+// another flag swallowed it: `-a -s 10` used `-s` as the alphabet and then
-+// blamed `10`.
-+function value(flag, i) {
-+  let next = process.argv[i + 1]
-+  if (next === undefined || FLAGS.includes(next)) {
-+    error('Missing value for ' + flag)
++// The library reduces its size argument with `size |= 0`, so it honours only
++// what fits in a signed 32-bit integer. Past that a size wraps: 2^32 + 5 asks
++// for four billion symbols and gets five, with no error anywhere. Reject it
++// here, where the flag is parsed, rather than let a wrapped length through.
++const MAX_SIZE = 0x7fffffff
++
++function optionValue(flag, index) {
++  let next = process.argv[index + 1]
++  if (next === undefined || VALUE_TAKING.includes(next)) {
++    error('Option ' + flag + ' requires a value')
 +  }
 +  return next
 +}
@@ -77,19 +71,22 @@ index cc1bec5..a101e14 100755
    let arg = process.argv[i]
    if (arg === '--size' || arg === '-s') {
 -    size = Number(process.argv[i + 1])
-+    size = Number(value(arg, i))
++    size = Number(optionValue(arg, i))
      i += 1
 -    if (Number.isNaN(size) || size <= 0) {
--      error('Size must be positive integer')
-+    // The message has always promised an integer; only `NaN` was rejected, so
-+    // `-s 5.9` passed and printed five symbols.
 +    if (!Number.isInteger(size) || size <= 0) {
-+      error(arg + ': Size must be positive integer')
+       error('Size must be positive integer')
      }
++    if (size > MAX_SIZE) {
++      error('Size must be at most ' + MAX_SIZE)
++    }
    } else if (arg === '--alphabet' || arg === '-a') {
 -    alphabet = process.argv[i + 1]
-+    alphabet = value(arg, i)
++    alphabet = optionValue(arg, i)
      i += 1
++    if (alphabet === '') {
++      error('Alphabet must not be empty')
++    }
    } else {
      error('Unknown argument ' + arg)
    }
@@ -100,498 +97,331 @@ index cc1bec5..a101e14 100755
 -  print(customNanoid())
 -} else {
 -  print(nanoid(size))
++// The library validates its own arguments and throws. Reaching a user through
++// a stack trace of node internals is not a CLI reporting a bad flag, so every
++// throw from either entry point is reported the way this program reports its
++// own rejections: one line on stderr, exit 1.
++let id
 +try {
-+  // `alphabet !== undefined` rather than a truthiness test: `-a ''` is a
-+  // request this CLI must refuse, and refusing it is the library's job.
-+  print(alphabet === undefined ? nanoid(size) : customAlphabet(alphabet, size)())
++  if (alphabet !== undefined) {
++    let customNanoid = customAlphabet(alphabet, size)
++    id = customNanoid()
++  } else {
++    id = nanoid(size)
++  }
 +} catch (e) {
-+  // The library's own limits - the int32 size wrap, V8's string ceiling, an
-+  // alphabet outside 1-256 symbols - reach the user as one line, not a stack.
 +  error(e.message)
  }
++print(id)
 diff --git a/index.browser.js b/index.browser.js
-index 2eabbdf..e47436b 100644
+index 2eabbdf..558709e 100644
 --- a/index.browser.js
 +++ b/index.browser.js
-@@ -7,9 +7,24 @@ import { urlAlphabet } from './url-alphabet/index.js'
- 
- export { urlAlphabet }
- 
--export let random = bytes => crypto.getRandomValues(new Uint8Array(bytes))
-+// `crypto.getRandomValues` rejects requests over 65536 bytes, so bigger
-+// buffers are filled by chunks, exactly as index.js does. `subarray` clamps
-+// its end to the buffer, so the last chunk needs no special case.
-+export let random = bytes => {
-+  let buffer = new Uint8Array(bytes)
-+  for (let from = 0; from < bytes; from += 65536) {
-+    crypto.getRandomValues(buffer.subarray(from, from + 65536))
-+  }
-+  return buffer
-+}
+@@ -10,6 +10,13 @@ export { urlAlphabet }
+ export let random = bytes => crypto.getRandomValues(new Uint8Array(bytes))
  
  export let customRandom = (alphabet, defaultSize, getRandom) => {
-+  // Outside 1-256 the cutoff below is 0 or NaN and no byte is ever
-+  // accepted, so the generator would loop forever instead of returning.
++  // Bytes are sampled into the alphabet, so an empty alphabet has nothing
++  // to sample and one over 256 symbols cannot be reached by a single byte.
++  // Both used to spin in the `while (true)` loop below forever.
 +  if (!alphabet.length || alphabet.length > 256) {
-+    throw new RangeError('Wrong alphabet')
++    throw new RangeError('Wrong alphabet size')
 +  }
 +
    // Random bytes are 0-255. `random % alphabet.length` can waste
    // that entropy by making some symbols more likely.
    //
-@@ -27,6 +42,11 @@ export let customRandom = (alphabet, defaultSize, getRandom) => {
-     let mask = alphabet.length - 1
- 
-     return (size = defaultSize) => {
-+      // `|=` convert `size` to number to prevent `valueOf` abusing, and a
-+      // negative size would otherwise satisfy `id.length >= size` on the
-+      // first symbol and return an ID of the wrong length.
-+      size |= 0
-+      if (size < 0) throw new RangeError('Wrong ID size')
-       if (!size) return ''
-       let id = ''
-       while (true) {
-@@ -48,9 +68,22 @@ export let customRandom = (alphabet, defaultSize, getRandom) => {
-   //
-   // `step` determines how many random bytes to request.
-   // `1.6` is a magic number chosen from benchmarks.
--  let step = Math.ceil((1.6 * 256 * defaultSize) / safeByteCutoff)
-+  //
-+  // `| 0` because a `defaultSize` that is not a number - undefined, null, NaN -
-+  // makes `step` NaN, and a round that requests NaN bytes accepts none. The
-+  // floor is for the rest: a `defaultSize` of 0 or a negative one leaves `step`
-+  // at or below zero, and `while (i--)` then never runs a single pass while the
-+  // `while (true)` around it keeps going, so the generator never returns. One
-+  // byte per round is slower than the benchmarked batch and always terminates.
-+  let step = Math.ceil((1.6 * 256 * (defaultSize | 0)) / safeByteCutoff)
-+  if (step < 1) step = 1
- 
-   return (size = defaultSize) => {
-+    // `|=` convert `size` to number to prevent `valueOf` abusing, and a
-+    // negative size would otherwise satisfy `id.length >= size` on the
-+    // first symbol and return an ID of the wrong length.
-+    size |= 0
-+    if (size < 0) throw new RangeError('Wrong ID size')
-     if (!size) return ''
-     let id = ''
-     while (true) {
-@@ -72,6 +105,10 @@ export let customRandom = (alphabet, defaultSize, getRandom) => {
- export let customAlphabet = (alphabet, size = 21) =>
-   customRandom(alphabet, size | 0, random)
- 
-+// `nanoid` allocates in one call rather than through `random` above: a single
-+// ID longer than the 65536 byte quota is not a shape this entry point serves,
-+// and routing it through the chunking loop costs 38 of the 118 bytes this
-+// bundle advertises. Tracked as a Proposed decision in BACKLOG.md.
- export let nanoid = (size = 21) => {
-   let id = ''
-   let bytes = crypto.getRandomValues(new Uint8Array((size |= 0)))
 diff --git a/index.d.ts b/index.d.ts
-index a7d10b2..dbbc779 100644
+index a7d10b2..c67c91d 100644
 --- a/index.d.ts
 +++ b/index.d.ts
-@@ -21,7 +21,8 @@
-  * model.id = nanoid() //=> "Uakgb_J5m9g-0JDMbcJqL"
-  * ```
-  *
-- * @param size Size of the ID. The default size is 21.
-+ * @param size Size of the ID. The default size is 21. A negative size throws a `RangeError`, and a fractional
-+ * size is truncated toward zero.
-  * @typeparam Type The ID type to replace `string` with some opaque type.
-  * @returns A random string.
-  */
-@@ -30,11 +31,13 @@ export function nanoid<Type extends string>(size?: number): Type
+@@ -30,8 +30,8 @@ export function nanoid<Type extends string>(size?: number): Type
  /**
   * Generate secure unique ID with custom alphabet.
   *
 - * Alphabet must contain 256 symbols or less. Otherwise, the generator
 - * will not be secure.
-+ * Alphabet must contain between 1 and 256 symbols. An alphabet of any other
-+ * length throws a `RangeError`, because outside that range the generator
-+ * cannot keep every symbol equally likely.
++ * Alphabet must contain 1 to 256 symbols. A single random byte addresses
++ * the alphabet, so anything outside that range throws a `RangeError`.
   *
   * @param alphabet Alphabet used to generate the ID.
-- * @param defaultSize Size of the ID. The default size is 21.
-+ * @param defaultSize Size of the ID. The default size is 21. A negative size throws a `RangeError`, and a fractional
-+ * size is truncated toward zero.
-  * @typeparam Type The ID type to replace `string` with some opaque type.
-  * @returns A random string generator.
-  *
-@@ -52,8 +55,9 @@ export function customAlphabet<Type extends string>(
+  * @param defaultSize Size of the ID. The default size is 21.
+@@ -52,8 +52,8 @@ export function customAlphabet<Type extends string>(
  /**
   * Generate unique ID with custom random generator and alphabet.
   *
 - * Alphabet must contain 256 symbols or less. Otherwise, the generator
 - * will not be secure.
-+ * Alphabet must contain between 1 and 256 symbols. An alphabet of any other
-+ * length throws a `RangeError`, because outside that range the generator
-+ * cannot keep every symbol equally likely.
++ * Alphabet must contain 1 to 256 symbols. A single random byte addresses
++ * the alphabet, so anything outside that range throws a `RangeError`.
   *
   * ```js
   * import { customRandom } from 'nanoid'
-@@ -70,7 +74,8 @@ export function customAlphabet<Type extends string>(
-  * ```
-  *
-  * @param alphabet Alphabet used to generate a random string.
-- * @param defaultSize Size of the random string.
-+ * @param defaultSize Size of the random string. A negative size throws a `RangeError`, and a fractional
-+ * size is truncated toward zero.
-  * @param random A random bytes generator.
-  * @typeparam Type The ID type to replace `string` with some opaque type.
-  * @returns A random string generator.
-@@ -100,7 +105,7 @@ export const urlAlphabet: string
-  * const nanoid = customRandom("abcdef", 5, random)
-  * ```
-  *
-- * @param bytes Size of the array.
-+ * @param bytes Size of the array. A negative size throws a `RangeError`.
-  * @returns An array of random bytes.
-  */
- export function random(bytes: number): Uint8Array
 diff --git a/index.js b/index.js
-index 7ee3d33..70924d5 100644
+index 7ee3d33..acb9094 100644
 --- a/index.js
 +++ b/index.js
-@@ -27,6 +27,12 @@ export function random(bytes) {
+@@ -27,6 +27,13 @@ export function random(bytes) {
  }
  
  export function customRandom(alphabet, defaultSize, getRandom) {
-+  // Outside 1-256 the cutoff below is 0 or NaN and no byte is ever
-+  // accepted, so the generator would loop forever instead of returning.
++  // Bytes are sampled into the alphabet, so an empty alphabet has nothing
++  // to sample and one over 256 symbols cannot be reached by a single byte.
++  // Both used to spin in the `while (true)` loop below forever.
 +  if (!alphabet.length || alphabet.length > 256) {
-+    throw new RangeError('Wrong alphabet')
++    throw new RangeError('Wrong alphabet size')
 +  }
 +
    // Random bytes are 0-255. `random % alphabet.length` can waste
    // that entropy by making some symbols more likely.
    //
-@@ -44,6 +50,11 @@ export function customRandom(alphabet, defaultSize, getRandom) {
-     let mask = alphabet.length - 1
- 
-     return (size = defaultSize) => {
-+      // `|=` convert `size` to number to prevent `valueOf` abusing, and a
-+      // negative size would otherwise satisfy `id.length >= size` on the
-+      // first symbol and return an ID of the wrong length.
-+      size |= 0
-+      if (size < 0) throw new RangeError('Wrong ID size')
-       if (!size) return ''
-       let id = ''
-       while (true) {
-@@ -65,9 +76,22 @@ export function customRandom(alphabet, defaultSize, getRandom) {
-   //
-   // `step` determines how many random bytes to request.
-   // `1.6` is a magic number chosen from benchmarks.
--  let step = Math.ceil((1.6 * 256 * defaultSize) / safeByteCutoff)
-+  //
-+  // `| 0` because a `defaultSize` that is not a number - undefined, null, NaN -
-+  // makes `step` NaN, and a round that requests NaN bytes accepts none. The
-+  // floor is for the rest: a `defaultSize` of 0 or a negative one leaves `step`
-+  // at or below zero, and `while (i--)` then never runs a single pass while the
-+  // `while (true)` around it keeps going, so the generator never returns. One
-+  // byte per round is slower than the benchmarked batch and always terminates.
-+  let step = Math.ceil((1.6 * 256 * (defaultSize | 0)) / safeByteCutoff)
-+  if (step < 1) step = 1
- 
-   return (size = defaultSize) => {
-+    // `|=` convert `size` to number to prevent `valueOf` abusing, and a
-+    // negative size would otherwise satisfy `id.length >= size` on the
-+    // first symbol and return an ID of the wrong length.
-+    size |= 0
-+    if (size < 0) throw new RangeError('Wrong ID size')
-     if (!size) return ''
-     let id = ''
-     while (true) {
 diff --git a/non-secure/index.d.ts b/non-secure/index.d.ts
-index 5cd785d..f882d71 100644
+index 5cd785d..4a6c017 100644
 --- a/non-secure/index.d.ts
 +++ b/non-secure/index.d.ts
-@@ -20,7 +20,9 @@
-  * model.id = nanoid() //=> "Uakgb_J5m9g-0JDMbcJqL"
-  * ```
-  *
-- * @param size Size of the ID. The default size is 21.
-+ * @param size Size of the ID. The default size is 21. Unlike the secure
-+ * entry point, a negative size returns an empty string rather than
-+ * throwing, and a fractional size is truncated toward zero.
-  * @typeparam Type The ID type to replace `string` with some opaque type.
-  * @returns A random string.
-  */
-@@ -31,8 +33,12 @@ export function nanoid<Type extends string>(size?: number): Type
+@@ -31,6 +31,9 @@ export function nanoid<Type extends string>(size?: number): Type
   * This method uses the non-secure predictable random generator
   * with bigger collision probability.
   *
-+ * An empty alphabet throws a `RangeError`.
++ * The alphabet is indexed rather than addressed by a random byte, so it has
++ * no upper bound here. An empty alphabet throws a `RangeError`.
 + *
   * @param alphabet Alphabet used to generate the ID.
-- * @param defaultSize Size of the ID. The default size is 21.
-+ * @param defaultSize Size of the ID. The default size is 21. Unlike the
-+ * secure entry point, a negative size returns an empty string rather than
-+ * throwing, and a fractional size is truncated toward zero.
+  * @param defaultSize Size of the ID. The default size is 21.
   * @typeparam Type The ID type to replace `string` with some opaque type.
-  * @returns A random string generator.
-  *
 diff --git a/non-secure/index.js b/non-secure/index.js
-index 06f5478..9b611b9 100644
+index 06f5478..a4d7b12 100644
 --- a/non-secure/index.js
 +++ b/non-secure/index.js
-@@ -3,6 +3,9 @@
+@@ -3,6 +3,10 @@
  import { urlAlphabet } from '../url-alphabet/index.js'
  
  export let customAlphabet = (alphabet, defaultSize = 21) => {
-+  // An empty alphabet would index past its end and build an ID out of
-+  // the string `undefined` instead of failing.
-+  if (!alphabet.length) throw new RangeError('Wrong alphabet')
++  // An empty alphabet has no symbol to index, and used to return IDs built
++  // from the literal text `undefined`. There is no upper bound here: this
++  // generator indexes the alphabet instead of sampling a byte into it.
++  if (!alphabet.length) throw new RangeError('Wrong alphabet size')
    return (size = defaultSize) => {
      let id = ''
      // A compact alternative for `for (var i = 0; i < step; i++)`.
+diff --git a/oxlint.config.ts b/oxlint.config.ts
+index d2b16c6..f8925b0 100644
+--- a/oxlint.config.ts
++++ b/oxlint.config.ts
+@@ -6,7 +6,7 @@ export default defineConfig({
+     typeCheck: false
+   },
+   extends: [loguxOxlintConfig],
+-  ignorePatterns: ['test/demo/dist'],
++  ignorePatterns: ['test/demo/dist', '.jeffy'],
+   rules: {
+     'unicorn/no-array-sort': 'off'
+   }
 diff --git a/package.json b/package.json
-index d8d3da8..f3553e2 100644
+index d8d3da8..b92ebdf 100644
 --- a/package.json
 +++ b/package.json
-@@ -19,6 +19,17 @@
-   ],
-   "bin": "./bin/nanoid.js",
-   "type": "module",
-+  "files": [
-+    "CHANGELOG.md",
-+    "index.js",
-+    "index.browser.js",
-+    "index.d.ts",
-+    "nanoid.js",
-+    "non-secure/index.js",
-+    "non-secure/index.d.ts",
-+    "url-alphabet/index.js",
-+    "bin/nanoid.js"
-+  ],
-   "sideEffects": false,
-   "browser": {
-     "./index.js": "./index.browser.js"
-@@ -86,7 +97,7 @@
+@@ -86,7 +86,7 @@
      {
        "name": "customAlphabet",
        "import": "{ customAlphabet }",
 -      "limit": "207 B"
-+      "limit": "316 B"
++      "limit": "239 B"
      },
      {
        "name": "urlAlphabet",
-@@ -103,7 +114,7 @@
+@@ -103,7 +103,7 @@
        "name": "non-secure customAlphabet",
        "import": "{ customAlphabet }",
        "path": "non-secure/index.js",
 -      "limit": "55 B"
-+      "limit": "89 B"
++      "limit": "93 B"
      }
    ],
    "engines": {
-diff --git a/test/alphabet.test.js b/test/alphabet.test.js
-new file mode 100644
-index 0000000..1c92c6c
---- /dev/null
-+++ b/test/alphabet.test.js
-@@ -0,0 +1,31 @@
-+import { equal, ok } from 'node:assert'
-+import { test } from 'node:test'
-+
-+import * as browser from '../index.browser.js'
-+import * as node from '../index.js'
-+import * as nonSecure from '../non-secure/index.js'
-+
-+// An alphabet outside the range an entry point supports used to hang index.js
-+// and index.browser.js forever, and made non-secure build IDs out of the
-+// string `undefined`. Every entry point must now terminate: either it throws
-+// a RangeError, or it returns a real ID of the requested size.
-+let entries = Object.entries({ browser, node, 'non-secure': nonSecure })
-+
-+for (let [name, entry] of entries) {
-+  for (let [label, alphabet] of [
-+    ['an empty', ''],
-+    ['a 300 symbol', 'a'.repeat(300)]
-+  ]) {
-+    test(`${name} terminates on ${label} alphabet`, () => {
-+      let id
-+      try {
-+        id = entry.customAlphabet(alphabet)(5)
-+      } catch (e) {
-+        ok(e instanceof RangeError, `${name} threw ${String(e)}`)
-+        return
-+      }
-+      equal(id.length, 5)
-+      for (let char of id) ok(alphabet.includes(char))
-+    })
-+  }
-+}
 diff --git a/test/bin.test.js b/test/bin.test.js
-index 7dd3908..95bed9a 100644
+index 7dd3908..c88abbe 100644
 --- a/test/bin.test.js
 +++ b/test/bin.test.js
-@@ -48,6 +48,50 @@ describe('CLI', () => {
+@@ -34,6 +34,49 @@ describe('CLI', () => {
+     await rejects(() => exec(`node "${BIN}" -test`), /Unknown argument -test/)
+   })
+ 
++  test('shows an error if the alphabet is empty', async () => {
++    await rejects(
++      () => exec(`node "${BIN}" -a "" -s 10`),
++      /Alphabet must not be empty/
++    )
++    await rejects(
++      () => exec(`node "${BIN}" --alphabet ""`),
++      /Alphabet must not be empty/
++    )
++  })
++
++  test('shows an error if an option has no value', async () => {
++    await rejects(
++      () => exec(`node "${BIN}" -a`),
++      /Option -a requires a value/
++    )
++    await rejects(
++      () => exec(`node "${BIN}" --alphabet`),
++      /Option --alphabet requires a value/
++    )
++    await rejects(
++      () => exec(`node "${BIN}" -s`),
++      /Option -s requires a value/
++    )
++  })
++
++  test('does not swallow a following flag as a value', async () => {
++    await rejects(
++      () => exec(`node "${BIN}" -a -s 5`),
++      /Option -a requires a value/
++    )
++    await rejects(
++      () => exec(`node "${BIN}" --size --alphabet abc`),
++      /Option --size requires a value/
++    )
++  })
++
++  test('accepts a value that starts with a hyphen', async () => {
++    let { stderr, stdout } = await exec(`node "${BIN}" -a "-_ab" -s 12`)
++    equal(stderr, '')
++    match(stdout, /^[-_ab]{12}\n$/)
++  })
++
+   test('shows an error if size is not a number', async () => {
+     await rejects(
+       () => exec(`node "${BIN}" -s abc`),
+@@ -41,6 +84,27 @@ describe('CLI', () => {
      )
    })
  
-+  test('requires a value for a flag at the end of the line', async () => {
++  test('shows an error if size is not an integer', async () => {
 +    await rejects(
-+      () => exec(`node "${BIN}" --size 8 --alphabet`),
-+      /Missing value for --alphabet/
++      () => exec(`node "${BIN}" -s 2.7`),
++      /Size must be positive integer/
 +    )
-+    await rejects(() => exec(`node "${BIN}" -s`), /Missing value for -s/)
-+  })
-+
-+  test('does not take another flag as a value', async () => {
-+    // `-a -s 10` used to make `-s` the alphabet and then blame `10`.
-+    await rejects(() => exec(`node "${BIN}" -a -s 10`), /Missing value for -a/)
-+  })
-+
-+  test('names the flag whose size was rejected', async () => {
 +    await rejects(
-+      () => exec(`node "${BIN}" -a abc -s 5.9`),
-+      /-s: Size must be positive integer/
++      () => exec(`node "${BIN}" -s 1e400`),
++      /Size must be positive integer/
++    )
++    await rejects(
++      () => exec(`node "${BIN}" --size Infinity`),
++      /Size must be positive integer/
 +    )
 +  })
 +
-+  test('reports a size the library refuses without a stack trace', async () => {
-+    let message = await exec(`node "${BIN}" -s 2147483648`).then(
-+      () => null,
-+      e => e.stderr
-+    )
-+    equal(message.trimEnd().split('\n').length, 1)
-+    match(message, /Wrong ID size/)
-+  })
-+
-+  test('reports an alphabet the library refuses', async () => {
-+    let message = await exec(`node "${BIN}" -a ''`).then(
-+      () => null,
-+      e => e.stderr
-+    )
-+    equal(message.trimEnd().split('\n').length, 1)
-+    match(message, /Wrong alphabet/)
-+  })
-+
-+  test('accepts an alphabet that starts with a hyphen', async () => {
-+    let { stderr, stdout } = await exec(`node "${BIN}" -a '-_abc'`)
++  test('accepts a size written in another numeric form', async () => {
++    let { stderr, stdout } = await exec(`node "${BIN}" -s 3.0`)
 +    equal(stderr, '')
-+    match(stdout, /^[-_abc]{21}\n$/)
++    match(stdout, /^[\w-]{3}\n$/)
++  })
++
+   test('requires error if size is a negative number', async () => {
+     await rejects(
+       () => exec(`node "${BIN}" --size "-1"`),
+@@ -48,6 +112,28 @@ describe('CLI', () => {
+     )
+   })
+ 
++  test('reports a library error as one line, not a stack trace', async () => {
++    let big = 'a'.repeat(300)
++    let err = await exec(`node "${BIN}" -a ${big} -s 5`).then(
++      () => null,
++      e => e
++    )
++    equal(err.stderr, 'Wrong alphabet size\n')
++  })
++
++  test('rejects a size the library would wrap', async () => {
++    for (let size of ['2147483648', '4294967296', '4294967301']) {
++      await rejects(
++        () => exec(`node "${BIN}" -s ${size}`),
++        /Size must be at most 2147483647/
++      )
++    }
++    await rejects(
++      () => exec(`node "${BIN}" -a abc -s 4294967301`),
++      /Size must be at most 2147483647/
++    )
 +  })
 +
    test('displays help', async () => {
      let { stderr, stdout } = await exec(`node "${BIN}" --help`)
      equal(stderr, '')
-diff --git a/test/demo/index.js b/test/demo/index.js
-index e907f52..e4da99e 100644
---- a/test/demo/index.js
-+++ b/test/demo/index.js
-@@ -12,10 +12,14 @@ const LENGTH = ALPHABET.length
- 
- let nanoid2 = customAlphabet(ALPHABET, LENGTH)
- 
--function print(number) {
--  return String(Math.floor(number * 100))
--    .replace(/\d{6}$/, ',$&')
--    .replace(/\d{3}$/, ',$&')
-+// Exported so .jeffy/probes/dev-only-surfaces can pin it at magnitudes the
-+// demo's own workload never reaches. `toLocaleString` is what test/benchmark.js
-+// already uses for the same job; the hand-rolled pair of replaces it stands in
-+// for scaled the rate by 100 before grouping it, so every figure on this page
-+// read a hundred times the rate it had just measured, and it also emitted a
-+// leading comma at three and six digits and dropped a separator past ten.
-+export function print(number) {
-+  return Math.floor(number).toLocaleString('en-US')
- }
- 
- function printDistr(title, fn) {
 diff --git a/test/index.test.js b/test/index.test.js
-index eeaa4bc..0727364 100644
+index eeaa4bc..8bdd033 100644
 --- a/test/index.test.js
 +++ b/test/index.test.js
-@@ -215,8 +215,6 @@ for (let type of ['node', 'browser']) {
+@@ -215,8 +215,12 @@ for (let type of ['node', 'browser']) {
        test(`is ready for 0 size`, () => {
          equal(customAlphabet('abc')(0), '')
          equal(customAlphabet('abc', 0)(0), '')
 -        equal(customAlphabet('')(0), '')
 -        equal(customAlphabet('', 0)(0), '')
++      })
++
++      test(`rejects an empty alphabet`, () => {
++        throws(() => customAlphabet(''), /Wrong alphabet size/)
++        throws(() => customAlphabet('', 0), /Wrong alphabet size/)
++        throws(() => customAlphabet([]), /Wrong alphabet size/)
        })
  
        test(`avoids pool pollution, infinite loop`, () => {
-@@ -240,8 +238,9 @@ for (let type of ['node', 'browser']) {
+@@ -240,8 +244,10 @@ for (let type of ['node', 'browser']) {
          }
        })
  
 -      test(`supports alphabets bigger than 256 symbols`, () => {
 -        equal(customAlphabet('a'.repeat(300))(0), '')
-+      test(`rejects alphabets outside 1-256 symbols`, () => {
-+        throws(() => customAlphabet('a'.repeat(300)), /Wrong alphabet/)
-+        throws(() => customAlphabet(''), /Wrong alphabet/)
++      test(`rejects alphabets bigger than 256 symbols`, () => {
++        equal(customAlphabet('a'.repeat(256), 3)().length, 3)
++        throws(() => customAlphabet('a'.repeat(257)), /Wrong alphabet size/)
++        throws(() => customAlphabet('a'.repeat(300)), /Wrong alphabet size/)
        })
  
        test(`supports non-string alphabets`, () => {
-@@ -281,7 +280,52 @@ for (let type of ['node', 'browser']) {
+@@ -281,7 +287,15 @@ for (let type of ['node', 'browser']) {
        test(`is ready for 0 size`, () => {
          let nanoid0 = customRandom('abc', 5, size => new Uint8Array(size))
          equal(nanoid0(0), '')
 -        equal(customRandom('', 5, size => new Uint8Array(size))(0), '')
 +      })
 +
-+      test(`rejects alphabets outside 1-256 symbols`, () => {
++      test(`rejects unusable alphabets`, () => {
 +        let getRandom = size => new Uint8Array(size)
-+        throws(() => customRandom('', 5, getRandom), /Wrong alphabet/)
-+        throws(() => customRandom('a'.repeat(300), 5, getRandom), /Wrong alphabet/)
-+      })
-+
-+      test(`throws on a negative size`, () => {
-+        // A getRandom that tolerates a negative request, so the generator's own
-+        // guard is what rejects the size rather than the byte allocator under
-+        // it - otherwise this passes for the wrong reason in the browser build.
-+        let getRandom = size => new Uint8Array(Math.max(0, size | 0))
-+        // Each branch returns its own closure and needs its own guard.
-+        throws(() => customRandom('abc', 5, getRandom)(-5), /Wrong ID size/)
-+        throws(() => customRandom('abcd', 5, getRandom)(-5), /Wrong ID size/)
-+        // A negative defaultSize reaches the guard with no argument passed.
-+        throws(() => customRandom('abc', -5, getRandom)(), /Wrong ID size/)
-+        throws(() => customRandom('abcd', -5, getRandom)(), /Wrong ID size/)
-+      })
-+
-+      test(`terminates whatever defaultSize it was built with`, { timeout: 5000 }, () => {
-+        // `step` is derived from defaultSize, and a step of zero, a negative
-+        // one or NaN made the reject loop spin forever. The timeout matters:
-+        // without it a regression hangs the whole suite instead of failing it.
-+        let getRandom = size => new Uint8Array(Math.max(0, size | 0))
-+        for (let defaultSize of [0, null, undefined, NaN, -5]) {
-+          equal(customRandom('abc', defaultSize, getRandom)(5).length, 5)
-+          equal(customAlphabet('abc', defaultSize)(5).length, 5)
-+        }
-+        // The benchmarked batch for a healthy default is untouched.
-+        equal(customRandom('abc', 21, getRandom)().length, 21)
-+      })
-+
-+      test(`truncates a fractional size`, () => {
-+        let sequence = [2, 255, 3, 7, 7, 7, 7, 7, 0, 1]
-+        function fakeRandom(size) {
-+          let bytes = []
-+          for (let i = 0; i < size; i += sequence.length) {
-+            bytes = bytes.concat(sequence.slice(0, size - i))
-+          }
-+          return bytes
-+        }
-+        // `size |= 0` truncates, which is what `customAlphabet` already did.
-+        equal(customRandom('abc', 5, fakeRandom)(3.9).length, 3)
-+        equal(customRandom('abcd', 5, fakeRandom)(3.9).length, 3)
++        throws(() => customRandom('', 5, getRandom), /Wrong alphabet size/)
++        throws(
++          () => customRandom('a'.repeat(300), 5, getRandom),
++          /Wrong alphabet size/
++        )
        })
  
        test(`supports power-of-two alphabets`, () => {
-@@ -322,6 +366,16 @@ for (let type of ['node', 'browser']) {
-         }, /Wrong ID size|Invalid typed array length/)
-       })
+diff --git a/test/non-secure.test.js b/test/non-secure.test.js
+index 9b19c7d..362f338 100644
+--- a/test/non-secure.test.js
++++ b/test/non-secure.test.js
+@@ -1,4 +1,4 @@
+-import { equal, match, notEqual, ok } from 'node:assert'
++import { equal, match, notEqual, ok, throws } from 'node:assert'
+ import { describe, test } from 'node:test'
  
-+      test(`fills buffers past the getRandomValues quota`, () => {
-+        // The quota is 65536 bytes per call, so anything larger has to be
-+        // filled in chunks. On the node type this runs against real Web
-+        // Crypto; the browser type stubs it, so the real quota for that build
-+        // is pinned in .jeffy/probes/index-browser instead.
-+        for (let size of [65536, 65537, 100000]) {
-+          equal(random(size).length, size)
-+        }
-+      })
+ import { urlAlphabet } from '../index.js'
+@@ -74,6 +74,15 @@ describe('non secure', () => {
+       equal(customAlphabet('abc', 0)(0), '')
+     })
+ 
++    test('rejects an empty alphabet', () => {
++      throws(() => customAlphabet(''), /Wrong alphabet size/)
++      throws(() => customAlphabet([]), /Wrong alphabet size/)
++    })
 +
-       test(`generates small random buffers`, () => {
-         for (let i = 0; i < urlAlphabet.length; i++) {
-           equal(random(10).length, 10)
++    test('has no upper bound on the alphabet', () => {
++      equal(customAlphabet('a'.repeat(300), 4)(), 'aaaa')
++    })
++
+     test('has options', () => {
+       let nanoidA = customAlphabet('a', 5)
+       equal(nanoidA(), 'aaaaa')

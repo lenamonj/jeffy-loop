@@ -1,0 +1,269 @@
+diff --git a/.gitignore b/.gitignore
+index e0ad5ff..7e00407 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -26,3 +26,4 @@ node_modules
+ .DS_Store
+ 
+ benchmarks/runInBrowser.bundle.js
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index 1387c80..37069b0 100644
+--- a/README.md
++++ b/README.md
+@@ -20,14 +20,14 @@ Install from the [npm registry](https://www.npmjs.com/) with your package manage
+ npm install classnames
+ ```
+ 
+-Use with [Node.js](https://nodejs.org/en/), [Browserify](https://browserify.org/), or [webpack](https://webpack.github.io/):
++The package ships ES modules only. Use it with [Node.js](https://nodejs.org/en/) or any bundler ([webpack](https://webpack.js.org/), [Vite](https://vite.dev/), [Rollup](https://rollupjs.org/)):
+ 
+ ```js
+-const classNames = require('classnames');
++import classNames from 'classnames';
+ classNames('foo', 'bar'); // => 'foo bar'
+ ```
+ 
+-Alternatively, you can simply include `index.js` on your page with a standalone `<script>` tag and it will export a global `classNames` method, or define the module if you are using RequireJS.
++In a browser without a bundler, load `index.js` from a `<script type="module">` block and import it there. There is no UMD build: the package exports no global `classNames` and defines no AMD module.
+ 
+ ### Project philosophy
+ 
+@@ -54,13 +54,15 @@ classNames({ foo: true, bar: true }); // => 'foo bar'
+ classNames('foo', { bar: true, duck: false }, 'baz', { quux: true }); // => 'foo bar baz quux'
+ 
+ // other falsy values are just ignored
+-classNames(null, false, 'bar', undefined, 0, { baz: null }, ''); // => 'bar'
++classNames(null, false, 'bar', undefined, { baz: null }, ''); // => 'bar'
+ 
+ // conditional strings (falsy results are ignored)
+ classNames('foo', true && 'bar'); // => 'foo bar'
+ classNames('foo', false && 'bar'); // => 'foo'
+ ```
+ 
++A numeric argument is always ignored, whether it is falsy or not, so `classNames(1)` is `''`. The TypeScript types reject numbers for that reason: a truthy number would be dropped in silence rather than joined.
++
+ Arrays will be recursively flattened as per the rules above:
+ 
+ ```js
+@@ -153,17 +155,15 @@ There is an alternate version of `classNames` available which correctly dedupes
+ 
+ This version is slower (about 5x) so it is offered as an opt-in.
+ 
+-To use the dedupe version with Node.js, Browserify, or webpack:
++To use the dedupe version:
+ 
+ ```js
+-const classNames = require('classnames/dedupe');
++import classNames from 'classnames/dedupe';
+ 
+ classNames('foo', 'foo', 'bar'); // => 'foo bar'
+ classNames('foo', { foo: false, bar: true }); // => 'bar'
+ ```
+ 
+-For standalone (global / AMD) use, include `dedupe.js` in a `<script>` tag on your page.
+-
+ ### Alternate `bind` version (for [css-modules](https://github.com/css-modules/css-modules))
+ 
+ If you are using [css-modules](https://github.com/css-modules/css-modules), or a similar approach to abstract class 'names' and the real `className` values that are actually output to the DOM, you may want to use the `bind` variant.
+@@ -171,7 +171,7 @@ If you are using [css-modules](https://github.com/css-modules/css-modules), or a
+ _Note that in ES2015 environments, it may be better to use the "dynamic class names" approach documented above._
+ 
+ ```js
+-const classNames = require('classnames/bind');
++import classNames from 'classnames/bind';
+ 
+ const styles = {
+   foo: 'abc',
+diff --git a/bind.js b/bind.js
+index eaa1eaa..c7dd3b1 100644
+--- a/bind.js
++++ b/bind.js
+@@ -15,7 +15,7 @@ export default function classNames () {
+ 
+ function parseValue (arg) {
+ 	if (typeof arg === 'string') {
+-		return this && this[arg] || arg;
++		return lookup(this, arg);
+ 	}
+ 
+ 	if (typeof arg !== 'object') {
+@@ -26,7 +26,7 @@ function parseValue (arg) {
+ 		return classNames.apply(this, arg);
+ 	}
+ 
+-	if (arg.toString !== Object.prototype.toString && !arg.toString.toString().includes('[native code]')) {
++	if (typeof arg.toString === 'function' && arg.toString !== Object.prototype.toString && !arg.toString.toString().includes('[native code]')) {
+ 		return arg.toString();
+ 	}
+ 
+@@ -34,13 +34,20 @@ function parseValue (arg) {
+ 
+ 	for (const key in arg) {
+ 		if (hasOwn.call(arg, key) && arg[key]) {
+-			classes = appendClass(classes, this && this[key] || key);
++			classes = appendClass(classes, lookup(this, key));
+ 		}
+ 	}
+ 
+ 	return classes;
+ }
+ 
++// Only an own key of the binding maps a class name. Reaching through to
++// Object.prototype would resolve a class called toString or constructor to an
++// inherited function and return it in place of the name.
++function lookup (binding, name) {
++	return binding && hasOwn.call(binding, name) && binding[name] || name;
++}
++
+ function appendClass (value, newClass) {
+ 	if (!newClass) {
+ 		return value;
+diff --git a/dedupe.js b/dedupe.js
+index 093c6f0..5fa06cd 100644
+--- a/dedupe.js
++++ b/dedupe.js
+@@ -9,7 +9,10 @@ export default function classNames () {
+ 	let classes = '';
+ 
+ 	for (const key in classSet) {
+-		if (classSet[key]) {
++		// An empty class name contributes nothing but a stray separator, and
++		// index.js already refuses one in appendClass. Splitting a string on
++		// whitespace and an object key of '' are the two ways one arrives.
++		if (key && classSet[key]) {
+ 			classes += classes ? (' ' +  key) : key;
+ 		}
+ 	}
+@@ -53,6 +56,7 @@ const hasOwn = {}.hasOwnProperty;
+ 
+ function appendObject (classSet, object) {
+ 	if (
++		typeof object.toString === 'function' &&
+ 		object.toString !== Object.prototype.toString &&
+ 		!object.toString.toString().includes('[native code]')
+ 	) {
+diff --git a/index.js b/index.js
+index 8915411..8fb9452 100644
+--- a/index.js
++++ b/index.js
+@@ -26,7 +26,7 @@ function parseValue (arg) {
+ 		return classNames.apply(null, arg);
+ 	}
+ 
+-	if (arg.toString !== Object.prototype.toString && !arg.toString.toString().includes('[native code]')) {
++	if (typeof arg.toString === 'function' && arg.toString !== Object.prototype.toString && !arg.toString.toString().includes('[native code]')) {
+ 		return arg.toString();
+ 	}
+ 
+diff --git a/tests/bind.js b/tests/bind.js
+index ba375e6..d8f04a4 100644
+--- a/tests/bind.js
++++ b/tests/bind.js
+@@ -76,6 +76,20 @@ describe('bind', () => {
+ 				toString: () => { return 'classFromMethod'; }
+ 			}), 'classFromMethod');
+ 		});
++
++		it('handles objects with a null prototype', () => {
++			const dict = Object.create(null);
++			dict.a = true;
++			dict.b = false;
++
++			assert.equal(classNames(dict), 'a');
++			assert.equal(classNames(Object.groupBy(['a', 'b'], (x) => x)), 'a b');
++		});
++
++		it('handles objects whose toString is not callable', () => {
++			assert.equal(classNames({toString: null, a: true}), 'a');
++			assert.equal(classNames({toString: undefined, a: true}), 'a');
++		});
+ 	});
+ 
+ 	describe('classNamesBound', () => {
+@@ -161,5 +175,29 @@ describe('bind', () => {
+ 
+ 			assert.equal(classNamesBound(new Class2()), 'classFromMethod');
+ 		});
++
++		it('does not resolve class names through Object.prototype', () => {
++			const cx = classNames.bind({});
++
++			for (const name of Object.getOwnPropertyNames(Object.prototype)) {
++				assert.equal(cx(name), name);
++				assert.equal(cx({[name]: true}), name);
++				assert.equal(cx([name]), name);
++			}
++		});
++
++		it('handles objects with a null prototype', () => {
++			const dict = Object.create(null);
++			dict.a = true;
++			dict.b = false;
++
++			assert.equal(classNamesBound(dict), '#a');
++			assert.equal(classNamesBound(Object.groupBy(['a', 'b'], (x) => x)), '#a #b');
++		});
++
++		it('handles objects whose toString is not callable', () => {
++			assert.equal(classNamesBound({toString: null, a: true}), '#a');
++			assert.equal(classNamesBound({toString: undefined, a: true}), '#a');
++		});
+ 	});
+ })
+diff --git a/tests/dedupe.js b/tests/dedupe.js
+index c1c51d1..7182861 100644
+--- a/tests/dedupe.js
++++ b/tests/dedupe.js
+@@ -86,4 +86,26 @@ describe('dedupe', () => {
+ 
+ 		assert.equal(dedupe(new Class2()), 'classFromMethod');
+ 	});
++
++	it('drops empty class names', () => {
++		assert.equal(dedupe('a '), 'a');
++		assert.equal(dedupe('a ', 'b'), 'a b');
++		assert.equal(dedupe(' a '), 'a');
++		assert.equal(dedupe(' '), '');
++		assert.equal(dedupe('a', {'': true}), 'a');
++	});
++
++	it('handles objects with a null prototype', () => {
++		const dict = Object.create(null);
++		dict.a = true;
++		dict.b = false;
++
++		assert.equal(dedupe(dict), 'a');
++		assert.equal(dedupe(Object.groupBy(['a', 'b'], (x) => x)), 'a b');
++	});
++
++	it('handles objects whose toString is not callable', () => {
++		assert.equal(dedupe({toString: null, a: true}), 'a');
++		assert.equal(dedupe({toString: undefined, a: true}), 'a');
++	});
+ });
+diff --git a/tests/index.js b/tests/index.js
+index d7f276d..3ada9ca 100644
+--- a/tests/index.js
++++ b/tests/index.js
+@@ -104,6 +104,20 @@ describe('classNames', () => {
+ 		assert.equal(classNames(new Class2()), 'classFromMethod');
+ 	});
+ 
++	it('handles objects with a null prototype', () => {
++		const dict = Object.create(null);
++		dict.a = true;
++		dict.b = false;
++
++		assert.equal(classNames(dict), 'a');
++		assert.equal(classNames(Object.groupBy(['a', 'b'], (x) => x)), 'a b');
++	});
++
++	it('handles objects whose toString is not callable', () => {
++		assert.equal(classNames({toString: null, a: true}), 'a');
++		assert.equal(classNames({toString: undefined, a: true}), 'a');
++	});
++
+ 	it('handles objects in a VM', () => {
+ 		const context = { classNames, output: undefined };
+ 		vm.createContext(context);

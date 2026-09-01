@@ -1,0 +1,79 @@
+diff --git a/.gitignore b/.gitignore
+index 04c1295..66a5911 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -8,3 +8,4 @@ Cargo.lock
+ scratch*
+ bench_large/huge
+ tmp/
++.claude/jeffy-loop.local.md
+diff --git a/Cargo.toml b/Cargo.toml
+index 5459969..ad3b962 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -12,7 +12,25 @@ repository = "https://github.com/BurntSushi/memchr"
+ readme = "README.md"
+ keywords = ["memchr", "memmem", "substring", "find", "search"]
+ license = "Unlicense OR MIT"
+-exclude = ["/.github", "/benchmarks", "/fuzz", "/scripts", "/tmp"]
++# An allowlist, not a denylist. With `exclude`, every new top-level path in the
++# repository was published by default, which is how files that have nothing to
++# do with the library reached the crates.io tarball. This list names what the
++# published crate contains; anything else added to the repository stays out
++# until someone puts it here on purpose.
++include = [
++    "/src",
++    "/Cargo.toml",
++    "/README.md",
++    "/COPYING",
++    "/LICENSE-MIT",
++    "/UNLICENSE",
++    "/AI_POLICY.md",
++    "/CONTRIBUTING.md",
++    "/rustfmt.toml",
++    "/.gitignore",
++    "/.ignore",
++    "/.vim",
++]
+ edition = "2021"
+ rust-version = "1.61"
+ 
+diff --git a/src/cow.rs b/src/cow.rs
+index 5306f97..4872b69 100644
+--- a/src/cow.rs
++++ b/src/cow.rs
+@@ -88,16 +88,9 @@ impl<'a> Imp<'a> {
+     #[cfg(feature = "alloc")]
+     #[inline(always)]
+     pub fn as_slice(&self) -> &[u8] {
+-        #[cfg(feature = "alloc")]
+-        {
+-            match self {
+-                Imp::Owned(ref x) => x,
+-                Imp::Borrowed(x) => x,
+-            }
+-        }
+-        #[cfg(not(feature = "alloc"))]
+-        {
+-            self.0
++        match self {
++            Imp::Owned(ref x) => x,
++            Imp::Borrowed(x) => x,
+         }
+     }
+ 
+diff --git a/src/lib.rs b/src/lib.rs
+index b310516..9de031b 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -146,8 +146,8 @@ will also use AVX2 accelerated routines when the `avx2` feature is enabled at
+ compile time. In general, enable this feature if you can.
+ * **alloc** - When enabled (the default), APIs in this crate requiring some
+ kind of allocation will become available. For example, the
+-[`memmem::Finder::into_owned`](crate::memmem::Finder::into_owned) API and the
+-[`arch::all::shiftor`](crate::arch::all::shiftor) substring search
++[`memmem::Finder::into_owned`] API and the
++[`arch::all::shiftor`] substring search
+ implementation. Otherwise, this crate is designed from the ground up to be
+ usable in core-only contexts, so the `alloc` feature doesn't add much
+ currently. Notably, disabling `std` but enabling `alloc` will **not** result

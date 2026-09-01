@@ -1,0 +1,706 @@
+diff --git a/.gitignore b/.gitignore
+index d9ac522..3ac33d8 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,3 +10,4 @@ build/
+ dist/
+ docs/_build/
+ 
++.claude/jeffy-loop.local.md
+diff --git a/MANIFEST.in b/MANIFEST.in
+index 822372a..a1fcc05 100644
+--- a/MANIFEST.in
++++ b/MANIFEST.in
+@@ -1,3 +1,7 @@
+ prune .github/
++prune .jeffy/
+ exclude .gitignore
+ exclude .readthedocs.yaml
++exclude PLAN.md
++exclude BACKLOG.md
++exclude JOURNAL*.md
+diff --git a/docs/index.rst b/docs/index.rst
+index 71bb3ed..cf88380 100644
+--- a/docs/index.rst
++++ b/docs/index.rst
+@@ -67,7 +67,7 @@ inserted into the cache.
+    suitable `lock` object.
+ 
+ .. autoclass:: Cache(maxsize, getsizeof=None)
+-   :members: currsize, getsizeof, maxsize
++   :members: currsize, getsizeof, maxsize, popitem
+ 
+    This class discards arbitrary items using :meth:`popitem` to make
+    space when necessary.  Derived classes may override :meth:`popitem`
+@@ -205,6 +205,41 @@ inserted into the cache.
+       :returns: An iterable of expired `(key, value)` pairs.
+ 
+ 
++.. note::
++
++   Iterating a :class:`TTLCache` or a :class:`TLRUCache` freezes the cache's
++   notion of time for the duration of each step of the iteration, so that a
++   key the iterator has just yielded can still be read.  Without this, an item
++   that expires between the iterator yielding its key and the caller reading
++   its value would raise :exc:`KeyError` from ``cache[key]`` or from
++   :meth:`items`.  The freeze lasts for as long as the caller holds the
++   iterator, so a partly consumed iterator that is kept alive keeps reads
++   pinned to the instant that iteration step began.
++
++   The freeze covers the operations that look a key up, so that they agree
++   with one another: ``key in cache``, ``cache[key]``, :meth:`get`,
++   :meth:`pop`, :meth:`setdefault` and ``del cache[key]`` all see the instant
++   that iteration step began, so a key the iterator has just yielded can be
++   read and deleted rather than reported missing.  These follow :attr:`timer`
++   instead: :func:`len`, :attr:`currsize`, :meth:`expire`, :meth:`popitem`,
++   and the expiration stamped on an item by ``cache[key] = value``.  An item
++   written while an iterator is held is therefore dated from the moment it is
++   written and never from the iteration's instant, whether it is written
++   directly or through :meth:`setdefault`, and :meth:`expire` keeps reclaiming
++   memory for as long as the iterator lives.
++
++   For the same reason, copying a time-aware cache through the mapping
++   protocol is not atomic.  :class:`dict` builds its copy by asking for
++   :meth:`keys` and only then reading each value, so the iteration is over
++   before the first value is read and an item that expires in between raises
++   :exc:`KeyError`.  This affects ``dict(cache)``, ``{**cache}`` and
++   ``dict.update(cache)``.  Copy through :meth:`items` instead::
++
++     copy = dict(cache.items())
++
++   which reads each value while the iterator that yielded its key is still
++   suspended, and is therefore consistent.
++
+ Extending cache classes
+ =======================
+ 
+@@ -552,6 +587,17 @@ often called with the same arguments:
+    and those that specify :attr:`__slots__` without including
+    :attr:`__dict__` as one of the defined slots.
+ 
++   .. note::
++
++      The wrapper is stored in the instance's :attr:`__dict__` on first
++      access and holds a reference back to the instance, so an instance whose
++      decorated method has been called takes part in a reference cycle and is
++      reclaimed by the cyclic garbage collector rather than by reference
++      counting.  This matters only where collection is disabled or deferred:
++      with :func:`gc.disable` in effect, such instances - and the caches they
++      own - stay alive until :func:`gc.collect` runs.  An instance whose
++      decorated method has never been called is not affected.
++
+    One advantage of :func:`cachedmethod` over the :func:`cached`
+    function decorator is that cache properties such as `maxsize` can
+    be set at runtime:
+diff --git a/pyproject.toml b/pyproject.toml
+index 3698f37..0a55000 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -52,6 +52,10 @@ typeCheckingMode = "standard"
+ reportFunctionMemberAccess = "information"
+ reportOptionalContextManager = "warning"
+ reportOptionalMemberAccess = "warning"
++exclude = ["**/node_modules", "**/__pycache__", "**/.*", "build", "dist"]
++
++[tool.ruff]
++extend-exclude = [".jeffy"]
+ 
+ [tool.ruff.lint]
+ ignore = ["DTZ005", "UP031"]
+diff --git a/src/cachetools/__init__.py b/src/cachetools/__init__.py
+index e992f5c..cdbc012 100644
+--- a/src/cachetools/__init__.py
++++ b/src/cachetools/__init__.py
+@@ -141,6 +141,17 @@ class Cache(collections.abc.MutableMapping):
+             self[key] = value = default
+         return value
+ 
++    def popitem(self):
++        """Remove and return an arbitrary `(key, value)` pair."""
++        # MutableMapping.popitem() would do, but its KeyError carries no
++        # message, and every subclass names the empty cache in its own.
++        try:
++            key = next(iter(self.__data))
++        except StopIteration:
++            raise KeyError("%s is empty" % type(self).__name__) from None
++        else:
++            return (key, self.pop(key))
++
+     # Although the MutableMapping.clear() default implementation works
+     # perfectly well, it calls popitem() in a loop until the cache is
+     # empty, resulting in O(n) complexity.  For large caches, this
+@@ -374,19 +385,41 @@ class _TimedCache(Cache):
+     """Base class for time aware cache implementations."""
+ 
+     class _Timer:
++        # Two independent freezes, because they have different lifetimes.
++        #
++        # `nesting` is one cache operation: __setitem__ calling popitem, or
++        # setdefault calling __setitem__, must see a single instant, and the
++        # user's timer must be called once for the whole operation, since a
++        # timer is allowed to be stateful.
++        #
++        # `iterating` is one step of __iter__.  Iteration yields a key and
++        # then lets the caller read it, so that read has to see the instant
++        # the key was judged live at - otherwise `for key in cache:
++        # cache[key]` and items() raise KeyError for an item that expires in
++        # between.  That freeze lasts as long as the caller holds the
++        # iterator, which may be indefinitely, so it is confined to reads:
++        # __enter__ ignores it, and an operation started while an iteration
++        # is in flight still reads the clock.  Sharing one counter for both
++        # meant an item written during an iteration was dated from the
++        # iteration's instant, and could be born already expired.
+         def __init__(self, timer):
+             self.__timer = timer
+             self.__nesting = 0
++            self.__iterating = 0
++            self.__inherited = False
+ 
+         def __call__(self):
+-            if self.__nesting == 0:
+-                return self.__timer()
+-            else:
++            if self.__nesting != 0:
+                 return self.__time
++            elif self.__iterating != 0:
++                return self.__itertime
++            else:
++                return self.__timer()
+ 
+         def __enter__(self):
+             if self.__nesting == 0:
+                 self.__time = time = self.__timer()
++                self.__inherited = False
+             else:
+                 time = self.__time
+             self.__nesting += 1
+@@ -395,6 +428,63 @@ class _TimedCache(Cache):
+         def __exit__(self, *exc):
+             self.__nesting -= 1
+ 
++        def _enter_iteration(self):
++            """Freeze reads at the current instant and return it."""
++            if self.__iterating == 0:
++                self.__itertime = time = self()
++            else:
++                time = self.__itertime
++            self.__iterating += 1
++            return time
++
++        def _exit_iteration(self):
++            self.__iterating -= 1
++
++        def _enter_read(self):
++            """Freeze a lookup at the instant an in-flight iteration is using.
++
++            get(), pop() and setdefault() each ask whether a key is present and
++            then read it, so both halves have to see one instant or they
++            disagree.  Outside an iteration that instant is now; inside one it
++            is the instant the iteration step began, so a lookup agrees with
++            the `in` and `[]` that surround it.
++            """
++            if self.__nesting == 0:
++                if self.__iterating != 0:
++                    self.__time = self.__itertime
++                    self.__inherited = True
++                else:
++                    self.__time = self.__timer()
++                    self.__inherited = False
++            self.__nesting += 1
++            return self.__time
++
++        def _exit_read(self):
++            self.__nesting -= 1
++
++        def _write_time(self):
++            """The instant a write stamps an expiry with.
++
++            Never an instant inherited from an in-flight iteration: an item's
++            lifetime starts when it is written, and inheriting would let
++            setdefault() store an item that is already expired.  Called from
++            within the write's own operation or immediately after it, so the
++            instant that operation read is still current and the user's timer
++            is called once for the whole write.
++            """
++            return self.__timer() if self.__inherited else self.__time
++
++        def _clock_time(self):
++            """The instant an argumentless expire() uses.
++
++            expire() follows the clock, as len() and popitem() do, so that it
++            keeps reclaiming memory while an iterator is held; the freeze an
++            iteration installs is for reads alone.  An operation already in
++            flight lends its own instant, so an expire() reached from inside
++            one still sees a single time.
++            """
++            return self._write_time() if self.__nesting else self.__timer()
++
+         def __reduce__(self):
+             return _TimedCache._Timer, (self.__timer,)
+ 
+@@ -427,16 +517,25 @@ class _TimedCache(Cache):
+         return self.__timer
+ 
+     def get(self, *args, **kwargs):
+-        with self.__timer:
++        self.__timer._enter_read()
++        try:
+             return Cache.get(self, *args, **kwargs)
++        finally:
++            self.__timer._exit_read()
+ 
+     def pop(self, *args, **kwargs):
+-        with self.__timer:
++        self.__timer._enter_read()
++        try:
+             return Cache.pop(self, *args, **kwargs)
++        finally:
++            self.__timer._exit_read()
+ 
+     def setdefault(self, *args, **kwargs):
+-        with self.__timer:
++        self.__timer._enter_read()
++        try:
+             return Cache.setdefault(self, *args, **kwargs)
++        finally:
++            self.__timer._exit_read()
+ 
+     def clear(self):
+         # Subclasses must override to also reset their own time-tracking
+@@ -504,7 +603,7 @@ class TTLCache(_TimedCache):
+             self.__links[key] = link = TTLCache._Link(key)
+         else:
+             link.unlink()
+-        link.expires = time + self.__ttl
++        link.expires = self.timer._write_time() + self.__ttl
+         link.next = root = self.__root
+         link.prev = prev = root.prev
+         prev.next = root.prev = link
+@@ -519,11 +618,15 @@ class TTLCache(_TimedCache):
+     def __iter__(self):
+         root = self.__root
+         curr = root.next
++        timer = self.timer
+         while curr is not root:
+             # "freeze" time for iterator access
+-            with self.timer as time:
++            time = timer._enter_iteration()
++            try:
+                 if time < curr.expires:
+                     yield curr.key
++            finally:
++                timer._exit_iteration()
+             curr = curr.next
+ 
+     def __setstate__(self, state):
+@@ -547,7 +650,7 @@ class TTLCache(_TimedCache):
+ 
+         """
+         if time is None:
+-            time = self.timer()
++            time = self.timer._clock_time()
+         root = self.__root
+         curr = root.next
+         links = self.__links
+@@ -635,8 +738,10 @@ class TLRUCache(_TimedCache):
+     def __setitem__(self, key, value, cache_setitem=Cache.__setitem__):
+         with self.timer as time:
+             self.expire(time)
+-            expires = self.__ttu(key, value, time)
+-            if not (time < expires):
++            # never the iteration's instant: an item's lifetime starts now
++            now = self.timer._write_time()
++            expires = self.__ttu(key, value, now)
++            if not (now < expires):
+                 # updating an existing item with an already expired
+                 # one should remove the existing item
+                 return self.__delitem(key)
+@@ -651,20 +756,26 @@ class TLRUCache(_TimedCache):
+         heapq.heappush(self.__order, item)
+ 
+     def __delitem__(self, key, cache_delitem=Cache.__delitem__):
+-        with self.timer as time:
+-            # no self.expire() for performance reasons, e.g. self.clear() [#67]
+-            cache_delitem(self, key)
++        # no self.expire() for performance reasons, e.g. self.clear() [#67]
++        cache_delitem(self, key)
+         item = self.__items.pop(key)
+         item.removed = True
+-        if not (time < item.expires):
++        # the read instant, as TTLCache uses: deleting a key looks it up, so a
++        # key an iterator has just yielded is deleted rather than reported
++        # missing, and a bare del agrees with the pop() that wraps this method
++        if not (self.timer() < item.expires):
+             raise KeyError(key)
+ 
+     def __iter__(self):
++        timer = self.timer
+         for curr in self.__order:
+             # "freeze" time for iterator access
+-            with self.timer as time:
++            time = timer._enter_iteration()
++            try:
+                 if time < curr.expires and not curr.removed:
+                     yield curr.key
++            finally:
++                timer._exit_iteration()
+ 
+     @property
+     def ttu(self):
+@@ -677,7 +788,7 @@ class TLRUCache(_TimedCache):
+ 
+         """
+         if time is None:
+-            time = self.timer()
++            time = self.timer._clock_time()
+         items = self.__items
+         order = self.__order
+         # clean up the heap if too many items are marked as removed
+diff --git a/tests/__init__.py b/tests/__init__.py
+index 2adcc63..569dda0 100644
+--- a/tests/__init__.py
++++ b/tests/__init__.py
+@@ -157,8 +157,10 @@ class CacheTestMixin(_TestCaseProtocol):
+         self.assertIn(key, {1, 2})
+         self.assertEqual(0, len(cache))
+ 
+-        with self.assertRaises(KeyError):
++        with self.assertRaises(KeyError) as cm:
+             cache.popitem()
++        # every cache class names itself, the base class included
++        self.assertEqual(f"{type(cache).__name__} is empty", cm.exception.args[0])
+ 
+     def test_popitem_exception_context(self):
+         # since Python 3.7, MutableMapping.popitem() suppresses
+diff --git a/tests/test_tlru.py b/tests/test_tlru.py
+index b0dac65..089748b 100644
+--- a/tests/test_tlru.py
++++ b/tests/test_tlru.py
+@@ -387,3 +387,171 @@ class TLRUCacheTest(unittest.TestCase, CacheTestMixin):
+         cache.timer.tick()
+         cache.timer.tick()  # past TTL
+         self.assertNotIn(42, cache)
++
++    def test_tlru_write_while_iterating_is_not_backdated(self):
++        # An item's lifetime starts when it is written.  While an iterator is
++        # held, reads are frozen at the instant that iteration step began, and
++        # a write must not inherit that instant or it is born already expired.
++        cache = TLRUCache[int, int, int](
++            maxsize=10, ttu=lambda k, v, t: t + 5, timer=Timer()
++        )
++        cache[1] = 1
++        cache[2] = 2
++        it = iter(cache)
++        self.assertEqual(1, next(it))
++        for _ in range(100):
++            cache.timer.tick()
++        cache[3] = 3
++        del it
++        self.assertIn(3, cache)
++        self.assertEqual(3, cache[3])
++
++    def test_tlru_held_iterator_does_not_freeze_expiry(self):
++        cache = TLRUCache[int, int, int](
++            maxsize=10, ttu=lambda k, v, t: t + 5, timer=Timer()
++        )
++        cache[1] = 1
++        cache[2] = 2
++        it = iter(cache)
++        self.assertEqual(1, next(it))
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertEqual(0, len(cache))
++        self.assertEqual(0, cache.currsize)
++        del it
++
++    def test_tlru_read_during_iteration_is_consistent(self):
++        # Iteration yields a key and then lets the caller read it, so that read
++        # has to see the instant the key was judged live at even though the
++        # timer moves on every call.
++        cache = TLRUCache[int, int, int](
++            maxsize=10, ttu=lambda k, v, t: t + 8, timer=Timer(auto=True)
++        )
++        for i in range(6):
++            cache[i] = i
++        self.assertEqual(list(range(6)), [cache[key] for key in cache])
++
++        # a second cache, because the timer above has advanced on every call
++        cache = TLRUCache[int, int, int](
++            maxsize=10, ttu=lambda k, v, t: t + 8, timer=Timer(auto=True)
++        )
++        for i in range(6):
++            cache[i] = i
++        self.assertEqual(
++            [(i, i) for i in range(6)],
++            [(key, value) for key, value in cache.items()],
++        )
++
++    def test_tlru_copy_through_items_is_consistent(self):
++        # dict(cache) asks for keys() and only then reads each value, so the
++        # iteration is over before the first read; copying through items()
++        # reads each value while the iterator that yielded its key is still
++        # suspended, and stays consistent even as the timer advances.
++        cache = TLRUCache[int, int, int](
++            maxsize=10, ttu=lambda k, v, t: t + 8, timer=Timer(auto=True)
++        )
++        for i in range(6):
++            cache[i] = i
++        self.assertEqual({i: i for i in range(6)}, dict(cache.items()))
++
++    def test_tlru_lookups_agree_during_iteration(self):
++        # The iteration freeze covers every operation that looks a key up, so
++        # `in`, `[]`, get, setdefault and pop cannot disagree with each other.
++        cache = TLRUCache[int, int, int](
++            maxsize=20, ttu=lambda k, v, t: t + 5, timer=Timer()
++        )
++        for i in range(4):
++            cache[i] = i
++        it = iter(cache)
++        key = next(it)
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertIn(key, cache)
++        self.assertEqual(key, cache[key])
++        self.assertEqual(key, cache.get(key, "default"))
++        self.assertEqual(key, cache.setdefault(key, -1))
++        self.assertEqual(key, cache.pop(key, "default"))
++        del it
++
++    def test_tlru_setdefault_during_iteration_reads_frozen_writes_now(self):
++        # setdefault has a foot on each side of the boundary: it looks the key
++        # up at the instant the iteration step began, so a key the iterator has
++        # just yielded is returned rather than overwritten, and an item it does
++        # store is dated from the write, so it is not born already expired.
++        cache = TLRUCache[int, int, int](
++            maxsize=20, ttu=lambda k, v, t: t + 5, timer=Timer()
++        )
++        cache[1] = 1
++        cache[2] = 2
++        it = iter(cache)
++        first = next(it)
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertEqual(first, cache.setdefault(first, -1))
++        self.assertEqual(99, cache.setdefault(99, 99))
++        del it
++        self.assertIn(99, cache)
++        self.assertEqual(99, cache[99])
++
++    def test_tlru_expire_during_iteration_follows_the_clock(self):
++        # A held iterator freezes reads alone.  expire() follows the clock,
++        # exactly as len(), currsize and popitem() do, so the documented way
++        # to reclaim memory keeps reclaiming it while an iterator is alive.
++        cache = TLRUCache[int, int, int](
++            maxsize=10, ttu=lambda k, v, t: t + 5, timer=Timer()
++        )
++        cache[1] = 1
++        cache[2] = 2
++        it = iter(cache)
++        self.assertEqual(1, next(it))
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertEqual([(1, 1), (2, 2)], sorted(cache.expire()))
++        self.assertEqual([], list(cache.expire()))
++        del it
++
++    def test_tlru_delete_during_iteration_agrees_with_lookups(self):
++        # Deleting a key looks it up, so it sees the instant that iteration
++        # step began: a key the iterator has just yielded is deleted rather
++        # than reported missing, and a bare del agrees with pop().
++        cache = TLRUCache[int, int, int](
++            maxsize=20, ttu=lambda k, v, t: t + 5, timer=Timer()
++        )
++        for i in range(4):
++            cache[i] = i
++        it = iter(cache)
++        key = next(it)
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertIn(key, cache)
++        del cache[key]
++        self.assertNotIn(key, cache)
++        del it
++
++    def test_tlru_second_iterator_joins_the_freeze_in_flight(self):
++        # A second iterator opened while the first is suspended mid-step joins
++        # the freeze already in flight instead of starting one of its own, so
++        # both see the instant the first step began even after the clock has
++        # moved past every expiry.
++        cache = TLRUCache[int, int, int](
++            maxsize=10, ttu=lambda k, v, t: t + 5, timer=Timer()
++        )
++        for i in range(4):
++            cache[i] = i
++        it1 = iter(cache)
++        it2 = iter(cache)
++        first = next(it1)
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertEqual(first, next(it2))
++        self.assertEqual(first, cache[first])
++        # interleaved, so one of the two is always suspended and the freeze
++        # never drops to zero: both walk the whole cache at that first instant
++        rest1, rest2 = [], []
++        for _ in range(3):
++            rest1.append(next(it1))
++            rest2.append(next(it2))
++        self.assertEqual(list(range(1, 4)), rest1)
++        self.assertEqual(list(range(1, 4)), rest2)
++        del it1, it2
++        self.assertEqual(0, len(cache))
+diff --git a/tests/test_ttl.py b/tests/test_ttl.py
+index e023173..4a457f2 100644
+--- a/tests/test_ttl.py
++++ b/tests/test_ttl.py
+@@ -245,3 +245,151 @@ class TTLCacheTest(unittest.TestCase, CacheTestMixin):
+         cache.timer.tick()
+         cache.timer.tick()  # past TTL
+         self.assertNotIn(42, cache)
++
++    def test_ttl_write_while_iterating_is_not_backdated(self):
++        # An item's lifetime starts when it is written.  While an iterator is
++        # held, reads are frozen at the instant that iteration step began, and
++        # a write must not inherit that instant or it is born already expired.
++        cache = TTLCache[int, int, int](maxsize=10, ttl=5, timer=Timer())
++        cache[1] = 1
++        cache[2] = 2
++        it = iter(cache)
++        self.assertEqual(1, next(it))
++        for _ in range(100):
++            cache.timer.tick()
++        cache[3] = 3
++        del it
++        self.assertIn(3, cache)
++        self.assertEqual(3, cache[3])
++
++    def test_ttl_held_iterator_does_not_freeze_expiry(self):
++        cache = TTLCache[int, int, int](maxsize=10, ttl=5, timer=Timer())
++        cache[1] = 1
++        cache[2] = 2
++        it = iter(cache)
++        self.assertEqual(1, next(it))
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertEqual(0, len(cache))
++        self.assertEqual(0, cache.currsize)
++        del it
++
++    def test_ttl_read_during_iteration_is_consistent(self):
++        # Iteration yields a key and then lets the caller read it, so that read
++        # has to see the instant the key was judged live at even though the
++        # timer moves on every call.
++        cache = TTLCache[int, int, int](maxsize=10, ttl=8, timer=Timer(auto=True))
++        for i in range(6):
++            cache[i] = i
++        self.assertEqual(list(range(6)), [cache[key] for key in cache])
++
++        # a second cache, because the timer above has advanced on every call
++        cache = TTLCache[int, int, int](maxsize=10, ttl=8, timer=Timer(auto=True))
++        for i in range(6):
++            cache[i] = i
++        self.assertEqual(
++            [(i, i) for i in range(6)],
++            [(key, value) for key, value in cache.items()],
++        )
++
++    def test_ttl_copy_through_items_is_consistent(self):
++        # dict(cache) asks for keys() and only then reads each value, so the
++        # iteration is over before the first read; copying through items()
++        # reads each value while the iterator that yielded its key is still
++        # suspended, and stays consistent even as the timer advances.
++        cache = TTLCache[int, int, int](maxsize=10, ttl=8, timer=Timer(auto=True))
++        for i in range(6):
++            cache[i] = i
++        self.assertEqual({i: i for i in range(6)}, dict(cache.items()))
++
++    def test_ttl_lookups_agree_during_iteration(self):
++        # The iteration freeze covers every operation that looks a key up, so
++        # `in`, `[]`, get, setdefault and pop cannot disagree with each other.
++        cache = TTLCache[int, int, int](maxsize=20, ttl=5, timer=Timer())
++        for i in range(4):
++            cache[i] = i
++        it = iter(cache)
++        key = next(it)
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertIn(key, cache)
++        self.assertEqual(key, cache[key])
++        self.assertEqual(key, cache.get(key, "default"))
++        self.assertEqual(key, cache.setdefault(key, -1))
++        self.assertEqual(key, cache.pop(key, "default"))
++        del it
++
++    def test_ttl_setdefault_during_iteration_reads_frozen_writes_now(self):
++        # setdefault has a foot on each side of the boundary: it looks the key
++        # up at the instant the iteration step began, so a key the iterator has
++        # just yielded is returned rather than overwritten, and an item it does
++        # store is dated from the write, so it is not born already expired.
++        cache = TTLCache[int, int, int](maxsize=20, ttl=5, timer=Timer())
++        cache[1] = 1
++        cache[2] = 2
++        it = iter(cache)
++        first = next(it)
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertEqual(first, cache.setdefault(first, -1))
++        self.assertEqual(99, cache.setdefault(99, 99))
++        del it
++        self.assertIn(99, cache)
++        self.assertEqual(99, cache[99])
++
++    def test_ttl_expire_during_iteration_follows_the_clock(self):
++        # A held iterator freezes reads alone.  expire() follows the clock,
++        # exactly as len(), currsize and popitem() do, so the documented way
++        # to reclaim memory keeps reclaiming it while an iterator is alive.
++        cache = TTLCache[int, int, int](maxsize=10, ttl=5, timer=Timer())
++        cache[1] = 1
++        cache[2] = 2
++        it = iter(cache)
++        self.assertEqual(1, next(it))
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertEqual([(1, 1), (2, 2)], sorted(cache.expire()))
++        self.assertEqual([], list(cache.expire()))
++        del it
++
++    def test_ttl_delete_during_iteration_agrees_with_lookups(self):
++        # Deleting a key looks it up, so it sees the instant that iteration
++        # step began: a key the iterator has just yielded is deleted rather
++        # than reported missing, and a bare del agrees with pop().
++        cache = TTLCache[int, int, int](maxsize=20, ttl=5, timer=Timer())
++        for i in range(4):
++            cache[i] = i
++        it = iter(cache)
++        key = next(it)
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertIn(key, cache)
++        del cache[key]
++        self.assertNotIn(key, cache)
++        del it
++
++    def test_ttl_second_iterator_joins_the_freeze_in_flight(self):
++        # A second iterator opened while the first is suspended mid-step joins
++        # the freeze already in flight instead of starting one of its own, so
++        # both see the instant the first step began even after the clock has
++        # moved past every expiry.
++        cache = TTLCache[int, int, int](maxsize=10, ttl=5, timer=Timer())
++        for i in range(4):
++            cache[i] = i
++        it1 = iter(cache)
++        it2 = iter(cache)
++        first = next(it1)
++        for _ in range(100):
++            cache.timer.tick()
++        self.assertEqual(first, next(it2))
++        self.assertEqual(first, cache[first])
++        # interleaved, so one of the two is always suspended and the freeze
++        # never drops to zero: both walk the whole cache at that first instant
++        rest1, rest2 = [], []
++        for _ in range(3):
++            rest1.append(next(it1))
++            rest2.append(next(it2))
++        self.assertEqual(list(range(1, 4)), rest1)
++        self.assertEqual(list(range(1, 4)), rest2)
++        del it1, it2
++        self.assertEqual(0, len(cache))

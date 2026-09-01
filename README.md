@@ -29,7 +29,7 @@ Jeffy Loop is an autonomous engineering system built around a simple principle: 
 
 ## The receipts
 
-Seven fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Six are patches this loop wrote, merged as written; the seventh is a finding a maintainer found convincing enough to fix himself:
+Eight fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Seven are patches this loop wrote and a maintainer merged; the eighth is a finding a maintainer found convincing enough to fix himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
@@ -37,11 +37,12 @@ Seven fixes are in other people's code because a maintainer with no stake in thi
 - **[PapaParse](https://github.com/mholt/PapaParse/pull/1135) - merged.** Header de-duplication re-ran on every row after a resume, rewriting data in place: `"foo, bar"` came back as `"foo, bar_1"`. Merged 2026-08-24, shipped in PapaParse 5.7.0.
 - **[mimalloc](https://github.com/microsoft/mimalloc/pull/1385) - merged.** `mi_theap_zalloc_csize` delegated its large-size branch to the plain malloc path, so a documented zeroing allocator returned uninitialized heap memory for every size above the small-size threshold. Merged 2026-08-31 by the library's author.
 - **[ada](https://github.com/ada-url/ada/pull/1244) - merged.** `ada::url` reported `host_end` one byte short of the position its own documentation describes, so slicing `href` by `[host_start, host_end)` truncated the host; `ada::url_aggregator` disagreed with it on every URL with a host. Merged 2026-09-01, about forty minutes after it was opened. ada is the URL parser inside Node.js.
+- **[nanoid](https://github.com/ai/nanoid/pull/609) - merged.** `customAlphabet` accepted alphabets it cannot sample from and hung forever in `while (true)`; the maintainer judged the runtime guard too expensive for the reachability and asked for a docs notice instead, which was reworked and merged the same day. Merged 2026-09-01.
 - **[chalk](https://github.com/chalk/chalk/pull/687) - fixed upstream.** The maintainer reproduced the finding, then wrote and merged his own fix, shipped in v6.0.0.
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
-Behind them: **<!-- count:converged -->64<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **32 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+Behind them: **<!-- count:converged -->70<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **33 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#real-world-validation-on-open-source-repositories)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
 
@@ -280,9 +281,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->95<!-- /count -->** | **<!-- count:fixed -->65<!-- /count -->** | **<!-- count:failed -->30<!-- /count -->** | **<!-- count:prs -->19<!-- /count -->** | **<!-- count:merged -->6<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->98<!-- /count -->** | **<!-- count:fixed -->71<!-- /count -->** | **<!-- count:failed -->27<!-- /count -->** | **<!-- count:prs -->19<!-- /count -->** | **<!-- count:merged -->7<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->64<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->70<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
 <sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md).</sub>
 
@@ -338,6 +339,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | vavr | Java | [details](evals/vavr/REPORT.md) - BitSet.removeAll threw | Fixed |
 | go-uuid | Go | [details](evals/go-uuid/REPORT.md) - SQL NULL returned stale UUID | Fixed |
 | pflag | Go | [details](evals/pflag/REPORT.md) - deprecated flag field ignored - [PR open](https://github.com/spf13/pflag/pull/507) | Fixed |
+| unicode-segmentation | Rust | [details](evals/unicode-segmentation/REPORT.md) - empty-string size_hint panic - [PR open](https://github.com/unicode-rs/unicode-segmentation/pull/181) | Fixed |
 | indicatif | Rust | [details](evals/indicatif/REPORT.md) - draw-width underflow panic | Fixed |
 | ta | Python | [details](evals/ta/REPORT.md) - wrong numbers since 2023 | Fixed |
 | go-cmp | Go | [details](evals/go-cmp/REPORT.md) - 2 grouping bugs, +31/-13 | Fixed |
@@ -353,12 +355,16 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | heck | Rust | [details](evals/heck/REPORT.md) - NFD lost combining marks | Fixed |
 | mapstructure | Go | [details](evals/mapstructure/REPORT.md) - silent numeric overflow | Fixed |
 | itoa | Rust | [details](evals/itoa/REPORT.md) - no-panic build failed to link | Fixed |
+| cachetools | Python | [details](evals/cachetools/REPORT.md) - held iterator froze the clock | Fixed |
+| memchr | Rust | [details](evals/memchr/REPORT.md) - crate shipped loop state | Fixed |
+| nanoid | JavaScript | [details](evals/nanoid/REPORT.md) - empty alphabet hung the generator - [PR merged](https://github.com/ai/nanoid/pull/609) | Fixed |
+| classnames | JavaScript | [details](evals/classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR open](https://github.com/JedWatson/classnames/pull/579) | Fixed |
+| python-slugify | Python | [details](evals/python-slugify/REPORT.md) - one bad entity voided all decoding | Fixed |
 | BurntSushi/toml | Go | [details](evals/ATTEMPTS.md) - 5 runs, 52 iters, not converged | Failed |
 | Carbon | PHP | [details](evals/ATTEMPTS.md) - 4 runs, 17 iters, not converged | Failed |
 | casbin | Go | [details](evals/casbin/REPORT.md) - 5 runs, 46 iters, not converged - [PR open](https://github.com/apache/casbin/pull/1753) | Failed |
 | cast | Go | [details](evals/ATTEMPTS.md) - 2 runs, 22 iters, not converged | Failed |
 | chroma.js | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iters, not converged | Failed |
-| classnames | JavaScript | [details](evals/ATTEMPTS.md) - 3 runs, 32 iters, not converged | Failed |
 | click | Python | [details](evals/ATTEMPTS.md) - 5 runs, 42 iters, not converged | Failed |
 | decimal.js | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 41 iters, not converged | Failed |
 | diff-so-fancy | Perl | [details](evals/ATTEMPTS.md) - 3 runs, 30 iters, not converged | Failed |
@@ -373,9 +379,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | itsdangerous | Python | [details](evals/ATTEMPTS.md) - 3 runs, 31 iters, not converged | Failed |
 | libuv | C | [details](evals/ATTEMPTS.md) - started, then abandoned | Failed |
 | mruby | C | [details](evals/ATTEMPTS.md) - 10 runs, 113 iters, not converged | Failed |
-| nanoid | JavaScript | [details](evals/nanoid/journal.md) - 3 runs, 30 iters, not converged | Failed |
 | node-semver | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iters, not converged | Failed |
-| python-slugify | Python | [details](evals/python-slugify/journal.md) - 2 runs, 23 iters, not converged | Failed |
 | shopspring/decimal | Go | [details](evals/ATTEMPTS.md) - 4 runs, 33 iters, not converged | Failed |
 | spdlog | C++ | [details](evals/ATTEMPTS.md) - 4 runs, 40 iters, not converged | Failed |
 | tenacity | Python | [details](evals/ATTEMPTS.md) - 2 runs, 20 iters, not converged | Failed |
