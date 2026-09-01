@@ -70,6 +70,26 @@ passed.
 
 ## Upstream
 
-The three Highs are the campaign-bar candidates from this run and are
-screened separately; the scorecard row records the run as converged
-regardless of what is filed.
+`H2` was filed as
+[PR #296](https://github.com/console-rs/console/pull/296), chosen over H1
+and H3 deliberately: one PR rather than a slate, and a pure function a
+reviewer can verify in one command with no terminal and no
+platform-specific code. Reachability was proven from a dependent crate
+rather than in-tree, after establishing that `mod utils` is gated on the
+`std` feature: the configuration that reaches the bug is
+`default-features = false, features = ["std", "unicode-width"]`, where
+upstream panics with `end byte index 5 is not a char boundary` and the
+fix returns the correct string. H1 and H3 are described in the PR body as
+offered follow-ups.
+
+**The first push of that PR went red on CI, and the failure was ours.**
+The regression test asserted display-width values unconditionally, while
+`char_width` returns 1 per character when the `unicode-width` feature is
+off by design, so it failed in every build without that feature. The fix
+itself was never in question. The cause was a verification shortcut: three
+feature configurations were checked where the project's own `Makefile`
+test target runs seven, which is what CI runs. The test is now gated the
+way its neighbours in that file are - one form per feature state, both
+still failing on `main` with the original panic - and all seven
+configurations plus fmt and clippy are green. The correction was posted as
+a comment on the thread rather than force-pushed quietly.
