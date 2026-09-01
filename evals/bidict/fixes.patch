@@ -1,0 +1,129 @@
+diff --git a/.gitignore b/.gitignore
+index b1190e8..7feb4fe 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -20,3 +20,4 @@ coverage.xml
+ dist
+ htmlcov
+ pip-wheel-metadata
++.claude/jeffy-loop.local.md
+diff --git a/CHANGELOG.rst b/CHANGELOG.rst
+index baf95e0..3edecf1 100644
+--- a/CHANGELOG.rst
++++ b/CHANGELOG.rst
+@@ -23,6 +23,17 @@ please consider sponsoring bidict on GitHub.`
+    Click the "Watch" dropdown, choose "Custom", and then choose "Releases".
+ 
+ 
++0.24.2 (not yet released)
++-------------------------
++
++- Raise the floor on the ``typing_extensions`` dependency from ``>=4.0`` to ``>=4.4``.
++  On Python < 3.12, :mod:`bidict` imports ``override`` from ``typing_extensions``,
++  which did not provide it until 4.4.0.
++  The old floor therefore admitted resolutions
++  in which ``import bidict`` failed with
++  ``ImportError: cannot import name 'override' from 'typing_extensions'``.
++
++
+ 0.24.1 (2026-08-25)
+ -------------------
+ 
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 4c45958..0a87b85 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -4,14 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
+ 
+ ## Orientation
+ 
+-`bidict` is a mature, dependency-free bidirectional mapping library
++`bidict` is a mature bidirectional mapping library
+ for Python (>=3.11, CPython + PyPy).
+ The public API is small;
+ the value is in the carefully-factored, fully type-hinted implementation.
+ Optimize for correctness, API stability, and long-term maintainability
+ over cleverness.
+-There are **zero runtime dependencies** (standard library only) —
+-do not add any.
++The only runtime dependency is `typing_extensions`, and only on Python < 3.12,
++where it supplies the `typing.override` decorator that 3.12 added to the stdlib
++(see `bidict/_typing.py` and pyproject.toml's `dependencies`).
++On 3.12 and later there are zero runtime dependencies.
++Do not add any others.
+ 
+ ## Canonical docs (imported so their content is in-session)
+ 
+diff --git a/README.rst b/README.rst
+index fb33690..3bc16c8 100644
+--- a/README.rst
++++ b/README.rst
+@@ -50,7 +50,10 @@ Features
+   safety, simplicity, flexibility, and ergonomics
+ 
+ - Lightweight, with no runtime dependencies
+-  outside Python's standard library
++  outside Python's standard library on Python 3.12 and later.
++  On Python 3.11 the only dependency is ``typing_extensions``,
++  which supplies the ``typing.override`` decorator
++  that 3.12 added to the standard library.
+ 
+ - Implemented in
+   concise, well-factored, fully type-hinted Python code
+diff --git a/docs/learning-from-bidict.rst b/docs/learning-from-bidict.rst
+index 3d23663..5419439 100644
+--- a/docs/learning-from-bidict.rst
++++ b/docs/learning-from-bidict.rst
+@@ -429,7 +429,7 @@ Python's data model
+   Must implement :meth:`~object.__hash__` such that
+   ``a == b ⇒ hash(a) == hash(b)``.
+   See the :meth:`object.__hash__` and :meth:`object.__eq__` docs, and
+-  the `implementation <https://github.com/jab/bidict/blob/main/bidict/_frozenbidict.py#L8>`__
++  the `implementation <https://github.com/jab/bidict/blob/main/bidict/_frozen.py#L8>`__
+   of :class:`~bidict.frozenbidict`.
+ 
+   - Consider :class:`~bidict.frozenbidict`:
+@@ -484,8 +484,8 @@ Portability
+   - gc / weakref
+ 
+   - Hence ``test_bidicts_freed_on_zero_refcount()``
+-    in `test_properties.py
+-    <https://github.com/jab/bidict/blob/main/tests/property_tests/test_properties.py>`__
++    in `test_bidict.py
++    <https://github.com/jab/bidict/blob/main/tests/test_bidict.py>`__
+     is skipped outside CPython.
+ 
+   - primitives' identities, nan, etc.
+diff --git a/pyproject.toml b/pyproject.toml
+index d40cfb2..20dad0f 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -6,8 +6,13 @@ authors = [{ name = "Joshua Bronson", email = "jabronson@gmail.com" }]
+ license = "MPL-2.0"
+ license-files = ["LICENSE"]
+ dependencies = [
+-  # bidict/_typing.py's `typing`/`typing_extensions` imports branch on python<3.12
+-  "typing_extensions>=4.0; python_version<'3.12'",
++  # bidict/_typing.py's `typing`/`typing_extensions` imports branch on python<3.12.
++  # The floor is load-bearing, not decorative: on those versions _typing.py imports
++  # `override` from typing_extensions, and typing_extensions did not add `override`
++  # until 4.4.0. A lower floor lets a resolver install a typing_extensions that makes
++  # `import bidict` fail with ImportError, which is what >=4.0 did. Raise this floor in
++  # lockstep with any new typing_extensions name bidict starts importing.
++  "typing_extensions>=4.4; python_version<'3.12'",
+ ]
+ requires-python = ">=3.11"
+ readme = "README.rst"
+diff --git a/uv.lock b/uv.lock
+index b0eaf65..dc6a6f0 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -86,7 +86,7 @@ test = [
+ ]
+ 
+ [package.metadata]
+-requires-dist = [{ name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.0" }]
++requires-dist = [{ name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.4" }]
+ 
+ [package.metadata.requires-dev]
+ dev = [

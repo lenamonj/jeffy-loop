@@ -1,0 +1,37 @@
+diff --git a/.gitignore b/.gitignore
+index 12e0bd1..d059cb4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -4,3 +4,4 @@ scripts/tmp
+ scripts/*.txt
+ scripts/*.rs
+ bench_data/*
++.claude/jeffy-loop.local.md
+diff --git a/Cargo.toml b/Cargo.toml
+index 0801bbc..d66dc53 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -26,14 +26,15 @@ edition = "2021"
+ rust-version = "1.66"
+ 
+ include = [
+-    "COPYRIGHT", 
+-    "LICENSE-MIT", 
+-    "LICENSE-APACHE", 
+-    "README.md", 
+-    "CARGO.toml", 
+-    "src/**/*.rs", 
+-    "benches/**/*.rs", 
+-    "tests/**/*.rs",
++    "/COPYRIGHT",
++    "/LICENSE-MIT",
++    "/LICENSE-APACHE",
++    "/README.md",
++    "/Cargo.toml",
++    "/src/**/*.rs",
++    "/benches/**/*.rs",
++    "/tests/**/*.rs",
++    "/tests/**/*.txt",
+ ]
+ 
+ [dependencies]

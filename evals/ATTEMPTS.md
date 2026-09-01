@@ -22,6 +22,7 @@ loss rather than hiding it.
 |---|---:|---:|---|---|---:|
 | ada | 2 | 18 | converged | evaluator countersigned | 0 |
 | bat | 1 | 10 | converged | evaluator countersigned | 0 |
+| bidict | 1 | 10 | converged | evaluator countersigned | 0 |
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
 | cachetools | 2 | 18 | converged | evaluator countersigned | 0 |
 | Catch2 | 4 | 35 | converged | evaluator countersigned | 1 |
@@ -42,6 +43,7 @@ loss rather than hiding it.
 | click | 5 | 42 | **not converged** | n/a | 0 |
 | cobra | 4 | 32 | converged | evaluator countersigned | 0 |
 | commander.js | 1 | 10 | converged | evaluator countersigned | 0 |
+| console | 1 | 12 | converged | evaluator countersigned | 0 |
 | dayjs | 8 | 74 | converged | evaluator countersigned | 1 |
 | decimal.js | 4 | 41 | **not converged** | n/a | 1 |
 | diff-so-fancy | 3 | 30 | **not converged** | n/a | 2 |
@@ -116,6 +118,7 @@ loss rather than hiding it.
 | typer | 1 | 11 | converged | evaluator countersigned | 0 |
 | underscore | 2 | 20 | converged | evaluator countersigned | 0 |
 | unicode-segmentation | 2 | 15 | converged | evaluator countersigned | 0 |
+| unicode-width | 1 | 6 | converged | evaluator countersigned | 0 |
 | urfave-cli | 2 | 18 | converged | evaluator countersigned | 0 |
 | validator | 4 | 31 | converged | evaluator countersigned | 1 |
 | validator.js | 2 | 20 | **not converged** | n/a | 0 |
