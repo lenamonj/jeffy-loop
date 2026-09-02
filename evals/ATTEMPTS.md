@@ -152,6 +152,7 @@ loss rather than hiding it.
 | swift-log | 2 | 16 | converged | evaluator countersigned | 0 |
 | commons-cli | 2 | 20 | converged | evaluator countersigned | 1 |
 | i18n | 2 | 14 | converged | evaluator countersigned | 0 |
+| kotlinx-io | 2 | 19 | converged | evaluator countersigned | 0 |
 
 ## The convergence standard is not uniform, and here is the split
 

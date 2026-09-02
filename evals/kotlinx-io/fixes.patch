@@ -1,0 +1,489 @@
+diff --git a/.gitignore b/.gitignore
+index 482d426d..a55565ef 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -22,3 +22,4 @@ kotlinx-io-native/repo/
+ 
+ logs
+ 
++.claude/jeffy-loop.local.md
+diff --git a/bytestring/common/src/ByteString.kt b/bytestring/common/src/ByteString.kt
+index 570572c1..b7b6bb1c 100644
+--- a/bytestring/common/src/ByteString.kt
++++ b/bytestring/common/src/ByteString.kt
+@@ -361,14 +361,17 @@ public fun ByteString.indexOf(byteArray: ByteArray, startIndex: Int = 0): Int {
+ }
+ 
+ /**
+- * Returns the index within this char sequence of the last occurrence of the specified [byte],
+- * starting from the specified [startIndex].
++ * Returns the index within this byte string of the last occurrence of the specified [byte],
++ * searching backwards from the end of this byte string down to [startIndex].
+  * If the [byte] not found, `-1` is returned.
+  *
+- * Behavior of this method is compatible with [CharSequence.lastIndexOf].
++ * [startIndex] is the lowest index the search examines, unlike [CharSequence.lastIndexOf], where it
++ * is the highest index examined: on a byte string holding `abcabc`,
++ * `lastIndexOf('a'.code.toByte(), 2)` returns `3`, where `"abcabc".lastIndexOf('a', 2)` returns `0`.
++ * A negative [startIndex] is treated as `0`.
+  *
+  * @param byte the value to search for.
+- * @param startIndex the index (inclusive) starting from which the [byte] should be searched.
++ * @param startIndex the lowest index (inclusive) the search will examine.
+  *
+  * @sample kotlinx.io.bytestring.samples.ByteStringSamples.lastIndexOfByteSample
+  */
+@@ -383,14 +386,18 @@ public fun ByteString.lastIndexOf(byte: Byte, startIndex: Int = 0): Int {
+ }
+ 
+ /**
+- * Returns the index within this char sequence of the last occurrence of the specified [byteString],
+- * starting from the specified [startIndex].
++ * Returns the index within this byte string of the last occurrence of the specified [byteString],
++ * searching backwards from the end of this byte string down to [startIndex].
+  * If the [byteString] not found, `-1` is returned.
+  *
+- * Behavior of this method is compatible with [CharSequence.lastIndexOf].
++ * [startIndex] is the lowest index the search examines, unlike [CharSequence.lastIndexOf], where it
++ * is the highest index examined: on a byte string holding `abcabc`, searching for the two bytes of
++ * `bc` from a [startIndex] of `2` returns `4`, where `"abcabc".lastIndexOf("bc", 2)` returns `1`.
++ * A negative [startIndex] is treated as `0`, and an empty [byteString] returns the size of this
++ * byte string whatever [startIndex] is.
+  *
+  * @param byteString the value to search for.
+- * @param startIndex the index (inclusive) starting from which the [byteString] should be searched.
++ * @param startIndex the lowest index (inclusive) the search will examine.
+  *
+  * @sample kotlinx.io.bytestring.samples.ByteStringSamples.lastIndexOfByteStringSample
+  */
+@@ -405,14 +412,18 @@ public fun ByteString.lastIndexOf(byteString: ByteString, startIndex: Int = 0):
+ }
+ 
+ /**
+- * Returns the index within this char sequence of the last occurrence of the specified [byteArray],
+- * starting from the specified [startIndex].
++ * Returns the index within this byte string of the last occurrence of the specified [byteArray],
++ * searching backwards from the end of this byte string down to [startIndex].
+  * If the [byteArray] not found, `-1` is returned.
+  *
+- * Behavior of this method is compatible with [CharSequence.lastIndexOf].
++ * [startIndex] is the lowest index the search examines, unlike [CharSequence.lastIndexOf], where it
++ * is the highest index examined: on a byte string holding `abcabc`, searching for the two bytes of
++ * `bc` from a [startIndex] of `2` returns `4`, where `"abcabc".lastIndexOf("bc", 2)` returns `1`.
++ * A negative [startIndex] is treated as `0`, and an empty [byteArray] returns the size of this
++ * byte string whatever [startIndex] is.
+  *
+  * @param byteArray the value to search for.
+- * @param startIndex the index (inclusive) starting from which the [byteArray] should be searched.
++ * @param startIndex the lowest index (inclusive) the search will examine.
+  *
+  * @sample kotlinx.io.bytestring.samples.ByteStringSamples.lastIndexOfByteArraySample
+  */
+diff --git a/core/common/src/Buffers.kt b/core/common/src/Buffers.kt
+index 479e04cf..83a80848 100644
+--- a/core/common/src/Buffers.kt
++++ b/core/common/src/Buffers.kt
+@@ -44,6 +44,11 @@ public fun Buffer.snapshot(): ByteString {
+  * @sample kotlinx.io.samples.KotlinxIoCoreCommonSamples.indexOfByteSample
+  */
+ public fun Buffer.indexOf(byte: Byte, startIndex: Long = 0, endIndex: Long = size): Long {
++    // Negative indices are an IllegalArgumentException here, as the KDoc above and the
++    // Source.indexOf sibling both promise; checkBounds below would call them out of bounds.
++    require(startIndex >= 0 && endIndex >= 0) {
++        "startIndex ($startIndex) and endIndex ($endIndex) should be non negative"
++    }
+     // For compatibility with Source.indexOf accept endIndices greater than size and truncate them.
+     val endOffset = minOf(endIndex, size)
+     checkBounds(size, startIndex, endOffset)
+diff --git a/core/common/test/CommonBufferTest.kt b/core/common/test/CommonBufferTest.kt
+index 801c21cc..326220a8 100644
+--- a/core/common/test/CommonBufferTest.kt
++++ b/core/common/test/CommonBufferTest.kt
+@@ -286,6 +286,27 @@ class CommonBufferTest {
+         assertEquals((halfSegment * 4 - 1).toLong(), buffer.indexOf('d'.code.toByte(), (halfSegment * 4 - 1).toLong()))
+     }
+ 
++    @Test
++    fun indexOfByteInvalidBoundsThrows() {
++        val buffer = Buffer()
++        buffer.writeString("abc")
++        assertFailsWith<IllegalArgumentException>("Expected failure: startIndex < 0") {
++            buffer.indexOf('a'.code.toByte(), -1)
++        }
++        assertFailsWith<IllegalArgumentException>("Expected failure: endIndex < 0") {
++            buffer.indexOf('a'.code.toByte(), 0, -1)
++        }
++        assertFailsWith<IllegalArgumentException>("Expected failure: both indices < 0") {
++            buffer.indexOf('a'.code.toByte(), -1, -2)
++        }
++        assertFailsWith<IllegalArgumentException>("Expected failure: startIndex > endIndex") {
++            buffer.indexOf('a'.code.toByte(), 10, 0)
++        }
++        assertFailsWith<IllegalArgumentException>("Expected failure: startIndex < 0 on an empty buffer") {
++            Buffer().indexOf(0, -1)
++        }
++    }
++
+     @Test
+     fun byteAt() {
+         val buffer = Buffer()
+diff --git a/core/mingw/src/files/FileSystemMingw.kt b/core/mingw/src/files/FileSystemMingw.kt
+index e7ad2cc8..9376f1c5 100644
+--- a/core/mingw/src/files/FileSystemMingw.kt
++++ b/core/mingw/src/files/FileSystemMingw.kt
+@@ -50,6 +50,24 @@ internal actual fun mkdirImpl(path: String) {
+     }
+ }
+ 
++/**
++ * Resolves the temporary directory, honouring an explicit `TMPDIR` override and otherwise
++ * delegating to `GetTempPathA`, which consults `TMP`, `TEMP`, `USERPROFILE` and the Windows
++ * directory in turn, so an environment that sets none of them still yields a real directory.
++ */
++public actual val SystemTemporaryDirectory: Path
++    get() = Path(
++        getenv("TMPDIR")?.toKString()?.takeIf { it.isNotEmpty() } ?: windowsTemporaryDirectory()
++    )
++
++private fun windowsTemporaryDirectory(): String = memScoped {
++    val buffer = allocArray<CHARVar>(MAX_PATH_LENGTH)
++    if (GetTempPathA(MAX_PATH_LENGTH.convert(), buffer) == 0u) {
++        throw IOException("GetTempPathA failed with error code: ${GetLastError()}")
++    }
++    buffer.toKString()
++}
++
+ private const val MAX_PATH_LENGTH = 32767
+ 
+ internal actual fun realpathImpl(path: String): String {
+diff --git a/core/native/src/files/PathsNative.kt b/core/native/src/files/PathsNative.kt
+index e013afd6..dbdb6958 100644
+--- a/core/native/src/files/PathsNative.kt
++++ b/core/native/src/files/PathsNative.kt
+@@ -79,6 +79,9 @@ internal class FileSource(
+         sink: Buffer,
+         byteCount: Long
+     ): Long {
++        require(byteCount >= 0L) { "byteCount: $byteCount" }
++        check(!closed) { "closed" }
++
+         val temporaryBuffer = ByteArray(byteCount.toInt())
+ 
+         // Copy bytes from the file to the segment.
+@@ -91,7 +94,7 @@ internal class FileSource(
+         return when {
+             bytesRead == byteCount -> bytesRead
+             feof(file) != 0 -> if (bytesRead == 0L) -1L else bytesRead
+-            ferror(file) != 0 -> throwIOExceptionForErrno("write")
++            ferror(file) != 0 -> throwIOExceptionForErrno("file read")
+             else -> bytesRead
+         }
+     }
+diff --git a/core/native/test/files/FileSourceSinkContractTest.kt b/core/native/test/files/FileSourceSinkContractTest.kt
+new file mode 100644
+index 00000000..8ac5f884
+--- /dev/null
++++ b/core/native/test/files/FileSourceSinkContractTest.kt
+@@ -0,0 +1,69 @@
++/*
++ * Copyright 2017-2026 JetBrains s.r.o. and respective authors and developers.
++ * Use of this source code is governed by the Apache 2.0 license that can be found in the LICENCE file.
++ */
++
++package kotlinx.io.files
++
++import kotlinx.io.*
++import kotlin.test.*
++
++/**
++ * The argument and state validation [RawSource.readAtMostTo] and [RawSink.write]
++ * document, checked against this platform's file-backed implementations.
++ */
++class FileSourceSinkContractTest {
++    private val files: MutableList<Path> = arrayListOf()
++
++    @AfterTest
++    fun cleanup() {
++        files.forEach { SystemFileSystem.delete(it, false) }
++    }
++
++    private fun tempFile(): Path = Path(tempFileName()).also { files.add(it) }
++
++    private fun fileWithContent(): Path = tempFile().also { path ->
++        SystemFileSystem.sink(path).buffered().use { it.writeString("abcdef") }
++    }
++
++    @Test
++    fun readAtMostToRejectsNegativeByteCount() {
++        SystemFileSystem.source(fileWithContent()).use { source ->
++            assertFailsWith<IllegalArgumentException> { source.readAtMostTo(Buffer(), -1) }
++        }
++    }
++
++    @Test
++    fun readAtMostToRejectsUseAfterClose() {
++        val source = SystemFileSystem.source(fileWithContent())
++        source.close()
++        assertFailsWith<IllegalStateException> { source.readAtMostTo(Buffer(), 1) }
++    }
++
++    @Test
++    fun writeRejectsNegativeByteCount() {
++        SystemFileSystem.sink(tempFile()).use { sink ->
++            assertFailsWith<IllegalArgumentException> {
++                sink.write(Buffer().also { it.writeString("abc") }, -1)
++            }
++        }
++    }
++
++    @Test
++    fun writeRejectsByteCountAboveSourceSize() {
++        SystemFileSystem.sink(tempFile()).use { sink ->
++            assertFailsWith<IllegalArgumentException> {
++                sink.write(Buffer().also { it.writeString("abc") }, 4)
++            }
++        }
++    }
++
++    @Test
++    fun writeRejectsUseAfterClose() {
++        val sink = SystemFileSystem.sink(tempFile())
++        sink.close()
++        assertFailsWith<IllegalStateException> {
++            sink.write(Buffer().also { it.writeString("abc") }, 3)
++        }
++    }
++}
+diff --git a/core/nativeNonApple/src/files/FileSystemNativeNonApple.kt b/core/nativeNonApple/src/files/FileSystemNativeNonApple.kt
+index 98a3ca5f..c304b9e0 100644
+--- a/core/nativeNonApple/src/files/FileSystemNativeNonApple.kt
++++ b/core/nativeNonApple/src/files/FileSystemNativeNonApple.kt
+@@ -9,10 +9,6 @@ import kotlinx.cinterop.*
+ import kotlinx.io.IOException
+ import platform.posix.*
+ 
+-@OptIn(ExperimentalForeignApi::class)
+-public actual val SystemTemporaryDirectory: Path
+-    get() = Path(getenv("TMPDIR")?.toKString() ?: getenv("TMP")?.toKString() ?: "")
+-
+ @OptIn(ExperimentalForeignApi::class, UnsafeNumber::class)
+ internal actual fun metadataOrNullImpl(path: Path): FileMetadata? {
+     memScoped {
+diff --git a/core/nodeFilesystemShared/src/files/PathsNodeJs.kt b/core/nodeFilesystemShared/src/files/PathsNodeJs.kt
+index aa50a9a2..921c30ad 100644
+--- a/core/nodeFilesystemShared/src/files/PathsNodeJs.kt
++++ b/core/nodeFilesystemShared/src/files/PathsNodeJs.kt
+@@ -98,6 +98,7 @@ internal class FileSource(private val path: Path) : RawSource {
+ 
+     override fun readAtMostTo(sink: Buffer, byteCount: Long): Long {
+         check(!closed) { "Source is closed." }
++        checkByteCount(byteCount)
+         if (byteCount == 0L) {
+             return 0
+         }
+@@ -147,6 +148,7 @@ internal class FileSink(path: Path, append: Boolean) : RawSink {
+     @OptIn(UnsafeIoApi::class)
+     override fun write(source: Buffer, byteCount: Long) {
+         check(!closed) { "Sink is closed." }
++        checkOffsetAndCount(source.size, 0, byteCount)
+         if (byteCount == 0L) {
+             return
+         }
+diff --git a/core/nodeFilesystemShared/test/files/FileSourceSinkContractTest.kt b/core/nodeFilesystemShared/test/files/FileSourceSinkContractTest.kt
+new file mode 100644
+index 00000000..8ac5f884
+--- /dev/null
++++ b/core/nodeFilesystemShared/test/files/FileSourceSinkContractTest.kt
+@@ -0,0 +1,69 @@
++/*
++ * Copyright 2017-2026 JetBrains s.r.o. and respective authors and developers.
++ * Use of this source code is governed by the Apache 2.0 license that can be found in the LICENCE file.
++ */
++
++package kotlinx.io.files
++
++import kotlinx.io.*
++import kotlin.test.*
++
++/**
++ * The argument and state validation [RawSource.readAtMostTo] and [RawSink.write]
++ * document, checked against this platform's file-backed implementations.
++ */
++class FileSourceSinkContractTest {
++    private val files: MutableList<Path> = arrayListOf()
++
++    @AfterTest
++    fun cleanup() {
++        files.forEach { SystemFileSystem.delete(it, false) }
++    }
++
++    private fun tempFile(): Path = Path(tempFileName()).also { files.add(it) }
++
++    private fun fileWithContent(): Path = tempFile().also { path ->
++        SystemFileSystem.sink(path).buffered().use { it.writeString("abcdef") }
++    }
++
++    @Test
++    fun readAtMostToRejectsNegativeByteCount() {
++        SystemFileSystem.source(fileWithContent()).use { source ->
++            assertFailsWith<IllegalArgumentException> { source.readAtMostTo(Buffer(), -1) }
++        }
++    }
++
++    @Test
++    fun readAtMostToRejectsUseAfterClose() {
++        val source = SystemFileSystem.source(fileWithContent())
++        source.close()
++        assertFailsWith<IllegalStateException> { source.readAtMostTo(Buffer(), 1) }
++    }
++
++    @Test
++    fun writeRejectsNegativeByteCount() {
++        SystemFileSystem.sink(tempFile()).use { sink ->
++            assertFailsWith<IllegalArgumentException> {
++                sink.write(Buffer().also { it.writeString("abc") }, -1)
++            }
++        }
++    }
++
++    @Test
++    fun writeRejectsByteCountAboveSourceSize() {
++        SystemFileSystem.sink(tempFile()).use { sink ->
++            assertFailsWith<IllegalArgumentException> {
++                sink.write(Buffer().also { it.writeString("abc") }, 4)
++            }
++        }
++    }
++
++    @Test
++    fun writeRejectsUseAfterClose() {
++        val sink = SystemFileSystem.sink(tempFile())
++        sink.close()
++        assertFailsWith<IllegalStateException> {
++            sink.write(Buffer().also { it.writeString("abc") }, 3)
++        }
++    }
++}
+diff --git a/core/unix/src/files/FileSystemUnix.kt b/core/unix/src/files/FileSystemUnix.kt
+index a26fb497..02be91c3 100644
+--- a/core/unix/src/files/FileSystemUnix.kt
++++ b/core/unix/src/files/FileSystemUnix.kt
+@@ -14,6 +14,19 @@ import kotlinx.cinterop.toKString
+ import kotlinx.io.IOException
+ import platform.posix.*
+ 
++/**
++ * Resolves the temporary directory from the environment, falling back to `/tmp`.
++ *
++ * `TMPDIR` is unset in a plain login shell, in a systemd unit and in most containers,
++ * so the fallback is the value POSIX prescribes rather than an empty path.
++ */
++public actual val SystemTemporaryDirectory: Path
++    get() = Path(
++        getenv("TMPDIR")?.toKString()?.takeIf { it.isNotEmpty() }
++            ?: getenv("TMP")?.toKString()?.takeIf { it.isNotEmpty() }
++            ?: "/tmp"
++    )
++
+ internal actual fun atomicMoveImpl(source: Path, destination: Path) {
+     if (rename(source.path, destination.path) != 0) {
+         throw IOException("Move failed: ${strerror(errno)?.toKString()}")
+diff --git a/core/wasmWasi/src/files/FileSystemWasm.kt b/core/wasmWasi/src/files/FileSystemWasm.kt
+index 2faa142e..a8feceb3 100644
+--- a/core/wasmWasi/src/files/FileSystemWasm.kt
++++ b/core/wasmWasi/src/files/FileSystemWasm.kt
+@@ -474,7 +474,8 @@ private class FileSink(private val fd: Fd) : RawSink {
+ 
+     @OptIn(UnsafeWasmMemoryApi::class)
+     override fun write(source: Buffer, byteCount: Long) {
+-        check(byteCount >= 0)
++        check(!closed) { "Sink is closed." }
++        checkOffsetAndCount(source.size, 0, byteCount)
+         if (byteCount == 0L) return
+         withScopedMemoryAllocator { allocator ->
+             val temporaryWriteBuffer = allocator.allocate(TEMP_CIOVEC_BUFFER_LEN)
+@@ -526,7 +527,8 @@ private class FileSource(private val fd: Fd) : RawSource {
+ 
+     @OptIn(UnsafeWasmMemoryApi::class)
+     override fun readAtMostTo(sink: Buffer, byteCount: Long): Long {
+-        check(byteCount >= 0)
++        check(!closed) { "Source is closed." }
++        checkByteCount(byteCount)
+         if (byteCount == 0L) return 0L
+         var totalRead = 0L
+ 
+diff --git a/core/wasmWasi/test/FileSourceSinkContractTest.kt b/core/wasmWasi/test/FileSourceSinkContractTest.kt
+new file mode 100644
+index 00000000..8ac5f884
+--- /dev/null
++++ b/core/wasmWasi/test/FileSourceSinkContractTest.kt
+@@ -0,0 +1,69 @@
++/*
++ * Copyright 2017-2026 JetBrains s.r.o. and respective authors and developers.
++ * Use of this source code is governed by the Apache 2.0 license that can be found in the LICENCE file.
++ */
++
++package kotlinx.io.files
++
++import kotlinx.io.*
++import kotlin.test.*
++
++/**
++ * The argument and state validation [RawSource.readAtMostTo] and [RawSink.write]
++ * document, checked against this platform's file-backed implementations.
++ */
++class FileSourceSinkContractTest {
++    private val files: MutableList<Path> = arrayListOf()
++
++    @AfterTest
++    fun cleanup() {
++        files.forEach { SystemFileSystem.delete(it, false) }
++    }
++
++    private fun tempFile(): Path = Path(tempFileName()).also { files.add(it) }
++
++    private fun fileWithContent(): Path = tempFile().also { path ->
++        SystemFileSystem.sink(path).buffered().use { it.writeString("abcdef") }
++    }
++
++    @Test
++    fun readAtMostToRejectsNegativeByteCount() {
++        SystemFileSystem.source(fileWithContent()).use { source ->
++            assertFailsWith<IllegalArgumentException> { source.readAtMostTo(Buffer(), -1) }
++        }
++    }
++
++    @Test
++    fun readAtMostToRejectsUseAfterClose() {
++        val source = SystemFileSystem.source(fileWithContent())
++        source.close()
++        assertFailsWith<IllegalStateException> { source.readAtMostTo(Buffer(), 1) }
++    }
++
++    @Test
++    fun writeRejectsNegativeByteCount() {
++        SystemFileSystem.sink(tempFile()).use { sink ->
++            assertFailsWith<IllegalArgumentException> {
++                sink.write(Buffer().also { it.writeString("abc") }, -1)
++            }
++        }
++    }
++
++    @Test
++    fun writeRejectsByteCountAboveSourceSize() {
++        SystemFileSystem.sink(tempFile()).use { sink ->
++            assertFailsWith<IllegalArgumentException> {
++                sink.write(Buffer().also { it.writeString("abc") }, 4)
++            }
++        }
++    }
++
++    @Test
++    fun writeRejectsUseAfterClose() {
++        val sink = SystemFileSystem.sink(tempFile())
++        sink.close()
++        assertFailsWith<IllegalStateException> {
++            sink.write(Buffer().also { it.writeString("abc") }, 3)
++        }
++    }
++}
