@@ -1,0 +1,1072 @@
+diff --git a/.gitattributes b/.gitattributes
+index 0ce1a8f..865e436 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -17,3 +17,9 @@
+ /**/*Test.php                 export-ignore
+ /**/*TestCase.php             export-ignore
+ /**/*Bench.php                export-ignore
++/PLAN.md                      export-ignore
++/BACKLOG.md                   export-ignore
++/JOURNAL.md                   export-ignore
++/JOURNAL-archive.md           export-ignore
++/.jeffy                       export-ignore
++/.jeffy/**                    export-ignore
+diff --git a/.gitignore b/.gitignore
+index 9948ce9..27f15ea 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -8,3 +8,4 @@ docs/_site
+ docs/.jekyll-metadata
+ vendor
+ /nbproject/private/
++.claude/jeffy-loop.local.md
+diff --git a/docs/9.0/connections/controls.md b/docs/9.0/connections/controls.md
+index 190474c..f6761b7 100644
+--- a/docs/9.0/connections/controls.md
++++ b/docs/9.0/connections/controls.md
+@@ -107,7 +107,7 @@ function League\Csv\delimiter_detect(Reader $csv, array $delimiters, int $limit
+ 
+ <p class="message-warning">Since version <code>9.7</code> this function is deprecated and you are encouraged to use <code>Info::getDelimiterStats</code> instead.</p>
+ 
+-The `Info::getDelimiterStats` static method helps detect the possible delimiter character used by the CSV document. This function returns the number of CSV fields found in the document depending on the submitted delimiters given.
++The `Info::getDelimiterStats` static method helps detect the possible delimiter character used by the CSV document. This function scores each submitted delimiter by how much of the document it splits: the score is the number of fields the delimiter produced plus the number of records those fields came from.
+ 
+ The function takes three (3) arguments:
+ 
+@@ -115,7 +115,7 @@ The function takes three (3) arguments:
+ - an array containing the delimiters to check;
+ - an integer which represents the number of CSV records to scan (defaults to `1`);
+ 
+-and returns an associated array whose keys are the submitted delimiters characters and whose values represent the field numbers found depending on the delimiter value.
++and returns an associated array whose keys are the submitted delimiters characters and whose values are that delimiter's score. A record the delimiter does not split is ignored, so it contributes nothing to the score.
+ 
+ ```php
+ use League\Csv\Info;
+@@ -126,14 +126,15 @@ $reader->setEnclosure('"');
+ $reader->setEscape('\\');
+ 
+ $result = Info::getDelimiterStats($reader, [' ', '|'], 10);
+-// $result can be the following
++// if the 10 first records each hold 5 fields separated by "|"
++// $result is the following
+ // [
+-//     '|' => 20,
++//     '|' => 60,
+ //     ' ' => 0,
+ // ]
+ // This seems to be a consistent CSV with:
+-// - 20 fields were counted with the "|" delimiter in the 10 first records;
+-// - in contrast no field was detected for the " " delimiter;
++// - the "|" delimiter splitting the 10 first records into 50 fields, scoring 50 + 10;
++// - in contrast the " " delimiter splitting no record at all, scoring 0;
+ ```
+ 
+ If the submitted delimiter **is invalid or not found** in the document, `0` will be returned as its associated value.
+diff --git a/docs/9.0/interoperability/escape-formula-injection.md b/docs/9.0/interoperability/escape-formula-injection.md
+index 8d745e4..5d4fc21 100644
+--- a/docs/9.0/interoperability/escape-formula-injection.md
++++ b/docs/9.0/interoperability/escape-formula-injection.md
+@@ -41,10 +41,10 @@ $writer->addFormatter($formatter->escapeRecord(...));
+ $writer->insertOne(['2', '2017-07-25', 'Important Client', '=2+5', 240, null]);
+ $writer->toString();
+ //outputting a CSV Document with all CSV Formula Injection escaped
+-//"2,2017-07-25,\"Important Client\",\"\t=2+5\",240,\n"
++//"2,2017-07-25,\"Important Client\",'=2+5,240,\n"
+ ```
+ 
+-Conversely, if you obtain a CSV document containing escaped formula field you can use the `Esca[eFormula::unescapeRecord` to remove any escaping character.
++Conversely, if you obtain a CSV document containing escaped formula field you can use `EscapeFormula::unescapeRecord` to remove any escaping character.
+ 
+ ```php
+ use League\Csv\EscapeFormula;
+@@ -52,8 +52,8 @@ use League\Csv\Reader;
+ 
+ $formatter = new EscapeFormula();
+ $reader = Reader::from('/path/to/my/file.csv');
+-$reader->addFormatter($formatter->unescapeRecord(...))
+-$reader->first(); 
++$reader->addFormatter($formatter->unescapeRecord(...));
++$reader->first();
+ // returns ['2', '2017-07-25', 'Important Client', '=2+5', '240', '']
+ // the escaping characters are removed.
+ ```
+diff --git a/docs/9.0/reader/record-type-inference.md b/docs/9.0/reader/record-type-inference.md
+index 6a88d5d..e567387 100644
+--- a/docs/9.0/reader/record-type-inference.md
++++ b/docs/9.0/reader/record-type-inference.md
+@@ -178,7 +178,7 @@ The inspection engine provides a field implementation for each supported field t
+ | --------------- | ----------------------------------------------------------------------- |
+ | `BooleanField`  | Detects and parses boolean values.                                      |
+ | `NumericField`  | Detects and parses numeric values.                                      |
+-| `DatetimeField` | Detects and parses date and time values.                                |
++| `DateTimeField` | Detects and parses date and time values.                                |
+ | `TimeField`     | Detects and parses time values.                                         |
+ | `JsonField`     | Detects and parses JSON values.                                         |
+ | `EnumField`     | Detects and parses values belonging to an enumeration.                  |
+@@ -205,11 +205,17 @@ Other built-in fields can be added when required:
+ ```php
+ $fieldList = FieldList::default()
+     ->append(
+-        new DatetimeField(),
+-        new TimeField(),
++        DateTimeField::common(),
++        TimeField::seconds(),
+     );
+ ```
+ 
++`DateTimeField` requires the date format it should recognize, so it is usually built through one of
++its named constructors: `DateTimeField::common()`, `::machine()` and `::localized()` each return a
++`FieldList` covering a family of formats, `::fromFormat()` takes your own list of formats, and
++`::timestamp()` returns a single field reading Unix timestamps. `TimeField` is built the same way,
++through `TimeField::seconds()`, `::minutes()` or `::hours()`, which select the precision.
++
+ This distinction is important: **a field being available does not mean that it is automatically used during inference**. Only fields present in the `FieldList` are considered by the `Inspector`.
+ 
+ #### Custom field types
+@@ -287,6 +293,7 @@ Frank;40;Tokyo;42fe384c-9dab-483c-b8e2-44c73a5e9043;
+ CSV;
+ 
+ $document = Reader::fromString($doc);
++$document->setDelimiter(';');
+ $document->setHeaderOffset(0);
+ ```
+ 
+diff --git a/src/CallbackStreamFilter.php b/src/CallbackStreamFilter.php
+index f4a6470..7c376ad 100644
+--- a/src/CallbackStreamFilter.php
++++ b/src/CallbackStreamFilter.php
+@@ -25,6 +25,7 @@ use ValueError;
+ 
+ use function array_keys;
+ use function in_array;
++use function is_resource;
+ use function stream_bucket_append;
+ use function stream_bucket_make_writeable;
+ use function stream_bucket_new;
+@@ -77,6 +78,12 @@ final class CallbackStreamFilter extends php_user_filter
+         }
+ 
+         Warning::cloak(function () use ($out, $data) {
++            // See SwapDelimiter::filter(): at the shutdown flush the stream is already closed
++            // and stream_bucket_new() raises a TypeError that Warning::cloak does not convert.
++            if (!is_resource($this->stream)) {
++                return;
++            }
++
+             stream_bucket_append($out, stream_bucket_new($this->stream, $data));
+         });
+ 
+diff --git a/src/CharsetConverter.php b/src/CharsetConverter.php
+index 182de94..019ed16 100644
+--- a/src/CharsetConverter.php
++++ b/src/CharsetConverter.php
+@@ -356,7 +356,7 @@ class CharsetConverter extends php_user_filter
+      * @codeCoverageIgnore
+      * @see self::appendOnReadTo()
+      * @see self::appendOnWriteTo()
+-     * @deprecated since version 9.22.0, use League\Csv\CharserConverter::appendOnReadTo() or League\Csv\CharserConverter::appendOnWriteTo() instead
++     * @deprecated since version 9.22.0, use League\Csv\CharsetConverter::appendOnReadTo() or League\Csv\CharsetConverter::appendOnWriteTo() instead
+      *
+      * @param resource $stream
+      *
+@@ -365,7 +365,7 @@ class CharsetConverter extends php_user_filter
+      *
+      * @return resource
+      */
+-    #[Deprecated(message:'use League\Csv\CharserConverter::appendOnReadTo() or League\Csv\CharserConverter::appendOnWriteTo() instead', since:'league/csv:9.22.0')]
++    #[Deprecated(message:'use League\Csv\CharsetConverter::appendOnReadTo() or League\Csv\CharsetConverter::appendOnWriteTo() instead', since:'league/csv:9.22.0')]
+     public static function appendTo(mixed $stream, string $input_encoding = 'UTF-8', string $output_encoding = 'UTF-8'): mixed
+     {
+         return self::appendFilter($stream, 0, $input_encoding, $output_encoding);
+@@ -377,7 +377,7 @@ class CharsetConverter extends php_user_filter
+      * @codeCoverageIgnore
+      * @see self::prependOnReadTo()
+      * @see self::prependOnWriteTo()
+-     * @deprecated since version 9.22.0, use League\Csv\CharserConverter::prependOnReadTo() or League\Csv\CharserConverter::prependOnWriteTo() instead
++     * @deprecated since version 9.22.0, use League\Csv\CharsetConverter::prependOnReadTo() or League\Csv\CharsetConverter::prependOnWriteTo() instead
+      *
+      * @param resource $stream
+      *
+@@ -386,7 +386,7 @@ class CharsetConverter extends php_user_filter
+      *
+      * @return resource
+      */
+-    #[Deprecated(message:'use League\Csv\CharserConverter::prependOnReadTo() or League\Csv\CharserConverter::prependOnWriteTo() instead', since:'league/csv:9.22.0')]
++    #[Deprecated(message:'use League\Csv\CharsetConverter::prependOnReadTo() or League\Csv\CharsetConverter::prependOnWriteTo() instead', since:'league/csv:9.22.0')]
+     public static function prependTo(mixed $stream, string $input_encoding = 'UTF-8', string $output_encoding = 'UTF-8'): mixed
+     {
+         return self::prependFilter($stream, 0, $input_encoding, $output_encoding);
+diff --git a/src/EncloseField.php b/src/EncloseField.php
+index a109dde..200b832 100644
+--- a/src/EncloseField.php
++++ b/src/EncloseField.php
+@@ -20,6 +20,7 @@ use Throwable;
+ 
+ use function array_map;
+ use function in_array;
++use function is_resource;
+ use function str_replace;
+ use function strcspn;
+ use function stream_bucket_append;
+@@ -135,6 +136,12 @@ class EncloseField extends php_user_filter
+         }
+ 
+         Warning::cloak(function () use ($data, $out) {
++            // See SwapDelimiter::filter(): at the shutdown flush the stream is already closed
++            // and stream_bucket_new() raises a TypeError that Warning::cloak does not convert.
++            if (!is_resource($this->stream)) {
++                return;
++            }
++
+             stream_bucket_append($out, stream_bucket_new($this->stream, $data));
+         });
+ 
+diff --git a/src/EscapeFormula.php b/src/EscapeFormula.php
+index eb381f5..cca992a 100644
+--- a/src/EscapeFormula.php
++++ b/src/EscapeFormula.php
+@@ -110,6 +110,7 @@ class EscapeFormula
+ 
+         return match (true) {
+             null === $strOrNull,
++            !isset($strOrNull[0]),
+             !isset($this->special_chars[$strOrNull[0]]) && !str_starts_with($strOrNull, $this->escape) => $cell,
+             default => $this->escape.$strOrNull,
+         };
+diff --git a/src/FragmentFinder.php b/src/FragmentFinder.php
+index d9a5a74..5917c80 100644
+--- a/src/FragmentFinder.php
++++ b/src/FragmentFinder.php
+@@ -313,7 +313,10 @@ class FragmentFinder
+         }
+         --$end;
+ 
+-        if ($end <= $start) {
++        // An end before the start is malformed. An end equal to the start is not: RFC 7111 writes a
++        // single-element range as `2-2`, and rejecting it here returned the -1 sentinel meaning
++        // select nothing, so `row=2-2` selected nothing where `row=2` selected the row.
++        if ($end < $start) {
+             return [-1, 0];
+         }
+ 
+diff --git a/src/Info.php b/src/Info.php
+index 0c3a8d3..e20891a 100644
+--- a/src/Info.php
++++ b/src/Info.php
+@@ -44,9 +44,12 @@ final class Info implements ByteSequence
+     /**
+      * Detect Delimiters usage in a {@link Reader} object.
+      *
+-     * Returns a associative array where each key represents
+-     * a submitted delimiter and each value the number CSV fields found
+-     * when processing at most $limit CSV records with the given delimiter
++     * Returns a associative array where each key represents a submitted
++     * delimiter and each value that delimiter's score: the number of fields
++     * the delimiter produced, plus the number of records those fields came
++     * from, over at most $limit CSV records.
++     * A record the delimiter does not split is ignored, so a delimiter
++     * absent from the document scores 0.
+      *
+      * @param array<string> $delimiters
+      * @param int<-1, max> $limit
+diff --git a/src/Query/Limit.php b/src/Query/Limit.php
+index 5827596..60f3b60 100644
+--- a/src/Query/Limit.php
++++ b/src/Query/Limit.php
+@@ -14,6 +14,7 @@ declare(strict_types=1);
+ namespace League\Csv\Query;
+ 
+ use Deprecated;
++use IteratorIterator;
+ use League\Csv\MapIterator;
+ use LimitIterator;
+ 
+@@ -34,7 +35,7 @@ final readonly class Limit
+      * @deprecated Since version 9.25.0
+      * @codeCoverageIgnore
+      */
+-    #[Deprecated(message:'use League\Csv\JsonConverter::__construct() instead', since:'league/csv:9.25.0')]
++    #[Deprecated(message:'use League\Csv\Query\Limit::__construct() instead', since:'league/csv:9.25.0')]
+     public static function new(int $offset, int $length): self
+     {
+         return new self($offset, $length);
+@@ -42,9 +43,16 @@ final readonly class Limit
+ 
+     /**
+      * Allows iteration over a limited subset of items in an iterable structure.
++     *
++     * An offset past the end of the structure selects nothing, whatever the structure is. Without
++     * the wrapper below that was true only for the non-seekable iterators a Reader or a generator
++     * supplies: LimitIterator seeks when its inner iterator is seekable, and seeking past the end
++     * raises OutOfBoundsException, so the same offset over an array threw where the same offset
++     * over a generator returned nothing. Wrapping defeats the seek, so every iterable walks
++     * forward and simply runs out. ResultSet::nth() catches that same exception for the same reason.
+      */
+     public function slice(iterable $value): LimitIterator
+     {
+-        return new LimitIterator(MapIterator::toIterator($value), $this->offset, $this->length);
++        return new LimitIterator(new IteratorIterator(MapIterator::toIterator($value)), $this->offset, $this->length);
+     }
+ }
+diff --git a/src/RFC4180Field.php b/src/RFC4180Field.php
+index a1c2c29..7866077 100644
+--- a/src/RFC4180Field.php
++++ b/src/RFC4180Field.php
+@@ -21,6 +21,7 @@ use TypeError;
+ 
+ use function array_map;
+ use function in_array;
++use function is_resource;
+ use function is_string;
+ use function str_replace;
+ use function strcspn;
+@@ -151,6 +152,12 @@ class RFC4180Field extends php_user_filter
+         }
+ 
+         Warning::cloak(function () use ($data, $out) {
++            // See SwapDelimiter::filter(): at the shutdown flush the stream is already closed
++            // and stream_bucket_new() raises a TypeError that Warning::cloak does not convert.
++            if (!is_resource($this->stream)) {
++                return;
++            }
++
+             stream_bucket_append($out, stream_bucket_new($this->stream, $data));
+         });
+ 
+diff --git a/src/ResultSet.php b/src/ResultSet.php
+index aff6c58..d5b7037 100644
+--- a/src/ResultSet.php
++++ b/src/ResultSet.php
+@@ -507,7 +507,7 @@ class ResultSet implements TabularDataReader, JsonSerializable
+ 
+     public function jsonSerialize(): array
+     {
+-        return array_values([...$this->records]);
++        return array_values([...$this->getRecords()]);
+     }
+ 
+     public function first(): array
+@@ -621,7 +621,7 @@ class ResultSet implements TabularDataReader, JsonSerializable
+     protected function yieldColumn(string|int $offset): Generator
+     {
+         yield from new MapIterator(
+-            new CallbackFilterIterator($this->records, fn (array $record): bool => isset($record[$offset])),
++            new CallbackFilterIterator($this->getRecords(), fn (array $record): bool => isset($record[$offset])),
+             fn (array $record) => $record[$offset]
+         );
+     }
+@@ -673,7 +673,7 @@ class ResultSet implements TabularDataReader, JsonSerializable
+         $value = $this->getColumnIndex($value_index, 'value', __METHOD__);
+ 
+         $iterator = new MapIterator(
+-            new CallbackFilterIterator($this->records, fn (array $record): bool => isset($record[$offset])),
++            new CallbackFilterIterator($this->getRecords(), fn (array $record): bool => isset($record[$offset])),
+             fn (array $record): array => [$record[$offset], $record[$value] ?? null]
+         );
+ 
+diff --git a/src/Schema/DateTimeField.php b/src/Schema/DateTimeField.php
+index 48f7fc6..d4ecec2 100644
+--- a/src/Schema/DateTimeField.php
++++ b/src/Schema/DateTimeField.php
+@@ -29,6 +29,18 @@ final class DateTimeField extends FieldEvaluator implements Field
+ {
+     /** @var non-empty-string */
+     public readonly string $format;
++    /**
++     * The format actually handed to createFromFormat, with the `|` reset modifier appended.
++     *
++     * Without it every field the format does not parse is taken from the current time, so a
++     * date-only format returns the CSV's date carrying the wall clock's time of day and the
++     * same document parsed twice yields different instants. The modifier only resets fields
++     * the format did not parse, so a format carrying a time, `U`, and a format already
++     * starting with `!` are all unaffected.
++     *
++     * @var non-empty-string
++     */
++    private readonly string $parseFormat;
+     public readonly DateTimeZone $timezone;
+     /** @var class-string<DateTimeImmutable|DateTime> */
+     public readonly string $outputClass;
+@@ -73,6 +85,7 @@ final class DateTimeField extends FieldEvaluator implements Field
+ 
+         parent::__construct($confidenceThreshold);
+         $this->format = $format;
++        $this->parseFormat = $format.'|';
+         $this->timezone = $timezone;
+         $this->outputClass = $outputClass;
+     }
+@@ -191,7 +204,7 @@ final class DateTimeField extends FieldEvaluator implements Field
+         }
+ 
+         try {
+-            $value = $this->outputClass::createFromFormat($this->format, $value, $this->timezone);
++            $value = $this->outputClass::createFromFormat($this->parseFormat, $value, $this->timezone);
+             if (false === $value) {
+                 return null;
+             }
+diff --git a/src/Schema/EnumField.php b/src/Schema/EnumField.php
+index 51e55e8..fcdc45c 100644
+--- a/src/Schema/EnumField.php
++++ b/src/Schema/EnumField.php
+@@ -101,6 +101,14 @@ final class EnumField extends FieldEvaluator implements Field
+             }
+         }
+ 
++        // The mirror of the branch above. A tabular source that is not a CSV document - a
++        // Buffer, or a ResultSet over a database result - hands an INTEGER column over as a
++        // PHP int, and tryFrom() on a string-backed enum is typed to reject one, so without
++        // this the method raises a TypeError where its contract is to return null.
++        if ('string' === $this->backedEnumType && is_int($value)) {
++            $value = (string) $value;
++        }
++
+         /** @var class-string<BackedEnum> $enumClass */
+         $enumClass = $this->enumClass;
+ 
+diff --git a/src/Schema/FieldList.php b/src/Schema/FieldList.php
+index 65d5813..f23d69a 100644
+--- a/src/Schema/FieldList.php
++++ b/src/Schema/FieldList.php
+@@ -170,7 +170,7 @@ final class FieldList implements Countable, IteratorAggregate
+             }
+         }
+ 
+-        return [] === $fields ? $this : new self(...$fields);
++        return new self(...$fields);
+     }
+ 
+     public function removeByType(FieldType $fieldType): self
+diff --git a/src/Schema/FieldListTest.php b/src/Schema/FieldListTest.php
+index 1531554..d78f4ed 100644
+--- a/src/Schema/FieldListTest.php
++++ b/src/Schema/FieldListTest.php
+@@ -211,6 +211,16 @@ final class FieldListTest extends TestCase
+         self::assertSame($list, $new);
+     }
+ 
++    public function testRemoveByOffsetCanEmptyTheList(): void
++    {
++        $list = new FieldList($this->s1, $this->s2, $this->s3);
++
++        self::assertTrue($list->removeByOffset(0, 1, 2)->isEmpty());
++        self::assertTrue($list->removeByOffset(-1, -2, -3)->isEmpty());
++        self::assertTrue($list->removeByOffset(0, 1, 2, 10)->isEmpty());
++        self::assertCount(3, $list);
++    }
++
+     public function testRemoveByType(): void
+     {
+         $list = new FieldList($this->s1, $this->s2);
+diff --git a/src/Schema/SetField.php b/src/Schema/SetField.php
+index 35908fa..518a7e4 100644
+--- a/src/Schema/SetField.php
++++ b/src/Schema/SetField.php
+@@ -85,7 +85,7 @@ final class SetField extends FieldEvaluator implements Field
+         }
+ 
+         $result = [];
+-        foreach (explode($this->separator, $value) as $part) {
++        foreach (explode($this->separator, $value, $this->limit) as $part) {
+             $part = trim($part);
+             if ('' === $part || isset($result[$part])) {
+                 continue;
+diff --git a/src/Schema/SetFieldTest.php b/src/Schema/SetFieldTest.php
+index 274c2e7..41316e3 100644
+--- a/src/Schema/SetFieldTest.php
++++ b/src/Schema/SetFieldTest.php
+@@ -90,8 +90,23 @@ final class SetFieldTest extends TestCase
+ 
+     public function test_it_respects_the_limit(): void
+     {
+-        $field = SetField::fromEnum(TestSetEnum::class, limit: 2);
++        $value = 'read,write,delete';
+ 
++        // The limit is explode()'s: it bounds the number of parts, and the last
++        // part keeps the remainder, so 'write,delete' is no enum case and drops.
++        self::assertSame([TestSetEnum::Read], SetField::fromEnum(TestSetEnum::class, limit: 2)->parse($value));
++        self::assertSame([TestSetEnum::Read, TestSetEnum::Write], SetField::fromEnum(TestSetEnum::class, limit: -1)->parse($value));
++        self::assertSame(
++            [TestSetEnum::Read, TestSetEnum::Write, TestSetEnum::Delete],
++            SetField::fromEnum(TestSetEnum::class, limit: PHP_INT_MAX)->parse($value)
++        );
++    }
++
++    public function test_the_default_limit_keeps_every_member(): void
++    {
++        $field = SetField::fromEnum(TestSetEnum::class);
++
++        self::assertSame(PHP_INT_MAX, $field->limit);
+         self::assertSame([TestSetEnum::Read, TestSetEnum::Write, TestSetEnum::Delete], $field->parse('read,write,delete'));
+     }
+ 
+diff --git a/src/Schema/TimeField.php b/src/Schema/TimeField.php
+index 181c239..8741f73 100644
+--- a/src/Schema/TimeField.php
++++ b/src/Schema/TimeField.php
+@@ -21,6 +21,7 @@ use function ctype_digit;
+ use function implode;
+ use function is_string;
+ use function preg_match;
++use function preg_quote;
+ use function strlen;
+ use function trim;
+ 
+@@ -86,7 +87,7 @@ final class TimeField extends FieldEvaluator implements Field
+     public function parse(mixed $value): ?string
+     {
+         if ($value instanceof DateTimeInterface) {
+-            return $value->format('H:i:s');
++            return $this->formatTime((int) $value->format('H'), (int) $value->format('i'), (int) $value->format('s'));
+         }
+ 
+         if (!is_string($value)) {
+@@ -104,7 +105,16 @@ final class TimeField extends FieldEvaluator implements Field
+ 
+         return ($hour > 23 || $minute > 59 || $second > 59)
+             ? null
+-            : $this->formatTimePart($hour)
++            : $this->formatTime($hour, $minute, $second);
++    }
++
++    /**
++     * Both parse() paths compose their answer here, so a value read from a string
++     * and the same value read from a DateTimeInterface cannot spell it differently.
++     */
++    private function formatTime(int $hour, int $minute, int $second): string
++    {
++        return $this->formatTimePart($hour)
+             .$this->separator
+             .$this->formatTimePart($minute)
+             .$this->separator
+@@ -132,6 +142,10 @@ final class TimeField extends FieldEvaluator implements Field
+             }
+         );
+ 
+-        return '/^'.implode($this->separator, $patternParts).'$/';
++        // The separator is caller-supplied and reaches a regex, so it is quoted against the
++        // delimiter it will sit inside: unquoted, a `.` matches any byte and turns every
++        // two-digit-anything-two-digit string into a valid time, and a `/` closes the pattern
++        // early and makes preg_match reject the whole expression.
++        return '/^'.implode(preg_quote($this->separator, '/'), $patternParts).'$/';
+     }
+ }
+diff --git a/src/Serializer/CastToString.php b/src/Serializer/CastToString.php
+index 08bbfe8..6280e9c 100644
+--- a/src/Serializer/CastToString.php
++++ b/src/Serializer/CastToString.php
+@@ -16,6 +16,9 @@ namespace League\Csv\Serializer;
+ use ReflectionParameter;
+ use ReflectionProperty;
+ 
++use function is_scalar;
++use function is_string;
++
+ /**
+  * @implements TypeCasting<?string>
+  */
+@@ -49,8 +52,14 @@ final class CastToString implements TypeCasting
+      */
+     public function toVariable(mixed $value): ?string
+     {
++        // The arms are ordered as the sibling casters order theirs: a value of the target
++        // type, then any other non-null scalar converted, then a non-null non-scalar
++        // refused, and only then the nullable and not-nullable arms, which a null reaches.
++        // Reaching the nullable arm with a non-null value is how a scalar was discarded.
+         $returnedValue = match (true) {
+             is_string($value) => $value,
++            null !== $value && is_scalar($value) => (string) $value,
++            null !== $value => throw TypeCastingFailed::dueToInvalidValue($value, $this->type->value, info: $this->variableName),
+             $this->isNullable => $this->default,
+             default => throw TypeCastingFailed::dueToNotNullableType($this->type->value, info: $this->variableName),
+         };
+diff --git a/src/Serializer/CastToStringTest.php b/src/Serializer/CastToStringTest.php
+index 126e3b0..28e36f5 100644
+--- a/src/Serializer/CastToStringTest.php
++++ b/src/Serializer/CastToStringTest.php
+@@ -139,4 +139,36 @@ final class CastToStringTest extends TestCase
+             'intersection type not supported' => ['propertyName' => 'intersectionType'],
+         ];
+     }
++
++    public function testItConvertsANonStringScalarOnBothNullableAndPlainProperties(): void
++    {
++        $class = new class () {
++            public string $string;
++            public ?string $nullableString = null;
++        };
++
++        $plain = new CastToString(new ReflectionProperty($class::class, 'string'));
++        $nullable = new CastToString(new ReflectionProperty($class::class, 'nullableString'));
++        $nullable->setOptions('the default');
++
++        // The nullable property used to send every non-string value to the default and
++        // answer null, so the same input read two ways on the two shapes.
++        self::assertSame('42', $plain->toVariable(42));
++        self::assertSame('42', $nullable->toVariable(42));
++        self::assertSame('4.5', $nullable->toVariable(4.5));
++        self::assertSame('', $nullable->toVariable(false));
++    }
++
++    public function testItRefusesANonScalarRatherThanDiscardingIt(): void
++    {
++        $class = new class () {
++            public ?string $nullableString = null;
++        };
++
++        $cast = new CastToString(new ReflectionProperty($class::class, 'nullableString'));
++
++        $this->expectException(TypeCastingFailed::class);
++
++        $cast->toVariable([1, 2]);
++    }
+ }
+diff --git a/src/Stream.php b/src/Stream.php
+index 5ecf7e6..3aaab69 100644
+--- a/src/Stream.php
++++ b/src/Stream.php
+@@ -182,8 +182,13 @@ final class Stream implements SeekableIterator
+      */
+     public function appendFilter(string $filtername, int $read_write, mixed $params = null): void
+     {
++        // PHP's convert.base64 and convert.quoted-printable filters refuse an explicit
++        // null params and accept the same call with the argument omitted, so a filter
++        // taking no parameters is attached with three arguments rather than four.
+         /** @var resource|false $res */
+-        $res = Warning::cloak(stream_filter_append(...), $this->stream, $filtername, $read_write, $params);
++        $res = null === $params
++            ? Warning::cloak(stream_filter_append(...), $this->stream, $filtername, $read_write)
++            : Warning::cloak(stream_filter_append(...), $this->stream, $filtername, $read_write, $params);
+         is_resource($res) || throw InvalidArgument::dueToStreamFilterNotFound($filtername);
+ 
+         $this->filters[$filtername][] = $res;
+@@ -199,7 +204,9 @@ final class Stream implements SeekableIterator
+     public function prependFilter(string $filtername, int $read_write, mixed $params = null): void
+     {
+         /** @var resource|false $res */
+-        $res = Warning::cloak(stream_filter_prepend(...), $this->stream, $filtername, $read_write, $params);
++        $res = null === $params
++            ? Warning::cloak(stream_filter_prepend(...), $this->stream, $filtername, $read_write)
++            : Warning::cloak(stream_filter_prepend(...), $this->stream, $filtername, $read_write, $params);
+         is_resource($res) || throw InvalidArgument::dueToStreamFilterNotFound($filtername);
+ 
+         $this->filters[$filtername][] = $res;
+diff --git a/src/StreamFilter.php b/src/StreamFilter.php
+index a790947..886742f 100644
+--- a/src/StreamFilter.php
++++ b/src/StreamFilter.php
+@@ -19,9 +19,11 @@ use TypeError;
+ 
+ use function get_resource_type;
+ use function gettype;
+-use function in_array;
+ use function is_resource;
++use function str_ends_with;
++use function str_starts_with;
+ use function stream_get_filters;
++use function substr;
+ 
+ use const STREAM_FILTER_READ;
+ use const STREAM_FILTER_WRITE;
+@@ -118,8 +120,12 @@ final class StreamFilter
+             };
+         }
+ 
++        // Same rule as Stream::prependFilter: an explicit null params is refused by PHP's
++        // convert.base64 and convert.quoted-printable filters, so it is omitted instead.
+         /** @var resource|false $filter */
+-        $filter = Warning::cloak(stream_filter_prepend(...), $stream, $filtername, $mode, $params);
++        $filter = null === $params
++            ? Warning::cloak(stream_filter_prepend(...), $stream, $filtername, $mode)
++            : Warning::cloak(stream_filter_prepend(...), $stream, $filtername, $mode, $params);
+         if (!is_resource($filter)) {
+             throw new RuntimeException('Could not append the registered stream filter: '.$filtername);
+         }
+@@ -148,7 +154,9 @@ final class StreamFilter
+         }
+ 
+         /** @var resource|false $filter */
+-        $filter = Warning::cloak(stream_filter_append(...), $stream, $filtername, $mode, $params);
++        $filter = null === $params
++            ? Warning::cloak(stream_filter_append(...), $stream, $filtername, $mode)
++            : Warning::cloak(stream_filter_append(...), $stream, $filtername, $mode, $params);
+         if (!is_resource($filter)) {
+             throw new RuntimeException('Could not append the registered stream filter: '.$filtername);
+         }
+@@ -158,9 +166,20 @@ final class StreamFilter
+ 
+     private static function filterFiltername(string $filtername): void
+     {
+-        if (!in_array($filtername, stream_get_filters(), true)) {
+-            throw new LogicException('The stream filter "'.$filtername.'" is not registered.');
++        foreach (stream_get_filters() as $registered) {
++            if ($registered === $filtername) {
++                return;
++            }
++
++            // PHP lists whole families as `<prefix>.*` - `zlib.*`, `convert.*`,
++            // `convert.iconv.*` - and never lists a concrete member on its own, so an
++            // exact match alone rejects every filter the engine actually ships.
++            if (str_ends_with($registered, '.*') && str_starts_with($filtername, substr($registered, 0, -1))) {
++                return;
++            }
+         }
++
++        throw new LogicException('The stream filter "'.$filtername.'" is not registered.');
+     }
+ 
+     /**
+diff --git a/src/StreamFilterTest.php b/src/StreamFilterTest.php
+new file mode 100644
+index 0000000..48357de
+--- /dev/null
++++ b/src/StreamFilterTest.php
+@@ -0,0 +1,108 @@
++<?php
++
++/**
++ * League.Csv (https://csv.thephpleague.com)
++ *
++ * (c) Ignace Nyamagana Butera <nyamsprod@gmail.com>
++ *
++ * For the full copyright and license information, please view the LICENSE
++ * file that was distributed with this source code.
++ */
++
++declare(strict_types=1);
++
++namespace League\Csv;
++
++use LogicException;
++use PHPUnit\Framework\Attributes\Test;
++use PHPUnit\Framework\TestCase;
++
++use function fclose;
++use function fopen;
++use function is_resource;
++
++final class StreamFilterTest extends TestCase
++{
++    /** @return resource */
++    private function stream()
++    {
++        $stream = fopen('php://temp', 'r+');
++        self::assertIsResource($stream);
++
++        return $stream;
++    }
++
++    #[Test]
++    public function it_accepts_a_member_of_a_registered_filter_family(): void
++    {
++        // stream_get_filters() lists families as `zlib.*` and `convert.iconv.*`,
++        // never their concrete members, so an exact-match check refuses them all.
++        $stream = $this->stream();
++
++        self::assertTrue(is_resource(StreamFilter::appendOnReadTo($stream, 'zlib.deflate')));
++        self::assertTrue(is_resource(StreamFilter::appendOnReadTo($stream, 'convert.iconv.UTF-8/ISO-8859-15')));
++
++        fclose($stream);
++    }
++
++    #[Test]
++    public function it_accepts_the_same_names_as_the_AbstractCsv_entry_points(): void
++    {
++        $reader = Reader::fromString("a,b\n");
++        $reader->appendStreamFilterOnRead('zlib.deflate');
++
++        $stream = $this->stream();
++
++        self::assertTrue(is_resource(StreamFilter::appendOnReadTo($stream, 'zlib.deflate')));
++
++        fclose($stream);
++    }
++
++    #[Test]
++    public function it_attaches_a_filter_that_refuses_an_explicit_null_params(): void
++    {
++        // The four entry points pass $params positionally; PHP's convert.base64 and
++        // convert.quoted-printable filters refuse an explicit null and accept the
++        // same call with the argument omitted.
++        $appendRead = $this->stream();
++        $prependRead = $this->stream();
++        $appendWrite = $this->stream();
++        $prependWrite = $this->stream();
++
++        self::assertTrue(is_resource(StreamFilter::appendOnReadTo($appendRead, 'convert.base64-encode')));
++        self::assertTrue(is_resource(StreamFilter::prependOnReadTo($prependRead, 'convert.base64-decode')));
++        self::assertTrue(is_resource(StreamFilter::appendOnWriteTo($appendWrite, 'convert.quoted-printable-encode')));
++        self::assertTrue(is_resource(StreamFilter::prependOnWriteTo($prependWrite, 'convert.quoted-printable-decode')));
++
++        fclose($appendRead);
++        fclose($prependRead);
++        fclose($appendWrite);
++        fclose($prependWrite);
++    }
++
++    #[Test]
++    public function it_still_refuses_a_name_no_family_covers(): void
++    {
++        $stream = $this->stream();
++
++        try {
++            $this->expectException(LogicException::class);
++            StreamFilter::appendOnReadTo($stream, 'no.such.filter');
++        } finally {
++            fclose($stream);
++        }
++    }
++
++    #[Test]
++    public function it_refuses_a_family_prefix_that_is_not_a_member(): void
++    {
++        $stream = $this->stream();
++
++        try {
++            $this->expectException(LogicException::class);
++            StreamFilter::appendOnReadTo($stream, 'zlibdeflate');
++        } finally {
++            fclose($stream);
++        }
++    }
++}
+diff --git a/src/StreamTest.php b/src/StreamTest.php
+index f47d28a..c755ad2 100644
+--- a/src/StreamTest.php
++++ b/src/StreamTest.php
+@@ -29,15 +29,37 @@ use function fwrite;
+ use function in_array;
+ use function stream_context_create;
+ use function stream_context_get_options;
++use function stream_get_meta_data;
+ use function stream_get_wrappers;
++use function stream_socket_pair;
+ use function stream_wrapper_register;
+ use function stream_wrapper_unregister;
+ 
+ use const STREAM_FILTER_READ;
++use const STREAM_PF_UNIX;
++use const STREAM_SOCK_STREAM;
+ 
+ #[Group('csv')]
+ final class StreamTest extends TestCase
+ {
++    /**
++     * Returns a stream that is non-seekable regardless of what stdout is attached to.
++     *
++     * STDOUT and php://stdout are non-seekable only when they happen to be a pipe or a tty;
++     * redirected to a regular file they seek fine, so they cannot stand in for this. A socket
++     * pair is never seekable. Both ends are returned because closing one end closes the other.
++     *
++     * @return array<resource>
++     */
++    private static function nonSeekableStreamPair(): array
++    {
++        $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
++        self::assertIsArray($pair);
++        self::assertFalse(stream_get_meta_data($pair[0])['seekable'], 'the fixture must be non-seekable');
++
++        return $pair;
++    }
++
+     protected function setUp(): void
+     {
+         stream_wrapper_register(StreamWrapper::PROTOCOL, StreamWrapper::class);
+@@ -142,9 +164,11 @@ final class StreamTest extends TestCase
+     {
+         $this->expectException(UnavailableFeature::class);
+ 
+-        $stream = Stream::from(STDOUT);
++        [$resource, $peer] = self::nonSeekableStreamPair();
++        $stream = Stream::from($resource);
+         $stream->fputcsv(['foo', 'bar'], escape: '');
+         $stream->fseek(-1);
++        unset($peer);
+     }
+ 
+     public function testSeek(): void
+@@ -167,20 +191,20 @@ final class StreamTest extends TestCase
+     {
+         $this->expectException(UnavailableFeature::class);
+ 
+-        /** @var resource $filePointer */
+-        $filePointer = fopen('php://stdout', 'w');
+-        $stream = Stream::from($filePointer);
++        [$resource, $peer] = self::nonSeekableStreamPair();
++        $stream = Stream::from($resource);
+         $stream->rewind();
++        unset($peer);
+     }
+ 
+     public function testCreateStreamWithNonSeekableStream(): void
+     {
+         $this->expectException(UnavailableFeature::class);
+ 
+-        /** @var resource $filePointer */
+-        $filePointer = fopen('php://stdout', 'w');
+-        $stream = Stream::from($filePointer);
++        [$resource, $peer] = self::nonSeekableStreamPair();
++        $stream = Stream::from($resource);
+         $stream->seek(3);
++        unset($peer);
+     }
+ 
+     public function testCsvControl(): void
+@@ -211,6 +235,29 @@ final class StreamTest extends TestCase
+         $stream->appendFilter($filtername, STREAM_FILTER_READ);
+     }
+ 
++    public function testAppendAndPrependFilterAttachAFilterRefusingAnExplicitNullParams(): void
++    {
++        // PHP's convert.base64 and convert.quoted-printable filters refuse an explicit
++        // null params and accept the same call with the argument omitted.
++        $appended = Stream::from('php://temp', 'r+');
++        $appended->appendFilter('convert.base64-encode', STREAM_FILTER_READ);
++
++        $prepended = Stream::from('php://temp', 'r+');
++        $prepended->prependFilter('convert.quoted-printable-encode', STREAM_FILTER_WRITE);
++
++        // Reaching the assertions at all is the check: both calls throw when the null is
++        // passed positionally. A params array that is not null must still reach the filter.
++        $writer = Writer::fromString();
++        $writer->appendStreamFilterOnWrite('zlib.deflate', ['level' => 1]);
++        $writer->insertOne([str_repeat('alpha,beta ', 200)]);
++
++        $tighter = Writer::fromString();
++        $tighter->appendStreamFilterOnWrite('zlib.deflate', ['level' => 9]);
++        $tighter->insertOne([str_repeat('alpha,beta ', 200)]);
++
++        self::assertNotSame(strlen($writer->toString()), strlen($tighter->toString()));
++    }
++
+     public function testIterateOverLines(): void
+     {
+         $text = <<<TEXT
+diff --git a/src/SwapDelimiter.php b/src/SwapDelimiter.php
+index d99a6ac..8cd2cb9 100644
+--- a/src/SwapDelimiter.php
++++ b/src/SwapDelimiter.php
+@@ -21,11 +21,13 @@ use function get_resource_type;
+ use function gettype;
+ use function in_array;
+ use function is_resource;
++use function str_contains;
+ use function str_replace;
+ use function stream_bucket_append;
+ use function stream_bucket_make_writeable;
+ use function stream_bucket_new;
+ use function stream_filter_append;
++use function stream_filter_prepend;
+ use function stream_filter_register;
+ use function stream_get_filters;
+ use function stream_get_meta_data;
+@@ -95,7 +97,7 @@ final class SwapDelimiter extends php_user_filter
+         $filter = Warning::cloak(fn () => stream_filter_append($stream, self::getFiltername(), params: [
+             'mb_separator' => $inputDelimiter,
+             'separator' => $delimiter,
+-            'mode' => str_contains(stream_get_meta_data($stream)['mode'], 'r') ? self::MODE_READ : self::MODE_WRITE,
++            'mode' => self::modeFor($stream),
+         ]));
+ 
+         is_resource($filter) || throw new RuntimeException('Could not append the registered stream filter: '.self::getFiltername());
+@@ -120,16 +122,32 @@ final class SwapDelimiter extends php_user_filter
+ 
+         $filtername = self::getFiltername();
+         /** @var resource|false $filter */
+-        $filter = Warning::cloak(fn () => stream_filter_append($stream, $filtername, params: [
++        $filter = Warning::cloak(fn () => stream_filter_prepend($stream, $filtername, params: [
+             'mb_separator' => $inputDelimiter,
+             'separator' => $delimiter,
+-            'mode' => str_contains(stream_get_meta_data($stream)['mode'], 'r') ? self::MODE_READ : self::MODE_WRITE,
++            'mode' => self::modeFor($stream),
+         ]));
+         is_resource($filter) || throw new RuntimeException('Could not prepend the registered stream filter: '.$filtername);
+ 
+         return $filter;
+     }
+ 
++    /**
++     * @param resource $stream
++     */
++    private static function modeFor(mixed $stream): string
++    {
++        // php://temp and php://memory report `w+b` whatever mode they were opened with,
++        // so a readable stream is recognised by the `+` as well as by the `r`; without
++        // that, Stream::fromString()'s own scratch document is read as write-only and
++        // the swap silently does nothing on the read side.
++        $mode = stream_get_meta_data($stream)['mode'];
++
++        return str_contains($mode, 'r') || str_contains($mode, '+')
++            ? self::MODE_READ
++            : self::MODE_WRITE;
++    }
++
+     public function onCreate(): bool
+     {
+         if (self::FILTER_NAME !== $this->filtername) {
+@@ -166,6 +184,14 @@ final class SwapDelimiter extends php_user_filter
+ 
+         $data = str_replace($this->search, $this->replace, $data);
+         Warning::cloak(function () use ($data, $out) {
++            // PHP flushes an attached write filter while it tears the stream down, so by the
++            // last call $this->stream can already be a closed resource; stream_bucket_new()
++            // raises a TypeError on one, which Warning::cloak does not convert. There is
++            // nothing left to pass the bucket on to at that point, so skipping is the answer.
++            if (!is_resource($this->stream)) {
++                return;
++            }
++
+             stream_bucket_append($out, stream_bucket_new($this->stream, $data));
+         });
+ 
+diff --git a/src/TabularDataReader.php b/src/TabularDataReader.php
+index 72e81d6..4d23efc 100644
+--- a/src/TabularDataReader.php
++++ b/src/TabularDataReader.php
+@@ -93,6 +93,6 @@ interface TabularDataReader extends TabularData, IteratorAggregate, Countable
+      *
+      * @throws UnableToProcessCsv if argument is less than 0
+      */
+-    #[Deprecated(message:'use League\Csv\TabularDataReader::nth() instead', since:'league/csv:9.9.0')]
++    #[Deprecated(message:'use the nth() method of the implementing class instead', since:'league/csv:9.9.0')]
+     public function fetchOne(int $nth_record = 0): array;
+ }
+diff --git a/src/XMLConverter.php b/src/XMLConverter.php
+index e5d985c..80ca884 100644
+--- a/src/XMLConverter.php
++++ b/src/XMLConverter.php
+@@ -295,12 +295,12 @@ class XMLConverter
+      * DEPRECATION WARNING! This method will be removed in the next major point release.
+      *
+      * @see XMLConverter::import()
+-     * @deprecated Since version 9.22.0, use League\Csv\XMLConverter::impoprt()
++     * @deprecated Since version 9.22.0, use League\Csv\XMLConverter::import()
+      * @codeCoverageIgnore
+      *
+      * Converts a Record collection into a DOMDocument.
+      */
+-    #[Deprecated(message:'use League\Csv\XMLConverter::impoprt()', since:'league/csv:9.22.0')]
++    #[Deprecated(message:'use League\Csv\XMLConverter::import()', since:'league/csv:9.22.0')]
+     public function convert(TabularDataProvider|TabularData|iterable $records): DOMDocument
+     {
+         $document = new DOMDocument(encoding: 'UTF-8');
+diff --git a/src/functions.php b/src/functions.php
+index ac6f912..4771a4b 100644
+--- a/src/functions.php
++++ b/src/functions.php
+@@ -41,9 +41,12 @@ function bom_match(string $str): string
+  *
+  * Detect Delimiters usage in a {@link Reader} object.
+  *
+- * Returns a associative array where each key represents
+- * a submitted delimiter and each value the number of CSV fields found
+- * when processing at most $limit CSV records with the given delimiter
++ * Returns a associative array where each key represents a submitted
++ * delimiter and each value that delimiter's score: the number of fields
++ * the delimiter produced, plus the number of records those fields came
++ * from, over at most $limit CSV records.
++ * A record the delimiter does not split is ignored, so a delimiter
++ * absent from the document scores 0.
+  *
+  * @param array<string> $delimiters
+  * @param int<-1, max> $limit

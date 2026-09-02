@@ -46,7 +46,7 @@ Twelve fixes are in other people's code because a maintainer with no stake in th
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
-Behind them: **<!-- count:converged -->89<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **34 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+Behind them: **<!-- count:converged -->90<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **34 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#real-world-validation-on-open-source-repositories)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
 
@@ -272,7 +272,7 @@ Five guarantees. Each one is enforced by the iteration prompt, the state files, 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
-  <img src="media/language-pie-light.png" alt="Pie chart of the 89 converged public targets by language: Python 19 at 21.3 percent, Rust 14 at 15.7 percent, Go 12 at 13.5 percent, JavaScript 10 at 11.2 percent, C++ 7 at 7.9 percent, Ruby 5 at 5.6 percent, C 4 at 4.5 percent, Java 4 at 4.5 percent, TypeScript 4 at 4.5 percent, PHP 3 at 3.4 percent, Swift 3 at 3.4 percent, C# 2 at 2.2 percent, Kotlin 2 at 2.2 percent." width="900">
+  <img src="media/language-pie-light.png" alt="Pie chart of the 90 converged public targets by language: Python 19 at 21.1 percent, Rust 14 at 15.6 percent, Go 12 at 13.3 percent, JavaScript 10 at 11.1 percent, C++ 7 at 7.8 percent, Ruby 5 at 5.6 percent, C 4 at 4.4 percent, Java 4 at 4.4 percent, PHP 4 at 4.4 percent, TypeScript 4 at 4.4 percent, Swift 3 at 3.3 percent, C# 2 at 2.2 percent, Kotlin 2 at 2.2 percent." width="900">
 </picture>
 
 <sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
@@ -285,9 +285,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->118<!-- /count -->** | **<!-- count:fixed -->90<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->31<!-- /count -->** | **<!-- count:merged -->11<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->119<!-- /count -->** | **<!-- count:fixed -->91<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->31<!-- /count -->** | **<!-- count:merged -->11<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->89<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->90<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
 <sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md).</sub>
 
@@ -327,6 +327,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | Spectre.Console | C# | [details](evals/spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](evals/quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
 | records | Python | [details](evals/records/REPORT.md) - 4 High data-loss bugs - [issue filed](https://github.com/kennethreitz/records/issues/236) | Fixed |
+| csv | PHP | [details](evals/csv/REPORT.md) - a date-only schema format took its time of day from the wall clock - [PRs open](https://github.com/thephpleague/csv/pull/591) | Fixed |
 | cobra | Go | [details](evals/cobra/REPORT.md) - timezone-dependent build | Fixed |
 | zod | TypeScript | [details](evals/zod/REPORT.md) - cyclic value validated | Fixed |
 | commander.js | JavaScript | [details](evals/commander-js/REPORT.md) - error named wrong argument | Fixed |
