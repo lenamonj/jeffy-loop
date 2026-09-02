@@ -146,6 +146,7 @@ loss rather than hiding it.
 | TOML-M (mutated spec) | 1 | 14 | converged, with a disclosed process violation | 0 |
 | utf8proc | 1 | 9 | converged | evaluator countersigned | 0 |
 | commons-text | 3 | 24 | converged | evaluator countersigned | 0 |
+| rubyzip | 5 | 46 | converged | evaluator countersigned | 1 |
 | xid | 1 | 10 | converged | evaluator countersigned | 0 |
 
 ## The convergence standard is not uniform, and here is the split

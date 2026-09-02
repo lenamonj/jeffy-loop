@@ -1,0 +1,2063 @@
+diff --git a/.gitignore b/.gitignore
+index ebc81ac..ae280d4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -13,3 +13,4 @@ html/
+ pkg/
+ .ruby-gemset
+ .ruby-version
++.claude/jeffy-loop.local.md
+diff --git a/.rubocop_todo.yml b/.rubocop_todo.yml
+index d681f1e..e78c01f 100644
+--- a/.rubocop_todo.yml
++++ b/.rubocop_todo.yml
+@@ -25,7 +25,7 @@ Lint/MissingSuper:
+ # Offense count: 5
+ # Configuration parameters: CountComments, CountAsOne.
+ Metrics/ClassLength:
+-  Max: 675
++  Max: 715
+ 
+ # Offense count: 21
+ # Configuration parameters: IgnoredMethods.
+diff --git a/Changelog.md b/Changelog.md
+index 5517cf3..d9b5b51 100644
+--- a/Changelog.md
++++ b/Changelog.md
+@@ -1,3 +1,14 @@
++# Unreleased
++
++- Removed `Zip::Entry#name_safe?`. It was undocumented (`:nodoc:`), nothing in the library called it, and after its own `cleanpath.relative?` guard the rest of it rejected nothing, so it answered `true` for every relative name including `C:/evil.txt`. Containment during extraction is decided by `Entry#extract`, which resolves the destination and refuses a name that leaves it - including through a symlink, which `name_safe?` said in as many words that it could not handle.
++
++- Extraction now raises `Zip::ExtractionError` when the filesystem refuses an entry's name - too long, carrying a byte it cannot hold, or needing a directory that is already a file - where `Errno::ENAMETOOLONG`, `Errno::EEXIST` and `ArgumentError` used to escape. A `destination_directory` the caller got wrong is answered in one of three ways: one that does not exist, or sits under a path this process cannot traverse, still reports with the operating system's own error; one that is not a directory is refused by the containment check, so nothing is written and nothing is raised; and one that is a directory this process cannot write into or cannot traverse raises `Zip::ExtractionError`.
++- A failed extraction no longer damages the destination. Entry contents are written beside the destination and moved into place once complete, so a corrupt archive no longer truncates the file it was overwriting or leaves a partial one behind.
++- An entry whose local header is missing, unreadable, or belongs to a different entry is now refused with a `Zip::Error`. Previously the first two read as an empty payload and the third returned the other entry's contents, all without an error or a warning.
++- A central directory record that runs past the end of the central directory is now refused. Previously it returned an entry whose name was whatever bytes followed the record.
++- An archive truncated inside a local header's name, and an empty buffer passed to `Zip::File.open_buffer`, now raise `Zip::Error` rather than `NoMethodError` and `TypeError`.
++- `Zip::InputStream` now raises `Zip::Error` when a local entry header will not parse and the position still carries a local entry signature, since the archive is declaring an entry it cannot deliver. In 3.6.0 the read simply ended there, with no error and no warning, so an application rejecting malformed archives with `rescue Zip::Error` received a truncated entry list as though the archive had reached its end. Bytes that are neither an entry nor an end-of-central-directory record now end the read with a warning, which is also new here, because the entries beyond them are unreachable either way.
++
+ # 3.6.0 (2026-09-01)
+ 
+ - Forward options from OutputStream.open without a block. [#674](https://github.com/rubyzip/rubyzip/pull/674)
+diff --git a/README.md b/README.md
+index a33f93c..83cd78b 100644
+--- a/README.md
++++ b/README.md
+@@ -393,7 +393,7 @@ Zip.warn_invalid_date = false
+ 
+ When reading a zip file it is potentially dangerous to trust what it tells you about how many entries it contains. A malformed zip file could claim a high number of entries in an attempt to waste internal resources, or crash the processing application.
+ 
+-By default rubyzip will warn if the number of declared entries is impossible based on the actual size of the Central Directory headers. You can set this check to raise an error:
++By default rubyzip will warn if the number of declared entries is impossible based on the actual size of the Central Directory headers, and it warns again if it reaches a Central Directory record it cannot read, since the entries after that record are lost and the archive would otherwise look complete but short. You can set both checks to raise an error:
+ 
+ ```ruby
+ Zip.validate_declared_number_of_entries = true
+diff --git a/lib/zip/central_directory.rb b/lib/zip/central_directory.rb
+index 5a3811c..7ed5787 100644
+--- a/lib/zip/central_directory.rb
++++ b/lib/zip/central_directory.rb
+@@ -121,10 +121,10 @@ module Zip
+       _number_of_disk_with_start_of_cdir,
+       _total_number_of_entries_in_cdir_on_this_disk,
+       @size,
+-      size_in_bytes,
++      @cdir_size,
+       @cdir_offset = buffer.unpack('VQ<vvVVQ<Q<Q<Q<')
+ 
+-      validate_size!(@size, size_in_bytes)
++      validate_size!(@size, @cdir_size)
+ 
+       zip64_extensible_data_size =
+         size_of_zip64_e_o_c_d - ZIP64_STATIC_EOCD_SIZE + 12
+@@ -153,15 +153,15 @@ module Zip
+       number_of_disk_with_start_of_cdir,
+       total_number_of_entries_in_cdir_on_this_disk,
+       @size,
+-      size_in_bytes,
++      @cdir_size,
+       @cdir_offset,
+       comment_length = buffer.unpack('VvvvvVVv')
+ 
+       complete = !([number_of_this_disk, number_of_disk_with_start_of_cdir,
+                     total_number_of_entries_in_cdir_on_this_disk, @size].any?(0xFFFF) ||
+-                    size_in_bytes == 0xFFFFFFFF || @cdir_offset == 0xFFFFFFFF)
++                    @cdir_size == 0xFFFFFFFF || @cdir_offset == 0xFFFFFFFF)
+ 
+-      validate_size!(@size, size_in_bytes) if complete
++      validate_size!(@size, @cdir_size) if complete
+ 
+       @comment = if comment_length.positive?
+                    buffer.slice(STATIC_EOCD_SIZE, comment_length)
+@@ -184,9 +184,19 @@ module Zip
+       raise Error, 'Zip consistency problem while reading central directory entry' if eof || io.eof?
+ 
+       @entry_set = EntrySet.new
++      entries_read = 0
++      # The extent is measured from where the records actually start, not from
++      # the offset the EOCD declares, so an archive with something prepended
++      # to it is bounded by the same arithmetic as any other.
++      cdir_end = io.tell + @cdir_size
+       @size.times do
+         entry = Entry.read_c_dir_entry(io)
+-        break unless entry
++        unless entry
++          validate_entries_read!(entries_read)
++          break
++        end
++
++        check_cdir_extent!(io, cdir_end, entries_read)
+ 
+         offset = if entry.zip64?
+                    entry.extra[:zip64].relative_header_offset
+@@ -202,9 +212,23 @@ module Zip
+         end
+ 
+         @entry_set << entry
++        entries_read += 1
+       end
+     end
+ 
++    # The EOCD declares how many bytes the central directory occupies, so a
++    # record whose name, extra field or comment runs past that extent has read
++    # bytes belonging to whatever follows it - the next record, the EOCD, or
++    # nothing at all - and the name it hands back is those bytes rather than an
++    # entry name. Only an overrun is a fault: a directory shorter than declared
++    # is padding, and the declared-count check answers for a missing record.
++    def check_cdir_extent!(io, cdir_end, entries_read) # :nodoc:
++      return if io.tell <= cdir_end
++
++      raise Error, 'Zip consistency problem: central directory record ' \
++                   "#{entries_read + 1} runs past the end of the central directory."
++    end
++
+     def read_local_extra_field(io)
+       buf = io.read(::Zip::LOCAL_ENTRY_STATIC_HEADER_LENGTH) || ''
+       return '' unless buf.bytesize == ::Zip::LOCAL_ENTRY_STATIC_HEADER_LENGTH
+@@ -265,6 +289,20 @@ module Zip
+       [io.tell, io.read]
+     end
+ 
++    # A record the reader could not parse ends the read, leaving fewer entries
++    # than the central directory declares. Silence there hands the caller a
++    # short archive that looks complete, so it is reported under the same
++    # switch that governs the declared entry count.
++    def validate_entries_read!(entries_read)
++      error = Error.new(
++        "Zip consistency problem: #{@size} entries are declared in the " \
++        "central directory but only #{entries_read} could be read."
++      )
++      raise error if Zip.validate_declared_number_of_entries
++
++      warn error.message
++    end
++
+     def validate_size!(size, size_in_bytes)
+       return if size * CDIR_ENTRY_STATIC_HEADER_LENGTH <= size_in_bytes
+ 
+diff --git a/lib/zip/entry.rb b/lib/zip/entry.rb
+index 4f9314c..ac7dfb9 100644
+--- a/lib/zip/entry.rb
++++ b/lib/zip/entry.rb
+@@ -1,7 +1,5 @@
+ # frozen_string_literal: true
+ 
+-require 'pathname'
+-
+ require_relative 'constants'
+ require_relative 'dirtyable'
+ 
+@@ -24,6 +22,13 @@ module Zip
+     COMPRESSION_LEVEL_FAST_GPFLAG = 0b100      # :nodoc:
+     COMPRESSION_LEVEL_MAX_GPFLAG = 0b010       # :nodoc:
+ 
++    # Flags for the temporary an entry's payload is written to before it is
++    # renamed into place. `EXCL` refuses to follow a symlink or reuse an
++    # existing file, so the temporary cannot be pointed somewhere else between
++    # the name being chosen and the file being opened.
++    TEMPORARY_FILE_FLAGS = # :nodoc:
++      ::File::WRONLY | ::File::CREAT | ::File::EXCL | ::File::BINARY
++
+     attr_accessor :comment, :compressed_size, :follow_symlinks, :name,
+                   :restore_ownership, :restore_permissions, :restore_times,
+                   :unix_gid, :unix_perms, :unix_uid
+@@ -227,19 +232,6 @@ module Zip
+       @name.end_with?('/')
+     end
+ 
+-    # Is the name a relative path, free of `..` patterns that could lead to
+-    # path traversal attacks? This does NOT handle symlinks; if the path
+-    # contains symlinks, this check is NOT enough to guarantee safety.
+-    def name_safe? # :nodoc:
+-      cleanpath = Pathname.new(@name).cleanpath
+-      return false unless cleanpath.relative?
+-
+-      root = ::File::SEPARATOR
+-      naive = Regexp.escape(::File.join(root, cleanpath.to_s))
+-      # Allow for Windows drive mappings at the root.
+-      ::File.absolute_path(cleanpath.to_s, root).match?(/([A-Z]:)?#{naive}/i)
+-    end
+-
+     def local_entry_offset # :nodoc:
+       local_header_offset + @local_header_size
+     end
+@@ -284,13 +276,47 @@ module Zip
+     # Extracts this entry to a file at `entry_path`, with
+     # `destination_directory` as the base location in the filesystem.
+     #
++    # Nothing is written outside `destination_directory`: an entry whose name
++    # climbs out with `..`, or whose path runs through a symlink that is
++    # already inside the destination, is skipped with a warning. A
++    # `destination_directory` that is itself a symlink is resolved and works
++    # normally.
++    #
++    # Extraction over a file that is already there replaces it rather than
++    # rewriting it in place: the payload is written beside the destination and
++    # moved onto it, so a failed extraction never leaves a half-written file.
++    # It happens only where the caller permits it - `Zip.on_exists_proc` and
++    # the block form decide, and the default is to raise
++    # `Zip::DestinationExistsError` - and where it does, the destination that
++    # was there is unlinked rather than overwritten. So another name for it
++    # keeps the old contents, its inode number changes, its mode is the one
++    # this extraction gives a new file rather than the one it had, and a
++    # destination this process may not write is replaced anyway, because
++    # replacing a file needs write permission on its directory rather than on
++    # the file.
++    #
++    # A name the filesystem will not accept - too long, carrying a byte it
++    # cannot hold, or needing a directory that is already there as a file -
++    # raises `Zip::ExtractionError`, so a caller guarding extraction with
++    # `rescue Zip::Error` catches it along with every other archive fault.
++    # A `destination_directory` the caller got wrong is answered in one of
++    # three ways, decided by the shape of the destination rather than by the
++    # entry. One that does not exist, or sits under a path this process cannot
++    # traverse, reports with the operating system's own error as it always has.
++    # One that exists but is not a directory - a regular file, say - is refused
++    # by the containment check before any write is attempted: nothing is
++    # written, nothing is raised, and the skip is warned about on stderr like
++    # any other unsafe path. One that is a directory but cannot be written into
++    # or cannot be traversed raises `Zip::ExtractionError`, like any other
++    # refusal the filesystem makes once the write has begun.
++    #
+     # NB: The caller is responsible for making sure `destination_directory` is
+     # safe, if it is passed.
+     def extract(entry_path = @name, destination_directory: '.', &block)
+       dest_dir = ::File.absolute_path(destination_directory || '.')
+-      extract_path = ::File.absolute_path(::File.join(dest_dir, entry_path))
++      extract_path = absolute_extract_path(dest_dir, entry_path)
+ 
+-      unless extract_path.start_with?(dest_dir + ::File::SEPARATOR) || dest_dir == ::File::SEPARATOR
++      unless contained?(dest_dir, extract_path)
+         warn "WARNING: skipped extracting '#{@name}' to '#{extract_path}' as unsafe."
+         return self
+       end
+@@ -299,7 +325,7 @@ module Zip
+ 
+       raise "unknown file type #{inspect}" unless directory? || file? || symlink?
+ 
+-      __send__(:"create_#{ftype}", extract_path, &block)
++      write_entry(dest_dir, extract_path, &block)
+       self
+     end
+ 
+@@ -370,7 +396,7 @@ module Zip
+ 
+       set_time(@last_mod_date, @last_mod_time)
+ 
+-      @name = io.read(@name_length)
++      @name = read_local_entry_name(io)
+       if ::Zip.force_entry_names_encoding
+         @name.force_encoding(::Zip.force_entry_names_encoding)
+       end
+@@ -477,6 +503,95 @@ module Zip
+                end
+     end
+ 
++    # Is `extract_path` really inside `dest_dir`? Comparing the strings catches
++    # a name that climbs out with `..`, and nothing more: a symlink already
++    # sitting in the destination is a way out that no string comparison sees,
++    # so what exists of the path is resolved as well. The destination may
++    # itself be a symlink, which is legitimate, so it is resolved too and the
++    # comparison is between real paths on both sides.
++    # `File.absolute_path` is the first thing the entry's name reaches, and a
++    # name carrying a null byte fails there rather than at the write.
++    def absolute_extract_path(dest_dir, entry_path) # :nodoc:
++      ::File.absolute_path(::File.join(dest_dir, entry_path))
++    rescue ::ArgumentError => e
++      # `File.join` is where a null byte in the name is caught, so the path
++      # this reports has to be built without it.
++      path = "#{dest_dir}#{::File::SEPARATOR}#{entry_path}"
++      raise ::Zip::ExtractionError.new(@name, path, e.message)
++    end
++
++    # Every filesystem write this entry makes goes through here, so the one
++    # rescue answers for all of them. A `SystemCallError` raised while the
++    # destination is a readable directory is about the path this entry's own
++    # name asked for; when the destination is not one, the failure is the
++    # caller's own argument and its error is passed through untouched.
++    def write_entry(dest_dir, extract_path, &block) # :nodoc:
++      # An archive need not carry an entry for each directory - `zip -D` and
++      # most streaming writers omit them - so a file's parent may not exist
++      # yet. Only directories inside the destination are made here: creating
++      # the destination itself is the caller's, and `File.open` reports its
++      # absence the way it always has. A directory entry makes its own path,
++      # and a symlink entry writes nothing, so neither needs this.
++      ::FileUtils.mkdir_p(::File.dirname(extract_path)) if file? && ::File.directory?(dest_dir)
++
++      __send__(:"create_#{ftype}", extract_path, &block)
++    rescue ::SystemCallError => e
++      raise unless ::File.directory?(dest_dir)
++
++      raise ::Zip::ExtractionError.new(@name, extract_path, e.message)
++    end
++
++    def contained?(dest_dir, extract_path) # :nodoc:
++      return false unless extract_path.start_with?(dest_dir + ::File::SEPARATOR) ||
++                          dest_dir == ::File::SEPARATOR
++
++      # A symlink at the target itself is written through, so it is refused
++      # whether or not it currently resolves to anything.
++      return false if ::File.symlink?(extract_path)
++
++      real_dest = resolved_path(dest_dir)
++      real_base = resolved_path(deepest_existing_directory(::File.dirname(extract_path)))
++
++      # There is nothing resolvable to compare when the destination does not
++      # exist or cannot be read. Refusing there would answer a question about
++      # the destination by blaming the entry; the write that follows reports it
++      # with the operating system's own error, which is what the caller needs.
++      # Nothing else defers: an ancestor of the destination is outside it, and
++      # a symlink pointing at one is a way out like any other.
++      return true if real_dest.nil? || real_base.nil?
++
++      inside?(real_dest, real_base)
++    end
++
++    # A header truncated inside its name reads short, or nothing at all. The
++    # extra field has always been checked for exactly this; the name had not
++    # been, so a truncated archive came out of the reader as a type error on
++    # nil rather than as an archive fault.
++    def read_local_entry_name(io) # :nodoc:
++      name = io.read(@name_length)
++      return name unless name.nil? || name.bytesize != @name_length
++
++      raise ::Zip::Error, 'Truncated local zip entry header'
++    end
++
++    def resolved_path(path) # :nodoc:
++      ::File.realpath(path)
++    rescue ::SystemCallError
++      nil
++    end
++
++    # The parent may not exist yet, since an archive need not record its
++    # directories; the deepest ancestor that does exist is what can be
++    # resolved, and everything made below it is made inside it.
++    def deepest_existing_directory(path) # :nodoc:
++      path = ::File.dirname(path) until ::File.directory?(path) || path == ::File.dirname(path)
++      path
++    end
++
++    def inside?(root, path) # :nodoc:
++      path == root || path.start_with?(root.chomp(::File::SEPARATOR) + ::File::SEPARATOR)
++    end
++
+     def check_c_dir_entry_static_header_length(buf) # :nodoc:
+       return unless buf.nil? || buf.bytesize != ::Zip::CDIR_ENTRY_STATIC_HEADER_LENGTH
+ 
+@@ -637,13 +752,17 @@ module Zip
+       to_s <=> other.to_s
+     end
+ 
+-    # Returns an IO like object for the given ZipEntry.
++    # Returns an IO like object for the given ZipEntry. If a block is passed
++    # the stream is passed to it and the block's value is returned, just as
++    # with ruby's builtin File.open method. An entry that holds no data of
++    # its own, such as a directory entry, yields an empty stream.
+     # Optional decrypter can be provided for an encrypted entry
+     # Warning: may behave weird with symlinks.
+     def get_input_stream(decrypter: nil, &block)
+       if ftype == :directory
+-        yield ::Zip::NullInputStream if block
+-        ::Zip::NullInputStream
++        return yield(::Zip::NullInputStream.instance) if block
++
++        ::Zip::NullInputStream.instance
+       elsif @filepath
+         case ftype
+         when :file
+@@ -657,9 +776,7 @@ module Zip
+           raise "unknown @file_type #{ftype}"
+         end
+       else
+-        zis = ::Zip::InputStream.new(@zipfile, offset: local_header_offset, decrypter: decrypter)
+-        zis.instance_variable_set(:@complete_entry, self)
+-        zis.get_next_entry
++        zis = local_input_stream(decrypter)
+         if block
+           begin
+             yield(zis)
+@@ -672,6 +789,39 @@ module Zip
+       end
+     end
+ 
++    # Opens the archive at this entry's recorded local header offset, and
++    # refuses anything that is not this entry's own header. Both refusals exist
++    # because the central directory has already declared this entry: a reader
++    # walking the archive forwards may take a header it cannot read as the end
++    # of the entries, but this reader was handed the entry and its size before
++    # it started, so nothing here is an ending.
++    def local_input_stream(decrypter) # :nodoc:
++      zis = ::Zip::InputStream.new(@zipfile, offset: local_header_offset, decrypter: decrypter)
++      zis.instance_variable_set(:@complete_entry, self)
++
++      local = zis.get_next_entry
++      if local.nil?
++        zis.close
++        raise ::Zip::Error, 'Zip consistency problem: no local header for entry ' \
++                            "'#{@name}' at offset #{local_header_offset}."
++      end
++
++      # A header parsing here does not make it this entry's header. The CRC is
++      # what the two records must agree on - the name may legitimately differ
++      # in encoding, and the sizes are Zip64 sentinels often enough to be
++      # useless - so an offset landing on some other entry's header is caught
++      # here rather than handing back that entry's payload. A local header
++      # marked as streamed carries its CRC in the data descriptor instead, and
++      # is not compared.
++      if !local.incomplete? && local.crc != @crc
++        zis.close
++        raise ::Zip::Error, 'Zip consistency problem: the local header at offset ' \
++                            "#{local_header_offset} does not belong to entry '#{@name}'."
++      end
++
++      zis
++    end
++
+     def gather_fileinfo_from_srcpath(src_path) # :nodoc:
+       stat   = file_stat(src_path)
+       @ftype = case stat.ftype
+@@ -750,32 +900,65 @@ module Zip
+       warn 'WARNING: invalid date/time in zip entry.' if ::Zip.warn_invalid_date
+     end
+ 
++    # Written beside the destination and moved into place only once it is
++    # whole. Opening the destination itself truncates it before the first byte
++    # is read, so a read that fails part way - a corrupt archive, an entry
++    # larger than it declared - would leave the destination empty and whatever
++    # was there gone.
+     def create_file(dest_path, _continue_on_exists_proc = proc { Zip.continue_on_exists_proc })
+       if ::File.exist?(dest_path) && !yield(self, dest_path)
+         raise DestinationExistsError, dest_path
+       end
+ 
+-      ::File.open(dest_path, 'wb') do |os|
+-        get_input_stream do |is|
+-          bytes_written = 0
+-          warned = false
+-          while (buf = is.sysread(Decompressor::CHUNK_SIZE))
+-            os << buf
+-            bytes_written += buf.bytesize
+-            next unless bytes_written > size && !warned
+-
+-            error = EntrySizeError.new(self)
+-            raise error if Zip.validate_entry_sizes
+-
+-            warn "WARNING: #{error.message}"
+-            warned = true
+-          end
++      tmp_path = temporary_path(dest_path)
++      # Only a temporary this call created is this call's to remove. `EXCL`
++      # means the open itself fails on a name already taken, and the block runs
++      # only once the file exists, so the flag is set exactly when the cleanup
++      # would be removing our own file rather than somebody else's.
++      created = false
++      begin
++        ::File.open(tmp_path, TEMPORARY_FILE_FLAGS, 0o666) do |os|
++          created = true
++          write_payload(os)
+         end
++        ::File.rename(tmp_path, dest_path)
++      rescue ::StandardError
++        ::FileUtils.rm_f(tmp_path) if created
++        raise
+       end
+ 
+       set_extra_attributes_on_path(dest_path)
+     end
+ 
++    def write_payload(output) # :nodoc:
++      get_input_stream do |is|
++        bytes_written = 0
++        warned = false
++        while (buf = is.sysread(Decompressor::CHUNK_SIZE))
++          output << buf
++          bytes_written += buf.bytesize
++          next unless bytes_written > size && !warned
++
++          error = EntrySizeError.new(self)
++          raise error if Zip.validate_entry_sizes
++
++          warn "WARNING: #{error.message}"
++          warned = true
++        end
++      end
++    end
++
++    # Beside the destination, so the move into place is a rename within one
++    # filesystem rather than a copy. The name is a fixed short one rather than
++    # anything derived from the entry, which would push a long but perfectly
++    # legal name past what the filesystem accepts.
++    def temporary_path(dest_path) # :nodoc:
++      ::File.join(
++        ::File.dirname(dest_path),
++        ".rubyzip-#{::Process.pid}-#{rand(1 << 32).to_s(36)}"
++      )
++    end
++
+     def create_directory(dest_path)
+       return if ::File.directory?(dest_path)
+ 
+diff --git a/lib/zip/errors.rb b/lib/zip/errors.rb
+index 7312fe0..cf86e2d 100644
+--- a/lib/zip/errors.rb
++++ b/lib/zip/errors.rb
+@@ -125,6 +125,44 @@ module Zip
+     end
+   end
+ 
++  # Error raised when the filesystem refuses the path an entry extracts to.
++  # Usually the entry's own name is what makes the path unusable - it is too
++  # long for this filesystem, it carries a byte the filesystem cannot hold, or
++  # a directory it needs is already there as a file.
++  #
++  # The boundary is the destination rather than the cause, though: a refusal
++  # becomes this error whenever `destination_directory` is a directory when it
++  # happens, which includes a directory this process may not write into or may
++  # not traverse. A destination that is missing, or under a path that cannot be
++  # traversed, reports with the operating system's own error instead, because
++  # then it is the caller's argument that is wrong rather than the archive; and
++  # a destination that exists but is not a directory raises nothing at all,
++  # being refused by the containment check before any write is attempted.
++  class ExtractionError < Error
++    # The name of the entry that could not be extracted.
++    attr_reader :entry_name
++
++    # The path that the filesystem refused.
++    attr_reader :path
++
++    # What the filesystem said about it.
++    attr_reader :reason
++
++    # Create a new ExtractionError for the entry named +entry_name+, the
++    # +path+ the filesystem refused, and the +reason+ it gave.
++    def initialize(entry_name, path, reason)
++      super()
++      @entry_name = entry_name
++      @path = path
++      @reason = reason
++    end
++
++    # The message returned by this error.
++    def message
++      "Cannot extract entry '#{@entry_name}' to '#{@path}': #{@reason}."
++    end
++  end
++
+   # Error raised if a split archive is read. Rubyzip does not support reading
+   # split archives.
+   class SplitArchiveError < Error
+diff --git a/lib/zip/extra_field.rb b/lib/zip/extra_field.rb
+index 487a208..805ac4b 100644
+--- a/lib/zip/extra_field.rb
++++ b/lib/zip/extra_field.rb
+@@ -35,8 +35,11 @@ module Zip
+       i = 0
+       while i < binstr.bytesize
+         id  = binstr[i, 2]
++        # `len` is nil when the length word itself is truncated away. Such a
++        # trailer is not a well-formed field whatever its header ID, so it is
++        # kept as unknown data rather than parsed as the type the ID names.
+         len = binstr[i + 2, 2].to_s.unpack1('v')
+-        if id && ID_MAP.member?(id)
++        if id && len && ID_MAP.member?(id)
+           extra_field_type_exist(binstr, id, len, i)
+         elsif id
+           break unless extra_field_type_unknown(binstr, len, i, local)
+diff --git a/lib/zip/extra_field/aes.rb b/lib/zip/extra_field/aes.rb
+index 544e195..e757e88 100644
+--- a/lib/zip/extra_field/aes.rb
++++ b/lib/zip/extra_field/aes.rb
+@@ -39,6 +39,9 @@ module Zip
+     end
+ 
+     def pack_for_local
++      return '' unless @vendor_version && @vendor_id &&
++                       @encryption_strength && @compression_method
++
+       [@vendor_version, @vendor_id,
+        @encryption_strength, @compression_method].pack('va2Cv')
+     end
+diff --git a/lib/zip/extra_field/generic.rb b/lib/zip/extra_field/generic.rb
+index cc029b5..aa734db 100644
+--- a/lib/zip/extra_field/generic.rb
++++ b/lib/zip/extra_field/generic.rb
+@@ -30,6 +30,11 @@ module Zip
+       true
+     end
+ 
++    # `pack_for_local` and `pack_for_c_dir` must pack only values the field
++    # actually holds. A field parsed from a truncated or central-directory-form
++    # encoding leaves the values it could not read unset, and packing an unset
++    # value raises `TypeError` out of a write that has nothing to do with it;
++    # such a field packs an empty payload instead.
+     def to_local_bin
+       s = pack_for_local
+       (self.class.const_get(:HEADER_ID) + [s.bytesize].pack('v')) << s
+diff --git a/lib/zip/extra_field/old_unix.rb b/lib/zip/extra_field/old_unix.rb
+index f9fc6e0..d8b80b5 100644
+--- a/lib/zip/extra_field/old_unix.rb
++++ b/lib/zip/extra_field/old_unix.rb
+@@ -38,10 +38,14 @@ module Zip
+     end
+ 
+     def pack_for_local
++      return '' unless @atime && @mtime && @uid && @gid
++
+       [@atime, @mtime, @uid, @gid].pack('VVvv')
+     end
+ 
+     def pack_for_c_dir
++      return '' unless @atime && @mtime
++
+       [@atime, @mtime].pack('VV')
+     end
+   end
+diff --git a/lib/zip/extra_field/universal_time.rb b/lib/zip/extra_field/universal_time.rb
+index b77b321..9e9753c 100644
+--- a/lib/zip/extra_field/universal_time.rb
++++ b/lib/zip/extra_field/universal_time.rb
+@@ -42,7 +42,13 @@ module Zip
+       size, content = initial_parse(binstr)
+       return if !size || size <= 0
+ 
+-      @flag, *times = content.unpack('Cl<l<l<')
++      flag, *times = content.unpack('Cl<l<l<')
++
++      # The flag byte governs which timestamps follow, and `pack_for_local`
++      # reads it back, so leave it at its initial 0 when it is not there.
++      return if flag.nil?
++
++      @flag = flag
+ 
+       # Parse the timestamps, in order, based on which flags are set.
+       return if times[0].nil?
+diff --git a/lib/zip/extra_field/unix.rb b/lib/zip/extra_field/unix.rb
+index ab4255c..78c95e5 100644
+--- a/lib/zip/extra_field/unix.rb
++++ b/lib/zip/extra_field/unix.rb
+@@ -31,6 +31,8 @@ module Zip
+     end
+ 
+     def pack_for_local
++      return '' unless @uid && @gid
++
+       [@uid, @gid].pack('vv')
+     end
+ 
+diff --git a/lib/zip/file.rb b/lib/zip/file.rb
+index 34503d0..564b9e0 100644
+--- a/lib/zip/file.rb
++++ b/lib/zip/file.rb
+@@ -68,7 +68,7 @@ module Zip
+     # default -> true.
+     attr_accessor :restore_times
+ 
+-    def_delegators :@cdir, :comment, :comment=, :each, :entries, :glob, :size
++    def_delegators :@cdir, :comment, :comment=, :size
+ 
+     # Opens a zip archive. Pass create: true to create
+     # a new archive if it doesn't exist already.
+@@ -241,6 +241,7 @@ module Zip
+                   end
+       new_entry.gather_fileinfo_from_srcpath(src_path)
+       @cdir << new_entry
++      apply_restore_options(new_entry)
+     end
+ 
+     # Convenience method for adding the contents of a file to the archive
+@@ -308,10 +309,23 @@ module Zip
+     def write_buffer(io = ::StringIO.new)
+       return io unless commit_required?
+ 
+-      ::Zip::OutputStream.write_buffer(io, suppress_extra_fields: @suppress_extra_fields) do |zos|
++      # Build the new archive in a scratch buffer before touching `io`. The
++      # entries whose data has not been rewritten are copied raw out of the
++      # archive this Zip::File was read from, which is `io` itself, so writing
++      # the new archive over it in place overwrites bytes that have not been
++      # copied yet - the file path avoids this by writing to a temp file and
++      # renaming, and this is the same discipline for a buffer.
++      scratch = ::Zip::OutputStream.write_buffer(
++        ::StringIO.new, suppress_extra_fields: @suppress_extra_fields
++      ) do |zos|
+         @cdir.each { |e| e.write_to_zip_output_stream(zos) }
+         zos.comment = comment
+       end
++
++      io.rewind
++      io.write(scratch.string)
++      io.truncate(io.pos) if io.respond_to?(:truncate)
++      io
+     end
+ 
+     # Closes the zip file committing any changes that has been made.
+@@ -331,16 +345,38 @@ module Zip
+       false
+     end
+ 
++    # Returns the entries in this archive. Every entry carries this
++    # archive's restore options, so extracting one honours the options
++    # this archive was opened with.
++    def entries
++      @cdir.entries.each { |entry| apply_restore_options(entry) }
++    end
++
++    # Iterates over the entries in this archive, as #entries does. Returns
++    # an Enumerator if no block is given.
++    def each(&block)
++      return entries.each unless block
++
++      entries.each(&block)
++    end
++
++    # Searches for entries whose names match `pattern`, yielding each match
++    # if a block is given and returning them all. Every match carries this
++    # archive's restore options, as #entries does.
++    def glob(*args, &block)
++      @cdir.glob(*args) do |entry|
++        apply_restore_options(entry)
++        block&.call(entry)
++      end
++    end
++
+     # Searches for entry with the specified name. Returns nil if
+     # no entry is found. See also get_entry
+     def find_entry(entry_name)
+       selected_entry = @cdir.find_entry(entry_name)
+       return if selected_entry.nil?
+ 
+-      selected_entry.restore_ownership   = @restore_ownership
+-      selected_entry.restore_permissions = @restore_permissions
+-      selected_entry.restore_times       = @restore_times
+-      selected_entry
++      apply_restore_options(selected_entry)
+     end
+ 
+     # Searches for an entry just as find_entry, but throws Errno::ENOENT
+@@ -358,11 +394,23 @@ module Zip
+ 
+       entry_name = entry_name.dup.to_s
+       entry_name << '/' unless entry_name.end_with?('/')
+-      @cdir << ::Zip::StreamableDirectory.new(@name, entry_name, nil, permission)
++      new_entry = ::Zip::StreamableDirectory.new(@name, entry_name, nil, permission)
++      @cdir << new_entry
++      apply_restore_options(new_entry)
+     end
+ 
+     private
+ 
++    # The single place this archive's restore options reach an entry. Every
++    # public method that hands an entry to a caller routes through here, so
++    # the options cannot be honoured on one lookup path and ignored on another.
++    def apply_restore_options(entry)
++      entry.restore_ownership   = @restore_ownership
++      entry.restore_permissions = @restore_permissions
++      entry.restore_times       = @restore_times
++      entry
++    end
++
+     def initialize_cdir(path_or_io, buffer: false)
+       @cdir = ::Zip::CentralDirectory.new
+ 
+@@ -384,6 +432,12 @@ module Zip
+         # This zip is probably a non-empty StringIO.
+         @create = false
+         @cdir.read_from_stream(path_or_io)
++      elsif buffer
++        # An empty buffer, and `@name` is that buffer rather than a path, so
++        # the file questions below cannot be asked about it at all.
++        unless @create
++          raise Error, 'Zip buffer has zero size. Did you mean to pass the create flag?'
++        end
+       elsif !@create && ::File.empty?(@name)
+         # A file exists, but it is empty, and we've said we're
+         # NOT creating a new zip.
+diff --git a/lib/zip/filesystem.rb b/lib/zip/filesystem.rb
+index 55369e9..ab3ff2b 100644
+--- a/lib/zip/filesystem.rb
++++ b/lib/zip/filesystem.rb
+@@ -40,6 +40,14 @@ module Zip
+   #   puts zipfile.file.read('first.txt')
+   # end
+   # ```
++  # Directories: most archives do not store a directory entry for every
++  # directory they contain - `zip -D` omits them, and so does
++  # Zip::OutputStream - so a directory may exist only as a prefix of the names
++  # of the entries it holds. Such a directory is listed by Dir#entries and
++  # answers File#directory? and File#exist?, exactly as one with an entry of
++  # its own does. It has no entry, though, so the calls that read an entry's
++  # metadata - File#size, File#mtime, File#ftype, File#stat's size and times -
++  # raise Errno::ENOENT for it, and Dir#delete has nothing to remove.
+   module FileSystem
+     def initialize # :nodoc:
+       mapped_zip       = ZipFileNameMapper.new(self)
+diff --git a/lib/zip/filesystem/dir.rb b/lib/zip/filesystem/dir.rb
+index 5ae4ac4..65a26c0 100644
+--- a/lib/zip/filesystem/dir.rb
++++ b/lib/zip/filesystem/dir.rb
+@@ -57,10 +57,17 @@ module Zip
+         path = @file.expand_path(directory_name)
+         path << '/' unless path.end_with?('/')
+         path = Regexp.escape(path)
+-        subdir_entry_regex = Regexp.new("^#{path}([^/]+)$")
++        # The trailing group matches entries deeper in the tree, so a
++        # directory the archive holds no entry of its own for is still listed,
++        # once, under the name its children share.
++        subdir_entry_regex = Regexp.new("^#{path}([^/]+)(?:/|$)")
++        seen = {}
+         @mapped_zip.each do |filename|
+           match = subdir_entry_regex.match(filename)
+-          yield(match[1]) unless match.nil?
++          next if match.nil? || seen.key?(match[1])
++
++          seen[match[1]] = true
++          yield(match[1])
+         end
+       end
+ 
+diff --git a/lib/zip/filesystem/file.rb b/lib/zip/filesystem/file.rb
+index 8fa353f..9fa6166 100644
+--- a/lib/zip/filesystem/file.rb
++++ b/lib/zip/filesystem/file.rb
+@@ -27,6 +27,9 @@ module Zip
+ 
+       def unix_mode_cmp(filename, mode)
+         e = find_entry(filename)
++        # A directory the archive holds no entry for records no permissions.
++        return false if e.nil?
++
+         e.fstype == FSTYPE_UNIX && (e.external_file_attributes >> 16).anybits?(mode)
+       rescue Errno::ENOENT
+         false
+@@ -34,7 +37,8 @@ module Zip
+       private :unix_mode_cmp
+ 
+       def exists?(filename)
+-        expand_path(filename) == '/' || !@mapped_zip.find_entry(filename).nil?
++        !@mapped_zip.find_entry(filename).nil? ||
++          @mapped_zip.directory?(expand_path(filename))
+       end
+       alias exist? exists?
+ 
+@@ -78,8 +82,7 @@ module Zip
+       end
+ 
+       def directory?(filename)
+-        entry = @mapped_zip.find_entry(filename)
+-        expand_path(filename) == '/' || (!entry.nil? && entry.directory?)
++        @mapped_zip.directory?(expand_path(filename))
+       end
+ 
+       def open(filename, mode = 'r', permissions = 0o644, &block)
+diff --git a/lib/zip/filesystem/zip_file_name_mapper.rb b/lib/zip/filesystem/zip_file_name_mapper.rb
+index 77a4e69..1c27929 100644
+--- a/lib/zip/filesystem/zip_file_name_mapper.rb
++++ b/lib/zip/filesystem/zip_file_name_mapper.rb
+@@ -64,6 +64,20 @@ module Zip
+         end
+       end
+ 
++      # Is this path a directory in the archive? Archives routinely omit
++      # directory entries - `zip -D` does, and so does Zip::OutputStream - so
++      # a directory may exist only as a prefix of the names of the entries it
++      # holds, and asking the entry set for it by name is not enough.
++      def directory?(path)
++        return true if path == '/'
++
++        entry = @zip_file.find_entry(path[1..])
++        return entry.directory? unless entry.nil?
++
++        prefix = "#{path.chomp('/')}/"
++        any? { |name| name.start_with?(prefix) }
++      end
++
+       def expand_path(path)
+         expanded = path.start_with?('/') ? path.dup : ::File.join(@pwd, path)
+         expanded.gsub!(/\/\.(\/|$)/, '')
+diff --git a/lib/zip/input_stream.rb b/lib/zip/input_stream.rb
+index b19c797..51a13ce 100644
+--- a/lib/zip/input_stream.rb
++++ b/lib/zip/input_stream.rb
+@@ -43,6 +43,14 @@ module Zip
+   class InputStream
+     CHUNK_SIZE = 32_768 # :nodoc:
+ 
++    # The records that legitimately follow the last local entry. Anything else
++    # where a local header was expected is damage, not the end of the archive.
++    END_OF_ENTRIES_SIGNATURES = [
++      ::Zip::CENTRAL_DIRECTORY_ENTRY_SIGNATURE,
++      ::Zip::CentralDirectory::END_OF_CD_SIG,
++      ::Zip::CentralDirectory::ZIP64_END_OF_CD_SIG
++    ].freeze # :nodoc:
++
+     include ::Zip::IOExtras::AbstractInputStream
+ 
+     # Opens the indicated zip file. An exception is thrown
+@@ -68,7 +76,12 @@ module Zip
+     # Returns an Entry object and positions the stream at the beginning of
+     # the entry data. It is necessary to call this method on a newly created
+     # InputStream before reading from the first entry in the archive.
+-    # Returns nil when there are no more entries.
++    # Returns nil when there are no more entries. Damage where the next local
++    # header should be is answered by what the archive claims is there: a
++    # local entry signature whose header will not parse raises `Zip::Error`,
++    # because the archive declared an entry it cannot deliver, while bytes
++    # that are neither an entry nor an end-of-entries record end the read with
++    # a warning, since the entries after them are unreachable either way.
+     def get_next_entry
+       unless @current_entry.nil?
+         raise StreamingError, @current_entry if @current_entry.incomplete?
+@@ -105,6 +118,7 @@ module Zip
+       return (maxlen.nil? || maxlen.zero? ? '' : nil) if eof?
+ 
+       output = produce_input(maxlen)
++      @pos += output.length
+ 
+       if out_string.nil?
+         output.force_encoding(Encoding::ASCII_8BIT)
+@@ -152,8 +166,9 @@ module Zip
+     end
+ 
+     def open_entry # :nodoc:
++      entry_offset = @archive_io.tell
+       @current_entry = ::Zip::Entry.read_local_entry(@archive_io)
+-      return if @current_entry.nil?
++      return report_unreadable_entry(entry_offset) if @current_entry.nil?
+ 
+       if @current_entry.incomplete? && @current_entry.compressed_size == 0 && !@complete_entry
+         raise StreamingError, @current_entry
+@@ -164,6 +179,36 @@ module Zip
+       @current_entry
+     end
+ 
++    # A local header the reader cannot parse looks exactly like the end of the
++    # archive to a sequential read, so every entry after it would be dropped in
++    # silence. The four bytes at the position say what the archive claims is
++    # there, and that is what the three answers are drawn from: an
++    # end-of-entries record really is the end; a local entry signature is the
++    # archive declaring an entry whose header will not parse, which is a fault
++    # the caller has to be able to catch with `rescue Zip::Error`; and anything
++    # else is damage the reader cannot interpret, reported and stopped at.
++    # Returns nil in the two cases that do not raise: the caller's contract is
++    # that nil means no further entry.
++    def report_unreadable_entry(offset) # :nodoc:
++      # A reader opened on one entry the central directory named is not walking
++      # the archive, so nothing here ends anything and its caller raises. The
++      # warning belongs to the sequential read alone.
++      return if @complete_entry
++
++      @archive_io.seek(offset, ::IO::SEEK_SET)
++      signature = @archive_io.read(4)&.unpack1('V')
++      return if signature.nil? || END_OF_ENTRIES_SIGNATURES.include?(signature)
++
++      if signature == ::Zip::LOCAL_ENTRY_SIGNATURE
++        raise Error, "Zip local entry header at offset #{offset} could not be " \
++                     'read; the archive declares an entry there.'
++      end
++
++      warn 'Zip consistency problem: no entry and no central directory found ' \
++           "at offset #{offset}; any entries after it have been skipped."
++      nil
++    end
++
+     def assemble_io # :nodoc:
+       io = if @current_entry.encrypted?
+              raise Error, 'A password is required to decode this zip file.' if @decrypter.nil?
+diff --git a/lib/zip/ioextras/abstract_input_stream.rb b/lib/zip/ioextras/abstract_input_stream.rb
+index 2a319c9..8310ba9 100644
+--- a/lib/zip/ioextras/abstract_input_stream.rb
++++ b/lib/zip/ioextras/abstract_input_stream.rb
+@@ -147,8 +147,12 @@ module Zip
+         chomp ? @output_buffer.slice!(0, cut_index).chomp(sep) : @output_buffer.slice!(0, cut_index)
+       end
+ 
+-      def ungetc(byte) # :nodoc:
++      # Pushes `byte` back so the next read returns it, moving #pos back with
++      # it. Returns `nil`, as `IO#ungetc` does.
++      def ungetc(byte)
+         @output_buffer = byte.chr + @output_buffer
++        @pos -= 1 if @pos.positive?
++        nil
+       end
+ 
+       def flush # :nodoc:
+diff --git a/lib/zip/null_input_stream.rb b/lib/zip/null_input_stream.rb
+index 5c2c707..8e63a44 100644
+--- a/lib/zip/null_input_stream.rb
++++ b/lib/zip/null_input_stream.rb
+@@ -1,9 +1,31 @@
+ # frozen_string_literal: true
+ 
+ module Zip
+-  module NullInputStream # :nodoc:all
+-    include ::Zip::NullDecompressor
++  # An IO-like object with no contents. It is the input stream of an entry
++  # that holds no data of its own, such as a directory entry.
++  class NullInputStream # :nodoc:all
+     include ::Zip::IOExtras::AbstractInputStream
++    include Singleton
++
++    # The size of the contents, which is always zero.
++    def size
++      0
++    end
++
++    # There is nothing to close, but an IO-like object should accept this.
++    def close
++      nil
++    end
++
++    private
++
++    def produce_input(_maxlen = nil)
++      nil
++    end
++
++    def input_finished?
++      true
++    end
+   end
+ end
+ 
+diff --git a/test/central_directory_test.rb b/test/central_directory_test.rb
+index 384e0d9..764d109 100644
+--- a/test/central_directory_test.rb
++++ b/test/central_directory_test.rb
+@@ -96,6 +96,93 @@ class ZipCentralDirectoryTest < Minitest::Test
+     end
+   end
+ 
++  # A two-entry archive whose first central directory record declares an AES
++  # vendor version rubyzip does not support, so reading that record fails and
++  # the read stops with fewer entries than the directory declares.
++  def archive_with_an_unreadable_cdir_record
++    fmt = 'VCCvvvvvVVVvvvvvVV'
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |os|
++      os.put_next_entry('a.txt')
++      os.write('aaaa')
++      os.put_next_entry('b.txt')
++      os.write('bbbb')
++    end
++    bytes = buffer.string.dup
++
++    first = bytes.index([0x02014b50].pack('V'))
++    header = bytes[first, 46].unpack(fmt)
++    name = bytes[first + 46, header[11]]
++    aes = [0x9901, 7, 9, 'AE', 1, 8].pack('vvva2Cv')
++    header[12] = aes.bytesize
++    patched = bytes[0...first] + header.pack(fmt) + name + aes +
++              bytes[(first + 46 + header[11])..]
++
++    eocd = patched.rindex([0x06054b50].pack('V'))
++    fields = patched[eocd, 22].unpack('VvvvvVVv')
++    fields[5] = eocd - first
++    fields[6] = first
++    patched[0...eocd] + fields.pack('VvvvvVVv') + patched[(eocd + 22)..]
++  end
++
++  def test_warn_when_fewer_entries_are_read_than_declared
++    io = ::StringIO.new(archive_with_an_unreadable_cdir_record)
++    cdir = ::Zip::CentralDirectory.new
++
++    assert_output('', /2 entries are declared .* only 0 could be read/m) do
++      cdir.read_from_stream(io)
++    end
++  end
++
++  def test_error_when_fewer_entries_are_read_than_declared
++    Zip.validate_declared_number_of_entries = true
++    io = ::StringIO.new(archive_with_an_unreadable_cdir_record)
++    cdir = ::Zip::CentralDirectory.new
++
++    error = assert_raises(::Zip::Error) { cdir.read_from_stream(io) }
++
++    assert_match(/2 entries are declared .* only 0 could be read/m, error.message)
++  end
++
++  # A central directory record whose name is declared longer than the
++  # directory holds reads the bytes that follow it - here the EOCD - and hands
++  # them back as an entry name.
++  def archive_with_an_over_declared_cdir_name(overrun)
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |os|
++      os.put_next_entry('a.txt')
++      os.write('aaaa')
++    end
++    bytes = buffer.string.dup
++
++    at = bytes.index([0x02014b50].pack('V')) + 28
++    bytes[at, 2] = [bytes[at, 2].unpack1('v') + overrun].pack('v')
++    bytes
++  end
++
++  def test_error_when_a_cdir_record_runs_past_the_end_of_the_directory
++    [4, 2000].each do |overrun|
++      io = ::StringIO.new(archive_with_an_over_declared_cdir_name(overrun))
++      cdir = ::Zip::CentralDirectory.new
++
++      error = assert_raises(::Zip::Error, "overrun of #{overrun}") do
++        cdir.read_from_stream(io)
++      end
++
++      assert_match(/record 1 runs past the end of the central directory/, error.message)
++    end
++  end
++
++  def test_a_directory_declared_longer_than_its_records_still_reads
++    bytes = archive_with_an_over_declared_cdir_name(0)
++    at = bytes.rindex([0x06054b50].pack('V')) + 12
++    bytes[at, 4] = [bytes[at, 4].unpack1('V') + 64].pack('V')
++    cdir = ::Zip::CentralDirectory.new
++
++    assert_output('', '') { cdir.read_from_stream(::StringIO.new(bytes)) }
++    assert_equal(['a.txt'], cdir.entries.map(&:name))
++  end
++
+   def test_count_entries
+     [
+       ['test/data/osx-archive.zip', 4],
+diff --git a/test/entry_test.rb b/test/entry_test.rb
+index 2e58ae5..da71577 100644
+--- a/test/entry_test.rb
++++ b/test/entry_test.rb
+@@ -357,4 +357,32 @@ class ZipEntryTest < Minitest::Test
+     entry.time = Time.now
+     assert(entry.absolute_time?)
+   end
++
++  def test_get_input_stream_for_directory_entry
++    Dir.mktmpdir do |tmp|
++      tmp_zip = ::File.join(tmp, 'with_dir.zip')
++      ::Zip::File.open(tmp_zip, create: true) do |zf|
++        zf.mkdir('adir')
++        zf.get_output_stream('adir/f.txt') { |os| os.write('hello') }
++      end
++
++      ::Zip::File.open(tmp_zip) do |zf|
++        entry = zf.get_entry('adir/')
++
++        assert_empty(zf.read('adir/'))
++        assert_empty(entry.get_input_stream(&:read))
++
++        stream = entry.get_input_stream
++
++        assert_kind_of(IO, stream)
++        assert_empty(stream.read)
++        assert_predicate(stream, :eof?)
++        assert_nil(stream.gets)
++        assert_equal(0, stream.size)
++
++        # The other entry is unaffected.
++        assert_equal('hello', zf.read('adir/f.txt'))
++      end
++    end
++  end
+ end
+diff --git a/test/extra_field_test.rb b/test/extra_field_test.rb
+index a8d245e..73645ba 100644
+--- a/test/extra_field_test.rb
++++ b/test/extra_field_test.rb
+@@ -172,4 +172,92 @@ class ZipExtraFieldTest < Minitest::Test
+     refute(extra.member?(:zip64))
+     assert_equal(1, extra.keys.size)
+   end
++
++  # A header ID with its length word truncated away is not a well-formed field,
++  # whatever the ID names. It must be kept as unknown data rather than parsed
++  # as that type, and it must never escape as anything but a Zip::Error.
++  def test_truncated_length_word_is_not_parsed_as_its_header_id
++    ::Zip::ExtraField::ID_MAP.each do |id, klass|
++      [id, "#{id}\x00"].each do |truncated|
++        extra = ::Zip::ExtraField.new(truncated.dup.force_encoding('BINARY'))
++
++        refute(extra.member?(klass.name), "#{klass.name} parsed from a truncated length word")
++        assert_equal(truncated, extra[:unknown].to_c_dir_bin)
++      end
++    end
++  end
++
++  def test_truncated_length_word_after_a_valid_field
++    valid = "UT#{[5].pack('v')}#{[0b001, 1_700_000_000].pack('Cl<')}".b
++
++    ::Zip::ExtraField::ID_MAP.each_key do |id|
++      extra = ::Zip::ExtraField.new(valid + id)
++
++      assert(extra.member?(:universaltime), 'the valid field before the trailer was lost')
++      assert_equal(1_700_000_000, extra[:universaltime].mtime.to_i)
++      assert_equal(id, extra[:unknown].to_c_dir_bin)
++    end
++  end
++
++  # A field parsed from its central-directory form leaves the values that form
++  # does not carry unset. Packing an unset value used to raise TypeError out of
++  # any later write of the entry, which is not a Zip::Error and not catchable
++  # by a caller that rescues one.
++  def test_rewrite_archive_carrying_a_zero_length_unix_field
++    empty_length = [0].pack('v')
++
++    { 'UX' => :oldunix, 'Ux' => :iunix }.each do |id, name|
++      extra = "#{id}#{empty_length}".b
++      io = StringIO.new(archive_with_extra(extra))
++
++      ::Zip::File.open_buffer(io) do |zf|
++        assert(zf.entries.first.extra.member?(name))
++        zf.rename('a.txt', 'b.txt')
++      end
++
++      io.rewind
++      ::Zip::File.open_buffer(io) do |zf|
++        assert_equal(['b.txt'], zf.entries.map(&:name))
++        assert_equal('hello', zf.read('b.txt'))
++      end
++    end
++  end
++
++  # An entry whose extra field re-serialises to more bytes than the archive
++  # holds makes the rewritten local header longer than the original. Rewriting
++  # a buffer used to write that longer header over the entry data it had not
++  # copied out yet, so the archive came back holding shifted bytes.
++  def test_rewrite_buffer_when_the_local_header_grows
++    extra = "UT#{[0].pack('v')}".b
++    io = StringIO.new(archive_with_extra(extra))
++
++    ::Zip::File.open_buffer(io) { |zf| zf.rename('a.txt', 'b.txt') }
++
++    io.rewind
++    ::Zip::File.open_buffer(io) do |zf|
++      assert_equal(['b.txt'], zf.entries.map(&:name))
++      assert_equal('hello', zf.read('b.txt'))
++    end
++  end
++
++  private
++
++  # A one-entry stored archive whose entry carries `extra` in both its local
++  # header and its central directory record.
++  def archive_with_extra(extra)
++    name = 'a.txt'
++    data = 'hello'
++    crc = Zlib.crc32(data)
++    dos_time = 0x63d6 # 12:30:44
++    dos_date = 0x58cf # 2024-06-15
++    local = "PK\x03\x04".b +
++            [20, 0, 0, dos_time, dos_date, crc, data.bytesize, data.bytesize,
++             name.bytesize, extra.bytesize].pack('vvvvvVVVvv') + name + extra
++    body = local + data
++    cdir = "PK\x01\x02".b +
++           [20, 0, 20, 0, 0, dos_time, dos_date, crc, data.bytesize, data.bytesize,
++            name.bytesize, extra.bytesize, 0, 0, 0, 0, 0].pack('CCvvvvvVVVvvvvvVV') + name + extra
++    eocd = "PK\x05\x06".b + [0, 0, 1, 1, cdir.bytesize, body.bytesize, 0].pack('vvvvVVv')
++    body + cdir + eocd
++  end
+ end
+diff --git a/test/file_extract_test.rb b/test/file_extract_test.rb
+index 0f16620..60c64eb 100644
+--- a/test/file_extract_test.rb
++++ b/test/file_extract_test.rb
+@@ -1,6 +1,7 @@
+ # frozen_string_literal: true
+ 
+ require 'fileutils'
++require 'tmpdir'
+ 
+ require_relative 'test_helper'
+ require_relative 'helpers/assert_entry'
+@@ -22,6 +23,337 @@ class ZipFileExtractTest < Minitest::Test
+     ::Zip.reset!
+   end
+ 
++  # Writes a one-entry archive whose stored name is exactly +name+, including
++  # names the writer itself would refuse. The entry is written under a
++  # placeholder of the same byte length and the name bytes are replaced in
++  # place, at the offsets the APPNOTE fixes, so the recorded lengths stay true.
++  def archive_named(name)
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('x' * name.bytesize)
++      zos.write('body')
++    end
++    bytes = buffer.string.b
++    [[bytes.index("PK\x03\x04".b), 26, 30], [bytes.index("PK\x01\x02".b), 28, 46]].each do |record, len_at, name_at|
++      length = bytes[record + len_at, 2].unpack1('v')
++      bytes[record + name_at, length] = name.b
++    end
++    bytes
++  end
++
++  def test_extract_name_the_filesystem_rejects_raises_a_zip_error
++    [
++      ['null byte in the name', "ev\0il.txt"],
++      ['name too long for a component', 'n' * 304],
++      ['parent already exists as a file', 'blocker/inner.txt']
++    ].each do |label, name|
++      ::Dir.mktmpdir do |dir|
++        ::FileUtils.touch(::File.join(dir, 'blocker'))
++
++        error = assert_raises(::Zip::ExtractionError, label) do
++          ::Zip::File.open_buffer(::StringIO.new(archive_named(name))) do |zf|
++            zf.each { |entry| entry.extract(entry.name, destination_directory: dir) }
++          end
++        end
++
++        assert_includes error.message, name, label
++      end
++    end
++  end
++
++  # An entry the central directory declares, whose local header is not where it
++  # says it is, must fail loudly: reading it as an empty payload extracts a
++  # zero-byte file over a name the archive said had content.
++  def archive_with_first_local_offset(offset)
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('a.txt')
++      zos.write('body of a.txt')
++    end
++    bytes = buffer.string.b
++    at = bytes.index([0x02014b50].pack('V')) + 42
++    bytes[at, 4] = [offset].pack('V')
++    bytes
++  end
++
++  def test_entry_whose_local_header_is_missing_raises_rather_than_reading_empty
++    ::Dir.mktmpdir do |dir|
++      error = assert_raises(::Zip::Error) do
++        ::Zip::File.open_buffer(::StringIO.new(archive_with_first_local_offset(0xFFFFFF00))) do |zf|
++          zf.each { |entry| entry.extract(entry.name, destination_directory: dir) }
++        end
++      end
++
++      assert_match(/no local header for entry 'a.txt'/, error.message)
++    end
++  end
++
++  def test_entry_whose_local_header_is_missing_raises_from_get_input_stream
++    ::Zip.validate_entry_sizes = false
++    assert_output('', '') do
++      assert_raises(::Zip::Error) do
++        ::Zip::File.open_buffer(::StringIO.new(archive_with_first_local_offset(0xFFFFFF00))) do |zf|
++          zf.entries.first.get_input_stream(&:read)
++        end
++      end
++    end
++  end
++
++  # A local header parsing at the offset does not make it this entry's header:
++  # reading it anyway hands back another entry's bytes under this entry's name.
++  def test_entry_pointed_at_another_entrys_local_header_raises
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('a.txt')
++      zos.write('AAAA-payload-a')
++      zos.put_next_entry('b.txt')
++      zos.write('BB-payload-b')
++    end
++    bytes = buffer.string.b
++    second = bytes.index([0x04034b50].pack('V'), 4)
++    at = bytes.index([0x02014b50].pack('V')) + 42
++    bytes[at, 4] = [second].pack('V')
++
++    error = assert_raises(::Zip::Error) do
++      ::Zip::File.open_buffer(::StringIO.new(bytes)) { |zf| zf.find_entry('a.txt').get_input_stream(&:read) }
++    end
++
++    assert_match(/does not belong to entry 'a.txt'/, error.message)
++  end
++
++  def test_streamed_local_header_still_reads
++    ::Zip::File.open('test/data/gpbit3stored.zip') do |zf|
++      assert_equal(1327, zf.find_entry('file1.txt').get_input_stream(&:read).bytesize)
++    end
++  end
++
++  # A failed extraction must leave the destination as it found it: writing
++  # straight to it truncates whatever was there before the first byte is read.
++  def test_failed_extraction_leaves_an_existing_file_intact
++    bytes = archive_with_first_local_offset(0xFFFFFF00)
++
++    ::Dir.mktmpdir do |dir|
++      path = ::File.join(dir, 'a.txt')
++      ::File.write(path, 'PRECIOUS ORIGINAL CONTENT')
++
++      assert_raises(::Zip::Error) do
++        ::Zip::File.open_buffer(::StringIO.new(bytes)) do |zf|
++          zf.each { |entry| entry.extract(entry.name, destination_directory: dir) { true } }
++        end
++      end
++
++      assert_equal('PRECIOUS ORIGINAL CONTENT', ::File.read(path))
++    end
++  end
++
++  def test_failed_extraction_leaves_nothing_behind
++    bytes = archive_with_first_local_offset(0xFFFFFF00)
++
++    ::Dir.mktmpdir do |dir|
++      assert_raises(::Zip::Error) do
++        ::Zip::File.open_buffer(::StringIO.new(bytes)) do |zf|
++          zf.each { |entry| entry.extract(entry.name, destination_directory: dir) }
++        end
++      end
++
++      assert_empty(::Dir.children(dir))
++    end
++  end
++
++  # The cleanup after a failed extraction removes the temporary this call
++  # created, and nothing else. An `EXCL` open fails outright on a name already
++  # taken, so at that point the file at that name belongs to somebody else.
++  def test_failed_extraction_leaves_a_file_it_did_not_create_alone
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('a.txt')
++      zos.write('body')
++    end
++
++    ::Dir.mktmpdir do |dir|
++      # `temporary_path` picks its name with `rand`, so seeding the default RNG
++      # makes the name this extraction will choose predictable.
++      ::Kernel.srand(20_260_902)
++      taken = ::File.join(dir, ".rubyzip-#{::Process.pid}-#{rand(1 << 32).to_s(36)}")
++      ::File.write(taken, 'NOT OURS')
++
++      ::Kernel.srand(20_260_902)
++      assert_raises(::Zip::Error) do
++        ::Zip::File.open_buffer(::StringIO.new(buffer.string.dup)) do |zf|
++          zf.each { |entry| entry.extract(entry.name, destination_directory: dir) }
++        end
++      end
++
++      assert_equal('NOT OURS', ::File.read(taken))
++    end
++  end
++
++  # Extraction over an existing file replaces it rather than rewriting it, so
++  # the file that was there is unlinked and another name for it keeps the
++  # contents it had. The rdoc on `Entry#extract` says so; this pins it.
++  def test_extraction_over_an_existing_file_replaces_it
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('a.txt')
++      zos.write('NEW')
++    end
++
++    ::Dir.mktmpdir do |dir|
++      dest = ::File.join(dir, 'a.txt')
++      ::File.write(dest, 'OLD')
++      link = ::File.join(dir, 'another-name')
++      ::File.link(dest, link)
++      before = ::File.stat(dest).ino
++
++      ::Zip::File.open_buffer(::StringIO.new(buffer.string.dup)) do |zf|
++        zf.each { |entry| entry.extract(entry.name, destination_directory: dir) { true } }
++      end
++
++      assert_equal('NEW', ::File.read(dest))
++      assert_equal('OLD', ::File.read(link))
++      refute_equal(before, ::File.stat(dest).ino)
++      assert_equal(1, ::File.stat(dest).nlink)
++    end
++  end
++
++  # The half of the boundary that is not an error at all: a destination that
++  # exists but is not a directory never reaches the write, because containment
++  # resolves it first and refuses. Both rdocs say so; this pins it.
++  def test_destination_that_is_a_file_is_refused_without_raising
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('a.txt')
++      zos.write('body')
++    end
++
++    ::Dir.mktmpdir do |dir|
++      dest = ::File.join(dir, 'a-regular-file')
++      ::File.write(dest, 'I am a file')
++
++      assert_output('', /skipped extracting 'a.txt'.*as unsafe/) do
++        ::Zip::File.open_buffer(::StringIO.new(buffer.string.dup)) do |zf|
++          zf.each { |entry| entry.extract(entry.name, destination_directory: dest) }
++        end
++      end
++
++      assert_equal('I am a file', ::File.read(dest))
++    end
++  end
++
++  # The boundary both rdocs state: being a directory is the whole of the test
++  # once the write has begun, so a destination that is one but cannot be
++  # written into is converted like any other refusal.
++  def test_unwritable_destination_directory_raises_an_extraction_error
++    skip 'root ignores the write bit' if ::Process.uid.zero?
++
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('a.txt')
++      zos.write('body')
++    end
++
++    ::Dir.mktmpdir do |dir|
++      dest = ::File.join(dir, 'locked')
++      ::FileUtils.mkdir_p(dest)
++      ::File.chmod(0o555, dest)
++
++      begin
++        error = assert_raises(::Zip::ExtractionError) do
++          ::Zip::File.open_buffer(::StringIO.new(buffer.string.dup)) do |zf|
++            zf.each { |entry| entry.extract(entry.name, destination_directory: dest) }
++          end
++        end
++
++        assert_equal('a.txt', error.entry_name)
++      ensure
++        ::File.chmod(0o755, dest)
++      end
++    end
++  end
++
++  # The other half of "is a directory when it happens": one that cannot be
++  # traversed is still a directory, so the refusal is converted the same way.
++  # This is the shape the prose named without anything driving it.
++  def test_untraversable_destination_directory_raises_an_extraction_error
++    skip 'root ignores the execute bit' if ::Process.uid.zero?
++
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('a.txt')
++      zos.write('body')
++    end
++
++    ::Dir.mktmpdir do |dir|
++      dest = ::File.join(dir, 'sealed')
++      ::FileUtils.mkdir_p(dest)
++      ::File.chmod(0o600, dest)
++
++      begin
++        error = assert_raises(::Zip::ExtractionError) do
++          ::Zip::File.open_buffer(::StringIO.new(buffer.string.dup)) do |zf|
++            zf.each { |entry| entry.extract(entry.name, destination_directory: dest) }
++          end
++        end
++
++        assert_equal('a.txt', error.entry_name)
++      ensure
++        ::File.chmod(0o755, dest)
++      end
++    end
++  end
++
++  def test_extract_into_a_missing_destination_raises_rather_than_refusing
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('a.txt')
++      zos.write('body')
++    end
++
++    ::Dir.mktmpdir do |dir|
++      missing = ::File.join(dir, 'no-such-dir')
++
++      assert_output('', '') do
++        assert_raises(Errno::ENOENT) do
++          ::Zip::File.open_buffer(::StringIO.new(buffer.string.dup)) do |zf|
++            zf.each { |entry| entry.extract(entry.name, destination_directory: missing) }
++          end
++        end
++      end
++
++      refute ::Dir.exist?(missing)
++    end
++  end
++
++  def test_extract_creates_parent_directories_the_archive_does_not_record
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('top.txt')
++      zos.write('top')
++      zos.put_next_entry('sub/deep/nested.txt')
++      zos.write('nested')
++    end
++
++    ::Dir.mktmpdir do |dir|
++      ::Zip::File.open_buffer(::StringIO.new(buffer.string.dup)) do |zf|
++        # The fixture must really lack directory entries, or this proves nothing.
++        assert_empty(zf.entries.map(&:name).grep(/\/$/))
++
++        zf.each { |entry| entry.extract(entry.name, destination_directory: dir) }
++      end
++
++      assert_equal('top', ::File.read(::File.join(dir, 'top.txt')))
++      assert_equal('nested', ::File.read(::File.join(dir, 'sub', 'deep', 'nested.txt')))
++    end
++
++    ::Dir.mktmpdir do |dir|
++      ::Zip::File.open_buffer(::StringIO.new(buffer.string.dup)) do |zf|
++        zf.entries.each { |entry| zf.extract(entry, entry.name, destination_directory: dir) }
++      end
++
++      assert_equal('nested', ::File.read(::File.join(dir, 'sub', 'deep', 'nested.txt')))
++    end
++  end
++
+   def test_extract
+     ::Zip::File.open(TEST_ZIP.zip_name) do |zf|
+       zf.extract(ENTRY_TO_EXTRACT, EXTRACTED_FILENAME)
+diff --git a/test/file_options_test.rb b/test/file_options_test.rb
+index 7c0efdc..e408b66 100644
+--- a/test/file_options_test.rb
++++ b/test/file_options_test.rb
+@@ -77,6 +77,30 @@ class FileOptionsTest < Minitest::Test
+     assert_equal(default_perms, ::File.stat(EXTPATH_3).mode)
+   end
+ 
++  def test_restore_permissions_false_on_every_lookup_path
++    ::FileUtils.cp(TXTPATH, TXTPATH_600)
++    ::File.chmod(0o600, TXTPATH_600)
++
++    ::Zip::File.open(ZIPPATH, create: true) do |zip|
++      zip.add(ENTRY_1, TXTPATH_600)
++    end
++
++    # The option must be honoured however the entry is reached. Iterating with
++    # #each is what the README's "Reading a Zip file" example does.
++    ::Zip::File.open(ZIPPATH, restore_permissions: false) do |zip|
++      zip.each { |entry| entry.extract(EXTRACT_1, destination_directory: Dir.tmpdir) }
++    end
++
++    ::Zip::File.open(ZIPPATH, restore_permissions: false) do |zip|
++      zip.get_entry(ENTRY_1).extract(EXTRACT_2, destination_directory: Dir.tmpdir)
++    end
++
++    default_perms = (Zip::RUNNING_ON_WINDOWS ? 0o100_644 : 0o100_666) - ::File.umask
++
++    assert_equal(default_perms, ::File.stat(EXTPATH_1).mode)
++    assert_equal(default_perms, ::File.stat(EXTPATH_2).mode)
++  end
++
+   def test_restore_permissions_as_default
+     # Copy and set up files with different permissions.
+     ::FileUtils.cp(TXTPATH, TXTPATH_600)
+diff --git a/test/file_test.rb b/test/file_test.rb
+index ba0e5a3..265f449 100644
+--- a/test/file_test.rb
++++ b/test/file_test.rb
+@@ -242,6 +242,27 @@ class ZipFileTest < Minitest::Test
+     assert_equal(data, string_io.string)
+   end
+ 
++  def test_rename_in_buffer_does_not_corrupt_the_archive
++    %w[a_much_longer_name.txt x].each do |new_name|
++      io = ::Zip::OutputStream.write_buffer(::StringIO.new) do |zos|
++        zos.put_next_entry('a.txt')
++        zos.write('hello world')
++        zos.put_next_entry('b.txt')
++        zos.write('second entry')
++      end
++      io.rewind
++
++      ::Zip::File.open_buffer(io) { |zf| zf.rename('a.txt', new_name) }
++
++      io.rewind
++      ::Zip::File.open_buffer(io) do |zf|
++        assert_equal([new_name, 'b.txt'].sort, zf.entries.map(&:name).sort)
++        assert_equal('hello world', zf.read(new_name))
++        assert_equal('second entry', zf.read('b.txt'))
++      end
++    end
++  end
++
+   def test_open_file_with_max_length_comment
+     # Should not raise any errors.
+     Zip::File.open('test/data/max_length_file_comment.zip') do |zf|
+@@ -460,6 +481,22 @@ class ZipFileTest < Minitest::Test
+     end
+   end
+ 
++  # An empty buffer is not an archive, and the branch that says so asked the
++  # filesystem about a name that is a StringIO.
++  def test_open_buffer_on_an_empty_buffer_raises_a_zip_error
++    error = assert_raises(::Zip::Error) do
++      ::Zip::File.open_buffer(::StringIO.new(''), &:entries)
++    end
++
++    assert_match(/zero size/, error.message)
++  end
++
++  def test_open_buffer_on_an_empty_buffer_still_creates
++    ::Zip::File.open_buffer(::StringIO.new(''), create: true) do |zf|
++      assert_empty(zf.entries)
++    end
++  end
++
+   def test_mkdir
+     buffer = ::Zip::File.open_buffer(create: true) do |zf|
+       # Add a directory with no slash.
+diff --git a/test/filesystem/dir_test.rb b/test/filesystem/dir_test.rb
+index d5ee1d8..97034b0 100644
+--- a/test/filesystem/dir_test.rb
++++ b/test/filesystem/dir_test.rb
+@@ -20,12 +20,64 @@ class DirectoryTest < Minitest::Test
+       assert_raises(Errno::EINVAL, 'Invalid argument - file1') do
+         zf.dir.delete('file1')
+       end
++      # `dir1` holds four entries, and deleting it removes only its own
++      # directory entry, so the directory is still there - the archive still
++      # names it as the parent of everything it held.
+       assert(zf.file.exists?('dir1'))
+       zf.dir.delete('dir1')
++
++      assert_nil(zf.find_entry('dir1/'))
++      assert(zf.file.exists?('dir1'))
++      assert(zf.file.directory?('dir1'))
++      assert_equal(%w[dir11 file11 file12], zf.dir.entries('dir1').sort)
++
++      # A directory with nothing left under it does go away.
++      %w[dir1/dir11/file111 dir1/file11 dir1/file12].each { |name| zf.remove(name) }
++      zf.dir.delete('dir1/dir11')
++
+       assert(!zf.file.exists?('dir1'))
+     end
+   end
+ 
++  # Most archives do not store a directory entry for every directory: `zip -D`
++  # omits them, and so does Zip::OutputStream. A directory that exists only as
++  # a prefix of the names of the entries it holds must still be listed.
++  def test_listing_matches_whether_or_not_directory_entries_are_stored
++    Dir.mktmpdir do |tmp|
++      without_dirs = ::File.join(tmp, 'without.zip')
++      with_dirs = ::File.join(tmp, 'with.zip')
++
++      ::Zip::OutputStream.open(without_dirs) do |zos|
++        zos.put_next_entry('sub/f.txt')
++        zos.write('hello')
++        zos.put_next_entry('top.txt')
++        zos.write('world')
++      end
++
++      ::Zip::File.open(with_dirs, create: true) do |zf|
++        zf.mkdir('sub')
++        zf.get_output_stream('sub/f.txt') { |os| os.write('hello') }
++        zf.get_output_stream('top.txt') { |os| os.write('world') }
++      end
++
++      refute(
++        ::Zip::File.open(without_dirs) { |zf| zf.entries.any?(&:directory?) },
++        'the fixture is supposed to have no directory entries'
++      )
++
++      [without_dirs, with_dirs].each do |zip_name|
++        ::Zip::File.open(zip_name) do |zf|
++          assert_equal(%w[sub top.txt], zf.dir.entries('.').sort, zip_name)
++          assert_equal(['f.txt'], zf.dir.entries('sub'), zip_name)
++          assert(zf.file.directory?('sub'), zip_name)
++          assert(zf.file.exists?('sub'), zip_name)
++          refute(zf.file.file?('sub'), zip_name)
++          assert_equal('hello', zf.file.read('sub/f.txt'), zip_name)
++        end
++      end
++    end
++  end
++
+   def test_mkdir
+     ::Zip::File.open(TEST_ZIP) do |zf|
+       assert_raises(Errno::EEXIST, 'File exists - dir1') do
+diff --git a/test/input_stream_test.rb b/test/input_stream_test.rb
+index 36307ef..87bc4f7 100644
+--- a/test/input_stream_test.rb
++++ b/test/input_stream_test.rb
+@@ -238,6 +238,55 @@ class ZipInputStreamTest < Minitest::Test
+     end
+   end
+ 
++  def test_corrupt_local_header_is_reported_not_read_as_end_of_stream
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('one.txt')
++      zos.write('one')
++      zos.put_next_entry('two.txt')
++      zos.write('two')
++    end
++    bytes = buffer.string.dup
++    second = bytes.index("PK\x03\x04".b, 1)
++    bytes[second, 4] = [0x04034b51].pack('V')
++
++    names = []
++    assert_output('', /no entry and no central directory found at offset #{second}/) do
++      ::Zip::InputStream.open(::StringIO.new(bytes)) do |zis|
++        while (entry = zis.get_next_entry)
++          names << entry.name
++        end
++      end
++    end
++
++    assert_equal(['one.txt'], names)
++  end
++
++  def test_pos_after_sysread
++    ::Zip::InputStream.open(TestZipFile::TEST_ZIP2.zip_name) do |zis|
++      zis.get_next_entry
++
++      assert_equal(10, zis.sysread(10).length)
++      assert_equal(10, zis.pos)
++      assert_equal(10, zis.sysread(10).length)
++      assert_equal(20, zis.pos)
++    end
++  end
++
++  def test_pos_moves_back_with_ungetc
++    ::Zip::InputStream.open(TestZipFile::TEST_ZIP2.zip_name) do |zis|
++      zis.get_next_entry
++      zis.read(10)
++      zis.ungetc('X'.ord)
++
++      assert_equal(9, zis.pos)
++
++      zis.read(1)
++
++      assert_equal(10, zis.pos)
++    end
++  end
++
+   def test_ungetc
+     ::Zip::InputStream.open(TestZipFile::TEST_ZIP2.zip_name) do |zis|
+       zis.get_next_entry
+@@ -378,4 +427,66 @@ class ZipInputStreamTest < Minitest::Test
+       assert_equal(Encoding::ASCII_8BIT, buffer.encoding)
+     end
+   end
++
++  # A local header truncated inside its name read nil and normalised it, so a
++  # NoMethodError reached a caller who had written `rescue Zip::Error`. The
++  # parse now fails as an archive fault, and the sequential reader passes that
++  # fault on rather than ending the read: the bytes at the position are a local
++  # entry signature, so the archive declared an entry it cannot deliver.
++  def truncated_local_header
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('a.txt')
++      zos.write('body')
++    end
++    buffer.string.b[0, 30]
++  end
++
++  def test_local_header_truncated_inside_its_name_is_an_archive_fault
++    error = assert_raises(::Zip::Error) do
++      ::Zip::Entry.new('x').read_local_entry(::StringIO.new(truncated_local_header))
++    end
++
++    assert_match(/Truncated local zip entry header/, error.message)
++  end
++
++  def test_truncated_local_header_is_raised_by_the_sequential_reader
++    error = assert_raises(::Zip::Error) do
++      ::Zip::InputStream.open(::StringIO.new(truncated_local_header)) do |is|
++        is.read while is.get_next_entry
++      end
++    end
++
++    assert_match(/local entry header at offset 0 could not be read/, error.message)
++  end
++
++  # An unreadable header partway through an archive is the same fault, and the
++  # entries read before it are not a reason to swallow it: a caller rejecting
++  # malformed archives with `rescue Zip::Error` must not receive a truncated
++  # entry list as if the archive had simply ended.
++  def test_unreadable_local_header_mid_archive_is_raised_after_the_entries_read
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('one.txt')
++      zos.write('one')
++      zos.put_next_entry('two.txt')
++      zos.write('two')
++    end
++    bytes = buffer.string.b
++    second = bytes.index("PK\x03\x04".b, 1)
++    bytes[second + 26, 2] = [0xFFF0].pack('v') # name longer than the archive
++
++    names = []
++    error = assert_raises(::Zip::Error) do
++      ::Zip::InputStream.open(::StringIO.new(bytes)) do |is|
++        while (entry = is.get_next_entry)
++          names << entry.name
++          is.read
++        end
++      end
++    end
++
++    assert_equal(['one.txt'], names)
++    assert_match(/local entry header at offset #{second} could not be read/, error.message)
++  end
+ end
+diff --git a/test/path_traversal_test.rb b/test/path_traversal_test.rb
+index f475279..4301f14 100644
+--- a/test/path_traversal_test.rb
++++ b/test/path_traversal_test.rb
+@@ -15,14 +15,8 @@ class PathTraversalTest < Minitest::Test
+   def extract_paths(zip_path, entries)
+     ::Zip::File.open(::File.join(TEST_FILE_ROOT, zip_path)) do |zip|
+       entries.each do |entry, test|
+-        if test == :error
+-          assert_raises(Errno::ENOENT) do
+-            zip.find_entry(entry).extract
+-          end
+-        else
+-          assert_output('', test) do
+-            zip.find_entry(entry).extract
+-          end
++        assert_output('', test) do
++          zip.find_entry(entry).extract
+         end
+       end
+     end
+@@ -100,43 +94,51 @@ class PathTraversalTest < Minitest::Test
+   end
+ 
+   def test_directory_symlink
+-    # Can't create tmp/moo, because the tmp symlink is skipped.
++    # The tmp symlink is skipped, so tmp/moo lands in a real directory inside
++    # the destination instead of being written through the link.
+     entries = {
+       'tmp'     => /WARNING: skipped symlink '.*\/tmp'/,
+-      'tmp/moo' => :error
++      'tmp/moo' => ''
+     }
+     in_tmpdir do
+       extract_paths(['jwilk', 'dirsymlink.zip'], entries)
+       refute File.exist?('/tmp/moo')
++      refute File.symlink?('tmp')
++      assert File.exist?('tmp/moo')
+     end
+   end
+ 
+   def test_two_directory_symlinks_a
+-    # Can't create par/moo because the symlinks are skipped.
++    # Both symlinks are skipped, so par/moo lands in a real directory inside
++    # the destination instead of being written through them.
+     entries = {
+       'cur'     => /WARNING: skipped symlink '.*\/cur'/,
+       'par'     => /WARNING: skipped symlink '.*\/par'/,
+-      'par/moo' => :error
++      'par/moo' => ''
+     }
+     in_tmpdir do
+       extract_paths(['jwilk', 'dirsymlink2a.zip'], entries)
+       refute File.exist?('cur')
+-      refute File.exist?('par')
+-      refute File.exist?('par/moo')
++      refute File.symlink?('par')
++      refute File.exist?('../moo')
++      assert File.exist?('par/moo')
+     end
+   end
+ 
+   def test_two_directory_symlinks_b
+-    # Can't create par/moo, because the symlinks are skipped.
++    # Both symlinks are skipped, so par/moo lands in a real directory inside
++    # the destination instead of being written through them.
+     entries = {
+       'cur'     => /WARNING: skipped symlink '.*\/cur'/,
+       'cur/par' => /WARNING: skipped symlink '.*\/cur\/par'/,
+-      'par/moo' => :error
++      'par/moo' => ''
+     }
+     in_tmpdir do
+       extract_paths(['jwilk', 'dirsymlink2b.zip'], entries)
+       refute File.exist?('cur')
+       refute File.exist?('../moo')
++      refute File.symlink?('par')
++      assert File.exist?('par/moo')
+     end
+   end
+ 
+@@ -182,14 +184,17 @@ class PathTraversalTest < Minitest::Test
+   end
+ 
+   def test_entry_name_with_relative_symlink
+-    # Doesn't create the symlink path, so can't create path/file.txt.
++    # The path symlink is skipped, so path/file.txt lands in a real directory
++    # inside the destination instead of being written through the link.
+     entries = {
+       'path'          => /WARNING: skipped symlink '.*\/path'/,
+-      'path/file.txt' => :error
++      'path/file.txt' => ''
+     }
+     in_tmpdir do
+       extract_paths(['tuzovakaoff', 'symlink.zip'], entries)
+       refute File.exist?('/tmp/file.txt')
++      refute File.symlink?('path')
++      assert File.exist?('path/file.txt')
+     end
+   end
+ 
+@@ -200,6 +205,53 @@ class PathTraversalTest < Minitest::Test
+     end
+   end
+ 
++  def test_symlink_already_in_the_destination_is_not_a_way_out_of_it
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('link/through.txt')
++      zos.write('should not land')
++    end
++
++    ::Dir.mktmpdir do |outer|
++      dest = ::File.join(outer, 'dest')
++      target = ::File.join(outer, 'target')
++      ::FileUtils.mkdir_p(dest)
++      ::FileUtils.mkdir_p(target)
++      ::File.symlink(target, ::File.join(dest, 'link'))
++
++      ::Zip::File.open_buffer(::StringIO.new(buffer.string.dup)) do |zf|
++        zf.each do |entry|
++          assert_output('', /skipped extracting 'link\/through.txt'/) do
++            entry.extract(entry.name, destination_directory: dest)
++          end
++        end
++      end
++
++      refute ::File.exist?(::File.join(target, 'through.txt'))
++    end
++  end
++
++  def test_destination_that_is_itself_a_symlink_still_extracts
++    buffer = ::StringIO.new
++    ::Zip::OutputStream.write_buffer(buffer) do |zos|
++      zos.put_next_entry('ok.txt')
++      zos.write('landed')
++    end
++
++    ::Dir.mktmpdir do |outer|
++      real = ::File.join(outer, 'real')
++      ::FileUtils.mkdir_p(real)
++      linked = ::File.join(outer, 'dest')
++      ::File.symlink(real, linked)
++
++      ::Zip::File.open_buffer(::StringIO.new(buffer.string.dup)) do |zf|
++        zf.each { |entry| entry.extract(entry.name, destination_directory: linked) }
++      end
++
++      assert_equal('landed', ::File.read(::File.join(real, 'ok.txt')))
++    end
++  end
++
+   def test_prevent_breakout_of_declared_destination_directory
+     dest_dir = 'out'
+     in_tmpdir do |test_path|
