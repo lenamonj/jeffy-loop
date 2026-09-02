@@ -1,0 +1,169 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 00000000..8a3084af
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,8 @@
++# Files that exist for local development tooling and must not travel in a
++# source archive of this package. `export-ignore` is honoured by `git archive`
++# and by `swift package archive-source`, which builds on it.
++PLAN.md            export-ignore
++BACKLOG.md         export-ignore
++JOURNAL.md         export-ignore
++JOURNAL-archive.md export-ignore
++.jeffy/            export-ignore
+diff --git a/.gitignore b/.gitignore
+index 4042772f..96f8726c 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,3 +10,4 @@ xcuserdata/
+ /Utils/Debugger/FormatterFixtures/.build
+ .docc-build
+ __pycache__
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index e930b20e..9d1a3814 100644
+--- a/README.md
++++ b/README.md
+@@ -145,14 +145,9 @@ These features are disabled by default. The package provides several package tra
+ 
+ ### `UnstableContainersPreview` package trait
+ 
+-This trait enables the following types in the [`ContainersPreview`][ContainersPreview] module:
++This trait enables the following types, all in the [`ContainersPreview`][ContainersPreview] module except `InputSpan`:
+ 
+-- [`struct InputSpan<Element>`][InputSpan] is a reference to a contiguous region of consumable items.
+-- [`struct Ref<Target>`][Ref] represents a borrowing reference to an item.
+-- [`struct MutableRef<Target>`][MutableRef] represents a mutating reference to an item.
+-
+-- [`protocol BorrowingSequence<Element>`][BorrowingSequence] models borrowing sequences with ephemeral lifetimes.
+-- [`protocol BorrowingIteratorProtocol<Element>`][BorrowingIteratorProtocol] models borrowing iterators with ephemeral elements.
++- [`struct InputSpan<Element>`][InputSpan] is a reference to a contiguous region of consumable items. It is vended by the separate [`SpanPreview`][SpanPreview] module, so reaching it requires `import SpanPreview`.
+ - [`protocol Container<Element>`][Container] models containers, or constructs that physically store their contents.
+ - [`protocol BidirectionalContainer<Element>`][BidirectionalContainer] is the container analogue of `BidirectionalCollection`.
+ - [`protocol RandomAccessContainer<Element>`][RandomAccessContainer] is the container analogue of `RandomAccessCollection`.
+@@ -160,23 +155,26 @@ This trait enables the following types in the [`ContainersPreview`][ContainersPr
+ - [`protocol MutableContainer<Element>`][MutableContainer] refines `PermutableContainer` to also support arbitrary element replacements/mutations, like `MutableCollection`.
+ - [`protocol RangeReplaceableContainer<Element>`][RangeReplaceableContainer] models a (potentially fixed capacity) container with insert/append/replace operations.
+ - [`protocol DynamicContainer<Element>`][DynamicContainer] refines `RangeReplaceableContainer` to add operations that require dynamic storage sizing.
++- [`protocol DrainableContainer<Element>`][DrainableContainer] refines `Container` to support consuming a subrange in place, and builds the removal operations on top of that.
+ - [`protocol Producer<Element, Failure>`][Producer] models a generative iterator -- an abstraction for producing items on demand.
++- [`protocol CountedProducer<Element, Failure>`][CountedProducer] refines `Producer` with an exact element count.
+ - [`protocol Drain<Element>`][Drain] refines `Producer` to model a source of in-place consumable elements -- primarily for use around container types.
++- [`protocol RangeExpression2<Bound>`][RangeExpression2] is the container analogue of `RangeExpression`, resolving a range expression against a `Container` rather than a `Collection`.
+ 
+-[InputSpan]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Types/InputSpan.swift
+-[Ref]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Types/Ref.swift
+-[MutableRef]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Types/MutableRef.swift
+-[BorrowingSequence]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/BorrowingSequence.swift
+-[BorrowingIteratorProtocol]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/BorrowingIteratorProtocol.swift
++[InputSpan]: https://github.com/apple/swift-collections/blob/main/Sources/SpanPreview/InputSpan.swift
++[SpanPreview]: https://github.com/apple/swift-collections/tree/main/Sources/SpanPreview
+ [Container]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Container/Container.swift
+-[BidirectionalContainer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Container/Container.swift
++[BidirectionalContainer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Container/BidirectionalContainer.swift
+ [RandomAccessContainer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Container/RandomAccessContainer.swift
+ [PermutableContainer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Container/PermutableContainer.swift
+ [MutableContainer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Container/MutableContainer.swift
+ [RangeReplaceableContainer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Container/RangeReplaceableContainer.swift
+ [DynamicContainer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Container/DynamicContainer.swift
+-[Producer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Producer.swift
+-[Drain]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Drain.swift
++[Producer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Producer/Producer.swift
++[Drain]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Drain/Drain.swift
++[DrainableContainer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Container/DrainableContainer.swift
++[CountedProducer]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Producer/CountedProducer.swift
++[RangeExpression2]: https://github.com/apple/swift-collections/blob/main/Sources/ContainersPreview/Protocols/Container/RangeExpression2.swift
+ 
+ The trait also enables a large list of new APIs throughout the package that make use of these constructs -- such as generic methods for transferring items between container types, and implementations of the classic `map`/`reduce`/`filter`/etc algorithms.
+ 
+@@ -225,7 +223,7 @@ The Swift Collections package is source-stable. The version numbers follow [Sema
+ 
+ ### Definition of Public API
+ 
+-The public API of version 1.5 of the `swift-collections` package consists of non-underscored declarations that are marked `public` in the `Collections`, `BasicContainers`, `BitCollections`, `ContainersPreview`, `DequeModule`, `HashTreeCollections`, `HeapModule`, `OrderedCollections`, and `TrailingElementsModule` modules.
++The public API of version 1.6 of the `swift-collections` package consists of non-underscored declarations that are marked `public` in the `Collections`, `BasicContainers`, `BitCollections`, `ContainersPreview`, `DequeModule`, `HashTreeCollections`, `HeapModule`, `OrderedCollections`, and `TrailingElementsModule` modules.
+ 
+ Interfaces that aren't part of the public API may continue to change in any release, including patch releases.
+ 
+@@ -275,7 +273,7 @@ Select features may require a more recent compiler than the minimum specified ab
+ To use this package in a SwiftPM project, you need to set it up as a package dependency:
+ 
+ ```swift
+-// swift-tools-version:6.3
++// swift-tools-version:6.0
+ import PackageDescription
+ 
+ let package = Package(
+@@ -322,9 +320,9 @@ We maintain separate branches for each minor version of the package:
+ 
+ Changes must land on the branch corresponding to the earliest release that they will need to ship on. They are periodically propagated to subsequent branches, in the following direction:
+ 
+-`release/1.3` → `release/1.4` → `release/1.5` → `main`
++`release/1.3` → `release/1.4` → `release/1.5` → `release/1.6` → `main`
+ 
+-For example, anything landing on `release/1.3` will eventually appear on `release/1.4`, `release/1.5`, and then `main` too; there is no need to file standalone PRs for each release line. Change propagation is not instantaneous, as it currently requires manual work -- it is performed by project maintainers.
++For example, anything landing on `release/1.3` will eventually appear on `release/1.4`, `release/1.5`, `release/1.6`, and then `main` too; there is no need to file standalone PRs for each release line. Change propagation is not instantaneous, as it currently requires manual work -- it is performed by project maintainers.
+ 
+ ### Working on the package
+ 
+diff --git a/Sources/BitCollections/BitArray/BitArray+LosslessStringConvertible.swift b/Sources/BitCollections/BitArray/BitArray+LosslessStringConvertible.swift
+index c9317330..d3329198 100644
+--- a/Sources/BitCollections/BitArray/BitArray+LosslessStringConvertible.swift
++++ b/Sources/BitCollections/BitArray/BitArray+LosslessStringConvertible.swift
+@@ -19,11 +19,24 @@ extension BitArray: LosslessStringConvertible {
+   /// of an integer value, consisting of the digits `0` and `1`, with the
+   /// highest digits appearing first.
+   ///
+-  ///     BitArray("") // []
+-  ///     BitArray("001") // [true, false, false]
+-  ///     BitArray("1110") // [false, true, true, true]
+-  ///     BitArray("42") // nil
+-  ///     BitArray("Foo") // nil
++  /// This initializer returns `nil` when the string does not have that form:
++  ///
++  ///     let empty = "", ones = "001", mixed = "1110"
++  ///     let number = "42", word = "Foo"
++  ///
++  ///     BitArray(empty) // []
++  ///     BitArray(ones) // [true, false, false]
++  ///     BitArray(mixed) // [false, true, true, true]
++  ///     BitArray(number) // nil
++  ///     BitArray(word) // nil
++  ///
++  /// The examples above deliberately pass `String` values rather than string
++  /// literals. A string literal written directly at the call site resolves to
++  /// `init(stringLiteral:)`, not to this initializer, and that one traps on
++  /// content that is not a valid bit string rather than returning `nil` -
++  /// `BitArray("Foo")` is a compile-time literal and terminates the program.
++  /// Use this initializer for any string whose contents are not known to be
++  /// valid, and handle the `nil` it returns.
+   ///
+   /// To accept the display format used by `description`, the digits in the
+   /// input string are also allowed to be surrounded by a single pair of ASCII
+diff --git a/Sources/DequeModule/_UnsafeDequeSegments.swift b/Sources/DequeModule/_UnsafeDequeSegments.swift
+index 35c056ca..4b71130a 100644
+--- a/Sources/DequeModule/_UnsafeDequeSegments.swift
++++ b/Sources/DequeModule/_UnsafeDequeSegments.swift
+@@ -55,21 +55,6 @@ internal struct _UnsafeDequeSegments<Element: ~Copyable> {
+     self.init(UnsafeBufferPointer(start: start1, count: count1),
+               UnsafeBufferPointer(start: start2, count: count2))
+   }
+-
+-  @_alwaysEmitIntoClient
+-  @_transparent
+-  internal var count: Int { first.count + (second?.count ?? 0) }
+-
+-  @_alwaysEmitIntoClient
+-  @_transparent
+-  internal func isIdentical(to other: Self) -> Bool {
+-    guard self.first._isIdentical(to: other.first) else { return false }
+-    switch (self.second, other.second) {
+-    case (nil, nil): return true
+-    case let (a?, b?): return a._isIdentical(to: b)
+-    default: return false
+-    }
+-  }
+ }
+ 
+ @frozen

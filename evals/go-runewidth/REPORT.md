@@ -144,4 +144,4 @@ docs instruct never rebuilt and every package-level width stayed stale.
 The fix removes the early return and the `handleEnv` truncation
 workaround that existed only to defeat it.
 
-Both are open.
+Both were merged by the maintainer within an hour of filing (2026-09-01, 21:27 and 21:31 ET).

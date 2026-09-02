@@ -1,0 +1,1134 @@
+diff --git a/.gitignore b/.gitignore
+index c6b9df2..b703bd7 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,4 @@
+ node_modules/
+ 
+ coverage/
++.claude/jeffy-loop.local.md
+diff --git a/.npmignore b/.npmignore
+index 168087f..b9f04a6 100644
+--- a/.npmignore
++++ b/.npmignore
+@@ -5,3 +5,10 @@ tsconfig.json
+ test/
+ 
+ img/
++
++PLAN.md
++BACKLOG.md
++JOURNAL.md
++JOURNAL-archive.md
++.claude/
++.jeffy/
+diff --git a/README.md b/README.md
+index acaa212..860547d 100644
+--- a/README.md
++++ b/README.md
+@@ -7,7 +7,7 @@ A tiny state manager for **React**, **React Native**, **Preact**, **Vue**,
+ **Svelte**, **Solid**, **Lit**, **Angular**, and vanilla JS.
+ It uses **many atomic stores** and direct manipulation.
+ 
+-- **Small.** Between 372 and 912 bytes (minified and brotlied).
++- **Small.** Between 392 and 946 bytes (minified and brotlied).
+   Zero dependencies. It uses [Size Limit] to control size.
+ - **Fast.** With small atomic and derived stores, you do not need to call
+   the selector function for all components on every store change.
+@@ -271,6 +271,19 @@ listenKeys($state, ['user'], (value, oldValue, changed) => {
+ })
+ ```
+ 
++The relation works in both directions: a watched key fires whenever it and the
++changed key name the same value or one contains the other, so watching
++`user.name` also fires when a write replaces the whole `user` object. Only
++whole segments count, so watching `ab` never fires for a write to `a`.
++
++```ts
++// Both `$state.setKey('user.name', 'Ada')` and
++// `$state.setKey('user', { name: 'Ada' })` trigger this listener
++listenKeys($state, ['user.name'], (value, oldValue, changed) => {
++  console.log(`name may have changed: ${changed}`)
++})
++```
++
+ `subscribeKeys(store, keys, cb)` in contrast with `listenKeys(store, keys, cb)`
+ also call listeners immediately during the subscription.
+ Please note that when using subscribe for store changes, the initial evaluation
+diff --git a/atom/index.d.ts b/atom/index.d.ts
+index 603ed93..bb8a2bb 100644
+--- a/atom/index.d.ts
++++ b/atom/index.d.ts
+@@ -24,7 +24,8 @@ export interface ReadableAtom<Value = any> {
+    *
+    * @remarks
+    * Called only by the store's own writes, so a store that never writes never
+-   * calls it. `Map#setKey` uses {@link MapStore#eqKey} instead.
++   * calls it. `Map#setKey` uses {@link MapStore#eqKey} instead,
++   * while `DeepMap#setKey` calls this one.
+    *
+    * Before the first write, `oldValue` can be `undefined`, for instance on the
+    * first run of a computed store.
+diff --git a/atom/index.js b/atom/index.js
+index 84fea1d..530d583 100644
+--- a/atom/index.js
++++ b/atom/index.js
+@@ -10,25 +10,34 @@ const QUEUE_ITEMS_PER_LISTENER = 4
+ // from React), causing each bundle to have its own epoch instance.
+ export const nanostoresGlobal = (globalThis.nanostoresGlobal ||= { epoch: 0 })
+ 
++// lqIndex is advanced past the current entry before that entry's listener
++// runs, and it is reset only after the queue drains. A listener is allowed to
++// re-enter this function - batch() flushes from its finally block - and the
++// re-entrant call has to resume where the outer one stopped instead of
++// replaying the entries it already ran.
+ let drainQueue = () => {
+-  let thrown
+-  for (
+-    lqIndex = 0;
+-    lqIndex < listenerQueue.length;
++  let thrown = []
++  let i
++  while (lqIndex < listenerQueue.length) {
++    i = lqIndex
+     lqIndex += QUEUE_ITEMS_PER_LISTENER
+-  ) {
+     try {
+-      listenerQueue[lqIndex](
+-        listenerQueue[lqIndex + 1].value,
+-        listenerQueue[lqIndex + 2],
+-        listenerQueue[lqIndex + 3]
++      listenerQueue[i](
++        listenerQueue[i + 1].value,
++        listenerQueue[i + 2],
++        listenerQueue[i + 3]
+       )
+     } catch (e) {
+-      thrown = e
++      thrown.push(e)
+     }
+   }
+-  listenerQueue.length = 0
+-  if (thrown) throw thrown
++  listenerQueue.length = lqIndex = 0
++  // More than one listener can throw during a single flush. Rethrowing just
++  // one of them loses the others, so a lone error is rethrown as itself and
++  // several are wrapped in an AggregateError.
++  if (thrown.length) {
++    throw thrown.length > 1 ? new AggregateError(thrown) : thrown[0]
++  }
+ }
+ 
+ export const batch = fn => {
+@@ -64,10 +73,7 @@ export const atom = initialValue => {
+       $atom.lc = listeners.push(listener)
+ 
+       return () => {
+-        for (
+-          let i = lqIndex + QUEUE_ITEMS_PER_LISTENER;
+-          i < listenerQueue.length;
+-        ) {
++        for (let i = lqIndex; i < listenerQueue.length; ) {
+           if (listenerQueue[i] === listener) {
+             listenerQueue.splice(i, QUEUE_ITEMS_PER_LISTENER)
+           } else {
+diff --git a/atom/index.test.ts b/atom/index.test.ts
+index b4f397f..e22c0e7 100644
+--- a/atom/index.test.ts
++++ b/atom/index.test.ts
+@@ -571,6 +571,47 @@ test('nested batch flushes only at the outermost exit', () => {
+   unbind()
+ })
+ 
++test('batch inside a listener does not replay listeners already run', () => {
++  let $a = atom(0)
++  let $other = atom(0)
++  let log: string[] = []
++  let unbindFirst = $a.listen(value => {
++    log.push(`first:${value}`)
++    batch(() => {
++      $other.set(value)
++    })
++  })
++  let unbindSecond = $a.listen(value => {
++    log.push(`second:${value}`)
++  })
++
++  $a.set(1)
++
++  deepStrictEqual(log, ['first:1', 'second:1'])
++
++  unbindFirst()
++  unbindSecond()
++})
++
++test('empty batch inside a listener does not replay listeners already run', () => {
++  let $a = atom(0)
++  let log: string[] = []
++  let unbindFirst = $a.listen(value => {
++    log.push(`first:${value}`)
++    batch(() => {})
++  })
++  let unbindSecond = $a.listen(value => {
++    log.push(`second:${value}`)
++  })
++
++  $a.set(1)
++
++  deepStrictEqual(log, ['first:1', 'second:1'])
++
++  unbindFirst()
++  unbindSecond()
++})
++
+ test('batch outside any listener is identical to a single set', () => {
+   let $a = atom(0)
+   let log: number[] = []
+@@ -789,6 +830,68 @@ test('runs listeners queued after a throwing one', () => {
+   deepStrictEqual(log, ['first', 'third'])
+ })
+ 
++test('keeps every listener error when several throw in one flush', () => {
++  let $a = atom(0)
++  $a.listen(() => {
++    throw new Error('first')
++  })
++  $a.listen(() => {
++    throw new Error('second')
++  })
++
++  let caught: unknown
++  try {
++    $a.set(1)
++  } catch (e) {
++    caught = e
++  }
++
++  equal(caught instanceof AggregateError, true)
++  deepStrictEqual(
++    (caught as AggregateError).errors.map((e: Error) => e.message),
++    ['first', 'second']
++  )
++})
++
++test('rethrows a lone listener error as itself, not wrapped', () => {
++  let $a = atom(0)
++  let error = new Error('solo')
++  $a.listen(() => {
++    throw error
++  })
++
++  let caught: unknown
++  try {
++    $a.set(1)
++  } catch (e) {
++    caught = e
++  }
++
++  equal(caught, error)
++})
++
++test('rethrows a falsy listener error instead of swallowing it', () => {
++  let $a = atom(0)
++  // A JavaScript caller can throw any value; 0 is the shape a truthiness
++  // guard on the collected error would swallow.
++  let falsy: unknown = 0
++  $a.listen(() => {
++    throw falsy
++  })
++
++  let threw = false
++  let caught: unknown
++  try {
++    $a.set(1)
++  } catch (e) {
++    threw = true
++    caught = e
++  }
++
++  equal(threw, true)
++  equal(caught, 0)
++})
++
+ test('batch keeps working when a listener throws during its flush', () => {
+   let $a = atom(0)
+   let $b = atom(0)
+diff --git a/deep-map/index.d.ts b/deep-map/index.d.ts
+index e78fd0c..1ba5206 100644
+--- a/deep-map/index.d.ts
++++ b/deep-map/index.d.ts
+@@ -53,6 +53,10 @@ export type DeepMapStore<T extends BaseDeepMap> = {
+    * $settings.setKey('visuals.theme', 'dark')
+    * ```
+    *
++   * Compares the value already at that path with the new one through the
++   * store's own {@link Store#eq}, so writing an equal value changes nothing
++   * and notifies no listener.
++   *
+    * @param key The key name. Attributes can be split with a dot `.` and `[]`.
+    * @param value New value.
+    */
+@@ -100,6 +104,9 @@ export function deepMap<T extends BaseDeepMap>(init?: T): DeepMapStore<T>
+  * Get a value by key from a store with an object value.
+  * Works with `map`, `deepMap`, and `atom`.
+  *
++ * Own properties only: a key naming an inherited member, like `toString`, is
++ * missing rather than answered with the prototype's member.
++ *
+  * ```js
+  * import { getKey, map } from 'nanostores'
+  *
+diff --git a/deep-map/index.js b/deep-map/index.js
+index 24c75ea..16625e1 100644
+--- a/deep-map/index.js
++++ b/deep-map/index.js
+@@ -15,7 +15,7 @@ export const deepMap = (initial = {}) => {
+ 
+   let $deepMap = atom(initial)
+   $deepMap.setKey = (key, value) => {
+-    if (getPath($deepMap.value, key) !== value) {
++    if (!$deepMap.eq(getPath($deepMap.value, key), value)) {
+       let oldValue = $deepMap.value
+       $deepMap.value = setPath($deepMap.value, key, value)
+       $deepMap.notify(oldValue, key)
+diff --git a/deep-map/index.test.ts b/deep-map/index.test.ts
+index 062b859..358b1bf 100644
+--- a/deep-map/index.test.ts
++++ b/deep-map/index.test.ts
+@@ -465,3 +465,72 @@ test('setKey can set a deep key when an intermediate value is null', () => {
+   $store.setKey('a.b', 1)
+   deepStrictEqual($store.get(), { a: { b: 1 } })
+ })
++
++test('treats a key inherited from Object.prototype as absent', () => {
++  let changes: (string | undefined)[] = []
++  let $store = deepMap<Record<string, string>>({ a: 'one' })
++  let unbind = $store.listen((value, oldValue, changed) => {
++    changes.push(changed)
++  })
++
++  equal(getKey($store, 'toString'), undefined)
++  equal(getKey($store, 'constructor'), undefined)
++
++  $store.setKey('toString', undefined)
++  $store.setKey('constructor', undefined)
++
++  deepStrictEqual(changes, [])
++  deepStrictEqual($store.get(), { a: 'one' })
++
++  unbind()
++})
++
++test('sets and reads a key named after an Object.prototype member', () => {
++  let $store = deepMap<Record<string, string>>({ a: 'one' })
++
++  $store.setKey('toString', 'two')
++  equal(getKey($store, 'toString'), 'two')
++  deepStrictEqual($store.get(), { a: 'one', toString: 'two' })
++
++  $store.setKey('toString', undefined)
++  deepStrictEqual($store.get(), { a: 'one' })
++})
++
++test('uses the store eq, so NaN over NaN does not notify', () => {
++  let calls = 0
++  let $store = deepMap<{ n: number }>({ n: NaN })
++  let unbind = $store.listen(() => calls++)
++
++  $store.setKey('n', NaN)
++  equal(calls, 0)
++
++  $store.setKey('n', 1)
++  equal(calls, 1)
++
++  unbind()
++})
++
++test('uses the store eq, so -0 over 0 notifies', () => {
++  let calls = 0
++  let $store = deepMap<{ z: number }>({ z: 0 })
++  let unbind = $store.listen(() => calls++)
++
++  $store.setKey('z', -0)
++  equal(calls, 1)
++  equal(Object.is($store.get().z, -0), true)
++
++  unbind()
++})
++
++test('honours a replaced eq on setKey', () => {
++  let calls = 0
++  let $store = deepMap<{ a: number }>({ a: 1 })
++  $store.eq = () => true
++  let unbind = $store.listen(() => calls++)
++
++  $store.setKey('a', 2)
++  equal(calls, 0)
++  equal($store.get().a, 1)
++
++  unbind()
++})
+diff --git a/deep-map/path.d.ts b/deep-map/path.d.ts
+index a69573b..646457e 100644
+--- a/deep-map/path.d.ts
++++ b/deep-map/path.d.ts
+@@ -102,6 +102,9 @@ export type BaseDeepMap = Record<string, unknown>
+ /**
+  * Get a value by object path. `undefined` if key is missing.
+  *
++ * Own properties only: a key naming an inherited member, like `toString`, is
++ * missing rather than answered with the prototype's member.
++ *
+  * ```
+  * import { getPath } from 'nanostores'
+  *
+diff --git a/deep-map/path.js b/deep-map/path.js
+index fb3de88..a01f47c 100644
+--- a/deep-map/path.js
++++ b/deep-map/path.js
+@@ -2,7 +2,10 @@ export function getPath(obj, path) {
+   let allKeys = getAllKeysFromPath(path)
+   let res = obj
+   for (let key of allKeys) {
+-    if (res == null) {
++    // Own properties only: a key naming an inherited member - `toString`,
++    // `constructor` - is absent from the store's value, and reading it through
++    // the prototype would report Object.prototype's member as the store's own.
++    if (res == null || !Object.hasOwn(res, key)) {
+       return undefined
+     }
+     res = res[key]
+@@ -50,7 +53,12 @@ function getKeyAndIndicesFromKey(key) {
+ 
+ const IS_NUMBER = /^\d+$/
+ function ensureKey(obj, key, nextKey) {
+-  if (key in obj) {
++  // Only a container this object owns can carry a deeper path. A present key
++  // holding a primitive is replaced rather than extended - spreading a string
++  // leaf would turn it into indexed character keys beside the new one - and an
++  // inherited member is not this object's to extend at all.
++  let current = obj[key]
++  if (Object.hasOwn(obj, key) && current !== null && typeof current === 'object') {
+     return
+   }
+ 
+diff --git a/deep-map/path.test.ts b/deep-map/path.test.ts
+index 2c4e856..f20be0a 100644
+--- a/deep-map/path.test.ts
++++ b/deep-map/path.test.ts
+@@ -39,6 +39,21 @@ test('path returns undefined for keys under null or undefined values', () => {
+   equal(getPath(exampleObj, 'c.d.e'), undefined)
+ })
+ 
++test('treats a key inherited from Object.prototype as absent', () => {
++  let source: Record<string, unknown> = { a: 1 }
++  equal(getPath(source, 'toString'), undefined)
++  equal(getPath(source, 'constructor'), undefined)
++  let nested: Record<string, Record<string, unknown>> = { a: {} }
++  equal(getPath(nested, 'a.toString'), undefined)
++})
++
++test('still reads own members that live beside inherited ones', () => {
++  let arrays: Record<string, number[]> = { a: [1, 2] }
++  equal(getPath(arrays, 'a.length'), 2)
++  let named: Record<string, unknown> = { toString: 'own' }
++  equal(getPath(named, 'toString'), 'own')
++})
++
+ test('simple path setting', () => {
+   type TestObj = {
+     a: {
+@@ -90,6 +105,50 @@ test('creating arrays', () => {
+   deepStrictEqual(initial, { a: expectedA })
+ })
+ 
++// A primitive leaf offers no deeper path in the declared types, so these are
++// the shapes a JavaScript caller reaches. The cast is at the call site rather
++// than a suppression, so the tests say which caller they are about.
++type Nested = Record<string, { b?: number }>
++type Indexed = Record<string, number[]>
++
++test('replaces a primitive leaf instead of writing through it', () => {
++  let string_ = { a: 'ab' } as unknown as Nested
++  let number_ = { a: 5 } as unknown as Nested
++  let null_ = { a: null } as unknown as Nested
++  deepStrictEqual(setPath(string_, 'a.b', 1), { a: { b: 1 } })
++  deepStrictEqual(setPath(number_, 'a.b', 1), { a: { b: 1 } })
++  deepStrictEqual(setPath(null_, 'a.b', 1), { a: { b: 1 } })
++})
++
++test('creates an array over a primitive leaf, as it does over an absent key', () => {
++  let string_ = { a: 'ab' } as unknown as Indexed
++  let null_ = { a: null } as unknown as Indexed
++  deepStrictEqual(setPath(string_, 'a[0]', 1), { a: [1] })
++  deepStrictEqual(setPath(null_, 'a[0]', 1), { a: [1] })
++  let empty: Indexed = {}
++  deepStrictEqual(setPath(empty, 'a[0]', 1), { a: [1] })
++})
++
++test('does not extend a container inherited from the prototype', () => {
++  // The spread in setByKey copies own properties only, so the only container a
++  // copy can still inherit is one defined on Object.prototype itself.
++  // eslint-disable-next-line no-extend-native -- that is the defect under test
++  Object.defineProperty(Object.prototype, 'inheritedContainer', {
++    configurable: true,
++    enumerable: false,
++    value: { secret: 1 },
++    writable: true
++  })
++  try {
++    let source: Record<string, { b?: number }> = {}
++    deepStrictEqual(setPath(source, 'inheritedContainer.b', 1), {
++      inheritedContainer: { b: 1 }
++    })
++  } finally {
++    delete (Object.prototype as Record<string, unknown>).inheritedContainer
++  }
++})
++
+ test('removes arrays', () => {
+   type TestObj = { a?: string[] }
+   let initial: TestObj = { a: ['a', 'b'] }
+diff --git a/effect/index.js b/effect/index.js
+index ee960c0..02efeca 100644
+--- a/effect/index.js
++++ b/effect/index.js
+@@ -4,11 +4,23 @@ export const effect = (stores, callback) => {
+   let unbinds = []
+   let lastRunUnbind
+ 
++  // The pending cleanup is dropped before it is invoked, never after, so it
++  // cannot run a second time: not when dispose is called twice, and not on the
++  // next dependency change after a callback that threw before returning a
++  // fresh one.
++  let cleanUpLastRun = () => {
++    let unbind = lastRunUnbind
++    lastRunUnbind = undefined
++    if (unbind) unbind()
++  }
++
+   let run = () => {
+-    lastRunUnbind && lastRunUnbind()
++    cleanUpLastRun()
+ 
+     let values = stores.map(store => store.get())
+-    lastRunUnbind = callback(...values)
++    let unbind = callback(...values)
++    // Same contract as onMount's initialize: a cleanup function or nothing.
++    if (typeof unbind === 'function') lastRunUnbind = unbind
+   }
+ 
+   unbinds = stores.map(store => store.listen(run))
+@@ -16,6 +28,6 @@ export const effect = (stores, callback) => {
+ 
+   return () => {
+     unbinds.forEach(unbind => unbind())
+-    lastRunUnbind && lastRunUnbind()
++    cleanUpLastRun()
+   }
+ }
+diff --git a/effect/index.test.ts b/effect/index.test.ts
+index c6f5da9..bb24a9e 100644
+--- a/effect/index.test.ts
++++ b/effect/index.test.ts
+@@ -86,6 +86,61 @@ test('Stops running effect when returned unsubscribe method called. Runs effect
+   strictEqual(effectCleanupMock.mock.calls.length, 1)
+ })
+ 
++test('Runs the cleanup once when unsubscribe is called more than once', ctx => {
++  let { effectCleanupMock, unbind } = createTestData(ctx)
++
++  unbind()
++  unbind()
++  unbind()
++  strictEqual(effectCleanupMock.mock.calls.length, 1)
++})
++
++test('Does not re-run a cleanup that a throwing callback left behind', () => {
++  let cleanups: number[] = []
++  let $atom1 = atom(0)
++
++  let unbind = effect($atom1, value => {
++    if (value === 1) throw new Error('effect callback failed')
++    return () => {
++      cleanups.push(value)
++    }
++  })
++
++  try {
++    $atom1.set(1)
++  } catch {}
++  deepStrictEqual(cleanups, [0])
++
++  try {
++    $atom1.set(2)
++  } catch {}
++  deepStrictEqual(cleanups, [0])
++
++  $atom1.set(3)
++  deepStrictEqual(cleanups, [0, 2])
++
++  unbind()
++  deepStrictEqual(cleanups, [0, 2, 3])
++})
++
++test('Ignores a non-function return from the callback', () => {
++  let seen: number[] = []
++  let $atom1 = atom(0)
++
++  // The declaration file forbids this return, so only a JavaScript caller can
++  // reach it; the cast reproduces that caller while keeping check-dts green.
++  let returnsNumber = ((value: number) => seen.push(value)) as (
++    value: number
++  ) => void
++
++  let unbind = effect($atom1, returnsNumber)
++  $atom1.set(1)
++  $atom1.set(2)
++  unbind()
++
++  deepStrictEqual(seen, [0, 1, 2])
++})
++
+ test('Supports listenable sources', () => {
+   let value = 1
+   let listeners = new Set<() => void>()
+diff --git a/lifecycle/index.js b/lifecycle/index.js
+index 5bda41e..967bcba 100644
+--- a/lifecycle/index.js
++++ b/lifecycle/index.js
+@@ -21,14 +21,19 @@ export let on = (object, listener, eventKey, mutateStore) => {
+   }
+   object.events[eventKey] = object.events[eventKey] || []
+   object.events[eventKey].push(listener)
++  // Calling an unbind twice must be a no-op, exactly as it is for the unbind
++  // that atom's listen() returns. The listener array is kept in place when it
++  // empties, so a later call finds an array rather than undefined and its
++  // indexOf reports -1 instead of splicing an unrelated listener out.
+   return () => {
+     let currentListeners = object.events[eventKey]
+     let index = currentListeners.indexOf(listener)
+-    currentListeners.splice(index, 1)
+-    if (!currentListeners.length) {
+-      delete object.events[eventKey]
+-      object.events[eventKey + REVERT_MUTATION]()
+-      delete object.events[eventKey + REVERT_MUTATION]
++    if (~index) {
++      currentListeners.splice(index, 1)
++      if (!currentListeners.length) {
++        object.events[eventKey + REVERT_MUTATION]()
++        delete object.events[eventKey + REVERT_MUTATION]
++      }
+     }
+   }
+ }
+@@ -117,7 +122,11 @@ export const STORE_UNMOUNT_DELAY = 1000
+ export let onMount = ($store, initialize) => {
+   let listener = payload => {
+     let destroy = initialize(payload)
+-    if (destroy) $store.events[UNMOUNT].push(destroy)
++    // A callback is documented to return a cleanup function or nothing. Any
++    // other return used to be stored and called from the unmount timer, where
++    // the resulting TypeError is uncatchable and ends the process a second
++    // after the mistake was made.
++    if (typeof destroy === 'function') $store.events[UNMOUNT].push(destroy)
+   }
+   return on($store, listener, MOUNT, runListeners => {
+     let originListen = $store.listen
+diff --git a/lifecycle/index.test.ts b/lifecycle/index.test.ts
+index 85e022c..fd1293e 100644
+--- a/lifecycle/index.test.ts
++++ b/lifecycle/index.test.ts
+@@ -43,6 +43,62 @@ test('has onStart and onStop listeners', () => {
+   deepStrictEqual(events, ['start', 'stop', 'start', 'stop', 'start'])
+ })
+ 
++test('unbind is a no-op when called more than once', () => {
++  let events: string[] = []
++  let store = atom(0)
++  let unbindFirst = onMount(store, () => {
++    events.push('first')
++  })
++  onMount(store, () => {
++    events.push('second')
++  })
++
++  unbindFirst()
++  unbindFirst()
++  unbindFirst()
++
++  let unbindListen = store.listen(() => {})
++  deepStrictEqual(events, ['second'])
++  unbindListen()
++})
++
++test('re-registering after the last unbind reinstalls the mutation', () => {
++  let events: string[] = []
++  let store = atom(0)
++  let unbindOnly = onStart(store, () => {
++    events.push('start')
++  })
++
++  unbindOnly()
++  unbindOnly()
++
++  let unbindAgain = onStart(store, () => {
++    events.push('again')
++  })
++  let unbindListen = store.listen(() => {})
++  deepStrictEqual(events, ['again'])
++
++  unbindListen()
++  unbindAgain()
++})
++
++test('ignores a non-function return from an onMount callback', async () => {
++  let log: number[] = []
++  let store = atom(0)
++  // The declaration file forbids this return, so only a JavaScript caller can
++  // reach it; the cast reproduces that caller while keeping check-dts green.
++  let returnsNumber = (() => log.push(1)) as () => void
++
++  let unbindMount = onMount(store, returnsNumber)
++
++  let unbindListen = store.listen(() => {})
++  unbindListen()
++  await setTimeout(STORE_UNMOUNT_DELAY + 50)
++
++  deepStrictEqual(log, [1])
++  unbindMount()
++})
++
+ test('tracks onStart from listening', () => {
+   let events: string[] = []
+   let store = atom(2)
+diff --git a/listen-keys/index.d.ts b/listen-keys/index.d.ts
+index 69cb970..ae380ad 100644
+--- a/listen-keys/index.d.ts
++++ b/listen-keys/index.d.ts
+@@ -15,6 +15,11 @@ import type { MapStoreKeys, StoreValue } from '../map/index.js'
+  * })
+  * ```
+  *
++ * A watched key fires when it and the changed key name the same value or one
++ * contains the other, so `user` fires for a write to `user.name` and
++ * `user.name` fires for a write that replaces the whole `user` object. Only
++ * whole path segments count, so `ab` never fires for a write to `a`.
++ *
+  * @param $store The store to listen.
+  * @param keys The keys to listen.
+  * @param listener Standard listener.
+diff --git a/listen-keys/index.js b/listen-keys/index.js
+index 3181498..571517d 100644
+--- a/listen-keys/index.js
++++ b/listen-keys/index.js
+@@ -1,20 +1,34 @@
+ import { getPath } from '../deep-map/path.js'
+ 
++const SEGMENT_BREAK = /[.[]/
++
++// A watched key and a reported `changed` key are related when they name the
++// same value or one contains the other: watching `user` catches a write to
++// `user.name`, and watching `user.name` catches a write that replaces the
++// whole `user` object. The boundary test is what keeps `ab` from matching a
++// write to `a`.
++function onSamePath(key, changed) {
++  if (key === changed) return true
++  let [shorter, longer] =
++    key.length < changed.length ? [key, changed] : [changed, key]
++  return (
++    longer.startsWith(shorter) && SEGMENT_BREAK.test(longer[shorter.length])
++  )
++}
++
+ export function listenKeys($store, keys, listener) {
+-  let keysSet = new Set(keys)
+   return $store.listen((value, oldValue, changed) => {
+     if (
+-      changed === undefined
+-        ? keys.some(
+-            key =>
+-              oldValue === undefined ||
+-              // `map` keys are plain properties, but a `deepMap` key is a path into
+-              // the value, where a plain lookup would compare undefined to undefined
+-              // and never report a change.
+-              value[key] !== oldValue[key] ||
+-              getPath(value, key) !== getPath(oldValue, key)
+-          )
+-        : (keysSet.has(changed) || keysSet.has(changed.split(/\.|\[/)[0]))
++      keys.some(key =>
++        changed === undefined
++          ? oldValue === undefined ||
++            // `map` keys are plain properties, but a `deepMap` key is a path into
++            // the value, where a plain lookup would compare undefined to undefined
++            // and never report a change.
++            value[key] !== oldValue[key] ||
++            getPath(value, key) !== getPath(oldValue, key)
++          : onSamePath(key, changed)
++      )
+     ) {
+       listener(value, oldValue, changed)
+     }
+diff --git a/listen-keys/index.test.ts b/listen-keys/index.test.ts
+index 18d75be..f6224a2 100644
+--- a/listen-keys/index.test.ts
++++ b/listen-keys/index.test.ts
+@@ -191,6 +191,81 @@ test('listens for array paths on whole-store set', () => {
+   unbind()
+ })
+ 
++test('fires a deep-key watcher when its parent is replaced', () => {
++  let events: string[] = []
++  let $store = deepMap({ other: 1, user: { name: 'Ada' } })
++
++  let unbind = listenKeys($store, ['user.name'], (value, _, changed) => {
++    events.push(`${changed} ${value.user.name}`)
++  })
++
++  $store.setKey('other', 2)
++  deepStrictEqual(events, [])
++
++  $store.setKey('user', { name: 'Grace' })
++  deepStrictEqual(events, ['user Grace'])
++
++  unbind()
++})
++
++test('fires an intermediate-path watcher for a change below it', () => {
++  let events: string[] = []
++  let $store = deepMap({ a: { b: { c: 1 } } })
++
++  let unbind = listenKeys($store, ['a.b'], (value, _, changed) => {
++    events.push(String(changed))
++  })
++
++  $store.setKey('a.b.c', 2)
++  deepStrictEqual(events, ['a.b.c'])
++
++  unbind()
++})
++
++test('does not fire when a changed key only shares a prefix', () => {
++  let events: string[] = []
++  let $store = map({ a: 1, ab: 1 })
++
++  let unbind = listenKeys($store, ['ab'], () => {
++    events.push('fired')
++  })
++
++  $store.setKey('a', 2)
++  deepStrictEqual(events, [])
++
++  $store.setKey('ab', 2)
++  deepStrictEqual(events, ['fired'])
++
++  unbind()
++})
++
++test('relates array paths to the key that holds them in both directions', () => {
++  let intoList: string[] = []
++  let ontoList: string[] = []
++  let $watchingList = deepMap({ list: [{ id: 1 }] })
++  let $watchingItem = deepMap({ list: [{ id: 1 }] })
++
++  let unbindList = listenKeys($watchingList, ['list'], (_value, _old, changed) => {
++    intoList.push(String(changed))
++  })
++  let unbindItem = listenKeys(
++    $watchingItem,
++    ['list[0].id'],
++    (_value, _old, changed) => {
++      ontoList.push(String(changed))
++    }
++  )
++
++  $watchingList.setKey('list[0].id', 2)
++  $watchingItem.setKey('list', [{ id: 9 }])
++
++  deepStrictEqual(intoList, ['list[0].id'])
++  deepStrictEqual(ontoList, ['list'])
++
++  unbindList()
++  unbindItem()
++})
++
+ test('keeps plain map keys containing a dot working', () => {
+   let events: string[] = []
+   let $store = map<{ 'a.b': string }>({ 'a.b': 'one' })
+diff --git a/map-creator/index.js b/map-creator/index.js
+index 9e0e818..fc7891c 100644
+--- a/map-creator/index.js
++++ b/map-creator/index.js
+@@ -15,7 +15,11 @@ export function mapCreator(init) {
+     let store = map({ id })
+     onMount(store, () => {
+       let destroy
+-      if (init) destroy = init(store, id, ...args)
++      if (init) {
++        let cleanup = init(store, id, ...args)
++        // Same contract as onMount's initialize: a cleanup function or nothing.
++        if (typeof cleanup === 'function') destroy = cleanup
++      }
+       return () => {
+         delete Creator.cache[id]
+         if (destroy) destroy()
+diff --git a/map-creator/index.test.ts b/map-creator/index.test.ts
+index 49b83d1..cf442a5 100644
+--- a/map-creator/index.test.ts
++++ b/map-creator/index.test.ts
+@@ -1,7 +1,12 @@
+ import { deepStrictEqual, equal, notEqual, throws } from 'node:assert'
+ import { test } from 'node:test'
++import { setTimeout } from 'node:timers/promises'
+ 
+-import { cleanStores, mapCreator } from '../index.js'
++import {
++  cleanStores,
++  mapCreator,
++  STORE_UNMOUNT_DELAY
++} from '../index.js'
+ 
+ test('creates map store with argument', () => {
+   let events = ''
+@@ -67,3 +72,20 @@ test('rejects object prototype IDs', () => {
+     throws(() => User(id), { message: id })
+   }
+ })
++
++test('ignores a non-function return from the init callback', async () => {
++  let log: number[] = []
++  // The declaration file forbids this return, so only a JavaScript caller can
++  // reach it; the cast reproduces that caller while keeping check-dts green.
++  let returnsNumber = (() => log.push(1)) as () => void
++
++  let User = mapCreator<{ name: string }>(returnsNumber)
++
++  let $user = User('1')
++  let unbind = $user.listen(() => {})
++  unbind()
++  await setTimeout(STORE_UNMOUNT_DELAY + 50)
++
++  deepStrictEqual(log, [1])
++  equal('1' in User.cache, false)
++})
+diff --git a/map/index.js b/map/index.js
+index fef52bc..88d651b 100644
+--- a/map/index.js
++++ b/map/index.js
+@@ -5,15 +5,20 @@ export const map = (initial = {}) => {
+   let $map = atom(initial)
+   $map.eqKey = Object.is
+ 
++  // Both reads are own-property reads. `key in map` and `map[key]` walk the
++  // prototype chain, so a key named after an Object.prototype member - the
++  // kind a dictionary built from data can hold - used to compare against the
++  // inherited value and notify with nothing changed.
+   $map.setKey = function (key, value) {
+     let oldMap = $map.value
+-    if (typeof value === 'undefined' && key in $map.value) {
+-      $map.value = { ...$map.value }
++    let has = Object.hasOwn(oldMap, key)
++    if (typeof value === 'undefined' && has) {
++      $map.value = { ...oldMap }
+       delete $map.value[key]
+       $map.notify(oldMap, key)
+-    } else if (!$map.eqKey($map.value[key], value, key)) {
++    } else if (!$map.eqKey(has ? oldMap[key] : undefined, value, key)) {
+       $map.value = {
+-        ...$map.value,
++        ...oldMap,
+         [key]: value
+       }
+       $map.notify(oldMap, key)
+diff --git a/map/index.test.ts b/map/index.test.ts
+index abda372..2e9ef1b 100644
+--- a/map/index.test.ts
++++ b/map/index.test.ts
+@@ -444,3 +444,38 @@ test('can use previous value in subscribers', () => {
+   unbind()
+   clock.runAll()
+ })
++
++test('treats a key inherited from Object.prototype as absent', () => {
++  let changes: (string | undefined)[] = []
++  let $store = map<Record<string, string>>({ a: 'one' })
++  let unbind = $store.listen((value, oldValue, changed) => {
++    changes.push(changed)
++  })
++
++  $store.setKey('toString', undefined)
++  $store.setKey('constructor', undefined)
++  $store.setKey('hasOwnProperty', undefined)
++
++  deepStrictEqual(changes, [])
++  deepStrictEqual($store.get(), { a: 'one' })
++
++  unbind()
++})
++
++test('sets and deletes a key named after an Object.prototype member', () => {
++  let changes: (string | undefined)[] = []
++  let $store = map<Record<string, string>>({ a: 'one' })
++  let unbind = $store.listen((value, oldValue, changed) => {
++    changes.push(changed)
++  })
++
++  $store.setKey('toString', 'two')
++  deepStrictEqual($store.get(), { a: 'one', toString: 'two' })
++
++  $store.setKey('toString', 'two')
++  $store.setKey('toString', undefined)
++  deepStrictEqual($store.get(), { a: 'one' })
++
++  deepStrictEqual(changes, ['toString', 'toString'])
++  unbind()
++})
+diff --git a/package.json b/package.json
+index e618e74..5266e15 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "nanostores",
+   "version": "1.5.2",
+-  "description": "A tiny (372 bytes) state manager for React/Preact/Vue/Svelte with many atomic tree-shakable stores",
++  "description": "A tiny (392 bytes) state manager for React/Preact/Vue/Svelte with many atomic tree-shakable stores",
+   "keywords": [
+     "preact",
+     "react",
+@@ -22,6 +22,15 @@
+     }
+   ],
+   "type": "module",
++  "files": [
++    "CHANGELOG.md",
++    "index.js",
++    "index.d.ts",
++    "*/index.js",
++    "*/index.d.ts",
++    "deep-map/path.js",
++    "deep-map/path.d.ts"
++  ],
+   "sideEffects": false,
+   "types": "./index.d.ts",
+   "exports": {
+@@ -59,14 +68,14 @@
+       "import": {
+         "./index.js": "{ atom }"
+       },
+-      "limit": "372 B"
++      "limit": "392 B"
+     },
+     {
+       "name": "Popular Set",
+       "import": {
+         "./index.js": "{ map, computed }"
+       },
+-      "limit": "912 B"
++      "limit": "946 B"
+     }
+   ],
+   "engines": {
+diff --git a/task/index.js b/task/index.js
+index 7ba6e58..d8ba280 100644
+--- a/task/index.js
++++ b/task/index.js
+@@ -1,15 +1,25 @@
+ let tasks = 0
+ let resolves = []
++// Bumped by cleanTasks. An end function created before a clean belongs to a
++// counter that no longer exists, so it must not decrement the one the tasks
++// started after the clean are using.
++let generation = 0
++
++let flush = () => {
++  let prevResolves = resolves
++  resolves = []
++  for (let i of prevResolves) i()
++}
+ 
+ export function startTask() {
+   tasks += 1
++  let taskGeneration = generation
++  let ended = false
+   return () => {
++    if (ended || taskGeneration !== generation) return
++    ended = true
+     tasks -= 1
+-    if (tasks === 0) {
+-      let prevResolves = resolves
+-      resolves = []
+-      for (let i of prevResolves) i()
+-    }
++    if (tasks === 0) flush()
+   }
+ }
+ 
+@@ -37,5 +47,9 @@ export function allTasks() {
+ }
+ 
+ export function cleanTasks() {
++  generation += 1
+   tasks = 0
++  // Nothing is running after a clean, so anything waiting on allTasks() is
++  // waiting on a condition that already holds.
++  flush()
+ }
+diff --git a/task/index.test.ts b/task/index.test.ts
+index 7e2a5b6..2d769d3 100644
+--- a/task/index.test.ts
++++ b/task/index.test.ts
+@@ -74,3 +74,53 @@ test('ends task on synchronous error', async () => {
+     cleanTasks()
+   }
+ })
++
++test('resolves a waiter that cleanTasks overtakes', { timeout: 1000 }, async () => {
++  cleanTasks()
++  startTask()
++  let settled = false
++  let waiting = allTasks().then(() => {
++    settled = true
++  })
++
++  cleanTasks()
++  await waiting
++  equal(settled, true)
++})
++
++test('ignores an end function created before cleanTasks', { timeout: 1000 }, async () => {
++  cleanTasks()
++  let stale = startTask()
++  cleanTasks()
++  stale()
++
++  let end = startTask()
++  end()
++
++  let settled = false
++  await allTasks().then(() => {
++    settled = true
++  })
++  equal(settled, true)
++})
++
++test('counts an end function only once however often it is called', { timeout: 1000 }, async () => {
++  cleanTasks()
++  let first = startTask()
++  let second = startTask()
++
++  first()
++  first()
++  first()
++
++  let settled = false
++  let waiting = allTasks().then(() => {
++    settled = true
++  })
++  await Promise.resolve()
++  equal(settled, false)
++
++  second()
++  await waiting
++  equal(settled, true)
++})

@@ -50,6 +50,7 @@ loss rather than hiding it.
 | diff-so-fancy | 3 | 30 | **not converged** | n/a | 2 |
 | eemeli/yaml | 5 | 50 | **not converged** | n/a | 0 |
 | faker | 3 | 30 | **not converged** | n/a | 0 |
+| fast_float | 1 | 8 | converged | evaluator countersigned | 0 |
 | fasthttp | 7 | 58 | converged | evaluator countersigned | 0 |
 | FluentValidation | 1 | 8 | converged | evaluator countersigned | 0 |
 | go-cmp | 2 | 15 | converged | evaluator countersigned | 0 |
@@ -138,8 +139,10 @@ loss rather than hiding it.
 | gitignore matcher | 5 | 42 | converged | 3 |
 | go-runewidth | 2 | 20 | converged | evaluator countersigned | 0 |
 | itertools | 1 | 8 | converged | evaluator countersigned | 0 |
+| nanostores | 2 | 18 | converged | evaluator countersigned | 0 |
 | natsort | 1 | 11 | converged | evaluator countersigned | 0 |
 | picomatch | 5 | 45 | **not converged** | n/a | 2 |
+| swift-collections | 5 | 25 | converged | evaluator countersigned | 1 |
 | TOML-M (mutated spec) | 1 | 14 | converged, with a disclosed process violation | 0 |
 | xid | 1 | 10 | converged | evaluator countersigned | 0 |
 
