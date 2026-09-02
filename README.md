@@ -29,7 +29,7 @@ Jeffy Loop is an autonomous engineering system built around a simple principle: 
 
 ## The receipts
 
-Eleven fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Ten are patches this loop wrote and a maintainer merged, across ten projects; the eleventh is a finding a maintainer found convincing enough to fix himself:
+Twelve fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Eleven are patches this loop wrote and a maintainer merged, across eleven projects; the twelfth is a finding a maintainer found convincing enough to fix himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
@@ -41,6 +41,7 @@ Eleven fixes are in other people's code because a maintainer with no stake in th
 - **[unicode-segmentation](https://github.com/unicode-rs/unicode-segmentation/pull/181) - merged.** `size_hint()` on the three public sentence iterators panicked on the empty string in debug builds, and in release returned a lower bound of `usize::MAX` against an upper bound of 0 - a violation of the `Iterator` contract that a caller sizing a buffer from the hint acts on. Merged 2026-09-01. unicode-segmentation is the UAX #29 implementation under much of the Rust ecosystem.
 - **[go-runewidth](https://github.com/mattn/go-runewidth/pull/106) - merged.** `Wrap(s, 0)` panicked with an integer divide by zero in a capacity hint, and the package-level `CreateLUT` never rebuilt its table after a flag change, so every width stayed stale. Two PRs, both merged 2026-09-01 within an hour of filing.
 - **[console](https://github.com/console-rs/console/pull/296) - merged.** `truncate_str` without `ansi-parsing` sliced the string at a column count used as a byte offset and panicked mid-character on any multi-byte input. Merged 2026-09-02 after one review round. console is the terminal layer under indicatif and dialoguer.
+- **[nanostores](https://github.com/nanostores/nanostores/pull/425) - merged.** `batch()` called from inside a store listener re-ran listeners that had already fired in the same flush, and the unbind returned by lifecycle `on()` detached a different listener on its second call. Two PRs, both merged 2026-09-02 by the maintainer for the next minor release. nanostores is the store Astro's documentation recommends for sharing state between islands.
 - **[chalk](https://github.com/chalk/chalk/pull/687) - fixed upstream.** The maintainer reproduced the finding, then wrote and merged his own fix, shipped in v6.0.0.
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
@@ -284,7 +285,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->113<!-- /count -->** | **<!-- count:fixed -->85<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->27<!-- /count -->** | **<!-- count:merged -->10<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->113<!-- /count -->** | **<!-- count:fixed -->85<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->27<!-- /count -->** | **<!-- count:merged -->11<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->84<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
@@ -302,6 +303,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | unicode-segmentation | Rust | [details](evals/unicode-segmentation/REPORT.md) - empty-string size_hint panic - [PR merged](https://github.com/unicode-rs/unicode-segmentation/pull/181) | Fixed |
 | go-runewidth | Go | [details](evals/go-runewidth/REPORT.md) - Wrap panicked at width zero - [PR merged](https://github.com/mattn/go-runewidth/pull/106) | Fixed |
 | console | Rust | [details](evals/console/REPORT.md) - truncate_str panicked mid-character - [PR merged](https://github.com/console-rs/console/pull/296) | Fixed |
+| nanostores | JavaScript | [details](evals/nanostores/REPORT.md) - batch() inside a listener replayed listeners - [PR merged](https://github.com/nanostores/nanostores/pull/425) | Fixed |
 | chalk | JavaScript | [details](evals/chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](evals/dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](evals/yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
@@ -316,7 +318,6 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | classnames | JavaScript | [details](evals/classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR open](https://github.com/JedWatson/classnames/pull/579) | Fixed |
 | assert | PHP | [details](evals/assert/REPORT.md) - isInitialized threw the wrong exception - [PR open](https://github.com/webmozarts/assert/pull/365) | Fixed |
 | natsort | Python | [details](evals/natsort/REPORT.md) - locale sentinel was three ASCII bytes - [PR open](https://github.com/SethMMorton/natsort/pull/196) | Fixed |
-| nanostores | JavaScript | [details](evals/nanostores/REPORT.md) - batch() inside a listener replayed listeners - [PR open](https://github.com/nanostores/nanostores/pull/425) | Fixed |
 | commons-text | Java | [details](evals/commons-text/REPORT.md) - LevenshteinDetailedDistance over-reported the distance - [PR open](https://github.com/apache/commons-text/pull/767) | Fixed |
 | mustache.js | JavaScript | [details](evals/mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](evals/spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |

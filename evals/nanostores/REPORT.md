@@ -18,7 +18,7 @@ budget of 5 rounds of 10**.
 | Ledger at convergence | 5 Lows carried |
 | Evaluator | **1 invocation: PASS** |
 | Suite at convergence | `pnpm test` green, `test:coverage: pass 80`, `check-claims` 26 checked / 0 mismatched |
-| Upstream | [PR #425](https://github.com/nanostores/nanostores/pull/425) (NS-1), [PR #426](https://github.com/nanostores/nanostores/pull/426) (NS-2) |
+| Upstream | [PR #425](https://github.com/nanostores/nanostores/pull/425) (NS-1) and [PR #426](https://github.com/nanostores/nanostores/pull/426) (NS-2), both **merged 2026-09-02** by the maintainer as `95cf91b` and `9ec8262`, slated for the next minor release |
 
 ## What the loop found
 
