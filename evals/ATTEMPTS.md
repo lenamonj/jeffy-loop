@@ -145,6 +145,7 @@ loss rather than hiding it.
 | swift-collections | 5 | 25 | converged | evaluator countersigned | 1 |
 | TOML-M (mutated spec) | 1 | 14 | converged, with a disclosed process violation | 0 |
 | utf8proc | 1 | 9 | converged | evaluator countersigned | 0 |
+| commons-text | 3 | 24 | converged | evaluator countersigned | 0 |
 | xid | 1 | 10 | converged | evaluator countersigned | 0 |
 
 ## The convergence standard is not uniform, and here is the split

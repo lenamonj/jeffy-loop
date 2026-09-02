@@ -1,0 +1,1040 @@
+diff --git a/.gitignore b/.gitignore
+index c5860d17..a8a55632 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -23,3 +23,4 @@ site-content
+ # NetBeans files
+ nb-configuration.xml
+ nbactions.xml
++.claude/jeffy-loop.local.md
+diff --git a/src/main/java/org/apache/commons/text/AlphabetConverter.java b/src/main/java/org/apache/commons/text/AlphabetConverter.java
+index a70cf5fa..c03e81a1 100644
+--- a/src/main/java/org/apache/commons/text/AlphabetConverter.java
++++ b/src/main/java/org/apache/commons/text/AlphabetConverter.java
+@@ -480,6 +480,13 @@ public final class AlphabetConverter {
+                 encodedLetterLength);
+     }
+ 
++    /**
++     * Returns one line per original letter, each reading {@code <original> -> <encoding>}, in the order the letters
++     * were given. The encoding is the same string {@link #encode(CharSequence)} produces for that letter, so a
++     * converter built from the class Javadoc's example renders {@code a -> 00}.
++     *
++     * @return A description of this converter's mapping, one line per original letter.
++     */
+     @Override
+     public String toString() {
+         final StringBuilder sb = new StringBuilder();
+@@ -487,7 +494,7 @@ public final class AlphabetConverter {
+         originalToEncoded.forEach((k, v) ->
+             sb.append(codePointToString(k))
+               .append(ARROW)
+-              .append(k)
++              .append(v)
+               .append(System.lineSeparator()));
+         // @formatter:on
+         return sb.toString();
+diff --git a/src/main/java/org/apache/commons/text/Builder.java b/src/main/java/org/apache/commons/text/Builder.java
+index c7cad0f5..2ed2dddb 100644
+--- a/src/main/java/org/apache/commons/text/Builder.java
++++ b/src/main/java/org/apache/commons/text/Builder.java
+@@ -25,8 +25,9 @@ import java.util.function.Supplier;
+  * take multiple steps to construct or are very complex to derive.
+  * </p>
+  * <p>
+- * The builder interface defines a single method, {@link #get()}, that classes must implement. The result of this method should be the final configured object
+- * or result after all building operations are performed.
++ * The builder interface declares {@link #build()} and inherits {@link #get()} from {@link Supplier}, so an implementing class must supply both. The result of
++ * either should be the final configured object or result after all building operations are performed, and implementing one in terms of the other is the
++ * usual way to keep them in step.
+  * </p>
+  * <p>
+  * It is a recommended practice that the methods supplied to configure the object or result being built return a reference to {@code this} so that method calls
+@@ -61,6 +62,10 @@ import java.util.function.Supplier;
+  *     public Font build() {
+  *         return this.font;
+  *     }
++ *
++ *     public Font get() {
++ *         return build();
++ *     }
+  * }
+  * </code>
+  * </pre>
+diff --git a/src/main/java/org/apache/commons/text/CaseUtils.java b/src/main/java/org/apache/commons/text/CaseUtils.java
+index 46dfc89b..d711c56e 100644
+--- a/src/main/java/org/apache/commons/text/CaseUtils.java
++++ b/src/main/java/org/apache/commons/text/CaseUtils.java
+@@ -59,8 +59,8 @@ public class CaseUtils {
+      * <pre>
+      * CaseUtils.toCamelCase(null, false)                                 = null
+      * CaseUtils.toCamelCase("", false, *)                                = ""
+-     * CaseUtils.toCamelCase(*, false, null)                              = *
+-     * CaseUtils.toCamelCase(*, true, new char[0])                        = *
++     * CaseUtils.toCamelCase("to camel case", false, null)                = "toCamelCase"
++     * CaseUtils.toCamelCase("to camel case", true, new char[0])          = "ToCamelCase"
+      * CaseUtils.toCamelCase("To.Camel.Case", false, new char[]{'.'})     = "toCamelCase"
+      * CaseUtils.toCamelCase(" to @ Camel case", true, new char[]{'@'})   = "ToCamelCase"
+      * CaseUtils.toCamelCase(" @to @ Camel case", false, new char[]{'@'}) = "toCamelCase"
+diff --git a/src/main/java/org/apache/commons/text/StrBuilder.java b/src/main/java/org/apache/commons/text/StrBuilder.java
+index 37226c5b..29f5016a 100644
+--- a/src/main/java/org/apache/commons/text/StrBuilder.java
++++ b/src/main/java/org/apache/commons/text/StrBuilder.java
+@@ -470,18 +470,24 @@ public class StrBuilder implements CharSequence, Appendable, Serializable, Build
+ 
+     /**
+      * Appends part of a CharSequence to this string builder. Appending null will call {@link #appendNull()}.
++     * <p>
++     * This method implements {@link Appendable#append(CharSequence, int, int)}, so its third argument is the end
++     * index, exclusive, and not a length: the characters appended are those of {@code seq.subSequence(startIndex,
++     * endIndex)}. The {@link #append(String, int, int)} overload beside it takes a length instead, as its own
++     * parameter names say.
++     * </p>
+      *
+      * @param seq        The CharSequence to append.
+      * @param startIndex The start index, inclusive, must be valid.
+-     * @param length     The length to append, must be valid.
++     * @param endIndex   The end index, exclusive, must be valid.
+      * @return {@code this} instance.
+      */
+     @Override
+-    public StrBuilder append(final CharSequence seq, final int startIndex, final int length) {
++    public StrBuilder append(final CharSequence seq, final int startIndex, final int endIndex) {
+         if (seq == null) {
+             return appendNull();
+         }
+-        return append(seq.toString(), startIndex, length);
++        return append(seq.toString(), startIndex, endIndex - startIndex);
+     }
+ 
+     /**
+diff --git a/src/main/java/org/apache/commons/text/StrSubstitutor.java b/src/main/java/org/apache/commons/text/StrSubstitutor.java
+index d1efcc22..f0e04b2f 100644
+--- a/src/main/java/org/apache/commons/text/StrSubstitutor.java
++++ b/src/main/java/org/apache/commons/text/StrSubstitutor.java
+@@ -578,7 +578,7 @@ public class StrSubstitutor {
+         if (source == null) {
+             return null;
+         }
+-        final StrBuilder buf = new StrBuilder(length).append(source, offset, length);
++        final StrBuilder buf = new StrBuilder(length).append(source, offset, offset + length);
+         substitute(buf, 0, length);
+         return buf.toString();
+     }
+diff --git a/src/main/java/org/apache/commons/text/WordUtils.java b/src/main/java/org/apache/commons/text/WordUtils.java
+index 4e32a2bb..476d552a 100644
+--- a/src/main/java/org/apache/commons/text/WordUtils.java
++++ b/src/main/java/org/apache/commons/text/WordUtils.java
+@@ -183,7 +183,6 @@ public class WordUtils {
+      * <pre>
+      * WordUtils.capitalize(null, *)            = null
+      * WordUtils.capitalize("", *)              = ""
+-     * WordUtils.capitalize(*, new char[0])     = *
+      * WordUtils.capitalize("i am fine", null)  = "I Am Fine"
+      * WordUtils.capitalize("i aM.fine", {'.'}) = "I aM.Fine"
+      * WordUtils.capitalize("i am fine", new char[]{}) = "I am fine"
+@@ -238,8 +237,8 @@ public class WordUtils {
+      * <pre>
+      * WordUtils.capitalizeFully(null, *)            = null
+      * WordUtils.capitalizeFully("", *)              = ""
+-     * WordUtils.capitalizeFully(*, null)            = *
+-     * WordUtils.capitalizeFully(*, new char[0])     = *
++     * WordUtils.capitalizeFully("i am FINE", null)  = "I Am Fine"
++     * WordUtils.capitalizeFully("i am FINE", new char[0]) = "I am fine"
+      * WordUtils.capitalizeFully("i aM.fine", {'.'}) = "I am.Fine"
+      * </pre>
+      *
+@@ -511,8 +510,7 @@ public class WordUtils {
+      * <pre>
+      * WordUtils.uncapitalize(null, *)            = null
+      * WordUtils.uncapitalize("", *)              = ""
+-     * WordUtils.uncapitalize(*, null)            = *
+-     * WordUtils.uncapitalize(*, new char[0])     = *
++     * WordUtils.uncapitalize("I Am Fine", null)  = "i am fine"
+      * WordUtils.uncapitalize("I AM.FINE", {'.'}) = "i AM.fINE"
+      * WordUtils.uncapitalize("I am fine", new char[]{}) = "i am fine"
+      * </pre>
+diff --git a/src/main/java/org/apache/commons/text/diff/CommandVisitor.java b/src/main/java/org/apache/commons/text/diff/CommandVisitor.java
+index 4dba623e..373497ee 100644
+--- a/src/main/java/org/apache/commons/text/diff/CommandVisitor.java
++++ b/src/main/java/org/apache/commons/text/diff/CommandVisitor.java
+@@ -143,4 +143,19 @@ public interface CommandVisitor<T> {
+      */
+     void visitKeepCommand(T object);
+ 
++    /**
++     * Method called once by {@link EditScript#visit EditScript.visit} after the last command of the script has been
++     * visited.
++     * <p>
++     * A visitor that accumulates commands and acts on them only when the next command of another kind arrives has no
++     * other way to learn that no such command is coming, so whatever it accumulated last would never be acted on. The
++     * default implementation does nothing, so a visitor that keeps no state need not implement it.
++     * </p>
++     *
++     * @since 1.15.1
++     */
++    default void visitEndOfScript() {
++        // empty
++    }
++
+ }
+diff --git a/src/main/java/org/apache/commons/text/diff/EditScript.java b/src/main/java/org/apache/commons/text/diff/EditScript.java
+index 053fdd50..baba1bff 100644
+--- a/src/main/java/org/apache/commons/text/diff/EditScript.java
++++ b/src/main/java/org/apache/commons/text/diff/EditScript.java
+@@ -121,12 +121,15 @@ public class EditScript<T> {
+      * pattern, this method is the entry point to which the user supplies its
+      * own visitor, the script will be responsible to drive it through the
+      * commands in order and call the appropriate method as each command is
+-     * encountered.
++     * encountered. Once the last command has been visited,
++     * {@link CommandVisitor#visitEndOfScript()} is called, so a visitor holding state gathered from the commands is
++     * told that no further command is coming.
+      *
+      * @param visitor  The visitor that will visit all commands in turn.
+      */
+     public void visit(final CommandVisitor<T> visitor) {
+         commands.forEach(command -> command.accept(visitor));
++        visitor.visitEndOfScript();
+     }
+ 
+ }
+diff --git a/src/main/java/org/apache/commons/text/diff/ReplacementsFinder.java b/src/main/java/org/apache/commons/text/diff/ReplacementsFinder.java
+index 9931e050..8dd3668b 100644
+--- a/src/main/java/org/apache/commons/text/diff/ReplacementsFinder.java
++++ b/src/main/java/org/apache/commons/text/diff/ReplacementsFinder.java
+@@ -101,6 +101,27 @@ public class ReplacementsFinder<T> implements CommandVisitor<T> {
+         pendingInsertions.add(object);
+     }
+ 
++    /**
++     * Handles the last replacement of the script, which no synchronization object follows.
++     * <p>
++     * The sub-sequences before a synchronization object are handed to the user handler when that object is visited. The
++     * sub-sequences at the very end of the script have no such object after them, so they are handed over here instead;
++     * without this they would be dropped, and a caller replaying the replacements would rebuild everything but the tail
++     * of the second sequence. The finder is left in its initial state afterwards, so it can visit another script.
++     * </p>
++     *
++     * @since 1.15.1
++     */
++    @Override
++    public void visitEndOfScript() {
++        if (!pendingDeletions.isEmpty() || !pendingInsertions.isEmpty()) {
++            handler.handleReplacement(skipped, pendingDeletions, pendingInsertions);
++            pendingDeletions.clear();
++            pendingInsertions.clear();
++        }
++        skipped = 0;
++    }
++
+     /**
+      * Handle a synchronization object.
+      * <p>
+diff --git a/src/main/java/org/apache/commons/text/diff/ReplacementsHandler.java b/src/main/java/org/apache/commons/text/diff/ReplacementsHandler.java
+index 6bfa5f5d..a5f9066e 100644
+--- a/src/main/java/org/apache/commons/text/diff/ReplacementsHandler.java
++++ b/src/main/java/org/apache/commons/text/diff/ReplacementsHandler.java
+@@ -33,7 +33,7 @@ public interface ReplacementsHandler<T> {
+      * <p>
+      * This method is called by a {@link ReplacementsFinder ReplacementsFinder} instance when it has synchronized two sub-sequences of object arrays being
+      * compared, and at least one of the sequences is non-empty. Since the sequences are synchronized, the objects before the two sub-sequences are equals (if
+-     * they exist). This property also holds for the objects after the two sub-sequences.
++     * they exist). This property also holds for the objects after the two sub-sequences, if they exist: the last replacement of a script has nothing after it and is handed over when the script ends.
+      * </p>
+      * <p>
+      * The replacement is defined as replacing the {@code from} sub-sequence into the {@code to} sub-sequence.
+diff --git a/src/main/java/org/apache/commons/text/lookup/DefaultStringLookup.java b/src/main/java/org/apache/commons/text/lookup/DefaultStringLookup.java
+index 597b9e4b..7e51630a 100644
+--- a/src/main/java/org/apache/commons/text/lookup/DefaultStringLookup.java
++++ b/src/main/java/org/apache/commons/text/lookup/DefaultStringLookup.java
+@@ -107,7 +107,8 @@ public enum DefaultStringLookup {
+     LOCAL_HOST(StringLookupFactory.KEY_LOCALHOST, StringLookupFactory.INSTANCE.localHostStringLookup()),
+ 
+     /**
+-     * The lookup for local host information using the key {@code "loopbackAddress"}.
++     * The lookup for local host information using the key {@code "loobackAddress"}, the value of
++     * {@link StringLookupFactory#KEY_LOOPBACK_ADDRESS}.
+      *
+      * @see StringLookupFactory#KEY_LOOPBACK_ADDRESS
+      * @see StringLookupFactory#loopbackAddressStringLookup()
+diff --git a/src/main/java/org/apache/commons/text/lookup/JavaPlatformStringLookup.java b/src/main/java/org/apache/commons/text/lookup/JavaPlatformStringLookup.java
+index 875a8307..b18d0615 100644
+--- a/src/main/java/org/apache/commons/text/lookup/JavaPlatformStringLookup.java
++++ b/src/main/java/org/apache/commons/text/lookup/JavaPlatformStringLookup.java
+@@ -85,21 +85,6 @@ final class JavaPlatformStringLookup extends AbstractStringLookup {
+     /** {@code vm} key for driving {@link JavaPlatformStringLookup#lookup(String)}. */
+     private static final String KEY_VM = "vm";
+ 
+-    /**
+-     * The main method for running the JavaPlatformStringLookup.
+-     *
+-     * @param args The standard Java main method parameter which is unused for our running of this class.
+-     */
+-    public static void main(final String[] args) {
+-        System.out.println(JavaPlatformStringLookup.class);
+-        System.out.printf("%s = %s%n", KEY_VERSION, INSTANCE.lookup(KEY_VERSION));
+-        System.out.printf("%s = %s%n", KEY_RUNTIME, INSTANCE.lookup(KEY_RUNTIME));
+-        System.out.printf("%s = %s%n", KEY_VM, INSTANCE.lookup(KEY_VM));
+-        System.out.printf("%s = %s%n", KEY_OS, INSTANCE.lookup(KEY_OS));
+-        System.out.printf("%s = %s%n", KEY_HARDWARE, INSTANCE.lookup(KEY_HARDWARE));
+-        System.out.printf("%s = %s%n", KEY_LOCALE, INSTANCE.lookup(KEY_LOCALE));
+-    }
+-
+     /**
+      * No need to build instances for now.
+      */
+diff --git a/src/main/java/org/apache/commons/text/lookup/PathFence.java b/src/main/java/org/apache/commons/text/lookup/PathFence.java
+index 0bd884a5..6bb25743 100644
+--- a/src/main/java/org/apache/commons/text/lookup/PathFence.java
++++ b/src/main/java/org/apache/commons/text/lookup/PathFence.java
+@@ -17,6 +17,8 @@
+ 
+ package org.apache.commons.text.lookup;
+ 
++import java.io.IOException;
++import java.nio.file.Files;
+ import java.nio.file.Path;
+ import java.nio.file.Paths;
+ import java.util.Arrays;
+@@ -28,6 +30,11 @@ import java.util.stream.Collectors;
+ /**
+  * A Path fence guards against using paths outside of a "fence" of made of root paths.
+  *
++ * <p>
++ * Resolution follows symbolic links: both the root paths and the path under test are resolved to their real locations before the containment check, so a
++ * symbolic link inside a fence that points outside it does not escape the fence.
++ * </p>
++ *
+  * Keep package-private.
+  */
+ final class PathFence {
+@@ -105,8 +112,33 @@ final class PathFence {
+         throw new IllegalArgumentException(String.format("[%s] -> [%s] not in the fence %s", fileName, pathAbs, roots));
+     }
+ 
++    /**
++     * Resolves a path to its real location so the fence check cannot be bypassed.
++     * <p>
++     * Lexical normalization alone removes {@code ".."} segments but does not follow symbolic links, so a link inside a fence pointing outside it would pass.
++     * {@link Path#toRealPath(java.nio.file.LinkOption...)} needs the path to exist, so resolve the deepest existing ancestor for real and re-attach the
++     * remaining segments; a path that does not exist yet cannot leak anything through a link that is not there.
++     * </p>
++     *
++     * @param path The path to resolve.
++     * @return The real path, absolute and normalized.
++     * @throws IllegalArgumentException if the path exists but cannot be resolved, because an unverifiable path must not be treated as inside the fence.
++     */
+     private Path normalize(final Path path) {
+-        return path.toAbsolutePath().normalize();
++        final Path absolute = path.toAbsolutePath().normalize();
++        Path existing = absolute;
++        while (existing != null && !Files.exists(existing)) {
++            existing = existing.getParent();
++        }
++        if (existing == null) {
++            return absolute;
++        }
++        try {
++            final Path real = existing.toRealPath();
++            return existing.equals(absolute) ? real : real.resolve(existing.relativize(absolute)).normalize();
++        } catch (final IOException e) {
++            throw new IllegalArgumentException(String.format("[%s] cannot be resolved to a real path", path), e);
++        }
+     }
+ 
+ }
+diff --git a/src/main/java/org/apache/commons/text/lookup/StringLookupFactory.java b/src/main/java/org/apache/commons/text/lookup/StringLookupFactory.java
+index 3feb4fe5..ec50df7a 100644
+--- a/src/main/java/org/apache/commons/text/lookup/StringLookupFactory.java
++++ b/src/main/java/org/apache/commons/text/lookup/StringLookupFactory.java
+@@ -255,6 +255,10 @@ public final class StringLookupFactory {
+          * <p>
+          * Path Fences apply to the file, property, and XML string lookups.
+          * </p>
++         * <p>
++         * Fences follow symbolic links: a fenced lookup resolves both the fence roots and the requested path to their real locations, so a symbolic link
++         * inside a fence that points outside it is rejected rather than followed.
++         * </p>
+          *
+          * @param fences Path resolution fences.
+          * @return {@code this} instance.
+@@ -1163,7 +1167,7 @@ public final class StringLookupFactory {
+      * </p>
+      *
+      * <pre>
+-     * StringSubstitutor.createInterpolator().replace("... ${loopbackAddress:canonical-name} ..."));
++     * StringSubstitutor.createInterpolator().replace("... ${loobackAddress:canonical-name} ..."));
+      * </pre>
+      * <p>
+      * The examples above convert {@code "canonical-name"} to the current host name, for example, {@code "EXAMPLE.apache.org"}.
+diff --git a/src/main/java/org/apache/commons/text/matcher/StringMatcher.java b/src/main/java/org/apache/commons/text/matcher/StringMatcher.java
+index e0bd7bc5..912a3445 100644
+--- a/src/main/java/org/apache/commons/text/matcher/StringMatcher.java
++++ b/src/main/java/org/apache/commons/text/matcher/StringMatcher.java
+@@ -143,7 +143,7 @@ public interface StringMatcher {
+      * @since 1.9
+      */
+     default int isMatch(final CharSequence buffer, final int start, final int bufferStart, final int bufferEnd) {
+-        return isMatch(CharSequenceUtils.toCharArray(buffer), start, bufferEnd, bufferEnd);
++        return isMatch(CharSequenceUtils.toCharArray(buffer), start, bufferStart, bufferEnd);
+     }
+ 
+     /**
+diff --git a/src/main/java/org/apache/commons/text/numbers/ParsedDecimal.java b/src/main/java/org/apache/commons/text/numbers/ParsedDecimal.java
+index 02754f9e..b3957135 100644
+--- a/src/main/java/org/apache/commons/text/numbers/ParsedDecimal.java
++++ b/src/main/java/org/apache/commons/text/numbers/ParsedDecimal.java
+@@ -32,7 +32,7 @@ package org.apache.commons.text.numbers;
+  *  <tr><td>0.0</td><td>false</td><td>[0]</td><td>0</td></tr>
+  *  <tr><td>1.2</td><td>false</td><td>[1, 2]</td><td>-1</td></tr>
+  *  <tr><td>-0.00971</td><td>true</td><td>[9, 7, 1]</td><td>-5</td></tr>
+- *  <tr><td>56300</td><td>true</td><td>[5, 6, 3]</td><td>2</td></tr>
++ *  <tr><td>56300</td><td>false</td><td>[5, 6, 3]</td><td>2</td></tr>
+  * </table>
+  */
+ final class ParsedDecimal {
+diff --git a/src/main/java/org/apache/commons/text/similarity/JaroWinklerDistance.java b/src/main/java/org/apache/commons/text/similarity/JaroWinklerDistance.java
+index 49b176d9..561f5db3 100644
+--- a/src/main/java/org/apache/commons/text/similarity/JaroWinklerDistance.java
++++ b/src/main/java/org/apache/commons/text/similarity/JaroWinklerDistance.java
+@@ -74,8 +74,8 @@ public class JaroWinklerDistance implements EditDistance<Double> {
+      * distance.apply("hello", "hallo")    = 0.12
+      * distance.apply("ABC Corporation", "ABC Corp") = 0.09
+      * distance.apply("D N H Enterprises Inc", "D &amp; H Enterprises, Inc.") = 0.05
+-     * distance.apply("My Gym Children's Fitness Center", "My Gym. Childrens Fitness") = 0.08
+-     * distance.apply("PENNSYLVANIA", "PENNCISYLVNIA") = 0.12
++     * distance.apply("My Gym Children's Fitness Center", "My Gym. Childrens Fitness") = 0.06
++     * distance.apply("PENNSYLVANIA", "PENNCISYLVNIA") = 0.10
+      * </pre>
+      *
+      * @param left The first input, must not be null.
+@@ -111,8 +111,8 @@ public class JaroWinklerDistance implements EditDistance<Double> {
+      * distance.apply("hello", "hallo")    = 0.12
+      * distance.apply("ABC Corporation", "ABC Corp") = 0.09
+      * distance.apply("D N H Enterprises Inc", "D &amp; H Enterprises, Inc.") = 0.05
+-     * distance.apply("My Gym Children's Fitness Center", "My Gym. Childrens Fitness") = 0.08
+-     * distance.apply("PENNSYLVANIA", "PENNCISYLVNIA") = 0.12
++     * distance.apply("My Gym Children's Fitness Center", "My Gym. Childrens Fitness") = 0.06
++     * distance.apply("PENNSYLVANIA", "PENNCISYLVNIA") = 0.10
+      * </pre>
+      *
+      * @param <E> The type of similarity score unit.
+diff --git a/src/main/java/org/apache/commons/text/similarity/JaroWinklerSimilarity.java b/src/main/java/org/apache/commons/text/similarity/JaroWinklerSimilarity.java
+index 9bbedba6..c2ce2dd3 100644
+--- a/src/main/java/org/apache/commons/text/similarity/JaroWinklerSimilarity.java
++++ b/src/main/java/org/apache/commons/text/similarity/JaroWinklerSimilarity.java
+@@ -149,8 +149,8 @@ public class JaroWinklerSimilarity implements SimilarityScore<Double> {
+      * sim.apply("hello", "hallo")    = 0.88
+      * sim.apply("ABC Corporation", "ABC Corp") = 0.91
+      * sim.apply("D N H Enterprises Inc", "D &amp; H Enterprises, Inc.") = 0.95
+-     * sim.apply("My Gym Children's Fitness Center", "My Gym. Childrens Fitness") = 0.92
+-     * sim.apply("PENNSYLVANIA", "PENNCISYLVNIA") = 0.88
++     * sim.apply("My Gym Children's Fitness Center", "My Gym. Childrens Fitness") = 0.94
++     * sim.apply("PENNSYLVANIA", "PENNCISYLVNIA") = 0.90
+      * </pre>
+      *
+      * @param left  The first input, must not be null.
+@@ -186,8 +186,8 @@ public class JaroWinklerSimilarity implements SimilarityScore<Double> {
+      * sim.apply("hello", "hallo")    = 0.88
+      * sim.apply("ABC Corporation", "ABC Corp") = 0.91
+      * sim.apply("D N H Enterprises Inc", "D &amp; H Enterprises, Inc.") = 0.95
+-     * sim.apply("My Gym Children's Fitness Center", "My Gym. Childrens Fitness") = 0.92
+-     * sim.apply("PENNSYLVANIA", "PENNCISYLVNIA") = 0.88
++     * sim.apply("My Gym Children's Fitness Center", "My Gym. Childrens Fitness") = 0.94
++     * sim.apply("PENNSYLVANIA", "PENNCISYLVNIA") = 0.90
+      * </pre>
+      *
+      * @param <E> The type of similarity score unit.
+@@ -202,7 +202,11 @@ public class JaroWinklerSimilarity implements SimilarityScore<Double> {
+         if (left == null || right == null) {
+             throw new IllegalArgumentException("CharSequences must not be null");
+         }
+-        if (Objects.equals(left, right)) {
++        // Two empty inputs are identical, so their similarity is 1. The general path below cannot say so: it reaches
++        // zero matches and returns 0, which is the answer for two inputs that share nothing rather than for two that
++        // are the same. Length is the test, not equality, because equality here is the element type's - two empty
++        // StringBuilders are not equal to each other and neither is an empty String to an empty StringBuilder.
++        if (left.length() == 0 && right.length() == 0 || Objects.equals(left, right)) {
+             return 1d;
+         }
+         final int[] mtp = matches(left, right);
+diff --git a/src/main/java/org/apache/commons/text/similarity/LevenshteinDetailedDistance.java b/src/main/java/org/apache/commons/text/similarity/LevenshteinDetailedDistance.java
+index f3138230..dcdba132 100644
+--- a/src/main/java/org/apache/commons/text/similarity/LevenshteinDetailedDistance.java
++++ b/src/main/java/org/apache/commons/text/similarity/LevenshteinDetailedDistance.java
+@@ -53,69 +53,41 @@ public class LevenshteinDetailedDistance implements EditDistance<LevenshteinResu
+         int subCount = 0;
+         int rowIndex = right.length();
+         int columnIndex = left.length();
+-        int dataAtLeft = 0;
+-        int dataAtTop = 0;
+-        int dataAtDiagonal = 0;
+-        int data = 0;
+-        boolean deleted = false;
+-        boolean added = false;
+-        while (rowIndex >= 0 && columnIndex >= 0) {
+-            if (columnIndex == 0) {
+-                dataAtLeft = -1;
+-            } else {
+-                dataAtLeft = matrix[rowIndex][columnIndex - 1];
+-            }
+-            if (rowIndex == 0) {
+-                dataAtTop = -1;
+-            } else {
+-                dataAtTop = matrix[rowIndex - 1][columnIndex];
+-            }
+-            if (rowIndex > 0 && columnIndex > 0) {
+-                dataAtDiagonal = matrix[rowIndex - 1][columnIndex - 1];
+-            } else {
+-                dataAtDiagonal = -1;
+-            }
+-            if (dataAtLeft == -1 && dataAtTop == -1 && dataAtDiagonal == -1) {
+-                break;
+-            }
+-            data = matrix[rowIndex][columnIndex];
+-            // case in which the character at left and right are the same,
+-            // in this case none of the counters will be incremented.
+-            if (columnIndex > 0 && rowIndex > 0 && left.at(columnIndex - 1).equals(right.at(rowIndex - 1))) {
+-                columnIndex--;
++        // Walk back from the last cell, taking only steps the matrix says are on a shortest path: a step is on one when
++        // the predecessor cell holds this cell's value less the cost of the step. Choosing a step the matrix does not
++        // support - which is what made this walk greedy - produces edit counts that sum to more than the distance.
++        while (rowIndex > 0 || columnIndex > 0) {
++            final int data = matrix[rowIndex][columnIndex];
++            if (rowIndex > 0 && columnIndex > 0 && matrix[rowIndex - 1][columnIndex - 1] == data
++                    && left.at(columnIndex - 1).equals(right.at(rowIndex - 1))) {
++                // The characters are equal and the diagonal costs nothing, so no counter moves.
+                 rowIndex--;
+-                continue;
+-            }
+-            // handling insert and delete cases.
+-            deleted = false;
+-            added = false;
+-            if (data - 1 == dataAtLeft && data <= dataAtDiagonal && data <= dataAtTop || dataAtDiagonal == -1 && dataAtTop == -1) { // NOPMD
++                columnIndex--;
++            } else if (columnIndex > 0 && matrix[rowIndex][columnIndex - 1] == data - 1) {
++                // A character of left is consumed without one of right.
+                 columnIndex--;
+                 if (swapped) {
+                     addCount++;
+-                    added = true;
+                 } else {
+                     delCount++;
+-                    deleted = true;
+                 }
+-            } else if (data - 1 == dataAtTop && data <= dataAtDiagonal && data <= dataAtLeft || dataAtDiagonal == -1 && dataAtLeft == -1) { // NOPMD
++            } else if (rowIndex > 0 && matrix[rowIndex - 1][columnIndex] == data - 1) {
++                // A character of right is consumed without one of left.
+                 rowIndex--;
+                 if (swapped) {
+                     delCount++;
+-                    deleted = true;
+                 } else {
+                     addCount++;
+-                    added = true;
+                 }
+-            }
+-            // substituted case
+-            if (!added && !deleted) {
++            } else {
++                // Nothing else is on a shortest path here, so this cell was reached by substituting.
+                 subCount++;
+-                columnIndex--;
+                 rowIndex--;
++                columnIndex--;
+             }
+         }
+-        return new LevenshteinResults(addCount + delCount + subCount, addCount, delCount, subCount);
++        // The distance is the cell the dynamic program filled, not a total recovered from this walk.
++        return new LevenshteinResults(matrix[right.length()][left.length()], addCount, delCount, subCount);
+     }
+ 
+     /**
+diff --git a/src/test/java/org/apache/commons/text/AlphabetConverterTest.java b/src/test/java/org/apache/commons/text/AlphabetConverterTest.java
+index 01665124..09f6eec9 100644
+--- a/src/test/java/org/apache/commons/text/AlphabetConverterTest.java
++++ b/src/test/java/org/apache/commons/text/AlphabetConverterTest.java
+@@ -293,4 +293,22 @@ class AlphabetConverterTest {
+         assertEquals(original, decoded, () -> "Encoded '" + original + "' into '" + encoded + "', but decoded into '" + decoded + "'");
+     }
+ 
++    /**
++     * Each line of the description must name the letter's encoding, which is what the class Javadoc's example
++     * documents: {@code ac.encode("a")} is {@code 00}, so the description reads {@code a -> 00}. The rendering is
++     * checked against {@code encode} itself rather than against a transcribed table, so the two cannot drift apart,
++     * and the code point the description used to carry instead is asserted absent.
++     */
++    @Test
++    void testToStringRendersTheEncodingNotTheCodePoint() throws UnsupportedEncodingException {
++        final AlphabetConverter ac = createJavadocExample();
++        final String eol = System.lineSeparator();
++        for (final Character original : new Character[] { 'a', 'b', 'c', 'd' }) {
++            final String letter = String.valueOf(original);
++            final String line = letter + " -> " + ac.encode(letter);
++            assertTrue(ac.toString().contains(line + eol), () -> "no line reading " + line + " in " + ac.toString());
++        }
++        assertFalse(ac.toString().contains("a -> 97"), "the description names the code point of a, not its encoding");
++        assertEquals(4, ac.toString().split(java.util.regex.Pattern.quote(eol), -1).length - 1);
++    }
+ }
+diff --git a/src/test/java/org/apache/commons/text/StrBuilderAppendInsertTest.java b/src/test/java/org/apache/commons/text/StrBuilderAppendInsertTest.java
+index 05e64ae8..bc30c900 100644
+--- a/src/test/java/org/apache/commons/text/StrBuilderAppendInsertTest.java
++++ b/src/test/java/org/apache/commons/text/StrBuilderAppendInsertTest.java
+@@ -17,6 +17,7 @@
+ 
+ package org.apache.commons.text;
+ 
++import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
+ import static org.junit.jupiter.api.Assertions.fail;
+@@ -353,10 +354,25 @@ class StrBuilderAppendInsertTest {
+         sb.append("abcbardef", 3, 3);
+         assertEquals("foobar", sb.toString());
+ 
+-        sb.append((CharSequence) "abcbardef", 4, 3);
++        // The CharSequence overload implements Appendable, whose third argument is the exclusive end index, so the
++        // same three characters are named by (4, 7) rather than by (4, 3). The expected output is unchanged.
++        sb.append((CharSequence) "abcbardef", 4, 7);
+         assertEquals("foobarard", sb.toString());
+     }
+ 
++    @Test
++    void testAppend_CharSequence_int_int_honoursAppendableContract() {
++        final Appendable appendable = new StrBuilder("x");
++        assertDoesNotThrow(() -> appendable.append("abcdef", 1, 3));
++        assertEquals("xbc", appendable.toString(), "Appendable appends seq.subSequence(start, end)");
++        final Appendable toTheEnd = new StrBuilder("x");
++        assertDoesNotThrow(() -> toTheEnd.append("abcdef", 1, 6));
++        assertEquals("xbcdef", toTheEnd.toString(), "an end index at the length is valid");
++        final StrBuilder reversed = new StrBuilder("x");
++        assertThrows(IndexOutOfBoundsException.class, () -> reversed.append((CharSequence) "abcdef", 3, 1),
++                "a start index past the end index is refused");
++    }
++
+     @Test
+     void testAppend_StringBuffer() {
+         StrBuilder sb = new StrBuilder();
+diff --git a/src/test/java/org/apache/commons/text/diff/ReplacementsFinderTest.java b/src/test/java/org/apache/commons/text/diff/ReplacementsFinderTest.java
+index 66db44a0..c584d740 100644
+--- a/src/test/java/org/apache/commons/text/diff/ReplacementsFinderTest.java
++++ b/src/test/java/org/apache/commons/text/diff/ReplacementsFinderTest.java
+@@ -27,6 +27,7 @@ import org.apache.commons.lang3.ArrayUtils;
+ import org.junit.jupiter.api.BeforeEach;
+ import org.junit.jupiter.params.ParameterizedTest;
+ import org.junit.jupiter.params.provider.Arguments;
++import org.junit.jupiter.params.provider.CsvSource;
+ import org.junit.jupiter.params.provider.MethodSource;
+ 
+ /**
+@@ -66,6 +67,28 @@ class ReplacementsFinderTest {
+         }
+     }
+ 
++    /** Applies the replacements it is handed back over the first sequence, which must reproduce the second one. */
++    private static final class RebuildingHandler implements ReplacementsHandler<Character> {
++        private final String left;
++        private final StringBuilder rebuilt = new StringBuilder();
++        private int index;
++
++        RebuildingHandler(final String left) {
++            this.left = left;
++        }
++
++        @Override
++        public void handleReplacement(final int skipped, final List<Character> from, final List<Character> to) {
++            rebuilt.append(left, index, index + skipped);
++            index += skipped + from.size();
++            to.forEach(rebuilt::append);
++        }
++
++        String rebuild() {
++            return rebuilt + left.substring(index);
++        }
++    }
++
+     public static Stream<Arguments> parameters() {
+         return Stream.of(Arguments.of("branco", "blanco", 1, new Character[] {'r'}, new Character[] {'l'}),
+             Arguments.of("test the blocks before you use it", "try the blocks before you put it", 25,
+@@ -79,6 +102,14 @@ class ReplacementsFinderTest {
+         handler = new SimpleHandler();
+     }
+ 
++    @ParameterizedTest
++    @CsvSource({"ab, ac", "ab, abc", "abc, ab", "abc, xyz", "branco, blanco", "abXcd, abYcd", "Xab, Yab", "abc, abc"})
++    void testReplacementsRebuildTheSecondSequence(final String left, final String right) {
++        final RebuildingHandler rebuilding = new RebuildingHandler(left);
++        new StringsComparator(left, right).getScript().visit(new ReplacementsFinder<>(rebuilding));
++        assertEquals(right, rebuilding.rebuild(), "Replacements do not rebuild the second sequence");
++    }
++
+     @ParameterizedTest
+     @MethodSource("parameters")
+     void testReplacementsHandler(final String left, final String right, final int skipped,
+diff --git a/src/test/java/org/apache/commons/text/lookup/JavaPlatformStringLookupTest.java b/src/test/java/org/apache/commons/text/lookup/JavaPlatformStringLookupTest.java
+index 3f081653..8b6c98bf 100644
+--- a/src/test/java/org/apache/commons/text/lookup/JavaPlatformStringLookupTest.java
++++ b/src/test/java/org/apache/commons/text/lookup/JavaPlatformStringLookupTest.java
+@@ -22,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+-import org.apache.commons.lang3.ArrayUtils;
+ import org.junit.jupiter.api.Test;
+ 
+ /**
+@@ -35,11 +34,6 @@ class JavaPlatformStringLookupTest {
+         assertThrows(IllegalArgumentException.class, () -> JavaPlatformStringLookup.INSTANCE.apply("BADKEY"));
+     }
+ 
+-    @Test
+-    void testMain() {
+-        JavaPlatformStringLookup.main(ArrayUtils.EMPTY_STRING_ARRAY);
+-    }
+-
+     @Test
+     void testNull() {
+         assertNull(JavaPlatformStringLookup.INSTANCE.apply(null));
+diff --git a/src/test/java/org/apache/commons/text/lookup/PathFenceTest.java b/src/test/java/org/apache/commons/text/lookup/PathFenceTest.java
+new file mode 100644
+index 00000000..03f2307e
+--- /dev/null
++++ b/src/test/java/org/apache/commons/text/lookup/PathFenceTest.java
+@@ -0,0 +1,105 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements. See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache license, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License. You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the license for the specific language governing permissions and
++ * limitations under the license.
++ */
++
++package org.apache.commons.text.lookup;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++import org.junit.jupiter.api.Assumptions;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++
++/**
++ * Tests {@link PathFence}.
++ */
++class PathFenceTest {
++
++    /** Contents of the file that lives outside the fence. */
++    private static final String SECRET = "TOP-SECRET";
++
++    @TempDir
++    private Path tempDir;
++
++    /**
++     * Creates a symbolic link, aborting the test when the platform will not make one; Windows refuses without elevation or developer mode.
++     *
++     * @param link   The link to create.
++     * @param target The link target.
++     */
++    private void createSymbolicLink(final Path link, final Path target) {
++        try {
++            Files.createSymbolicLink(link, target);
++        } catch (final IOException | UnsupportedOperationException e) {
++            Assumptions.abort("This platform cannot create symbolic links: " + e);
++        }
++    }
++
++    @Test
++    void testPathInsideFenceIsAccepted() throws IOException {
++        final Path inside = Files.createDirectories(tempDir.resolve("in"));
++        final Path file = Files.write(inside.resolve("ok.txt"), "INSIDE".getBytes(StandardCharsets.UTF_8));
++        final StringLookup lookup = StringLookupFactory.builder().setFences(inside).get().fileStringLookup();
++        assertEquals("INSIDE", lookup.lookup("UTF-8:" + file));
++    }
++
++    @Test
++    void testRelativeTraversalOutOfFenceIsRejected() throws IOException {
++        final Path inside = Files.createDirectories(tempDir.resolve("in"));
++        final Path outside = Files.createDirectories(tempDir.resolve("out"));
++        Files.write(outside.resolve("secret.txt"), SECRET.getBytes(StandardCharsets.UTF_8));
++        final StringLookup lookup = StringLookupFactory.builder().setFences(inside).get().fileStringLookup();
++        assertThrows(IllegalArgumentException.class, () -> lookup.lookup("UTF-8:" + inside.resolve("../out/secret.txt")));
++    }
++
++    /**
++     * A symbolic link inside a fence pointing outside it must not escape the fence: lexical normalization does not follow links, so this is the check that
++     * fails when the fence resolves paths lexically.
++     *
++     * @throws IOException on I/O error.
++     */
++    @Test
++    void testSymbolicLinkInsideFenceIsRejected() throws IOException {
++        final Path inside = Files.createDirectories(tempDir.resolve("in"));
++        final Path outside = Files.createDirectories(tempDir.resolve("out"));
++        final Path secret = Files.write(outside.resolve("secret.txt"), SECRET.getBytes(StandardCharsets.UTF_8));
++        final Path link = inside.resolve("link.txt");
++        createSymbolicLink(link, secret);
++        final StringLookup lookup = StringLookupFactory.builder().setFences(inside).get().fileStringLookup();
++        assertThrows(IllegalArgumentException.class, () -> lookup.lookup("UTF-8:" + link));
++    }
++
++    /**
++     * A fence root that is itself a symbolic link still fences the directory it points at.
++     *
++     * @throws IOException on I/O error.
++     */
++    @Test
++    void testSymbolicLinkFenceRootResolvesToItsTarget() throws IOException {
++        final Path real = Files.createDirectories(tempDir.resolve("real"));
++        final Path file = Files.write(real.resolve("ok.txt"), "INSIDE".getBytes(StandardCharsets.UTF_8));
++        final Path linkedRoot = tempDir.resolve("linked");
++        createSymbolicLink(linkedRoot, real);
++        final StringLookup lookup = StringLookupFactory.builder().setFences(linkedRoot).get().fileStringLookup();
++        assertEquals("INSIDE", lookup.lookup("UTF-8:" + file));
++    }
++}
+diff --git a/src/test/java/org/apache/commons/text/matcher/StringMatcherTest.java b/src/test/java/org/apache/commons/text/matcher/StringMatcherTest.java
+new file mode 100644
+index 00000000..33a965a1
+--- /dev/null
++++ b/src/test/java/org/apache/commons/text/matcher/StringMatcherTest.java
+@@ -0,0 +1,110 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.commons.text.matcher;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++import java.util.HashMap;
++import java.util.Map;
++
++import org.apache.commons.text.StringSubstitutor;
++import org.junit.jupiter.api.Test;
++
++/**
++ * Tests the default methods of {@link StringMatcher}, which are the only implementation a matcher that supplies just
++ * the abstract {@code char[]} overload inherits.
++ */
++public class StringMatcherTest {
++
++    /**
++     * Records the window it is handed, and matches only inside that window. Supplies just the abstract overload, so
++     * every other entry point resolves to a default method of the interface.
++     */
++    private static final class RecordingMatcher implements StringMatcher {
++
++        private final char[] chars;
++        private int lastBufferStart = -1;
++        private int lastBufferEnd = -1;
++
++        RecordingMatcher(final String str) {
++            this.chars = str.toCharArray();
++        }
++
++        @Override
++        public int isMatch(final char[] buffer, final int start, final int bufferStart, final int bufferEnd) {
++            lastBufferStart = bufferStart;
++            lastBufferEnd = bufferEnd;
++            if (start < bufferStart || start + chars.length > bufferEnd) {
++                return 0;
++            }
++            for (int i = 0; i < chars.length; i++) {
++                if (buffer[start + i] != chars[i]) {
++                    return 0;
++                }
++            }
++            return chars.length;
++        }
++
++        @Override
++        public int size() {
++            return chars.length;
++        }
++    }
++
++    /**
++     * The {@code CharSequence} overload documents {@code bufferStart} as the first active index in the buffer, exactly
++     * as the {@code char[]} overload does, so an inheriting matcher must be handed the same window by both.
++     */
++    @Test
++    public void testIsMatchCharSequencePassesBufferStartThrough() {
++        final RecordingMatcher viaChars = new RecordingMatcher("c");
++        final RecordingMatcher viaCharSequence = new RecordingMatcher("c");
++        viaChars.isMatch("abcdef".toCharArray(), 2, 1, 5);
++        viaCharSequence.isMatch("abcdef", 2, 1, 5);
++        assertEquals(1, viaChars.lastBufferStart);
++        assertEquals(1, viaCharSequence.lastBufferStart);
++        assertEquals(5, viaChars.lastBufferEnd);
++        assertEquals(5, viaCharSequence.lastBufferEnd);
++    }
++
++    /**
++     * The two four-argument overloads must agree on the result they compute for the same window, not only on the
++     * arguments they forward.
++     */
++    @Test
++    public void testIsMatchOverloadsAgreeOnTheSameWindow() {
++        assertEquals(new RecordingMatcher("ab").isMatch("xabz".toCharArray(), 1, 0, 4),
++                new RecordingMatcher("ab").isMatch("xabz", 1, 0, 4));
++        assertEquals(new RecordingMatcher("ab").isMatch("xabz".toCharArray(), 1, 2, 4),
++                new RecordingMatcher("ab").isMatch("xabz", 1, 2, 4));
++    }
++
++    /**
++     * {@link StringSubstitutor} drives its matchers through the {@code CharSequence} overload, because the buffer it
++     * searches is a {@code TextStringBuilder}. A caller-supplied prefix matcher that honours {@code bufferStart}
++     * therefore reaches the interface default, and a discarded {@code bufferStart} silently stops the substitution.
++     */
++    @Test
++    public void testStringSubstitutorHandsACustomMatcherTheRealBufferStart() {
++        final Map<String, String> values = new HashMap<>();
++        values.put("key", "value");
++        final StringSubstitutor substitutor = new StringSubstitutor(values);
++        substitutor.setVariablePrefixMatcher(new RecordingMatcher("${"));
++        assertEquals("a value b", substitutor.replace("a ${key} b"));
++    }
++}
+diff --git a/src/test/java/org/apache/commons/text/similarity/JaroWinklerDistanceTest.java b/src/test/java/org/apache/commons/text/similarity/JaroWinklerDistanceTest.java
+index 0f4ee10c..85322bc4 100644
+--- a/src/test/java/org/apache/commons/text/similarity/JaroWinklerDistanceTest.java
++++ b/src/test/java/org/apache/commons/text/similarity/JaroWinklerDistanceTest.java
+@@ -117,4 +117,25 @@ class JaroWinklerDistanceTest {
+         assertArrayEquals(new int[]{2, 0, 2}, JaroWinklerDistance.matches("ab", "aba"));
+     }
+ 
++    /**
++     * The distance is one minus the similarity, so the similarity's empty-input defect surfaced here as a distance of
++     * 1.0 - two inputs as far apart as possible - for two inputs that are in fact identical.
++     */
++    @Test
++    void testEmptyInputsAreIdenticalWhateverTheirType() {
++        assertEquals(0d, distance.apply(new StringBuilder(), new StringBuilder()), 0.00001d);
++        assertEquals(0d, distance.apply("", new StringBuilder()), 0.00001d);
++        assertEquals(0d, distance.apply(new StringBuilder(), ""), 0.00001d);
++        assertEquals(0d, distance.apply("", ""), 0.00001d);
++    }
++
++    /**
++     * The empty shortcut must not swallow the cases either side of it.
++     */
++    @Test
++    void testEmptyShortcutLeavesItsNeighboursAlone() {
++        assertEquals(1d, distance.apply(new StringBuilder(), new StringBuilder("a")), 0.00001d);
++        assertEquals(1d, distance.apply(new StringBuilder("a"), new StringBuilder()), 0.00001d);
++        assertEquals(0d, distance.apply(new StringBuilder("foo"), new StringBuilder("foo")), 0.00001d);
++    }
+ }
+diff --git a/src/test/java/org/apache/commons/text/similarity/JaroWinklerSimilarityTest.java b/src/test/java/org/apache/commons/text/similarity/JaroWinklerSimilarityTest.java
+index 0f391688..514e93cf 100644
+--- a/src/test/java/org/apache/commons/text/similarity/JaroWinklerSimilarityTest.java
++++ b/src/test/java/org/apache/commons/text/similarity/JaroWinklerSimilarityTest.java
+@@ -146,4 +146,28 @@ class JaroWinklerSimilarityTest {
+         assertEquals(0.941666d, similarity.apply(wrap("aaabcd"), "aaacdb"), 0.00001d);
+         assertEquals(0.911111d, similarity.apply(wrap("John Horn"), "John Hopkins"), 0.00001d);
+     }
++
++    /**
++     * Two empty inputs are identical, so their similarity is 1 whatever CharSequence type carries them. The shortcut
++     * that says so tested element equality, which a StringBuilder does not define by content, so a pair the
++     * documentation scores 1.0 fell through to the match loop and scored 0.0 instead.
++     */
++    @Test
++    void testEmptyInputsAreIdenticalWhateverTheirType() {
++        assertEquals(1d, similarity.apply(new StringBuilder(), new StringBuilder()), 0.00001d);
++        assertEquals(1d, similarity.apply("", new StringBuilder()), 0.00001d);
++        assertEquals(1d, similarity.apply(new StringBuilder(), ""), 0.00001d);
++        assertEquals(1d, similarity.apply("", ""), 0.00001d);
++    }
++
++    /**
++     * The empty shortcut must not swallow the cases either side of it: one empty input still scores 0, and two
++     * non-empty inputs with equal content still score 1 through the match loop rather than through any shortcut.
++     */
++    @Test
++    void testEmptyShortcutLeavesItsNeighboursAlone() {
++        assertEquals(0d, similarity.apply(new StringBuilder(), new StringBuilder("a")), 0.00001d);
++        assertEquals(0d, similarity.apply(new StringBuilder("a"), new StringBuilder()), 0.00001d);
++        assertEquals(1d, similarity.apply(new StringBuilder("foo"), new StringBuilder("foo")), 0.00001d);
++    }
+ }
+diff --git a/src/test/java/org/apache/commons/text/similarity/LevenshteinDetailedDistanceTest.java b/src/test/java/org/apache/commons/text/similarity/LevenshteinDetailedDistanceTest.java
+index f80cbc79..3acb00a0 100644
+--- a/src/test/java/org/apache/commons/text/similarity/LevenshteinDetailedDistanceTest.java
++++ b/src/test/java/org/apache/commons/text/similarity/LevenshteinDetailedDistanceTest.java
+@@ -19,6 +19,10 @@ package org.apache.commons.text.similarity;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
+ 
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Random;
++
+ import org.apache.commons.text.TextStringBuilder;
+ import org.junit.jupiter.api.Test;
+ import org.junit.jupiter.params.ParameterizedTest;
+@@ -479,4 +483,35 @@ class LevenshteinDetailedDistanceTest {
+         assertEquals(expectedResult.toString(), actualResult.toString());
+     }
+ 
++    /**
++     * The reported distance must be the minimum number of edits, which is what {@link LevenshteinDistance} computes for the same pair. Before this was fixed
++     * the detailed distance was recovered from a backtrace that took steps the matrix did not support, so it could exceed the true distance.
++     */
++    @Test
++    void testDistanceAgreesWithLevenshteinDistance() {
++        final LevenshteinDistance plain = LevenshteinDistance.getDefaultInstance();
++        // The smallest pair on which the two disagreed: "aba" reaches "bab" by deleting the leading a and appending b.
++        assertEquals(2, plain.apply("aba", "bab"));
++        assertEquals(2, UNLIMITED_DISTANCE.apply("aba", "bab").getDistance());
++        final List<String> corpus = new ArrayList<>();
++        final Random random = new Random(20260902L);
++        for (int i = 0; i < 120; i++) {
++            final StringBuilder builder = new StringBuilder();
++            final int length = random.nextInt(9);
++            for (int j = 0; j < length; j++) {
++                builder.append((char) ('a' + random.nextInt(3)));
++            }
++            corpus.add(builder.toString());
++        }
++        for (final String left : corpus) {
++            for (final String right : corpus) {
++                final LevenshteinResults results = UNLIMITED_DISTANCE.apply(left, right);
++                assertEquals(plain.apply(left, right), results.getDistance(), () -> "distance for [" + left + "] -> [" + right + "]");
++                assertEquals(results.getDistance().intValue(),
++                        results.getInsertCount() + results.getDeleteCount() + results.getSubstituteCount(),
++                        () -> "edit counts must sum to the distance for [" + left + "] -> [" + right + "]");
++            }
++        }
++    }
++
+ }
