@@ -1,0 +1,416 @@
+diff --git a/.gitignore b/.gitignore
+index dc5cdca..d29afe3 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -11,3 +11,4 @@ DerivedData
+ docs/
+ 
+ .*.sw?
++.claude/jeffy-loop.local.md
+diff --git a/.licenseignore b/.licenseignore
+index bf9bd75..427f9a0 100644
+--- a/.licenseignore
++++ b/.licenseignore
+@@ -9,6 +9,7 @@
+ .swift-format
+ .editorconfig
+ .github/*
++.jeffy/*
+ *.md
+ *.txt
+ *.yml
+diff --git a/Package.swift b/Package.swift
+index b513b07..4863881 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -39,13 +39,11 @@ let package = Package(
+         ),
+         .testTarget(
+             name: "LoggingTests",
+-            dependencies: ["Logging"],
+-            exclude: ["CMakeLists.txt"]
++            dependencies: ["Logging"]
+         ),
+         .testTarget(
+             name: "InMemoryLoggingTests",
+-            dependencies: ["InMemoryLogging", "Logging"],
+-            exclude: ["CMakeLists.txt"]
++            dependencies: ["InMemoryLogging", "Logging"]
+         ),
+     ]
+ )
+diff --git a/Package@swift-6.1.swift b/Package@swift-6.1.swift
+index 022d26d..64c7e56 100644
+--- a/Package@swift-6.1.swift
++++ b/Package@swift-6.1.swift
+@@ -39,13 +39,11 @@ let package = Package(
+         ),
+         .testTarget(
+             name: "LoggingTests",
+-            dependencies: ["Logging"],
+-            exclude: ["CMakeLists.txt"]
++            dependencies: ["Logging"]
+         ),
+         .testTarget(
+             name: "InMemoryLoggingTests",
+-            dependencies: ["InMemoryLogging", "Logging"],
+-            exclude: ["CMakeLists.txt"]
++            dependencies: ["InMemoryLogging", "Logging"]
+         ),
+     ]
+ )
+diff --git a/Sources/InMemoryLogging/InMemoryLogHandler.swift b/Sources/InMemoryLogging/InMemoryLogHandler.swift
+index af1b599..dd4f249 100644
+--- a/Sources/InMemoryLogging/InMemoryLogHandler.swift
++++ b/Sources/InMemoryLogging/InMemoryLogHandler.swift
+@@ -31,7 +31,7 @@ public import Logging
+ /// someFunction(logger: logger)
+ ///
+ /// // Retrieve what was logged
+-/// let logEntries = logger.entries
++/// let logEntries = logHandler.entries
+ /// ```
+ ///
+ public struct InMemoryLogHandler: LogHandler {
+diff --git a/Sources/Logging/Handlers/MultiplexLogHandler.swift b/Sources/Logging/Handlers/MultiplexLogHandler.swift
+index be9c511..97e1460 100644
+--- a/Sources/Logging/Handlers/MultiplexLogHandler.swift
++++ b/Sources/Logging/Handlers/MultiplexLogHandler.swift
+@@ -69,7 +69,10 @@ public struct MultiplexLogHandler: LogHandler {
+     ///
+     /// - parameters:
+     ///    - handlers: An array of `LogHandler`s, each of which will receive the log messages sent to this `Logger`.
+-    ///                The array must not be empty.
++    ///                The array must not be empty. An empty array trips an assertion in a debug build;
++    ///                in a release build, where assertions are compiled out, the resulting handler is
++    ///                inert - it logs nothing, reports empty metadata and no provider, and sits at
++    ///                ``Logger/Level/trace`` - rather than failing later on an unrelated access.
+     public init(_ handlers: [any LogHandler]) {
+         assert(!handlers.isEmpty, "MultiplexLogHandler.handlers MUST NOT be empty")
+         self.handlers = handlers
+@@ -79,7 +82,8 @@ public struct MultiplexLogHandler: LogHandler {
+     /// Create a multiplex log handler with the metadata provider you provide.
+     /// - Parameters:
+     ///   - handlers: An array of `LogHandler`s, each of which will receive every log message sent to this `Logger`.
+-    ///    The array must not be empty.
++    ///    The array must not be empty, with the same debug-and-release behaviour described on
++    ///    ``init(_:)`` when it is.
+     ///   - metadataProvider: The metadata provider that adds metadata to log messages for this handler.
+     public init(_ handlers: [any LogHandler], metadataProvider: Logger.MetadataProvider?) {
+         assert(!handlers.isEmpty, "MultiplexLogHandler.handlers MUST NOT be empty")
+@@ -180,13 +184,24 @@ public struct MultiplexLogHandler: LogHandler {
+         get {
+             var effective: Logger.Metadata = [:]
+             // as a rough estimate we assume that the underlying handlers have a similar metadata count,
+-            // and we use the first one's current count to estimate how big of a dictionary we need to allocate:
+-
+-            // !-safe, we always have at least one handler
+-            effective.reserveCapacity(self.handlers.first!.metadata.count)
++            // and we use the first one's current count to estimate how big of a dictionary we need to allocate.
++            // This is a capacity hint and nothing more, so an empty handler list simply hints nothing:
++            // force-unwrapping here made a release build - where the initializer's assert is compiled
++            // out - die on an unrelated nil unwrap instead of behaving like the inert handler it is.
++            effective.reserveCapacity(self.handlers.first?.metadata.count ?? 0)
+ 
++            // Base metadata follows the priority rule this type documents and its
++            // `metadataKey` subscript already implements: the earlier handler's value
++            // wins a conflicting key. Providers follow the opposite rule, because
++            // `MetadataProvider.multiplex(_:)` documents left-to-right composition with
++            // the last provider winning, and because a provider overrides base metadata
++            // on every other handler in the package. The two rules therefore run as two
++            // passes rather than interleaved, which is what made the getter disagree
++            // with its own subscript.
++            for handler in self.handlers {
++                effective.merge(handler.metadata, uniquingKeysWith: { existing, _ in existing })
++            }
+             for handler in self.handlers {
+-                effective.merge(handler.metadata, uniquingKeysWith: { _, handlerMetadata in handlerMetadata })
+                 if let provider = handler.metadataProvider {
+                     effective.merge(provider.get(), uniquingKeysWith: { _, provided in provided })
+                 }
+diff --git a/Sources/Logging/LogHandler.swift b/Sources/Logging/LogHandler.swift
+index 4b76f88..c7d1990 100644
+--- a/Sources/Logging/LogHandler.swift
++++ b/Sources/Logging/LogHandler.swift
+@@ -280,6 +280,15 @@ extension LogHandler {
+     }
+ 
+     /// A default implementation for the SwiftLog 1.0 log message handler.
++    ///
++    /// This forwards to ``log(event:)`` rather than to
++    /// ``log(level:message:metadata:source:file:function:line:)``, whose own default
++    /// forwards here. Routing it back there closed a cycle between the two defaults,
++    /// so a handler implementing only ``log(event:)`` - the shape this protocol's
++    /// documentation asks for - recursed until the stack overflowed as soon as any
++    /// caller used this 1.0 entry point. The source handed to the handler is
++    /// unchanged: the module derived from `file`, because the 1.0 method carries no
++    /// source of its own.
+     @available(*, deprecated, renamed: "log(event:)")
+     public func log(
+         level: Logging.Logger.Level,
+@@ -290,13 +299,15 @@ extension LogHandler {
+         line: UInt
+     ) {
+         self.log(
+-            level: level,
+-            message: message,
+-            metadata: metadata,
+-            source: Logger.currentModule(filePath: file),
+-            file: file,
+-            function: function,
+-            line: line
++            event: LogEvent(
++                level: level,
++                message: message,
++                metadata: metadata,
++                source: Logger.currentModule(filePath: file),
++                file: file,
++                function: function,
++                line: line
++            )
+         )
+     }
+ }
+diff --git a/Sources/Logging/Logger+Attributes.swift b/Sources/Logging/Logger+Attributes.swift
+index ff5646a..9260f86 100644
+--- a/Sources/Logging/Logger+Attributes.swift
++++ b/Sources/Logging/Logger+Attributes.swift
+@@ -262,7 +262,12 @@ extension Logger.MetadataValue {
+     ///
+     /// **Setting:** Replaces the value with `.stringConvertible(AttributedStringCarrier(...))`
+     /// carrying the given attributes. For `.string` and `.stringConvertible` cases the string
+-    /// representation is preserved. For `.dictionary` and `.array` cases the setter is a no-op.
++    /// representation is preserved. For `.dictionary` and `.array` cases the setter is a no-op:
++    /// only a string-shaped value can carry attributes, so the value is left exactly as it was
++    /// and the attributes you passed are discarded. A handler that walks a metadata dictionary
++    /// assigning attributes to every value - the shape ``MetadataValueAttributes`` is built for -
++    /// therefore leaves collection values untouched rather than failing, and a handler that needs
++    /// to know whether an attribute took effect should read ``attributes`` back.
+     ///
+     /// Only handlers that inspect attributes pay the cost of the getter check.
+     @inlinable
+@@ -286,7 +291,11 @@ extension Logger.MetadataValue {
+                     Logger.AttributedStringCarrier(string: box.description, metadataAttributes: newValue)
+                 )
+             case .dictionary, .array:
+-                assertionFailure("Cannot set attributes on .dictionary or .array metadata values")
++                // A collection value has nowhere to store attributes, so this is the documented
++                // no-op. It must not trap: the intended usage is a handler assigning attributes
++                // across every value of a metadata dictionary without inspecting each case first,
++                // and trapping made that pattern kill any debug build whose metadata held an
++                // array or a dictionary while release silently did the documented thing.
+                 return
+             }
+         }
+diff --git a/Sources/Logging/Logger.swift b/Sources/Logging/Logger.swift
+index 48d2092..ba2d4c8 100644
+--- a/Sources/Logging/Logger.swift
++++ b/Sources/Logging/Logger.swift
+@@ -1122,7 +1122,7 @@ extension Logger {
+     ///  logger.info(
+     ///      "user selected colors",
+     ///      metadata: [
+-    ///          "colors": .array([.string("\(user.topColor)"), .string("\(user.secondColor)")
++    ///          "colors": .array([.string("\(user.topColor)"), .string("\(user.secondColor)")])
+     ///      ]
+     ///  )
+     ///  ```
+diff --git a/Tests/LoggingTests/CompatibilityTest.swift b/Tests/LoggingTests/CompatibilityTest.swift
+index 2a37a15..ff984a8 100644
+--- a/Tests/LoggingTests/CompatibilityTest.swift
++++ b/Tests/LoggingTests/CompatibilityTest.swift
+@@ -16,6 +16,8 @@
+ import Logging
+ import Testing
+ 
++import class Foundation.NSLock
++
+ struct CompatibilityTest {
+     @available(*, deprecated, message: "Testing deprecated functionality")
+     @Test func allLogLevelsWorkWithOldSchoolLogHandlerWorks() {
+@@ -66,6 +68,88 @@ struct CompatibilityTest {
+         testLogging.history.assertExist(level: .error, message: "yes: error", source: "yes: error source")
+         testLogging.history.assertExist(level: .critical, message: "yes: critical", source: "yes: critical source")
+     }
++
++    /// A handler implementing only `log(event:)` - the shape `LogHandler`'s documentation
++    /// asks implementers for - must survive a caller on the SwiftLog 1.0 entry point.
++    /// Both deprecated defaults used to forward to each other, so this call recursed until
++    /// the stack overflowed.
++    @available(*, deprecated, message: "Testing deprecated functionality")
++    @Test func swiftLog1CompatibilityMethodReachesAnEventOnlyHandler() {
++        let handler = EventOnlyLogHandler()
++
++        handler.log(
++            level: .warning,
++            message: "compat",
++            metadata: ["k": "v"],
++            file: #filePath,
++            function: #function,
++            line: 42
++        )
++
++        let events = handler.recorded
++        #expect(events.count == 1)
++        #expect(events.first?.level == .warning)
++        #expect(events.first?.message == "compat")
++        #expect(events.first?.metadata == ["k": "v"])
++        // The 1.0 method carries no source, so the default derives it from `file`.
++        #expect(events.first?.source == "LoggingTests")
++        #expect(events.first?.line == 42)
++    }
++
++    /// The same 1.0 entry point must still reach a handler that implements only the
++    /// source-carrying deprecated method, which is the route that keeps working because
++    /// `log(event:)`'s own default forwards there.
++    @available(*, deprecated, message: "Testing deprecated functionality")
++    @Test func swiftLog1CompatibilityMethodReachesASourceOnlyHandler() {
++        let testLogging = NewerButStillOldTestLogging()
++        let handler = testLogging.make(label: "compat")
++
++        handler.log(
++            level: .error,
++            message: "compat",
++            metadata: nil,
++            file: #filePath,
++            function: #function,
++            line: 42
++        )
++
++        testLogging.history.assertExist(level: .error, message: "compat", source: "LoggingTests")
++    }
++}
++
++/// A handler in the shape `LogHandler`'s documentation asks for: it implements
++/// `log(event:)` and nothing else.
++private struct EventOnlyLogHandler: LogHandler {
++    private final class Store: @unchecked Sendable {
++        private let lock = NSLock()
++        private var events: [LogEvent] = []
++        func append(_ event: LogEvent) {
++            self.lock.lock()
++            defer { self.lock.unlock() }
++            self.events.append(event)
++        }
++        var all: [LogEvent] {
++            self.lock.lock()
++            defer { self.lock.unlock() }
++            return self.events
++        }
++    }
++
++    private let store = Store()
++
++    var metadata: Logger.Metadata = [:]
++    var logLevel: Logger.Level = .trace
++
++    subscript(metadataKey metadataKey: String) -> Logger.Metadata.Value? {
++        get { self.metadata[metadataKey] }
++        set { self.metadata[metadataKey] = newValue }
++    }
++
++    func log(event: LogEvent) {
++        self.store.append(event)
++    }
++
++    var recorded: [LogEvent] { self.store.all }
+ }
+ 
+ private struct OldSchoolTestLogging {
+diff --git a/Tests/LoggingTests/LoggingTest.swift b/Tests/LoggingTests/LoggingTest.swift
+index c6991dc..136452d 100644
+--- a/Tests/LoggingTests/LoggingTest.swift
++++ b/Tests/LoggingTests/LoggingTest.swift
+@@ -274,13 +274,19 @@ struct LoggingTest {
+             }
+         )
+ 
++        // The conflicting key resolves to the earlier handler, which is the priority
++        // rule this type documents and the rule its `metadataKey` subscript has always
++        // implemented. This expectation read "in-2" while the subscript returned
++        // "in-1", so the type's two read paths disagreed with each other and one of
++        // them disagreed with the doc comment.
+         #expect(
+             multiplexLogger.handler.metadata == [
+                 "one": "111",
+                 "two": "222",
+-                "in": "in-2",
++                "in": "in-1",
+             ]
+         )
++        #expect(multiplexLogger.handler[metadataKey: "in"] == "in-1")
+     }
+ 
+     @Test func multiplexMetadataProviderSet() {
+@@ -315,11 +321,15 @@ struct LoggingTest {
+             }
+         )
+ 
++        // Base metadata resolves to the earlier handler; provided metadata keeps the
++        // opposite rule, because `MetadataProvider.multiplex(_:)` documents
++        // left-to-right composition with the last provider winning. Both rules are
++        // exercised here by `in` and `provider-overlap` respectively.
+         #expect(
+             multiplexLogger.handler.metadata == [
+                 "one": "111",
+                 "two": "222",
+-                "in": "in-2",
++                "in": "in-1",
+                 "provider-1": "provided-111",
+                 "provider-2": "provided-222",
+                 "provider-overlap": "provided-222",
+diff --git a/Tests/LoggingTests/MetadataAttributesTest.swift b/Tests/LoggingTests/MetadataAttributesTest.swift
+index 0f6ac50..faaf2a1 100644
+--- a/Tests/LoggingTests/MetadataAttributesTest.swift
++++ b/Tests/LoggingTests/MetadataAttributesTest.swift
+@@ -319,6 +319,50 @@ struct MetadataAttributesTests {
+         #expect(metadata["tagged"]?.attributes[AttrA.self] == nil)
+         #expect(metadata["tagged"]?.description == "42")
+     }
++
++    @Test("Setting attributes on a collection value is a no-op, not a trap")
++    func testSetAttributesOnCollectionValueIsANoOp() {
++        var array: Logger.MetadataValue = ["a", "b"]
++        array.attributes = [AttrA.a1]
++        #expect(array == .array([.string("a"), .string("b")]))
++        #expect(array.attributes[AttrA.self] == nil)
++
++        var dictionary: Logger.MetadataValue = ["k": "v"]
++        dictionary.attributes = [AttrA.a1]
++        #expect(dictionary == .dictionary(["k": .string("v")]))
++        #expect(dictionary.attributes[AttrA.self] == nil)
++    }
++
++    @Test("Intermediate handler survives collection metadata values")
++    func testIntermediateHandlerSurvivesCollectionValues() {
++        let recorder = AttributeRecorder()
++        let inner = AttributeRecordingHandler(recorder: recorder)
++        let enriching = AttributeEnrichingHandler(wrapping: inner)
++
++        var logger = Logger(label: "test") { _ in enriching }
++        logger.logLevel = .trace
++
++        // The enriching handler assigns attributes to every value it walks. Collection
++        // values have nowhere to carry them, and that must not take the process down.
++        logger.info(
++            "event",
++            metadata: [
++                "plain": "no-attrs",
++                "list": ["a", "b"],
++                "map": ["k": "v"],
++            ]
++        )
++
++        #expect(recorder.messages.count == 1)
++        let metadata = recorder.messages[0]
++
++        #expect(metadata["plain"]?.attributes[AttrB.self] == .b1)
++        // The collection values arrive unchanged, carrying no attributes.
++        #expect(metadata["list"] == .array([.string("a"), .string("b")]))
++        #expect(metadata["list"]?.attributes[AttrB.self] == nil)
++        #expect(metadata["map"] == .dictionary(["k": .string("v")]))
++        #expect(metadata["map"]?.attributes[AttrB.self] == nil)
++    }
+ }
+ 
+ // MARK: - Test Helpers for intermediate handler tests

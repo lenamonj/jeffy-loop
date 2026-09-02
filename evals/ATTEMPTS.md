@@ -149,6 +149,7 @@ loss rather than hiding it.
 | rubyzip | 5 | 46 | converged | evaluator countersigned | 1 |
 | xid | 1 | 10 | converged | evaluator countersigned | 0 |
 | uuid | 1 | 10 | converged | evaluator countersigned | 0 |
+| swift-log | 2 | 16 | converged | evaluator countersigned | 0 |
 
 ## The convergence standard is not uniform, and here is the split
 
