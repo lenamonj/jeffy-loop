@@ -1,0 +1,546 @@
+diff --git a/.gitignore b/.gitignore
+index 98e0c4c..cd8749c 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -11,3 +11,4 @@ pkg
+ .tool-versions
+ Gemfile.lock
+ gemfiles/*.lock
++.claude/jeffy-loop.local.md
+diff --git a/lib/i18n.rb b/lib/i18n.rb
+index 429ce46..3105ed6 100644
+--- a/lib/i18n.rb
++++ b/lib/i18n.rb
+@@ -160,22 +160,35 @@ module I18n
+     #
+     # *PLURALIZATION*
+     #
+-    # Translation data can contain pluralized translations. Pluralized translations
+-    # are arrays of singular/plural versions of translations like <tt>['Foo', 'Foos']</tt>.
++    # Translation data can contain pluralized translations. A pluralized translation
++    # is a Hash keyed by pluralization category, like
++    # <tt>{ :one => 'Foo', :other => 'Foos' }</tt>, and the category is chosen from the
++    # <tt>:count</tt> option. An entry that is not a Hash is returned unchanged, so an
++    # Array of singular and plural forms is not a pluralized translation and
++    # <tt>:count</tt> does not select from it.
+     #
+     # Note that <tt>I18n::Backend::Simple</tt> only supports an algorithm for English
+     # pluralization rules. Other algorithms can be supported by custom backends.
+     #
+-    # This returns the singular version of a pluralized translation:
++    # With the translation <tt>:foo => { :one => 'Foo', :other => 'Foos' }</tt>, this
++    # returns the singular version:
+     #   I18n.t :foo, :count => 1 # => 'Foo'
+     #
+-    # These both return the plural version of a pluralized translation:
++    # These both return the plural version of the same translation:
+     #   I18n.t :foo, :count => 0 # => 'Foos'
+     #   I18n.t :foo, :count => 2 # => 'Foos'
+     #
++    # A <tt>:zero</tt> key is used for a count of 0 when the translation defines one.
++    # <em>E.g.</em>, with the translation
++    # <tt>:foo => { :zero => 'No Foos', :one => 'Foo', :other => 'Foos' }</tt>:
++    #   I18n.t :foo, :count => 0 # => 'No Foos'
++    #
++    # A translation that defines no key for the category a count selects raises
++    # <tt>I18n::InvalidPluralizationData</tt>.
++    #
+     # The <tt>:count</tt> option can be used both for pluralization and interpolation.
+     # <em>E.g.</em>, with the translation
+-    # <tt>:foo => ['%{count} foo', '%{count} foos']</tt>, count will
++    # <tt>:foo => { :one => '%{count} foo', :other => '%{count} foos' }</tt>, count will
+     # be interpolated to the pluralized translation:
+     #   I18n.t :foo, :count => 1 # => '1 foo'
+     #
+@@ -213,6 +226,11 @@ module I18n
+     #
+     # Then <tt>I18n.t(:salutation, :gender => 'w', :name => 'Smith')</tt> will result in "Mrs. Smith".
+     #
++    # A lambda declared with two positional parameters receives the interpolation
++    # values as a Hash, empty when none were passed, so <tt>I18n.t(:salutation)</tt>
++    # calls it with <tt>(:salutation, {})</tt>. A lambda that declares keyword
++    # parameters receives them as keywords instead.
++    #
+     # Note that the string returned by lambda will go through string interpolation too,
+     # so the following lambda would give the same result:
+     #   lambda { |key, options| options[:gender] == 'm' ? "Mr. %{name}" : "Mrs. %{name}" }
+@@ -271,6 +289,7 @@ module I18n
+     #   I18n.t 'example.one' == 'One interpolation %{foo}'
+     #   I18n.t 'example.two' == 'Two interpolations %{foo} %{bar}'
+     #   I18n.t 'example.three' == ['One %{foo}', 'Two %{bar}', 'Three %{baz}']
++    #   I18n.t 'example.sprintf' == 'Sprintf style %<foo>.2f'
+     #   I18n.t 'example.one', locale: :other == 'One interpolation %{baz}'
+     #
+     # Then we can expect the following results:
+@@ -278,9 +297,13 @@ module I18n
+     #   I18n.interpolation_keys('example.one') #=> ['foo']
+     #   I18n.interpolation_keys('example.two') #=> ['foo', 'bar']
+     #   I18n.interpolation_keys('example.three') #=> ['foo', 'bar', 'baz']
++    #   I18n.interpolation_keys('example.sprintf') #=> ['foo']
+     #   I18n.interpolation_keys('one', scope: 'example', locale: :other) #=> ['baz']
+     #   I18n.interpolation_keys('does-not-exist') #=> []
+     #   I18n.interpolation_keys('example') #=> []
++    #
++    # Only the interpolation key is returned, never the sprintf format
++    # specifier that follows it in the %<name>fmt form.
+     def interpolation_keys(key, **options)
+       raise I18n::ArgumentError if !key.is_a?(String) || key.empty?
+ 
+@@ -494,7 +517,12 @@ module I18n
+     def interpolation_keys_from_translation(translation)
+       case translation
+       when ::String
+-        translation.scan(Regexp.union(I18n.config.interpolation_patterns))
++        # A pattern may capture more than the key - %<foo>d captures the format
++        # specifier too - so keep only the first non-nil capture of each match,
++        # the same rule #interpolate_hash uses to pick the key.
++        translation.scan(Regexp.union(I18n.config.interpolation_patterns)).map do |captures|
++          Array(captures).compact.first
++        end
+       when ::Array
+         translation.map { |element| interpolation_keys_from_translation(element) }
+       else
+diff --git a/lib/i18n/backend/base.rb b/lib/i18n/backend/base.rb
+index 0c59cd7..2b85cc3 100644
+--- a/lib/i18n/backend/base.rb
++++ b/lib/i18n/backend/base.rb
+@@ -162,7 +162,7 @@ module I18n
+               )
+             when Proc
+               date_or_time = options.delete(:object) || object
+-              resolve(locale, object, subject.call(date_or_time, **options))
++              resolve(locale, object, Utils.call_translation_proc(subject, date_or_time, options))
+             else
+               subject
+             end
+@@ -185,7 +185,16 @@ module I18n
+ 
+           key = pluralization_key(entry, count)
+           raise InvalidPluralizationData.new(entry, count, key) unless entry.has_key?(key)
+-          entry[key]
++          pluralized_entry(entry[key])
++        end
++
++        # #translate dups a String entry before pluralizing, but a pluralized
++        # entry is a Hash at that point, so the value picked out of it would
++        # otherwise be the stored object itself and a caller mutating the result
++        # would corrupt the store. Every pluralize implementation returns through
++        # here for that reason.
++        def pluralized_entry(value)
++          value.is_a?(::String) ? value.dup : value
+         end
+ 
+         # Interpolates values into a given subject.
+diff --git a/lib/i18n/backend/fallbacks.rb b/lib/i18n/backend/fallbacks.rb
+index 0ab50a7..39ffe5b 100644
+--- a/lib/i18n/backend/fallbacks.rb
++++ b/lib/i18n/backend/fallbacks.rb
+@@ -86,7 +86,7 @@ module I18n
+             ))
+           when Proc
+             date_or_time = options.delete(:object) || object
+-            resolve_entry(options[:fallback_original_locale], object, subject.call(date_or_time, **options))
++            resolve_entry(options[:fallback_original_locale], object, Utils.call_translation_proc(subject, date_or_time, options))
+           else
+             subject
+           end
+diff --git a/lib/i18n/backend/interpolation_compiler.rb b/lib/i18n/backend/interpolation_compiler.rb
+index 0e5c872..616f184 100644
+--- a/lib/i18n/backend/interpolation_compiler.rb
++++ b/lib/i18n/backend/interpolation_compiler.rb
+@@ -18,6 +18,13 @@
+ module I18n
+   module Backend
+     module InterpolationCompiler
++      # Interpolation forms this compiler does not implement, so a string matching
++      # one of them is never compiled and keeps the interpreted behaviour: the
++      # sprintf %<key>fmt form, which the tokenizer does not see at all, and a
++      # bare %% escape, which the interpreted path collapses to a single percent
++      # while the tokenizer only recognises %% when it introduces %%{key}.
++      UNCOMPILABLE_PATTERN = /%<\w+>|%%(?!\{)/
++
+       module Compiler
+         extend self
+ 
+@@ -62,7 +69,9 @@ module I18n
+ 
+         def interpolate_or_raise_missing(key)
+           escaped_key = escape_key_sym(key)
+-          RESERVED_KEYS.include?(key) ? reserved_key(escaped_key) : interpolate_key(escaped_key)
++          # RESERVED_KEYS holds Symbols and key arrives as a String, so compare
++          # the symbolized form or the reserved branch is never reached.
++          RESERVED_KEYS.include?(key.to_sym) ? reserved_key(escaped_key) : interpolate_key(escaped_key)
+         end
+ 
+         def interpolate_key(key)
+@@ -95,14 +104,18 @@ module I18n
+         end
+       end
+ 
++      # The compiled method is a singleton method on a String, and a String does
++      # not carry one through Base#translate's dup or into a frozen entry, so the
++      # compiled copies are kept here, keyed by content, instead of on the stored
++      # object. store_translations warms this cache; a lookup that misses it
++      # compiles once and reuses that copy from then on.
+       def interpolate(locale, string, values)
+-        if string.respond_to?(:i18n_interpolate)
+-          string.i18n_interpolate(values)
+-        elsif values
+-          super
+-        else
+-          string
+-        end
++        return string.i18n_interpolate(values) if string.respond_to?(:i18n_interpolate)
++
++        compiled = compiled_interpolation(string)
++        return compiled.i18n_interpolate(values) if compiled
++
++        values ? super : string
+       end
+ 
+       def store_translations(locale, data, options = EMPTY_HASH)
+@@ -111,12 +124,43 @@ module I18n
+       end
+ 
+       protected
++
+       def compile_all_strings_in(data)
+-        data.each_value do |value|
+-          Compiler.compile_if_an_interpolation(value)
+-          compile_all_strings_in(value) if value.kind_of?(Hash)
++        case data
++        when ::Hash then data.each_value { |value| compile_all_strings_in(value) }
++        when ::Array then data.each { |value| compile_all_strings_in(value) }
++        when ::String then compiled_interpolation(data)
+         end
+       end
++
++      # Returns a compiled copy of the string, or nil when this compiler cannot
++      # represent it. The compiled body only understands the %{key} and %%{key}
++      # forms, so a string carrying any other interpolation pattern - the
++      # sprintf %<key>fmt form, or a pattern the application appended to
++      # I18n.config.interpolation_patterns - is left to the interpreted path,
++      # which is the only one that handles those.
++      def compiled_interpolation(string)
++        return nil unless compilable?(string)
++
++        compiled = compiled_interpolations.compute_if_absent(-string) do
++          # dup so the compiled singleton method never lands on the caller's
++          # object, which for the store_translations warm-up is the stored entry.
++          Compiler.compile_if_an_interpolation(string.dup)
++        end
++        compiled if compiled.respond_to?(:i18n_interpolate)
++      end
++
++      def compiled_interpolations
++        @compiled_interpolations ||= Concurrent::Map.new
++      end
++
++      private
++
++      def compilable?(string)
++        Compiler.interpolated_str?(string) &&
++          !string.match?(UNCOMPILABLE_PATTERN) &&
++          I18n.config.interpolation_patterns == I18n::DEFAULT_INTERPOLATION_PATTERNS
++      end
+     end
+   end
+ end
+diff --git a/lib/i18n/backend/key_value.rb b/lib/i18n/backend/key_value.rb
+index b937e25..59f0ae9 100644
+--- a/lib/i18n/backend/key_value.rb
++++ b/lib/i18n/backend/key_value.rb
+@@ -153,7 +153,7 @@ module I18n
+           else
+             return entry unless entry.is_a?(Hash)
+             key = pluralization_key(entry, count)
+-            entry[key]
++            pluralized_entry(entry[key])
+           end
+         end
+       end
+diff --git a/lib/i18n/backend/pluralization.rb b/lib/i18n/backend/pluralization.rb
+index 1d3277b..f22c9e8 100644
+--- a/lib/i18n/backend/pluralization.rb
++++ b/lib/i18n/backend/pluralization.rb
+@@ -45,13 +45,13 @@ module I18n
+           # Users that want a different string for the case of `count == 0` should use the explicit "0" key instead.
+           # We keep this incorrect behaviour for now for backwards compatibility until we can remove it.
+           # Ref: https://github.com/ruby-i18n/i18n/issues/629
+-          return entry[:zero] if count == 0 && entry.has_key?(:zero)
++          return pluralized_entry(entry[:zero]) if count == 0 && entry.has_key?(:zero)
+ 
+           # "0" and "1" are special cases
+           # https://unicode-org.github.io/cldr/ldml/tr35-numbers.html#Explicit_0_1_rules
+           if count == 0 || count == 1
+             value = entry[symbolic_count(count)]
+-            return value if value
++            return pluralized_entry(value) if value
+           end
+ 
+           # Lateral Inheritance of "count" attribute (http://www.unicode.org/reports/tr35/#Lateral_Inheritance):
+@@ -63,7 +63,7 @@ module I18n
+           plural_rule_category = pluralizer.call(count)
+ 
+           value = if entry.has_key?(plural_rule_category) || entry.has_key?(:other)
+-            entry[plural_rule_category] || entry[:other]
++            pluralized_entry(entry[plural_rule_category] || entry[:other])
+           else
+             raise InvalidPluralizationData.new(entry, count, plural_rule_category)
+           end
+diff --git a/lib/i18n/gettext/po_parser.rb b/lib/i18n/gettext/po_parser.rb
+index 75445df..68f6955 100644
+--- a/lib/i18n/gettext/po_parser.rb
++++ b/lib/i18n/gettext/po_parser.rb
+@@ -36,7 +36,7 @@ module_eval <<'..end src/poparser.ry modeval..id7a99570e05', 'src/poparser.ry',
+     @msgctxt = ""
+     @ignore_fuzzy = ignore_fuzzy
+ 
+-    str.strip!
++    str = str.strip
+     @q = []
+     until str.empty? do
+       case str
+diff --git a/lib/i18n/tests/pluralization.rb b/lib/i18n/tests/pluralization.rb
+index 19e73f3..e70fb76 100644
+--- a/lib/i18n/tests/pluralization.rb
++++ b/lib/i18n/tests/pluralization.rb
+@@ -27,6 +27,18 @@ module I18n
+         assert_equal({ :one => 'bar' }, I18n.t(:default => { :one => 'bar' }, :count => nil))
+       end
+ 
++      test "pluralization: the result is not the stored translation object" do
++        I18n.backend.store_translations(:en, :__plural => { :one => +'apple', :other => +'apples' })
++        result = I18n.t(:__plural, :count => 1)
++        result << '!'
++        assert_equal 'apple', I18n.t(:__plural, :count => 1)
++      end
++
++      test "pluralization: the result is not frozen" do
++        I18n.backend.store_translations(:en, :__frozen_plural => { :one => 'apple'.freeze, :other => 'apples'.freeze })
++        assert_equal false, I18n.t(:__frozen_plural, :count => 1).frozen?
++      end
++
+       test "pluralization: given incomplete pluralization data it raises I18n::InvalidPluralizationData" do
+         assert_raises(I18n::InvalidPluralizationData) { I18n.t(:default => { :one => 'bar' }, :count => 2) }
+       end
+diff --git a/lib/i18n/tests/procs.rb b/lib/i18n/tests/procs.rb
+index d377117..80ed475 100644
+--- a/lib/i18n/tests/procs.rb
++++ b/lib/i18n/tests/procs.rb
+@@ -13,6 +13,20 @@ module I18n
+         assert_equal %|[:a_lambda, #{{:foo=>"foo"}}]|, I18n.t(:a_lambda, :foo => 'foo')
+       end
+ 
++      test "lookup: given a translation is a two argument lambda it calls it with the key and a hash of interpolation values" do
++        I18n.backend.store_translations(:en, :a_lambda => lambda { |key, options| "#{key}:#{options[:foo].inspect}" })
++        assert_equal 'a_lambda:"foo"', I18n.t(:a_lambda, :foo => 'foo')
++      end
++
++      test "lookup: given a translation is a two argument lambda it calls it with an empty hash when no interpolation values are given" do
++        I18n.backend.store_translations(:en, :a_lambda => lambda { |key, options| "#{key}:#{options[:foo].inspect}" })
++        assert_equal 'a_lambda:nil', I18n.t(:a_lambda)
++      end
++
++      test "defaults: given a default is a two argument lambda it calls it with an empty hash when no interpolation values are given" do
++        assert_equal 'nil-default', I18n.t(nil, :default => lambda { |key, options| "#{key.inspect}-default" })
++      end
++
+       test "defaults: given a default is a Proc it calls it with the key and interpolation values" do
+         proc = lambda { |*args| I18n::Tests::Procs.filter_args(*args) }
+         assert_equal %|[nil, #{{:foo=>"foo"}}]|, I18n.t(nil, :default => proc, :foo => 'foo')
+diff --git a/lib/i18n/utils.rb b/lib/i18n/utils.rb
+index 8841561..4a0563a 100644
+--- a/lib/i18n/utils.rb
++++ b/lib/i18n/utils.rb
+@@ -31,6 +31,23 @@ module I18n
+         end
+       end
+ 
++      # Invokes a translation or default Proc with the key and the interpolation
++      # values, as I18n.translate documents.
++      #
++      # Ruby hands an empty keyword splat to no argument at all, so a lambda
++      # declared the documented way - ->(key, options) - would be called with one
++      # argument and raise when no interpolation values were passed. Give that
++      # shape the hash positionally, which is what Ruby does for it anyway once
++      # the hash is non-empty. Everything else keeps the keyword splat.
++      def call_translation_proc(subject, key, options)
++        if options.empty? && subject.lambda? && required_positional_arity(subject) >= 2 &&
++           subject.parameters.none? { |type, _name| %i[key keyreq keyrest].include?(type) }
++          subject.call(key, options)
++        else
++          subject.call(key, **options)
++        end
++      end
++
+       def deep_symbolize_keys(hash)
+         hash.each_with_object({}) do |(key, value), result|
+           result[key.respond_to?(:to_sym) ? key.to_sym : key] = deep_symbolize_keys_in_object(value)
+@@ -40,6 +57,10 @@ module I18n
+ 
+       private
+ 
++      def required_positional_arity(subject)
++        subject.parameters.count { |type, _name| type == :req }
++      end
++
+       def deep_symbolize_keys_in_object(value)
+         case value
+         when Hash
+diff --git a/test/backend/interpolation_compiler_test.rb b/test/backend/interpolation_compiler_test.rb
+index 68a634c..c3dbcc7 100644
+--- a/test/backend/interpolation_compiler_test.rb
++++ b/test/backend/interpolation_compiler_test.rb
+@@ -42,6 +42,12 @@ class InterpolationCompilerTest < I18n::TestCase
+     assert_equal '-A-', compile_and_interpolate('-%{a}-', :a => 'A')
+   end
+ 
++  def test_reserved_key_raises_in_the_compiled_body
++    assert_raises(I18n::ReservedInterpolationKey) do
++      compile_and_interpolate('%{scope}', :scope => 'x')
++    end
++  end
++
+   def assert_handles_key(str, key)
+     assert_equal 'A', compile_and_interpolate(str, key => 'A')
+   end
+@@ -107,6 +113,51 @@ class I18nBackendInterpolationCompilerTest < I18n::TestCase
+     super
+   end
+ 
++  # The compiled copies live in the backend's own cache, because Base#translate
++  # dups a String entry and dup drops singleton methods.
++  def test_every_entry_shape_reaches_a_compiled_copy
++    I18n.backend.store_translations(:en, :scalar => +'hi %{name}', :arr => [+'A %{v}'], :frozen => 'hi %{name}'.freeze)
++    %w[scalar frozen].each do |key|
++      entry = I18n.backend.send(:translations)[:en][key.to_sym]
++      assert I18n.backend.send(:compiled_interpolation, entry), "#{key} has no compiled copy"
++    end
++    element = I18n.backend.send(:translations)[:en][:arr].first
++    assert I18n.backend.send(:compiled_interpolation, element), 'array element has no compiled copy'
++  end
++
++  def test_storing_does_not_attach_a_method_to_the_stored_entry
++    I18n.backend.store_translations(:en, :untouched => +'hi %{name}')
++    entry = I18n.backend.send(:translations)[:en][:untouched]
++    assert_equal false, entry.respond_to?(:i18n_interpolate)
++  end
++
++  def test_forms_the_compiler_cannot_represent_are_left_interpreted
++    {
++      :sprintf => 'n = %<v>d',
++      :mixed   => '%{a} and %<v>d',
++      :percent => '100%% of %{a}'
++    }.each do |key, value|
++      I18n.backend.store_translations(:en, key => +value)
++      entry = I18n.backend.send(:translations)[:en][key]
++      assert_nil I18n.backend.send(:compiled_interpolation, entry), "#{key} should not be compiled"
++    end
++    assert_equal 'n = 3',      I18n.t(:sprintf, :v => 3)
++    assert_equal 'A and 3',    I18n.t(:mixed, :a => 'A', :v => 3)
++    assert_equal '100% of A',  I18n.t(:percent, :a => 'A')
++  end
++
++  def test_a_custom_interpolation_pattern_disables_compilation
++    I18n.backend.store_translations(:en, :custom => +'hi %{name}')
++    entry = I18n.backend.send(:translations)[:en][:custom]
++    original = I18n.config.interpolation_patterns
++    begin
++      I18n.config.interpolation_patterns = original.dup << /\{\{(\w+)\}\}/
++      assert_nil I18n.backend.send(:compiled_interpolation, entry)
++    ensure
++      I18n.config.interpolation_patterns = original
++    end
++  end
++
+   # pre-compile default strings to make sure we are testing I18n::Backend::InterpolationCompiler
+   def interpolate(*args)
+     options = args.last.kind_of?(Hash) ? args.last : {}
+diff --git a/test/backend/metadata_test.rb b/test/backend/metadata_test.rb
+index 84507c0..ce1d6e2 100644
+--- a/test/backend/metadata_test.rb
++++ b/test/backend/metadata_test.rb
+@@ -44,5 +44,13 @@ class I18nBackendMetadataTest < I18n::TestCase
+   test "metadata works with frozen values" do
+     assert_equal(1, I18n.t(:missing, :count => 1, :default => 'foo'.freeze).translation_metadata[:count])
+   end
++
++  test "metadata is attached to a pluralized entry whose stored strings are frozen" do
++    I18n.backend.store_translations(:en, :apples => { :one => 'apple'.freeze, :other => 'apples'.freeze })
++    metadata = I18n.t(:apples, :count => 1).translation_metadata
++    assert_equal(:en, metadata[:locale])
++    assert_equal(:apples, metadata[:key])
++    assert_equal(1, metadata[:count])
++  end
+ end
+ 
+diff --git a/test/gettext/po_parser_test.rb b/test/gettext/po_parser_test.rb
+new file mode 100644
+index 0000000..48da2f2
+--- /dev/null
++++ b/test/gettext/po_parser_test.rb
+@@ -0,0 +1,17 @@
++require 'test_helper'
++require 'i18n/gettext/po_parser'
++
++class I18nGettextPoParserTest < I18n::TestCase
++  SOURCE = %(  msgid "car"\nmsgstr "Auto"\n  ).freeze
++
++  def test_parse_does_not_mutate_the_source_string
++    source = SOURCE.dup
++    GetText::PoParser.new.parse(source, I18n::Backend::Gettext::PoData.new)
++    assert_equal SOURCE, source
++  end
++
++  def test_parse_accepts_a_frozen_source_string
++    data = GetText::PoParser.new.parse(SOURCE, I18n::Backend::Gettext::PoData.new)
++    assert_equal({ 'car' => 'Auto' }, data)
++  end
++end
+diff --git a/test/i18n/interpolate_test.rb b/test/i18n/interpolate_test.rb
+index e9ef2c1..8263e4e 100644
+--- a/test/i18n/interpolate_test.rb
++++ b/test/i18n/interpolate_test.rb
+@@ -99,7 +99,9 @@ end
+ class I18nCustomInterpolationPatternTest < I18n::TestCase
+   def setup
+     super
+-    @old_interpolation_patterns = I18n.config.interpolation_patterns
++    # dup before the in-place <<, or teardown restores the mutated array itself
++    # and the extra pattern leaks into every later test in the process.
++    @old_interpolation_patterns = I18n.config.interpolation_patterns.dup
+     I18n.config.interpolation_patterns << /\{\{(\w+)\}\}/
+   end
+ 
+diff --git a/test/i18n_test.rb b/test/i18n_test.rb
+index 1d6e541..4528090 100644
+--- a/test/i18n_test.rb
++++ b/test/i18n_test.rb
+@@ -349,6 +349,26 @@ class I18nTest < I18n::TestCase
+     assert_equal ["foo", "bar", "baz"], I18n.interpolation_keys("example_array")
+   end
+ 
++  test "interpolation_keys returns only the key for sprintf style interpolations" do
++    store_translations(:en, "example_sprintf" => "n = %<count>d")
++    assert_equal ["count"], I18n.interpolation_keys("example_sprintf")
++  end
++
++  test "interpolation_keys returns only the key when the sprintf format has a precision" do
++    store_translations(:en, "example_precision" => "x = %<v>.2f")
++    assert_equal ["v"], I18n.interpolation_keys("example_precision")
++  end
++
++  test "interpolation_keys handles both interpolation styles in one translation" do
++    store_translations(:en, "example_mixed" => "%{a} and %<b>d")
++    assert_equal ["a", "b"], I18n.interpolation_keys("example_mixed")
++  end
++
++  test "interpolation_keys ignores escaped percent signs" do
++    store_translations(:en, "example_literal" => "100%% sure about %{foo}")
++    assert_equal ["foo"], I18n.interpolation_keys("example_literal")
++  end
++
+   test "interpolation_keys raises I18n::ArgumentError when non-string argument" do
+     assert_raises(I18n::ArgumentError) { I18n.interpolation_keys(["bad-argument"]) }
+   end
