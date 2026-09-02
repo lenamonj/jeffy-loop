@@ -1,0 +1,213 @@
+diff --git a/.gitignore b/.gitignore
+index 716378f..056f4e4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -41,3 +41,4 @@ libutf8proc.pc
+ # clangd
+ /.cache/
+ /compile_commands.json
++.claude/jeffy-loop.local.md
+diff --git a/MANIFEST b/MANIFEST
+index 9047ab5..1b2f4e4 100644
+--- a/MANIFEST
++++ b/MANIFEST
+@@ -3,7 +3,7 @@ include/utf8proc.h
+ lib/
+ lib/libutf8proc.a
+ lib/libutf8proc.so -> libutf8proc.so.3.2.3
+-lib/libutf8proc.so.2 -> libutf8proc.so.3.2.3
++lib/libutf8proc.so.3 -> libutf8proc.so.3.2.3
+ lib/libutf8proc.so.3.2.3
+ lib/pkgconfig/
+ lib/pkgconfig/libutf8proc.pc
+diff --git a/Makefile b/Makefile
+index bf0516a..6b68ee3 100644
+--- a/Makefile
++++ b/Makefile
+@@ -194,7 +194,10 @@ dist:
+ distcheck: dist
+ 	test `grep UTF8PROC_VERSION utf8proc.h | cut -d' ' -f3 | tr '\n' .` = $(VERSION). || exit 1
+ 	test `grep "utf8proc VERSION" CMakeLists.txt |cut -d' ' -f 4` = $(VERSION) || exit 1
+-	test `grep  libutf8proc.so.$(MAJOR).$(MINOR).$(PATCH) MANIFEST | wc -l` = 3 || exit 1
++	rm -f MANIFEST.new
++	$(MAKE) MANIFEST.new
++	diff MANIFEST MANIFEST.new || exit 1
++	rm -f MANIFEST.new
+ 	test `grep 'set(SO_' CMakeLists.txt |cut -d' ' -f2 | tr -d ')' | tr '\n' '.'` = $(MAJOR).$(MINOR).$(PATCH). || exit 1
+ 	rm -rf utf8proc-$(VERSION)
+ 	tar xzf utf8proc-$(VERSION).tar.gz
+diff --git a/NEWS.md b/NEWS.md
+index 96cf44c..49a6561 100644
+--- a/NEWS.md
++++ b/NEWS.md
+@@ -26,7 +26,11 @@
+ 
+  - Documentation improvements ([#295], [#291]).
+ 
+- - Build fix for C90 ([#284]), silence ASAN warning ([#240]), CMake modernization ([#260]).
++ - Build fix for C90 ([#284]).  The header compiles as C90; a strict
++   `-pedantic-errors` C90 compilation still reports the three
++   `utf8proc_property_t` bit-fields whose declared types are fixed by the
++   struct's binary layout.
++ - Silence ASAN warning ([#240]), CMake modernization ([#260]).
+ 
+ ## Version 2.10.0 ##
+ 
+@@ -35,6 +39,11 @@
+  - Unicode 16 support ([#277]).
+  - New `utf8proc_charwidth_ambiguous` function to return whether a character has
+    East Asian width class A (Ambiguous) ([#270]).
++ - `UTF8PROC_STABLE` no longer has any effect.  Redesigning the combining table
++   moved the Unicode composition exclusions into the generated table itself, so
++   composition respects versioning stability whether or not the flag is passed,
++   and passing no flag no longer composes excluded pairs.  (Recorded
++   retroactively: this behaviour change was not noted at the time of release.)
+ 
+ ## Version 2.9.0 ##
+ 
+diff --git a/lump.md b/lump.md
+index 39186fb..36ab564 100644
+--- a/lump.md
++++ b/lump.md
+@@ -1,4 +1,8 @@
+ ```
++U+000A      <-- line separator (general category Zl),
++                paragraph separator (general category Zp)
++                [only when both UTF8PROC_NLF2LS and UTF8PROC_NLF2PS are
++                 set, i.e. UTF8PROC_NLF2LF]
+ U+0020      <-- all space characters (general category Zs)
+ U+0027  '   <-- left/right single quotation mark U+2018..2019,
+                 modifier letter apostrophe U+02BC,
+diff --git a/utf8proc.h b/utf8proc.h
+index 83bb5f6..7d2240d 100644
+--- a/utf8proc.h
++++ b/utf8proc.h
+@@ -148,7 +148,15 @@ extern "C" {
+ typedef enum {
+   /** The given UTF-8 input is NULL terminated. */
+   UTF8PROC_NULLTERM  = (1<<0),
+-  /** Unicode Versioning Stability has to be respected. */
++  /**
++   * No effect; retained for source and binary compatibility.
++   *
++   * This flag once suppressed the compositions that Unicode's versioning
++   * stability policy excludes.  Since version 2.10.0 those composition
++   * exclusions are filtered out of the generated combining table itself, so
++   * composition respects versioning stability whether or not the flag is
++   * passed, and no value of it selects the older behaviour.
++   */
+   UTF8PROC_STABLE    = (1<<1),
+   /** Compatibility decomposition (i.e. formatting information is lost). */
+   UTF8PROC_COMPAT    = (1<<2),
+@@ -210,7 +218,7 @@ typedef enum {
+   /**
+    * Strip unassigned codepoints.
+    */
+-  UTF8PROC_STRIPNA    = (1<<14),
++  UTF8PROC_STRIPNA    = (1<<14)
+ } utf8proc_option_t;
+ 
+ /** @name Error codes
+@@ -291,10 +299,25 @@ typedef struct utf8proc_property_struct {
+    * so, the `comb_length` table entries will be checked sequentially
+    * for a match.
+    */
++  /* These three share one 16-bit allocation unit, which is why their
++     declared type is utf8proc_uint16_t rather than unsigned.  A bit-field
++     declared with any type other than int, unsigned int or signed int is a
++     C99 feature, so a strict C90 compilation of this header with
++     -pedantic-errors reports these three and nothing else; the header is
++     otherwise C90 clean.  Widening them to unsigned would change how
++     toolchains that pack bit-fields by declared type lay this struct out,
++     and utf8proc_get_property hands callers a pointer into an array of it,
++     so the declared types stay as they are. */
+   utf8proc_uint16_t comb_index:10;
+   utf8proc_uint16_t comb_length:5;
+   utf8proc_uint16_t comb_issecond:1;
+   unsigned bidi_mirrored:1;
++  /**
++   * Whether this codepoint is a Unicode composition exclusion.
++   *
++   * Informational only: since version 2.10.0 the generated combining table
++   * omits excluded compositions, so the library itself never reads this field.
++   */
+   unsigned comp_exclusion:1;
+   /**
+    * Can this codepoint be ignored?
+@@ -348,7 +371,7 @@ typedef enum {
+   UTF8PROC_CATEGORY_CC = 26, /**< Other, control */
+   UTF8PROC_CATEGORY_CF = 27, /**< Other, format */
+   UTF8PROC_CATEGORY_CS = 28, /**< Other, surrogate */
+-  UTF8PROC_CATEGORY_CO = 29, /**< Other, private use */
++  UTF8PROC_CATEGORY_CO = 29 /**< Other, private use */
+ } utf8proc_category_t;
+ 
+ /** Bidirectional character classes. */
+@@ -375,7 +398,7 @@ typedef enum {
+   UTF8PROC_BIDI_CLASS_LRI  = 20, /**< Left-to-Right Isolate */
+   UTF8PROC_BIDI_CLASS_RLI  = 21, /**< Right-to-Left Isolate */
+   UTF8PROC_BIDI_CLASS_FSI  = 22, /**< First Strong Isolate */
+-  UTF8PROC_BIDI_CLASS_PDI  = 23, /**< Pop Directional Isolate */
++  UTF8PROC_BIDI_CLASS_PDI  = 23 /**< Pop Directional Isolate */
+ } utf8proc_bidi_class_t;
+ 
+ /** Decomposition type. */
+@@ -395,7 +418,7 @@ typedef enum {
+   UTF8PROC_DECOMP_TYPE_SMALL    = 13, /**< Small */
+   UTF8PROC_DECOMP_TYPE_SQUARE   = 14, /**< Square */
+   UTF8PROC_DECOMP_TYPE_FRACTION = 15, /**< Fraction */
+-  UTF8PROC_DECOMP_TYPE_COMPAT   = 16, /**< Compat */
++  UTF8PROC_DECOMP_TYPE_COMPAT   = 16 /**< Compat */
+ } utf8proc_decomp_type_t;
+ 
+ /** Boundclass property. (TR29) */
+@@ -426,7 +449,7 @@ typedef enum {
+   /* the Extended_Pictographic property is used in the Unicode 11
+      grapheme-boundary rules, so we store it in the boundclass field */
+   UTF8PROC_BOUNDCLASS_EXTENDED_PICTOGRAPHIC = 19,
+-  UTF8PROC_BOUNDCLASS_E_ZWG = 20, /* UTF8PROC_BOUNDCLASS_EXTENDED_PICTOGRAPHIC + ZWJ */
++  UTF8PROC_BOUNDCLASS_E_ZWG = 20 /* UTF8PROC_BOUNDCLASS_EXTENDED_PICTOGRAPHIC + ZWJ */
+ } utf8proc_boundclass_t;
+ 
+ /** Indic_Conjunct_Break property. (TR44) */
+@@ -434,7 +457,7 @@ typedef enum {
+   UTF8PROC_INDIC_CONJUNCT_BREAK_NONE = 0,
+   UTF8PROC_INDIC_CONJUNCT_BREAK_LINKER = 1,
+   UTF8PROC_INDIC_CONJUNCT_BREAK_CONSONANT = 2,
+-  UTF8PROC_INDIC_CONJUNCT_BREAK_EXTEND = 3,
++  UTF8PROC_INDIC_CONJUNCT_BREAK_EXTEND = 3
+ } utf8proc_indic_conjunct_break_t;
+ 
+ /**
+@@ -599,8 +622,8 @@ UTF8PROC_DLLEXPORT utf8proc_ssize_t utf8proc_decompose_custom(
+  * - @ref UTF8PROC_STRIPCC - strip or convert all non-affected control characters
+  * - @ref UTF8PROC_COMPOSE - try to combine decomposed codepoints into composite
+  *                           codepoints
+- * - @ref UTF8PROC_STABLE  - prohibit combining characters that would violate
+- *                           the unicode versioning stability
++ * - @ref UTF8PROC_STABLE  - no effect since version 2.10.0; composition
++ *                           always respects unicode versioning stability
+  *
+  * @return
+  * In case of success, the length (in codepoints) of the normalized UTF-32 string is
+@@ -625,8 +648,8 @@ UTF8PROC_DLLEXPORT utf8proc_ssize_t utf8proc_normalize_utf32(utf8proc_int32_t *b
+  * - @ref UTF8PROC_STRIPCC - strip or convert all non-affected control characters
+  * - @ref UTF8PROC_COMPOSE - try to combine decomposed codepoints into composite
+  *                           codepoints
+- * - @ref UTF8PROC_STABLE  - prohibit combining characters that would violate
+- *                           the unicode versioning stability
++ * - @ref UTF8PROC_STABLE  - no effect since version 2.10.0; composition
++ *                           always respects unicode versioning stability
+  * - @ref UTF8PROC_CHARBOUND - insert 0xFF bytes before each grapheme cluster
+  *
+  * @return
+@@ -777,7 +800,8 @@ UTF8PROC_DLLEXPORT utf8proc_ssize_t utf8proc_map_custom(
+  * Returns a pointer to newly allocated memory of a NFD, NFC, NFKD, NFKC or
+  * NFKC_Casefold normalized version of the null-terminated string `str`.  These
+  * are shortcuts to calling utf8proc_map() with @ref UTF8PROC_NULLTERM
+- * combined with @ref UTF8PROC_STABLE and flags indicating the normalization.
++ * combined with @ref UTF8PROC_STABLE (which has no effect, and is passed for
++ * historical reasons) and flags indicating the normalization.
+  *
+  * @note The memory of the new UTF-8 string will have been allocated
+  * with `malloc`, and should therefore be deallocated with `free`.
