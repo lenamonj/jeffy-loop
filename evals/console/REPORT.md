@@ -93,3 +93,9 @@ way its neighbours in that file are - one form per feature state, both
 still failing on `main` with the original panic - and all seven
 configurations plus fmt and clippy are green. The correction was posted as
 a comment on the thread rather than force-pushed quietly.
+
+**Merged 2026-09-02** by the maintainer as `abf0358`, after one review
+round: the description and comments were cut to the facts, the loop over
+`chars()` with a running byte count became `char_indices()`, and the
+bindings were renamed to say which of them count columns and which count
+bytes. The fix's logic did not change between the first push and the merge.
