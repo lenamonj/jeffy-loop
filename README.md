@@ -43,7 +43,7 @@ Nine fixes are in other people's code because a maintainer with no stake in this
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
-Behind them: **<!-- count:converged -->73<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **33 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+Behind them: **<!-- count:converged -->78<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **34 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#real-world-validation-on-open-source-repositories)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
 
@@ -269,7 +269,7 @@ Five guarantees. Each one is enforced by the iteration prompt, the state files, 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
-  <img src="media/language-pie-light.png" alt="Pie chart of the 62 converged public targets by language: Python 14 at 22.6 percent, Go 10 at 16.1 percent, Rust 8 at 12.9 percent, JavaScript 7 at 11.3 percent, C++ 5 at 8.1 percent, TypeScript 4 at 6.5 percent, C 3 at 4.8 percent, Ruby 3 at 4.8 percent, C# 2 at 3.2 percent, Java 2 at 3.2 percent, PHP 2 at 3.2 percent, Kotlin 1 at 1.6 percent, Swift 1 at 1.6 percent." width="900">
+  <img src="media/language-pie-light.png" alt="Pie chart of the 78 converged public targets by language: Python 19 at 24.4 percent, Rust 13 at 16.7 percent, Go 12 at 15.4 percent, JavaScript 9 at 11.5 percent, C++ 6 at 7.7 percent, TypeScript 4 at 5.1 percent, C 3 at 3.8 percent, PHP 3 at 3.8 percent, Ruby 3 at 3.8 percent, C# 2 at 2.6 percent, Java 2 at 2.6 percent, Kotlin 1 at 1.3 percent, Swift 1 at 1.3 percent." width="900">
 </picture>
 
 <sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
@@ -282,9 +282,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->101<!-- /count -->** | **<!-- count:fixed -->74<!-- /count -->** | **<!-- count:failed -->27<!-- /count -->** | **<!-- count:prs -->19<!-- /count -->** | **<!-- count:merged -->8<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->107<!-- /count -->** | **<!-- count:fixed -->79<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->25<!-- /count -->** | **<!-- count:merged -->8<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->73<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->78<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
 <sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md).</sub>
 
@@ -311,6 +311,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | pflag | Go | [details](evals/pflag/REPORT.md) - deprecated flag field ignored - [PR open](https://github.com/spf13/pflag/pull/507) | Fixed |
 | classnames | JavaScript | [details](evals/classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR open](https://github.com/JedWatson/classnames/pull/579) | Fixed |
 | console | Rust | [details](evals/console/REPORT.md) - truncate_str panicked mid-character - [PR open](https://github.com/console-rs/console/pull/296) | Fixed |
+| assert | PHP | [details](evals/assert/REPORT.md) - isInitialized threw the wrong exception - [PR open](https://github.com/webmozarts/assert/pull/365) | Fixed |
+| natsort | Python | [details](evals/natsort/REPORT.md) - locale sentinel was three ASCII bytes - [PR open](https://github.com/SethMMorton/natsort/pull/196) | Fixed |
+| go-runewidth | Go | [details](evals/go-runewidth/REPORT.md) - Wrap panicked at width zero - [PR open](https://github.com/mattn/go-runewidth/pull/106) | Fixed |
 | mustache.js | JavaScript | [details](evals/mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](evals/spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](evals/quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
@@ -364,6 +367,8 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | python-slugify | Python | [details](evals/python-slugify/REPORT.md) - one bad entity voided all decoding | Fixed |
 | bidict | Python | [details](evals/bidict/REPORT.md) - declared dependency floor could not import | Fixed |
 | unicode-width | Rust | [details](evals/unicode-width/REPORT.md) - published crate lacked its own test corpus | Fixed |
+| itertools | Rust | [details](evals/itertools/REPORT.md) - 1 Medium, 3 Lows, 8 iterations | Fixed |
+| xid | Go | [details](evals/xid/REPORT.md) - 5 Mediums in 10 iterations | Fixed |
 | BurntSushi/toml | Go | [details](evals/ATTEMPTS.md) - 5 runs, 52 iters, not converged | Failed |
 | Carbon | PHP | [details](evals/ATTEMPTS.md) - 4 runs, 17 iters, not converged | Failed |
 | casbin | Go | [details](evals/casbin/REPORT.md) - 5 runs, 46 iters, not converged - [PR open](https://github.com/apache/casbin/pull/1753) | Failed |
@@ -384,6 +389,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | libuv | C | [details](evals/ATTEMPTS.md) - started, then abandoned | Failed |
 | mruby | C | [details](evals/ATTEMPTS.md) - 10 runs, 113 iters, not converged | Failed |
 | node-semver | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iters, not converged | Failed |
+| picomatch | JavaScript | [details](evals/ATTEMPTS.md) - 5 runs, 45 iters, not converged - [PR open](https://github.com/micromatch/picomatch/pull/204) | Failed |
 | shopspring/decimal | Go | [details](evals/ATTEMPTS.md) - 4 runs, 33 iters, not converged | Failed |
 | spdlog | C++ | [details](evals/ATTEMPTS.md) - 4 runs, 40 iters, not converged | Failed |
 | tenacity | Python | [details](evals/ATTEMPTS.md) - 2 runs, 20 iters, not converged | Failed |
@@ -494,7 +500,7 @@ Check K is the clearest example, because it closed the hole it was born from. Th
 
 **The gate grades the run's evidence, not only the code.** The adversarial evaluator is the mechanism that makes self-improvement honest, because the most common failure is not a missed bug but a proof that does not prove anything. `path-to-regexp` is the plainest case in the corpus: three runs, five evaluator invocations, four of them rejections, and **not one rejection was a missed defect in the library**. Every one was a defect in the run's own evidence, including a verify command whose randomised assertions could report safe without ever searching. Those findings improve the method, not the target.
 
-**Failures are published beside successes.** `evals/ATTEMPTS.md` carries every attempt, including **32 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. A corpus of only successes cannot teach anything about where the method stops working, and knowing where it stops is what tells us what to build next. Several of the engine's largest changes exist because a published failure named the gap first.
+**Failures are published beside successes.** `evals/ATTEMPTS.md` carries every attempt, including **34 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. A corpus of only successes cannot teach anything about where the method stops working, and knowing where it stops is what tells us what to build next. Several of the engine's largest changes exist because a published failure named the gap first.
 
 The governing principle came from a self-run that caught its own author. A run promoted a lesson into `PLAN.md` and then broke that same lesson two iterations later, in the very work that promoted it. **A promoted lesson does not protect the iteration that promotes it.** So where a lesson can be checked mechanically it belongs in the harness, and where it cannot it is written down knowing that prose is the weaker instrument.
 

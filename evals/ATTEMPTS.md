@@ -21,6 +21,7 @@ loss rather than hiding it.
 | Target | Runs | Iterations | Outcome | Standard met | Runs that ended blocked |
 |---|---:|---:|---|---|---:|
 | ada | 2 | 18 | converged | evaluator countersigned | 0 |
+| assert | 2 | 21 | converged | evaluator countersigned | 0 |
 | bat | 1 | 10 | converged | evaluator countersigned | 0 |
 | bidict | 1 | 10 | converged | evaluator countersigned | 0 |
 | BurntSushi/toml | 5 | 52 | **not converged** | n/a | 3 |
@@ -135,7 +136,12 @@ loss rather than hiding it.
 |---|---:|---:|---|---:|
 | TOML decoder | 1 | 11 | converged | 0 |
 | gitignore matcher | 5 | 42 | converged | 3 |
+| go-runewidth | 2 | 20 | converged | evaluator countersigned | 0 |
+| itertools | 1 | 8 | converged | evaluator countersigned | 0 |
+| natsort | 1 | 11 | converged | evaluator countersigned | 0 |
+| picomatch | 5 | 45 | **not converged** | n/a | 2 |
 | TOML-M (mutated spec) | 1 | 14 | converged, with a disclosed process violation | 0 |
+| xid | 1 | 10 | converged | evaluator countersigned | 0 |
 
 ## The convergence standard is not uniform, and here is the split
 

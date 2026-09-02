@@ -1,0 +1,960 @@
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..6fae25c
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1 @@
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index 5e2cfd9..de84f82 100644
+--- a/README.md
++++ b/README.md
+@@ -12,9 +12,25 @@ Usage
+ -----
+ 
+ ```go
+-runewidth.StringWidth("つのだ☆HIRO") == 12
++runewidth.StringWidth("つのだ☆HIRO") == 11
+ ```
+ 
++The star in that string is East Asian Ambiguous: one cell in most locales,
++two in a CJK one. The package-level functions use the width detected at
++startup from `LC_ALL`, `LC_CTYPE` and `LANG`, or from `RUNEWIDTH_EASTASIAN`
++when that is set, so the example above holds outside a CJK locale. To
++measure with the East Asian widths whatever the locale, use a condition:
++
++```go
++c := runewidth.NewCondition()
++c.EastAsianWidth = true
++c.StringWidth("つのだ☆HIRO") == 12
++```
++
++Assigning to the package-level `runewidth.EastAsianWidth` does not change
++what `runewidth.StringWidth` returns; it reports the detected locale and is
++read when a new `Condition` is built.
++
+ 
+ Author
+ ------
+diff --git a/runewidth.go b/runewidth.go
+index 3316854..283a096 100644
+--- a/runewidth.go
++++ b/runewidth.go
+@@ -14,10 +14,35 @@ import (
+ //go:generate go run script/generate.go
+ 
+ var (
+-	// EastAsianWidth will be set true if the current locale is CJK
++	// EastAsianWidth reports whether the current locale is CJK. It is set
++	// at init, from RUNEWIDTH_EASTASIAN when that variable is set and from
++	// the locale otherwise.
++	//
++	// It is readable output and an input to NewCondition; it is not an
++	// input to the package-level functions. Those measure through
++	// DefaultCondition, and only the init-time locale handling ever copies
++	// this variable into it, so assigning here leaves StringWidth,
++	// RuneWidth and the rest answering exactly as they did before. A
++	// Condition that NewCondition builds after the assignment does honour
++	// the new value. To change the package-level functions, assign to
++	// DefaultCondition.EastAsianWidth instead, and call
++	// DefaultCondition.CreateLUT again if a lookup table has already been
++	// built.
++	// TestPackageFlagVarsAreInputsToNewConditionOnly pins this.
+ 	EastAsianWidth bool
+ 
+-	// StrictEmojiNeutral should be set false if handle broken fonts
++	// StrictEmojiNeutral controls how emoji that the Unicode width tables
++	// leave at one cell are measured. Set it false to give those emoji two
++	// cells instead, which is what a terminal whose font renders them
++	// full-width needs.
++	//
++	// It has effect only while EastAsianWidth is true. In any other
++	// configuration the width comes from the Unicode tables alone and this
++	// flag changes nothing, which TestStrictEmojiNeutralScope pins.
++	//
++	// Like EastAsianWidth, this variable is an input to NewCondition and
++	// not to the package-level functions; assign to
++	// DefaultCondition.StrictEmojiNeutral to change those.
+ 	StrictEmojiNeutral bool = true
+ 
+ 	// ZeroWidthJoiner is flag to set to use UTR#51 ZWJ.
+@@ -147,7 +172,6 @@ func handleEnv() {
+ 	if DefaultCondition.EastAsianWidth != EastAsianWidth {
+ 		DefaultCondition.EastAsianWidth = EastAsianWidth
+ 		if len(DefaultCondition.combinedLut) > 0 {
+-			DefaultCondition.combinedLut = DefaultCondition.combinedLut[:0]
+ 			CreateLUT()
+ 		}
+ 	}
+@@ -355,8 +379,11 @@ var nonprint = table{
+ 
+ // Condition have flag EastAsianWidth whether the current locale is CJK or not.
+ type Condition struct {
+-	combinedLut        []byte
+-	EastAsianWidth     bool
++	combinedLut    []byte
++	EastAsianWidth bool
++
++	// StrictEmojiNeutral has effect only while EastAsianWidth is true;
++	// see the package-level variable of the same name.
+ 	StrictEmojiNeutral bool
+ 
+ 	// Deprecated: ZWJ sequences are always handled through Unicode
+@@ -487,6 +514,11 @@ graphemes:
+ }
+ 
+ // Truncate return string truncated with w cells
++//
++// If s already fits in w cells it is returned unchanged and tail is never
++// used. Otherwise, when tail alone does not fit in w, the budget cannot be
++// met at all and the result is exactly tail, whose width then exceeds w:
++// Truncate("abcdef", 0, "...") is "...".
+ func (c *Condition) Truncate(s string, w int, tail string) string {
+ 	if c.StringWidth(s) <= w {
+ 		return s
+@@ -537,6 +569,12 @@ func (c *Condition) TruncateLeft(s string, w int, prefix string) string {
+ }
+ 
+ // TruncatePrefix cuts the beginning of `s` so the result fits in w cells, with prefix prepended
++//
++// When prefix is w cells or wider there is no room left for any of s and
++// the result is exactly prefix, whose width then meets or exceeds w:
++// TruncatePrefix("abcdef", 0, "...") is "...". That test comes before the
++// one that returns s unchanged, so unlike Truncate it applies even when s
++// would itself have fit in w.
+ func (c *Condition) TruncatePrefix(s string, w int, prefix string) string {
+ 	if c.StringWidth(prefix) >= w {
+ 		return prefix
+@@ -564,29 +602,129 @@ func (c *Condition) TruncatePrefix(s string, w int, prefix string) string {
+ 
+ // Wrap return string wrapped with w cells
+ func (c *Condition) Wrap(s string, w int) string {
+-	width := 0
+ 	var out strings.Builder
+-	out.Grow(len(s) + len(s)/w + 1)
+-	for _, r := range s {
+-		cw := c.RuneWidth(r)
+-		if r == '\n' {
+-			out.WriteRune(r)
++	// One newline per w cells is the worst case, so len(s)/w is the
++	// capacity hint. Guard the division: w of 0 is what a caller passes
++	// when terminal size detection fails, and a capacity hint is no
++	// reason to panic on it.
++	grow := len(s) + 1
++	if w > 0 {
++		grow += len(s) / w
++	}
++	out.Grow(grow)
++	// Pure ASCII cannot form a multi-rune grapheme cluster other than
++	// CRLF, which the byte loop handles identically, so it skips the
++	// segmenter - the same trade StringWidth already makes, and worth
++	// making: the segmenter costs about three times the byte loop.
++	if isASCII(s) {
++		c.wrapASCII(&out, s, w)
++	} else {
++		c.wrapClusters(&out, s, w)
++	}
++	return out.String()
++}
++
++func isASCII(s string) bool {
++	for i := 0; i < len(s); i++ {
++		if s[i] >= 0x80 {
++			return false
++		}
++	}
++	return true
++}
++
++// wrapASCII and wrapClusters must agree on every ASCII input, which
++// TestWrapASCIIPathMatchesClusterPath drives over a corpus.
++func (c *Condition) wrapASCII(out *strings.Builder, s string, w int) {
++	width := 0
++	for i := 0; i < len(s); i++ {
++		b := s[i]
++		if b == '\n' {
++			out.WriteByte(b)
+ 			width = 0
+ 			continue
+-		} else if width+cw > w {
+-			out.WriteByte('\n')
++		}
++		// CRLF is one grapheme cluster, so the cluster path never
++		// measures the CR on its own; treat it as one unit here too or
++		// the two paths disagree at a non-positive width.
++		if b == '\r' && i+1 < len(s) && s[i+1] == '\n' {
++			out.WriteString(s[i : i+2])
+ 			width = 0
+-			out.WriteRune(r)
+-			width += cw
++			i++
+ 			continue
+ 		}
+-		out.WriteRune(r)
++		cw := 1
++		if b < 0x20 || b == 0x7F {
++			cw = 0
++		}
++		// Same rule as wrapClusters: a byte that occupies no columns
++		// never causes a break.
++		if cw > 0 && width+cw > w {
++			out.WriteByte('\n')
++			width = 0
++		}
++		out.WriteByte(b)
+ 		width += cw
+ 	}
+-	return out.String()
++}
++
++// wrapClusters walks grapheme clusters, not runes: StringWidth and the
++// truncation functions all measure in clusters, and breaking a line inside
++// one splits a ZWJ emoji sequence or a flag pair and leaves a joiner
++// dangling at the end of a line. Writing the cluster's own bytes also keeps
++// Wrap from re-encoding input it cannot decode - WriteRune turns every
++// undecodable byte into U+FFFD, and Wrap is the only function here that
++// ever rewrote its input.
++func (c *Condition) wrapClusters(out *strings.Builder, s string, w int) {
++	width := 0
++	g := graphemes.FromString(s)
++	for g.Next() {
++		cluster := g.Value()
++		// A line break can sit anywhere inside a cluster, not only alone
++		// or after a CR: the segmenter joins a break to a truncated
++		// multi-byte sequence on either side of it, so "caf\xe9\n" comes
++		// back as "c", "a", "f\xe9\n". Split on the breaks and measure
++		// every piece the same way rather than reasoning about where the
++		// break can fall - two earlier attempts here special-cased a
++		// shape and each missed a real one.
++		for {
++			i := strings.IndexByte(cluster, '\n')
++			if i < 0 {
++				break
++			}
++			width = c.writePiece(out, cluster[:i], width, w)
++			out.WriteByte('\n')
++			width = 0
++			cluster = cluster[i+1:]
++		}
++		width = c.writePiece(out, cluster, width, w)
++	}
++}
++
++// writePiece writes one break-free piece of a cluster, moving to a new line
++// first if it does not fit the remaining budget, and returns the new column.
++func (c *Condition) writePiece(out *strings.Builder, piece string, width, w int) int {
++	if piece == "" {
++		return width
++	}
++	cw := c.graphemeWidth(piece)
++	// Never start a new line for something that occupies no columns: a
++	// zero-width piece fits anywhere, and breaking before one only emits
++	// a line the input never asked for.
++	if cw > 0 && width+cw > w {
++		out.WriteByte('\n')
++		width = 0
++	}
++	out.WriteString(piece)
++	return width + cw
+ }
+ 
+ // FillLeft return string filled in left by spaces in w cells
++//
++// The spaces go before s, so the result is right-aligned in a field of w
++// cells: FillLeft("a", 6) is five spaces followed by "a". If s already
++// occupies w cells or more it is returned unchanged and never truncated, so
++// the result can be wider than w: FillLeft("abcdef", 2) is "abcdef".
+ func (c *Condition) FillLeft(s string, w int) string {
+ 	width := c.StringWidth(s)
+ 	count := w - width
+@@ -596,7 +734,12 @@ func (c *Condition) FillLeft(s string, w int) string {
+ 	return s
+ }
+ 
+-// FillRight return string filled in left by spaces in w cells
++// FillRight return string filled in right by spaces in w cells
++//
++// The spaces go after s, so the result is left-aligned in a field of w
++// cells: FillRight("a", 6) is "a" followed by five spaces. If s already
++// occupies w cells or more it is returned unchanged and never truncated, so
++// the result can be wider than w: FillRight("abcdef", 2) is "abcdef".
+ func (c *Condition) FillRight(s string, w int) string {
+ 	width := c.StringWidth(s)
+ 	count := w - width
+@@ -623,6 +766,14 @@ func IsCombiningWidth(r rune) bool {
+ }
+ 
+ // IsNeutralWidth returns whether is neutral width or not.
++//
++// It answers from the ranges EastAsianWidth.txt lists explicitly as N, so
++// it is not the same question as whether r's East_Asian_Width is Neutral.
++// That file's @missing line reads `0000..10FFFF; N`, giving most code
++// points it does not list the value N by default, and this predicate
++// answers false for every one of them: IsNeutralWidth(0x0590) is false,
++// though U+0590 is unlisted and so Neutral by that default. RuneWidth is
++// unaffected and reports one cell either way.
+ func IsNeutralWidth(r rune) bool {
+ 	return inTable(r, neutral)
+ }
+@@ -633,6 +784,11 @@ func StringWidth(s string) (width int) {
+ }
+ 
+ // Truncate return string truncated with w cells
++//
++// If s already fits in w cells it is returned unchanged and tail is never
++// used. Otherwise, when tail alone does not fit in w, the budget cannot be
++// met at all and the result is exactly tail, whose width then exceeds w:
++// Truncate("abcdef", 0, "...") is "...".
+ func Truncate(s string, w int, tail string) string {
+ 	return DefaultCondition.Truncate(s, w, tail)
+ }
+@@ -643,6 +799,12 @@ func TruncateLeft(s string, w int, prefix string) string {
+ }
+ 
+ // TruncatePrefix cuts the beginning of `s` so the result fits in w cells, with prefix prepended
++//
++// When prefix is w cells or wider there is no room left for any of s and
++// the result is exactly prefix, whose width then meets or exceeds w:
++// TruncatePrefix("abcdef", 0, "...") is "...". That test comes before the
++// one that returns s unchanged, so unlike Truncate it applies even when s
++// would itself have fit in w.
+ func TruncatePrefix(s string, w int, prefix string) string {
+ 	return DefaultCondition.TruncatePrefix(s, w, prefix)
+ }
+@@ -653,20 +815,30 @@ func Wrap(s string, w int) string {
+ }
+ 
+ // FillLeft return string filled in left by spaces in w cells
++//
++// The spaces go before s, so the result is right-aligned in a field of w
++// cells: FillLeft("a", 6) is five spaces followed by "a". If s already
++// occupies w cells or more it is returned unchanged and never truncated, so
++// the result can be wider than w: FillLeft("abcdef", 2) is "abcdef".
+ func FillLeft(s string, w int) string {
+ 	return DefaultCondition.FillLeft(s, w)
+ }
+ 
+-// FillRight return string filled in left by spaces in w cells
++// FillRight return string filled in right by spaces in w cells
++//
++// The spaces go after s, so the result is left-aligned in a field of w
++// cells: FillRight("a", 6) is "a" followed by five spaces. If s already
++// occupies w cells or more it is returned unchanged and never truncated, so
++// the result can be wider than w: FillRight("abcdef", 2) is "abcdef".
+ func FillRight(s string, w int) string {
+ 	return DefaultCondition.FillRight(s, w)
+ }
+ 
+-// CreateLUT will create an in-memory lookup table of 557055 bytes for faster operation.
++// CreateLUT will create an in-memory lookup table of 557056 bytes for faster operation.
+ // This should not be called concurrently with other operations.
++// If a flag on DefaultCondition is changed, CreateLUT should be called
++// again: it rebuilds the table from the flags in force, and until it is
++// called the package-level functions keep answering from the old one.
+ func CreateLUT() {
+-	if len(DefaultCondition.combinedLut) > 0 {
+-		return
+-	}
+ 	DefaultCondition.CreateLUT()
+ }
+diff --git a/runewidth_test.go b/runewidth_test.go
+index f60704a..8e4d730 100644
+--- a/runewidth_test.go
++++ b/runewidth_test.go
+@@ -8,9 +8,12 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"sort"
++	"strings"
+ 	"sync"
+ 	"testing"
+ 	"unicode/utf8"
++
++	"github.com/clipperhouse/uax29/v2/graphemes"
+ )
+ 
+ var _ sort.Interface = (*table)(nil) // ensure that type "table" does implement sort.Interface
+@@ -176,6 +179,78 @@ func TestDefaultLUT(t *testing.T) {
+ 	DefaultCondition.combinedLut = nil
+ }
+ 
++// TestCreateLUTSizeMatchesDocumentedFigure pins the byte count both
++// CreateLUT doc comments state against the allocation they describe. The
++// two comments disagreed until this test existed - one said 557056 and the
++// other 557055 - because a figure typed into prose has nothing holding it
++// to the code it describes.
++func TestCreateLUTSizeMatchesDocumentedFigure(t *testing.T) {
++	// The figure written in both doc comments, and in the string form the
++	// comments use, so a change to the allocation names the text to update.
++	const documented = 557056
++
++	c := &Condition{}
++	c.CreateLUT()
++	if got := len(c.combinedLut); got != documented {
++		t.Errorf("CreateLUT allocated %d bytes, both doc comments say %d; update the comments or the allocation", got, documented)
++	}
++}
++
++// TestPackageCreateLUTRebuildsAfterFlagChange pins that the package-level
++// CreateLUT rebuilds an existing table after DefaultCondition's flags
++// change. It used to return early whenever a table was already built, so a
++// program that called CreateLUT, changed a flag, and called CreateLUT again
++// as Condition.CreateLUT's doc instructs went on measuring with the stale
++// table and every package-level width was silently wrong. Both directions
++// are driven, because the stale table is wrong either way round.
++//
++// The oracle is a fresh Condition carrying the flags now in force, compared
++// over the whole rune space, so the test cannot be satisfied by a rebuild
++// that produces some other table.
++func TestPackageCreateLUTRebuildsAfterFlagChange(t *testing.T) {
++	savedEA, savedLut := DefaultCondition.EastAsianWidth, DefaultCondition.combinedLut
++	defer func() {
++		DefaultCondition.EastAsianWidth, DefaultCondition.combinedLut = savedEA, savedLut
++	}()
++
++	for _, start := range []bool{false, true} {
++		DefaultCondition.combinedLut = nil
++		DefaultCondition.EastAsianWidth = start
++		CreateLUT()
++
++		DefaultCondition.EastAsianWidth = !start
++		CreateLUT()
++
++		want := &Condition{
++			EastAsianWidth:     !start,
++			StrictEmojiNeutral: DefaultCondition.StrictEmojiNeutral,
++			ZeroWidthJoiner:    DefaultCondition.ZeroWidthJoiner,
++		}
++
++		mismatches := 0
++		var firstRune rune
++		var firstGot, firstWant int
++		for r := rune(0); r <= utf8.MaxRune; r++ {
++			got, exp := RuneWidth(r), want.RuneWidth(r)
++			if got != exp {
++				if mismatches == 0 {
++					firstRune, firstGot, firstWant = r, got, exp
++				}
++				mismatches++
++			}
++		}
++		if mismatches != 0 {
++			t.Errorf("built at EastAsianWidth=%v then flipped and rebuilt: %d runes disagree with a fresh Condition, first %U got %d want %d",
++				start, mismatches, firstRune, firstGot, firstWant)
++		}
++
++		const s = "\u00b1\u3042A"
++		if got, exp := StringWidth(s), want.StringWidth(s); got != exp {
++			t.Errorf("built at EastAsianWidth=%v then flipped and rebuilt: StringWidth = %d, want %d", start, got, exp)
++		}
++	}
++}
++
+ func checkInterval(first, last rune) bool {
+ 	return first >= 0 && first <= utf8.MaxRune &&
+ 		last >= 0 && last <= utf8.MaxRune &&
+@@ -415,6 +490,410 @@ END`
+ 	}
+ }
+ 
++// TestWrapNonPositiveWidth pins the w <= 0 boundary. Wrap sized its output
++// builder with len(s)/w, so w == 0 panicked with an integer division by
++// zero while every other public function returns a defined result there.
++// Wrap only ever inserts newlines, so stripping them must give the input
++// back whatever the width.
++// TestStrictEmojiNeutralScope pins the scope the documentation states for
++// StrictEmojiNeutral: it has effect only while EastAsianWidth is true, and
++// where it does have effect it widens emoji the Unicode tables leave at one
++// cell to two cells, and touches nothing else. The doc comment used to
++// state no restriction at all, which read as a promise the flag worked
++// everywhere.
++func TestStrictEmojiNeutralScope(t *testing.T) {
++	strict := &Condition{EastAsianWidth: false, StrictEmojiNeutral: true}
++	loose := &Condition{EastAsianWidth: false, StrictEmojiNeutral: false}
++	outside := 0
++	for r := rune(0); r <= utf8.MaxRune; r++ {
++		if strict.RuneWidth(r) != loose.RuneWidth(r) {
++			outside++
++		}
++	}
++	if outside != 0 {
++		t.Errorf("with EastAsianWidth false, StrictEmojiNeutral changed %d rune widths; the documentation says it has no effect there", outside)
++	}
++
++	strict = &Condition{EastAsianWidth: true, StrictEmojiNeutral: true}
++	loose = &Condition{EastAsianWidth: true, StrictEmojiNeutral: false}
++	changed, offTable, notWidened := 0, 0, 0
++	for r := rune(0); r <= utf8.MaxRune; r++ {
++		a, b := strict.RuneWidth(r), loose.RuneWidth(r)
++		if a == b {
++			continue
++		}
++		changed++
++		if !inTable(r, emoji) {
++			offTable++
++		}
++		if a != 1 || b != 2 {
++			notWidened++
++		}
++	}
++	if changed == 0 {
++		t.Error("with EastAsianWidth true, StrictEmojiNeutral changed no rune width; the documentation says it widens emoji")
++	}
++	if offTable != 0 {
++		t.Errorf("StrictEmojiNeutral changed %d runes outside the emoji table", offTable)
++	}
++	if notWidened != 0 {
++		t.Errorf("StrictEmojiNeutral changed %d runes by something other than one cell to two", notWidened)
++	}
++}
++
++// TestREADMEExamples runs the README's usage examples exactly as they are
++// written there and asserts the values it states. The README claimed 12 for
++// the first example, which is the East Asian answer; the default condition
++// on any locale that is not CJK returns 11.
++//
++// The first example names a condition - a locale that is not CJK - so this
++// establishes it rather than inheriting whatever an earlier test left
++// behind. TestDefaultLUT leaves the package in East Asian mode, which is
++// RW-15; every global this touches is restored on the way out.
++func TestREADMEExamples(t *testing.T) {
++	const s = "\u3064\u306e\u3060\u2606HIRO"
++
++	savedGlobal, savedDefault := EastAsianWidth, DefaultCondition.EastAsianWidth
++	defer func() {
++		EastAsianWidth, DefaultCondition.EastAsianWidth = savedGlobal, savedDefault
++	}()
++	EastAsianWidth, DefaultCondition.EastAsianWidth = false, false
++
++	if got := StringWidth(s); got != 11 {
++		t.Errorf("README example one: StringWidth = %d, README says 11", got)
++	}
++
++	c := NewCondition()
++	c.EastAsianWidth = true
++	if got := c.StringWidth(s); got != 12 {
++		t.Errorf("README example two: c.StringWidth = %d, README says 12", got)
++	}
++
++	// The README also states what assigning to the package-level variable
++	// does not do, and a claim about the absence of an effect needs a
++	// check as much as one about its presence. Stated as before and after,
++	// which is what the claim says, rather than as a fixed number.
++	before := StringWidth(s)
++	EastAsianWidth = true
++	if after := StringWidth(s); after != before {
++		t.Errorf("assigning EastAsianWidth changed StringWidth from %d to %d; the README says it does not", before, after)
++	}
++}
++
++// TestPackageFlagVarsAreInputsToNewConditionOnly pins the contract the
++// package-level flag variables document: each one is readable output and
++// an input to NewCondition, and assigning to one does not change what the
++// package-level functions return, because those measure through
++// DefaultCondition and only the init-time locale handling writes there.
++//
++// The assertions are stated as before and after rather than as fixed
++// widths, so the test says the same thing whatever East Asian mode an
++// earlier test left the package in (RW-15).
++func TestPackageFlagVarsAreInputsToNewConditionOnly(t *testing.T) {
++	const ambiguous = '\u00b1' // PLUS-MINUS SIGN: East Asian Ambiguous, one cell normally and two under the East Asian widths
++
++	savedEA, savedSEN, savedZWJ := EastAsianWidth, StrictEmojiNeutral, ZeroWidthJoiner
++	defer func() {
++		EastAsianWidth, StrictEmojiNeutral, ZeroWidthJoiner = savedEA, savedSEN, savedZWJ
++	}()
++
++	beforeDefault := *DefaultCondition
++	beforeRune := RuneWidth(ambiguous)
++	beforeString := StringWidth(string(ambiguous))
++
++	EastAsianWidth, StrictEmojiNeutral, ZeroWidthJoiner = !savedEA, !savedSEN, !savedZWJ
++
++	if got := RuneWidth(ambiguous); got != beforeRune {
++		t.Errorf("after assigning the package flag variables, RuneWidth = %d, was %d; they are documented as no input to the package-level functions", got, beforeRune)
++	}
++	if got := StringWidth(string(ambiguous)); got != beforeString {
++		t.Errorf("after assigning the package flag variables, StringWidth = %d, was %d; they are documented as no input to the package-level functions", got, beforeString)
++	}
++	if DefaultCondition.EastAsianWidth != beforeDefault.EastAsianWidth ||
++		DefaultCondition.StrictEmojiNeutral != beforeDefault.StrictEmojiNeutral ||
++		DefaultCondition.ZeroWidthJoiner != beforeDefault.ZeroWidthJoiner {
++		t.Errorf("assigning the package flag variables changed DefaultCondition to {%v %v %v}, was {%v %v %v}; only the init-time locale handling writes there",
++			DefaultCondition.EastAsianWidth, DefaultCondition.StrictEmojiNeutral, DefaultCondition.ZeroWidthJoiner,
++			beforeDefault.EastAsianWidth, beforeDefault.StrictEmojiNeutral, beforeDefault.ZeroWidthJoiner)
++	}
++
++	// The other half of the documented contract: NewCondition does read
++	// them, so a Condition built after the assignment honours it.
++	c := NewCondition()
++	if c.EastAsianWidth != EastAsianWidth || c.StrictEmojiNeutral != StrictEmojiNeutral || c.ZeroWidthJoiner != ZeroWidthJoiner {
++		t.Errorf("NewCondition() = {%v %v %v}, want the package variables {%v %v %v}",
++			c.EastAsianWidth, c.StrictEmojiNeutral, c.ZeroWidthJoiner,
++			EastAsianWidth, StrictEmojiNeutral, ZeroWidthJoiner)
++	}
++	want := 1
++	if c.EastAsianWidth {
++		want = 2
++	}
++	if got := c.RuneWidth(ambiguous); got != want {
++		t.Errorf("NewCondition().RuneWidth = %d, want %d: the Condition built after the assignment measures by the new value", got, want)
++	}
++}
++
++// TestWrapNewlineClusterResetsColumn pins that a line break resets the
++// column even when the segmenter hands the break back glued to whatever
++// follows it. uax29 returns "\n" joined to a following truncated
++// multi-byte sequence as a single cluster, so matching the whole cluster
++// against "\n" missed the break, the column never reset, and Wrap inserted
++// a line break the input never asked for.
++func TestWrapNewlineClusterResetsColumn(t *testing.T) {
++	// An explicit condition, not the package-level function: the byte that
++	// follows the newline decodes to U+FFFD, which is East Asian
++	// Ambiguous and so one cell here but two under the East Asian widths.
++	// TestDefaultLUT leaves the package in that mode (RW-15), so a test
++	// that read the ambient default would pass alone and fail in a full
++	// run.
++	c := &Condition{EastAsianWidth: false, StrictEmojiNeutral: true}
++
++	// "abcde" is exactly the budget, and what follows the newline is one
++	// cell, so nothing may be inserted.
++	if got, want := c.Wrap("abcde\n\xed", 5), "abcde\n\xed"; got != want {
++		t.Errorf("Wrap(%q, 5) = %q, want %q", "abcde\n\xed", got, want)
++	}
++
++	// Every lead byte that can begin a multi-byte sequence, truncated.
++	for b := 0xC2; b <= 0xF7; b++ {
++		s := "abcde\n" + string([]byte{byte(b)})
++		got := c.Wrap(s, 5)
++		if got != s {
++			t.Errorf("Wrap(%q, 5) = %q, want the input unchanged", s, got)
++		}
++		if strings.Contains(got, "\n\n") {
++			t.Errorf("Wrap(%q, 5) = %q inserted an empty line", s, got)
++		}
++	}
++
++	// The column resets to the width of whatever shares the cluster with
++	// the break, not to zero: the invalid byte already occupies one cell
++	// of the new line, so the break before z falls one character earlier
++	// than it would if the reset were to zero.
++	if got, want := c.Wrap("abcde\n\xedxyz", 3), "abc\nde\n\xedxy\nz"; got != want {
++		t.Errorf("Wrap(%q, 3) = %q, want %q", "abcde\n\xedxyz", got, want)
++	}
++}
++
++// TestWrapBudgetOverInvalidUTF8 pins that no wrapped line exceeds its
++// budget when a grapheme cluster carries content on either side of a line
++// break. The segmenter joins a break to a truncated multi-byte sequence
++// before it as well as after it, so "caf\xe9\n" segments as "c", "a",
++// "f\xe9\n"; writing such a cluster whole put four columns on a line
++// budgeted at three. Every check here is over invalid UTF-8, which is
++// exactly what the existing wrap tests did not cover.
++func TestWrapBudgetOverInvalidUTF8(t *testing.T) {
++	c := &Condition{EastAsianWidth: false, StrictEmojiNeutral: true}
++
++	var corpus []string
++	for b := 0x80; b <= 0xFF; b++ {
++		x := string([]byte{byte(b)})
++		corpus = append(corpus,
++			"caf"+x+"\n", "caf\n"+x, x+"\ncaf", "ab"+x+"de\nfg",
++			"\n"+x+"\n", x+"\n"+x, "caf"+x+"\r\ndef")
++	}
++
++	for _, s := range corpus {
++		for w := 2; w <= 6; w++ {
++			got := c.Wrap(s, w)
++			if stripped, want := strings.ReplaceAll(got, "\n", ""), strings.ReplaceAll(s, "\n", ""); stripped != want {
++				t.Fatalf("Wrap(%q, %d) = %q, newline-stripped %q, want %q", s, w, got, stripped, want)
++			}
++			for _, line := range strings.Split(got, "\n") {
++				if lw := c.StringWidth(line); lw > w {
++					t.Fatalf("Wrap(%q, %d) = %q: the line %q is %d columns, over a budget of %d", s, w, got, line, lw, w)
++				}
++			}
++		}
++	}
++
++	// The two cases the gate reproduced, as known answers.
++	if got, want := c.Wrap("caf\xe9\n", 3), "ca\nf\xe9\n"; got != want {
++		t.Errorf("Wrap(%q, 3) = %q, want %q", "caf\xe9\n", got, want)
++	}
++	if got, want := c.Wrap("r\xe9sum\xe9\n", 4), "r\xe9su\nm\xe9\n"; got != want {
++		t.Errorf("Wrap(%q, 4) = %q, want %q", "r\xe9sum\xe9\n", got, want)
++	}
++}
++
++// clusterStarts returns the byte offsets at which a grapheme cluster begins
++// in s, plus len(s), which is where the last cluster ends.
++func clusterStarts(s string) map[int]bool {
++	m := map[int]bool{len(s): true}
++	g := graphemes.FromString(s)
++	for g.Next() {
++		m[g.Start()] = true
++	}
++	return m
++}
++
++// TestWrapSplitsOnlyAtClusterBoundaries pins the contract that Wrap breaks
++// lines where StringWidth counts cells: between grapheme clusters, never
++// inside one. Wrap used to range over runes, so it split ZWJ sequences and
++// flag pairs and left a joiner dangling at the end of a line, and it
++// disagreed with StringWidth about how wide the same string was.
++func TestWrapSplitsOnlyAtClusterBoundaries(t *testing.T) {
++	family := "\U0001F468\u200D\U0001F469\u200D\U0001F466"
++	corpus := []string{
++		family + family,
++		"\U0001F1EF\U0001F1F5\U0001F1EF\U0001F1F5", // two regional-indicator flags
++		"e\u0301e\u0301e\u0301",                    // three combining clusters
++		"a\U0001F600b\U0001F600c",
++		"あいうえお",
++		"abcdefghij",
++	}
++	for _, s := range corpus {
++		starts := clusterStarts(s)
++		for w := 1; w <= 8; w++ {
++			got := Wrap(s, w)
++			// No input here contains a newline, so every newline in the
++			// output was inserted by Wrap.
++			off := 0
++			for i := 0; i < len(got); i++ {
++				if got[i] == '\n' {
++					if !starts[off] {
++						t.Errorf("Wrap(%q, %d) = %q broke at byte %d, which is inside a grapheme cluster", s, w, got, off)
++					}
++					continue
++				}
++				off++
++			}
++			if off != len(s) {
++				t.Errorf("Wrap(%q, %d) = %q kept %d bytes of a %d byte input", s, w, got, off, len(s))
++			}
++		}
++	}
++
++	// The two families are four cells wide, so at a budget of four they
++	// must not be split at all.
++	if got, want := StringWidth(family+family), 4; got != want {
++		t.Fatalf("StringWidth(two families) = %d, want %d", got, want)
++	}
++	if got, want := Wrap(family+family, 4), family+family; got != want {
++		t.Errorf("Wrap(two families, 4) = %q, want %q", got, want)
++	}
++}
++
++// TestWrapASCIIPathMatchesClusterPath is the differential that lets Wrap
++// keep an ASCII fast path at all: for every ASCII input the byte loop must
++// produce exactly what the grapheme walk produces, including for CRLF,
++// which is the one multi-rune cluster ASCII can form.
++func TestWrapASCIIPathMatchesClusterPath(t *testing.T) {
++	corpus := []string{
++		"", "a", "abc", "abcdefghij", "the quick brown fox",
++		"a\nb", "a\r\nb", "\r\n", "\n\n", "a\tb", "a\x7fb", "\x00\x01",
++		"line one\nline two\nline three", strings.Repeat("word ", 30),
++	}
++	c := NewCondition()
++	for _, s := range corpus {
++		for w := -1; w <= 12; w++ {
++			var ascii, clusters strings.Builder
++			c.wrapASCII(&ascii, s, w)
++			c.wrapClusters(&clusters, s, w)
++			if ascii.String() != clusters.String() {
++				t.Errorf("Wrap paths disagree on %q at w=%d: ascii %q, clusters %q",
++					s, w, ascii.String(), clusters.String())
++			}
++		}
++	}
++}
++
++// TestWrapPreservesBytes pins that Wrap only ever inserts newlines. It used
++// to range over runes and re-encode with WriteRune, which turned every
++// undecodable byte into U+FFFD while StringWidth, Truncate, TruncateLeft
++// and TruncatePrefix all passed the same bytes through untouched.
++func TestWrapPreservesBytes(t *testing.T) {
++	for _, s := range []string{
++		"abc\xffdef", "\x80", "\xff\xff\xff", "\xed\xa0\x80", "\xc3",
++		"caf\xe9 latte", // Latin-1 e-acute, undecodable as UTF-8
++		"ok", "あ",
++	} {
++		for _, w := range []int{1, 2, 5} {
++			if got, want := strings.ReplaceAll(Wrap(s, w), "\n", ""), s; got != want {
++				t.Errorf("Wrap(%q, %d) stripped of newlines = %q, want %q", s, w, got, want)
++			}
++		}
++	}
++}
++
++func TestWrapNonPositiveWidth(t *testing.T) {
++	for _, s := range []string{"", "hello", "あい", "a\nb", "é"} {
++		for _, w := range []int{0, -1} {
++			got := Wrap(s, w)
++			if stripped, want := strings.ReplaceAll(got, "\n", ""), strings.ReplaceAll(s, "\n", ""); stripped != want {
++				t.Errorf("Wrap(%q, %d) = %q, newline-stripped %q, want %q", s, w, got, stripped, want)
++			}
++		}
++	}
++}
++
++// TestTruncateAffixWiderThanBudget pins what Truncate and TruncatePrefix
++// document for a budget narrower than the caller's own affix: the affix
++// comes back whole, so the result is wider than w. Both are driven as the
++// enumeration behind that sentence, over a corpus at every width from 0 to
++// 12, because the claim generalises over every such case rather than over
++// the two examples the doc comments name.
++//
++// TruncateLeft is deliberately absent: its w counts cells to cut from the
++// front, not a budget the result must fit, so the contract does not apply
++// to it.
++func TestTruncateAffixWiderThanBudget(t *testing.T) {
++	c := &Condition{}
++
++	// The two examples the doc comments state.
++	if got := c.Truncate("abcdef", 0, "..."); got != "..." {
++		t.Errorf(`Truncate("abcdef", 0, "...") = %q, the doc comment says "..."`, got)
++	}
++	if got := c.TruncatePrefix("abcdef", 0, "..."); got != "..." {
++		t.Errorf(`TruncatePrefix("abcdef", 0, "...") = %q, the doc comment says "..."`, got)
++	}
++
++	inputs := []string{"", "a", "abcdef", "\u3064\u306e\u3060\u2606HIRO", "\u3042\u308a\u304c\u3068\u3046"}
++	affixes := []string{"", "-", "...", "\u2026", "ab", "\u3042\u3044"}
++
++	cases := 0
++	for _, in := range inputs {
++		for _, affix := range affixes {
++			aw := c.StringWidth(affix)
++			for w := 0; w <= 12; w++ {
++				// Truncate only reaches its tail when s does not already fit.
++				if aw > w && c.StringWidth(in) > w {
++					if got := c.Truncate(in, w, affix); got != affix {
++						t.Errorf("Truncate(%q, %d, %q) = %q, want the tail alone %q", in, w, affix, got, affix)
++					}
++					cases++
++				}
++				if aw >= w {
++					if got := c.TruncatePrefix(in, w, affix); got != affix {
++						t.Errorf("TruncatePrefix(%q, %d, %q) = %q, want the prefix alone %q", in, w, affix, got, affix)
++					}
++					cases++
++				}
++			}
++		}
++	}
++	if cases == 0 {
++		t.Fatal("the corpus produced no case where the affix does not fit; the enumeration proves nothing")
++	}
++
++	// The asymmetry the doc comments state: Truncate returns s untouched
++	// when s already fits, however wide the tail is, while TruncatePrefix
++	// tests its prefix first and so returns it even then.
++	if got := c.Truncate("a", 2, "\u3042\u3044"); got != "a" {
++		t.Errorf(`Truncate("a", 2, "\u3042\u3044") = %q, want "a": s already fits, so the tail is never used`, got)
++	}
++	if got := c.TruncatePrefix("a", 2, "\u3042\u3044"); got != "\u3042\u3044" {
++		t.Errorf(`TruncatePrefix("a", 2, "\u3042\u3044") = %q, want the prefix: the prefix test precedes the fits-already test`, got)
++	}
++
++	// And the consequence the doc comments name: the result is then wider
++	// than the budget, which is the surprise a caller has to know about.
++	if got := c.Truncate("abcdef", 0, "..."); c.StringWidth(got) <= 0 {
++		t.Errorf("Truncate returned %q of width %d; the doc comment says the width exceeds w", got, c.StringWidth(got))
++	}
++}
++
+ func TestTruncateNoNeeded(t *testing.T) {
+ 	s := "あいうえおあい"
+ 	expected := "あいうえおあい"
+@@ -524,6 +1003,34 @@ var iscombiningwidthtests = []struct {
+ 	{'☆', false},
+ }
+ 
++// TestIsNeutralWidthAnswersFromListedRangesOnly pins which of the two
++// readings of IsNeutralWidth the code implements, which is what its doc
++// comment now states: it answers from the ranges EastAsianWidth.txt lists
++// explicitly as N, not from the East_Asian_Width property, whose @missing
++// line makes most unlisted code points Neutral by default.
++func TestIsNeutralWidthAnswersFromListedRangesOnly(t *testing.T) {
++	// Listed as N: true.
++	if !IsNeutralWidth(0x00A9) {
++		t.Error("IsNeutralWidth(U+00A9) = false, want true: the copyright sign is listed with East_Asian_Width=N")
++	}
++	// Listed as W: false, so the predicate is not simply true everywhere.
++	if IsNeutralWidth(0x3042) {
++		t.Error("IsNeutralWidth(U+3042) = true, want false: HIRAGANA LETTER A is listed with East_Asian_Width=W")
++	}
++	// Not listed at all: false, though the file's @missing default makes it
++	// Neutral. This is the case the doc comment exists to disclose.
++	if IsNeutralWidth(0x0590) {
++		t.Error("IsNeutralWidth(U+0590) = true, want false: it is unlisted, and the table holds only the listed ranges")
++	}
++	// The width is the same either way, which is why this is a naming
++	// question rather than a wrong answer.
++	for _, c := range []*Condition{{}, {EastAsianWidth: true}} {
++		if got := c.RuneWidth(0x0590); got != 1 {
++			t.Errorf("RuneWidth(U+0590) with EastAsianWidth=%v = %d, want 1", c.EastAsianWidth, got)
++		}
++	}
++}
++
+ func TestIsCombiningWidth(t *testing.T) {
+ 	for _, tt := range iscombiningwidthtests {
+ 		if out := IsCombiningWidth(tt.in); out != tt.out {
+@@ -568,6 +1075,58 @@ func TestFillRightFit(t *testing.T) {
+ 	}
+ }
+ 
++// TestFillSidesMatchTheirDocComments pins which side each fill pads, which
++// is what their doc comments now say and what they did not say before: both
++// carried the sentence "filled in left", so the documentation gave a caller
++// no way to tell the two apart and described FillRight wrongly.
++//
++// The per-case assertions are backed by the enumeration behind the claim,
++// over a corpus at every width, because the sentence generalises over all of
++// them rather than over the two examples the comments name.
++func TestFillSidesMatchTheirDocComments(t *testing.T) {
++	c := &Condition{}
++
++	// The examples both doc comments state.
++	if got, want := c.FillLeft("a", 6), "     a"; got != want {
++		t.Errorf("FillLeft(%q, 6) = %q, want %q: the spaces go before s", "a", got, want)
++	}
++	if got, want := c.FillRight("a", 6), "a     "; got != want {
++		t.Errorf("FillRight(%q, 6) = %q, want %q: the spaces go after s", "a", got, want)
++	}
++	// The no-op case they also state: wider than w rather than truncated.
++	for _, f := range []struct {
++		name string
++		fn   func(string, int) string
++	}{{"FillLeft", c.FillLeft}, {"FillRight", c.FillRight}} {
++		if got := f.fn("abcdef", 2); got != "abcdef" {
++			t.Errorf("%s(%q, 2) = %q, want the input unchanged", f.name, "abcdef", got)
++		}
++	}
++	// Padding is counted in cells, not bytes or runes.
++	if got, want := c.FillLeft("\u3042", 5), "   \u3042"; got != want {
++		t.Errorf("FillLeft(%q, 5) = %q, want %q: a wide rune occupies two of the five cells", "\u3042", got, want)
++	}
++
++	// The enumeration: for every input and width, FillLeft is padding then s
++	// and FillRight is s then padding, with the padding exactly the cells the
++	// input leaves short.
++	for _, in := range []string{"", "a", "abcdef", "\u3042\u3044", "\u00e9", "\xe0\xa0"} {
++		for w := -3; w <= 10; w++ {
++			pad := w - c.StringWidth(in)
++			if pad < 0 {
++				pad = 0
++			}
++			spaces := strings.Repeat(" ", pad)
++			if got, want := c.FillLeft(in, w), spaces+in; got != want {
++				t.Errorf("FillLeft(%q, %d) = %q, want %q", in, w, got, want)
++			}
++			if got, want := c.FillRight(in, w), in+spaces; got != want {
++				t.Errorf("FillRight(%q, %d) = %q, want %q", in, w, got, want)
++			}
++		}
++	}
++}
++
+ func TestEnv(t *testing.T) {
+ 	old := os.Getenv("RUNEWIDTH_EASTASIAN")
+ 	defer os.Setenv("RUNEWIDTH_EASTASIAN", old)

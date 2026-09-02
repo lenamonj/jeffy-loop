@@ -1,0 +1,379 @@
+diff --git a/.gitignore b/.gitignore
+index 339c4ba..2b41045 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -43,3 +43,4 @@ pip-log.txt
+ 
+ # VSCode
+ .vscode
++.claude/jeffy-loop.local.md
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b2fb977..878282e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -30,6 +30,25 @@ Unreleased
+   ([@gaoflow](https://github.com/gaoflow), PR
+   [#191](https://github.com/SethMMorton/natsort/pull/191))
+ - Eliminated mypy failure related to string literals
++- The source distribution shipped whatever development state happened to be
++  tracked in git, because there was no `MANIFEST.in` to prune the file list
++  setuptools-scm supplies; it now excludes tooling state while still carrying
++  the package, the tests and the packaging files
++- `os_sorted` and `os_sort_keygen` document that every input is coerced to
++  `str` before collating, but on a POSIX host without PyICU they did not, so
++  the same non-string input sorted differently depending on whether PyICU was
++  installed; all three branches now share one coercion step
++- The CLI printed one blank line when stdin held nothing, because splitting an
++  empty string yields a single empty entry; empty input is now no entries at
++  all, in both newline and NUL separator modes
++- The installed `natsort` console script printed a full traceback for a
++  mistyped `--filter` range or a Ctrl-C, because the handlers lived in the
++  `python -m natsort` path only; both entry points now go through a shared
++  `cli` function and report one line
++- The PyICU sentinel that `ns.NUMAFTER` places before numbers was the three
++  ASCII characters `x7f` rather than the maximum byte, so with PyICU installed
++  numbers were sorted before, not after, any string whose collation key began
++  above byte `0x78`
+ 
+ ### Removed
+ 
+diff --git a/MANIFEST.in b/MANIFEST.in
+new file mode 100644
+index 0000000..590e705
+--- /dev/null
++++ b/MANIFEST.in
+@@ -0,0 +1,8 @@
++# The sdist is built from the git-tracked file list that setuptools-scm
++# supplies, which would otherwise carry development state that no installer
++# needs. Everything below is tooling memory, not part of the package.
++exclude PLAN.md
++exclude BACKLOG.md
++exclude JOURNAL.md
++exclude JOURNAL-archive.md
++prune .jeffy
+diff --git a/natsort/__main__.py b/natsort/__main__.py
+index 58e9af5..ece6d6a 100644
+--- a/natsort/__main__.py
++++ b/natsort/__main__.py
+@@ -269,7 +269,13 @@ def get_entries(args: TypedArgs) -> list[str]:
+     if len(args.entries) > 0:
+         return args.entries
+     separator = "\0" if args.zero_terminated else "\n"
+-    return sys.stdin.read().rstrip(separator).split(separator)
++    stream = sys.stdin.read().rstrip(separator)
++    if not stream:
++        # Nothing but separators, or nothing at all, is no entries rather than
++        # one empty entry: splitting "" yields [""], which would print a blank
++        # line and hand a phantom element to whatever reads the output next.
++        return []
++    return stream.split(separator)
+ 
+ 
+ def keep_entry_range(
+@@ -396,10 +402,25 @@ def sort_and_print_entries(entries: list[str], args: TypedArgs) -> None:
+         print(entry)  # noqa: T201
+ 
+ 
+-if __name__ == "__main__":
++def cli(*arguments: str) -> None:
++    """
++    Run the command-line interface, reporting bad input without a traceback.
++
++    This is the console-script entry point, kept separate from `main` so that
++    `main` stays a plain function that raises, while anything typed at a shell
++    is answered with a single line. Both ways of starting the tool - the
++    installed `natsort` script and `python -m natsort` - go through here, so
++    they report the same thing.
++
++    Arguments are read from sys.argv when none are given.
++    """
+     try:
+-        main()
+-    except ValueError as a:
+-        sys.exit(str(a))
++        main(*arguments)
++    except ValueError as err:
++        sys.exit(str(err))
+     except KeyboardInterrupt:
+         sys.exit(1)
++
++
++if __name__ == "__main__":
++    cli()
+diff --git a/natsort/compat/locale.py b/natsort/compat/locale.py
+index f387fd0..6713fcc 100644
+--- a/natsort/compat/locale.py
++++ b/natsort/compat/locale.py
+@@ -35,7 +35,7 @@ try:
+     # This string should in theory be sorted after any other byte
+     # string because it contains the max byte char repeated many times.
+     # You would need some odd data to come after that.
+-    null_string_locale_max = b"x7f" * 50
++    null_string_locale_max = b"\xff" * 50
+ 
+     def dumb_sort() -> bool:
+         """Determine if the locale backend is not collating correctly."""
+diff --git a/natsort/natsort.py b/natsort/natsort.py
+index 82d1e11..2d89a9b 100644
+--- a/natsort/natsort.py
++++ b/natsort/natsort.py
+@@ -678,6 +678,21 @@ def numeric_regex_chooser(alg: NSType) -> str:
+     return utils.regex_chooser(alg).pattern[1:-1]
+ 
+ 
++def _coerce_to_path_like(v: Any) -> str | PurePath:  # noqa: ANN401
++    """
++    Return *v* unchanged when it is already path-like, else its `str` form.
++
++    Every `os_sort_keygen` branch collates path components, so anything that
++    is not already a path or a string has to become one first. Keeping that
++    rule in one place is what makes the three branches agree: they once did
++    not, and the same input sorted differently depending on whether PyICU
++    happened to be installed.
++    """
++    if isinstance(v, (str, PurePath)):
++        return v
++    return str(v)
++
++
+ def _split_apply(
+     v: Any,  # noqa: ANN401
+     key: Callable[[T], NatsortInType] | None = None,
+@@ -685,9 +700,7 @@ def _split_apply(
+ ) -> Iterator[str]:
+     if key is not None:
+         v = key(v)
+-    if not isinstance(v, (str, PurePath)):
+-        v = str(v)
+-    return utils.path_splitter(v, treat_base=treat_base)
++    return utils.path_splitter(_coerce_to_path_like(v), treat_base=treat_base)
+ 
+ 
+ # Choose the implementation based on the host OS
+@@ -726,7 +739,16 @@ else:
+         def os_sort_keygen(  # noqa: D103
+             key: Callable[[Any], NatsortInType] | None = None,
+         ) -> Callable[[Any], NatsortOutType]:
+-            return natsort_keygen(key=key, alg=ns.LOCALE | ns.PATH | ns.IGNORECASE)
++            natsort_path_key = natsort_keygen(
++                alg=ns.LOCALE | ns.PATH | ns.IGNORECASE,
++            )
++
++            def os_sort_key(value: Any) -> NatsortOutType:  # noqa: ANN401
++                if key is not None:
++                    value = key(value)
++                return natsort_path_key(_coerce_to_path_like(value))
++
++            return os_sort_key
+ 
+     else:
+         # ICU installed
+@@ -761,8 +783,8 @@ os_sorted
+ 
+ Notes
+ -----
+-On Windows, this will implicitly coerce all inputs to str before
+-collating.
++This will implicitly coerce all inputs to str before collating, on
++every platform and whether or not PyICU is installed.
+ 
+ """
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 8170860..334410e 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -46,7 +46,7 @@ Issues = "https://github.com/SethMMorton/natsort/issues"
+ Changelog = "https://github.com/SethMMorton/natsort/blob/main/CHANGELOG.md"
+ 
+ [project.scripts]
+-natsort = "natsort.__main__:main"
++natsort = "natsort.__main__:cli"
+ 
+ [tool.setuptools_scm]
+ version_file = "natsort/_version.py"
+@@ -59,7 +59,7 @@ mypy_path = "mypy_stubs"
+ 
+ [tool.ruff]
+ target-version = "py39"
+-extend-exclude = ["build", "dist", "docs", "mypy_stubs", "_version.py"]
++extend-exclude = [".jeffy", "build", "dist", "docs", "mypy_stubs", "_version.py"]
+ 
+ [tool.ruff.format]
+ docstring-code-format = true
+diff --git a/tests/test_compat_locale.py b/tests/test_compat_locale.py
+new file mode 100644
+index 0000000..90da67d
+--- /dev/null
++++ b/tests/test_compat_locale.py
+@@ -0,0 +1,70 @@
++"""\
++Test the locale compatibility layer.
++"""
++
++from __future__ import annotations
++
++import importlib.util
++import sys
++import types
++from typing import TYPE_CHECKING
++
++import pytest
++
++import natsort.compat.locale
++from natsort.compat.locale import get_strxfrm, null_string_locale_max
++
++if TYPE_CHECKING:
++    from collections.abc import Iterator
++
++
++@pytest.fixture
++def icu_locale_module() -> Iterator[types.ModuleType]:
++    """
++    Load natsort/compat/locale.py with a stub "icu" module in place.
++
++    The PyICU half of that module is unreachable through a normal import
++    on a machine without PyICU, and importing natsort at all builds a real
++    collator at module scope. Loading the source file directly with a stub
++    in sys.modules is what lets the PyICU constants be checked anywhere.
++    """
++    saved = sys.modules.get("icu")
++    sys.modules["icu"] = types.ModuleType("icu")
++    spec = importlib.util.spec_from_file_location(
++        "_icu_locale",
++        natsort.compat.locale.__file__,
++    )
++    assert spec is not None
++    assert spec.loader is not None
++    module = importlib.util.module_from_spec(spec)
++    try:
++        spec.loader.exec_module(module)
++        yield module
++    finally:
++        if saved is None:
++            del sys.modules["icu"]
++        else:
++            sys.modules["icu"] = saved
++
++
++def test_icu_null_string_locale_max_is_the_maximum_byte_string(
++    icu_locale_module: types.ModuleType,
++) -> None:
++    # The PyICU branch prepends this sentinel to numbers under
++    # ns.NUMAFTER | ns.LOCALE, so it has to sort after every sort key
++    # PyICU can return. It once held b"x7f" (three ASCII characters)
++    # rather than the maximum byte, which put numbers ahead of any
++    # string whose sort key began above byte 0x78.
++    assert icu_locale_module.null_string_locale_max > b"\xff" * 49
++    assert icu_locale_module.null_string_locale == b""
++
++
++@pytest.mark.parametrize(
++    "value",
++    ["a", "Z", "ä", "漢字", "Ω", "я", "~~~~~~", "￿"],
++)
++@pytest.mark.usefixtures("with_locale_en_us")
++def test_null_string_locale_max_sorts_after_any_transformed_input(
++    value: str,
++) -> None:
++    assert get_strxfrm()(value) < null_string_locale_max  # type: ignore[operator]
+diff --git a/tests/test_main.py b/tests/test_main.py
+index 77230da..83b70af 100644
+--- a/tests/test_main.py
++++ b/tests/test_main.py
+@@ -14,6 +14,7 @@ from hypothesis.strategies import DataObject, data, floats, integers, lists
+ from natsort.__main__ import (
+     TypedArgs,
+     check_filters,
++    cli,
+     get_entries,
+     keep_entry_range,
+     keep_entry_value,
+@@ -197,12 +198,27 @@ def test_get_entries_with_empty_stdin(
+     zero_terminated: bool,
+     mocker: MockerFixture,
+ ) -> None:
+-    """Test that empty stdin yields a single empty entry."""
++    """Test that empty stdin yields no entries at all."""
+     args = TypedArgs(zero_terminated=zero_terminated)
+     mock_stdin = mocker.patch("sys.stdin.read", return_value="")
+     entries = get_entries(args)
+     mock_stdin.assert_called_once_with()
+-    assert entries == [""]
++    assert entries == []
++
++
++@pytest.mark.parametrize(
++    ("zero_terminated", "stdin_content"),
++    [(False, "\n"), (False, "\n\n"), (True, "\0"), (True, "\0\0")],
++)
++def test_get_entries_with_only_separators_on_stdin(
++    zero_terminated: bool,
++    stdin_content: str,
++    mocker: MockerFixture,
++) -> None:
++    """Test that stdin holding only separators yields no entries."""
++    args = TypedArgs(zero_terminated=zero_terminated)
++    mocker.patch("sys.stdin.read", return_value=stdin_content)
++    assert get_entries(args) == []
+ 
+ 
+ # Each test has an "example" version for demonstrative purposes,
+@@ -293,3 +309,29 @@ def test_keep_entry_range(lows: list[int], highs: list[int], truth: bool) -> Non
+ @pytest.mark.parametrize(("values", "truth"), [([100, 45], True), ([23], False)])
+ def test_keep_entry_value(values: list[int], truth: bool) -> None:
+     assert keep_entry_value("a56b23c89", values, int, re.compile(r"\d+")) is truth
++
++
++def test_cli_reports_a_bad_filter_range_without_a_traceback() -> None:
++    # The installed console script calls cli, not main, so a mistyped range
++    # has to come back as one line rather than as a stack trace.
++    with pytest.raises(SystemExit) as exc_info:
++        cli("-f", "10", "5", "a1")
++    assert str(exc_info.value) == "Error in --filter: low >= high"
++
++
++def test_cli_exits_quietly_on_keyboard_interrupt(mocker: MockerFixture) -> None:
++    mocker.patch("natsort.__main__.main", side_effect=KeyboardInterrupt)
++    with pytest.raises(SystemExit) as exc_info:
++        cli()
++    assert exc_info.value.code == 1
++
++
++def test_cli_passes_arguments_through_to_main(mocker: MockerFixture) -> None:
++    patched = mocker.patch("natsort.__main__.main")
++    cli("a1", "a2")
++    patched.assert_called_once_with("a1", "a2")
++
++
++def test_main_still_raises_so_it_stays_callable_as_a_function() -> None:
++    with pytest.raises(ValueError, match="Error in --filter: low >= high"):
++        main("-f", "10", "5", "a1")
+diff --git a/tests/test_os_sorted.py b/tests/test_os_sorted.py
+index d7e2afa..43ecf53 100644
+--- a/tests/test_os_sorted.py
++++ b/tests/test_os_sorted.py
+@@ -222,3 +222,23 @@ else:
+ def test_os_sorted_corpus() -> None:
+     result = natsort.os_sorted(given)
+     assert result == expected
++
++
++@pytest.mark.parametrize("value", [None, 10, 1.5, True, ("a",), 4.3, float("nan")])
++def test_os_sort_keygen_coerces_non_string_input_to_str(value: object) -> None:
++    # os_sorted documents that it coerces every input to str before
++    # collating. The Windows and PyICU branches did that through
++    # _split_apply; the PyICU-absent branch did not, so the same input
++    # sorted differently depending on whether PyICU was installed.
++    key = natsort.os_sort_keygen()
++    assert key(value) == key(str(value))
++
++
++def test_os_sorted_orders_non_strings_as_their_str_form() -> None:
++    assert natsort.os_sorted([None, "a"]) == ["a", None]
++    assert natsort.os_sorted(["None", "a"]) == ["a", "None"]
++
++
++def test_os_sort_keygen_applies_its_key_before_coercing() -> None:
++    key = natsort.os_sort_keygen(key=lambda x: x[0])
++    assert key((10, "z")) == natsort.os_sort_keygen()("10")

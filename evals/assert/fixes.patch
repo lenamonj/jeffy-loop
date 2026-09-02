@@ -1,0 +1,1788 @@
+diff --git a/.gitattributes b/.gitattributes
+index 20443cc..1e22cfb 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -9,3 +9,8 @@
+ /phpunit.xml.dist     export-ignore
+ /tests                export-ignore
+ /tools                export-ignore
++/PLAN.md              export-ignore
++/BACKLOG.md           export-ignore
++/JOURNAL.md           export-ignore
++/JOURNAL-archive.md   export-ignore
++/.jeffy               export-ignore
+diff --git a/README.md b/README.md
+index fef4eda..45e63d8 100644
+--- a/README.md
++++ b/README.md
+@@ -38,6 +38,18 @@ ordering for all assertions:
+ Check the source code of the assertions to find out details about the additional
+ available placeholders.
+ 
++Because the message is applied as a `sprintf()` format string, a literal percent sign
++has to be written `%%`:
++
++```
++Assert::true($ok, 'Coverage must be 100%%.');
++```
++
++A message whose placeholders cannot be applied - an unknown specifier, or more
++placeholders than the assertion supplies values for - is reported unformatted rather
++than raising out of the assertion, so every failure still arrives as an
++`InvalidArgumentException`.
++
+ Installation
+ ------------
+ 
+@@ -139,6 +151,14 @@ Method                                                | Description
+ `oneOf($value, array $values, $message = '')`         | Check that a value is one of a list of values (alias of `inArray`)
+ `notOneOf($value, array $values, $message = '')`      | Check that a value is not one of a list of values (alias of `notInArray`)
+ 
++The five ordering assertions - `greaterThan`, `greaterThanEq`, `lessThan`, `lessThanEq` and
++`range` - only compare operands that can be ordered against one another: two numbers, two
++strings, two booleans, two arrays or two objects. A pair PHP would decide by coercing one side
++(an object against a number, an array against a number, a non-numeric string against a number)
++is reported as a failed assertion rather than compared, and `NAN` is ordered against nothing at
++all. `eq`, `notEq`, `same` and `notSame` are unaffected: they are documented as `==` and `===`
++and keep exactly those semantics.
++
+ ### String Assertions
+ 
+ You should check that a value is a string with `Assert::string()` before making
+@@ -172,6 +192,13 @@ Method                                              | Description
+ `email($value, $message = '')`                      | Check that a string is a valid e-mail address
+ `notWhitespaceOnly($value, $message = '')`          | Check that a string contains at least one non-whitespace character
+ 
++`regex` and `notRegex` compile the pattern you give them, and a pattern that does not compile is
++reported as such - `The pattern "/[/" is not a valid regular expression: ...` - rather than as a
++verdict about the value. A valid pattern that cannot be matched at all, because the subject
++exhausts a PCRE limit or is not valid UTF-8 under `/u`, is reported as
++`The pattern "/./u" could not be matched against the value: ...` carrying PCRE's own reason. A
++custom message describes the value, so it is not used for either failure.
++
+ ### File Assertions
+ 
+ Method                              | Description
+diff --git a/bin/src/MixinGenerator.php b/bin/src/MixinGenerator.php
+index 61b3d88..b5d87a6 100644
+--- a/bin/src/MixinGenerator.php
++++ b/bin/src/MixinGenerator.php
+@@ -125,6 +125,13 @@ PHP
+         foreach ($staticMethods as $method) {
+             $this->haveAssert[$method->getName()] = str_contains($method->getDocComment(), '@psalm-assert');
+ 
++            // Skipped here rather than in getMethods(): these methods get no generated variants,
++            // but the Psalm plugin still has to know the base method asserts a type, or it stops
++            // preserving the argument's type for that one assertion.
++            if (in_array($method->getName(), $this->skipGenerateForMethods, true)) {
++                continue;
++            }
++
+             $nullOr = $this->nullOr($method, 4);
+             if (null !== $nullOr) {
+                 $this->haveAssert["nullOr".$method->getName()] = str_contains($nullOr, '@psalm-assert');
+@@ -731,10 +738,6 @@ BODY;
+         $staticMethods = $assert->getMethods(ReflectionMethod::IS_STATIC);
+ 
+         foreach ($staticMethods as $staticMethod) {
+-            if (in_array($staticMethod->name, $this->skipGenerateForMethods)) {
+-                continue;
+-            }
+-
+             $modifiers = $staticMethod->getModifiers();
+             if (0 === ($modifiers & ReflectionMethod::IS_PUBLIC)) {
+                 continue;
+diff --git a/src/Assert.php b/src/Assert.php
+index 31c861b..15b0d50 100644
+--- a/src/Assert.php
++++ b/src/Assert.php
+@@ -13,6 +13,7 @@ declare(strict_types=1);
+ 
+ namespace Webmozart\Assert;
+ 
++use ArgumentCountError;
+ use ArrayAccess;
+ use Closure;
+ use Countable;
+@@ -22,6 +23,7 @@ use ReflectionFunction;
+ use ReflectionProperty;
+ use Throwable;
+ use Traversable;
++use ValueError;
+ 
+ /**
+  * Efficient assertions to validate the input/output of your methods.
+@@ -47,7 +49,7 @@ class Assert
+         if (!\is_string($value)) {
+             $message = static::resolveMessage($message);
+ 
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a string. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -87,7 +89,7 @@ class Assert
+     {
+         if (!\is_int($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an integer. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -106,9 +108,9 @@ class Assert
+      */
+     public static function integerish(mixed $value, string|callable $message = ''): int|float|string
+     {
+-        if (!\is_numeric($value) || $value != (int) $value) {
++        if (!\is_numeric($value) || (\is_float($value) && !static::castsToInteger($value)) || $value != (int) $value) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an integerish value. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -134,7 +136,7 @@ class Assert
+ 
+         if ($value < 1) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a positive integer. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -158,7 +160,7 @@ class Assert
+ 
+         if ($value < 0) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a non negative integer. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -182,7 +184,7 @@ class Assert
+ 
+         if ($value >= 0) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a negative integer. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -204,7 +206,7 @@ class Assert
+     {
+         if (!\is_float($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a float. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -226,7 +228,7 @@ class Assert
+     {
+         if (!\is_numeric($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a numeric. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -250,7 +252,7 @@ class Assert
+     {
+         if (!\is_int($value) || $value < 0) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a non-negative integer. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -272,7 +274,7 @@ class Assert
+     {
+         if (!\is_bool($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a boolean. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -294,7 +296,7 @@ class Assert
+     {
+         if (!\is_scalar($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a scalar. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -316,7 +318,7 @@ class Assert
+     {
+         if (!\is_object($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an object. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -340,7 +342,7 @@ class Assert
+     {
+         if (!\is_object($value) && !\is_string($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an objectish value. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -348,7 +350,7 @@ class Assert
+ 
+         if (\is_string($value) && !\class_exists($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected class to be defined. Got: %s',
+                 $value
+             ));
+@@ -374,7 +376,7 @@ class Assert
+     {
+         if (!\is_resource($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a resource. Got: %s',
+                 static::typeToString($value),
+                 $type // User supplied message might include the second placeholder.
+@@ -383,7 +385,7 @@ class Assert
+ 
+         if ($type && $type !== \get_resource_type($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a resource of type %2$s. Got: %s',
+                 static::typeToString($value),
+                 $type
+@@ -406,11 +408,15 @@ class Assert
+     {
+         Assert::object($value);
+ 
+-        $reflectionProperty = new ReflectionProperty($value, $property);
++        // A property the object does not declare or carry is not initialized either, and asking
++        // ReflectionProperty about it raises a ReflectionException past every caller catching
++        // the InvalidArgumentException this assertion promises.
++        $initialized = \property_exists($value, $property)
++            && (new ReflectionProperty($value, $property))->isInitialized($value);
+ 
+-        if (!$reflectionProperty->isInitialized($value)) {
++        if (!$initialized) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected property %s to be initialized.',
+                 $property,
+             ));
+@@ -432,7 +438,7 @@ class Assert
+     {
+         if (!\is_callable($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a callable. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -454,7 +460,7 @@ class Assert
+     {
+         if (!\is_array($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an array. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -476,7 +482,7 @@ class Assert
+     {
+         if (!\is_array($value) && !($value instanceof ArrayAccess)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an array accessible. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -498,7 +504,7 @@ class Assert
+     {
+         if (!\is_array($value) && !($value instanceof Countable)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a countable. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -520,7 +526,7 @@ class Assert
+     {
+         if (!\is_array($value) && !($value instanceof Traversable)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an iterable. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -549,7 +555,7 @@ class Assert
+ 
+         if (!($value instanceof $class)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an instance of %2$s. Got: %s',
+                 static::typeToString($value),
+                 $class
+@@ -575,7 +581,7 @@ class Assert
+ 
+         if (!\is_object($value) || $value instanceof $class) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an instance other than %2$s. Got: %s',
+                 static::typeToString($value),
+                 $class
+@@ -601,6 +607,10 @@ class Assert
+     {
+         static::isIterable($classes);
+ 
++        // Materialised before the loop: the failure message below lists the same classes, and a
++        // Generator cannot be traversed twice.
++        $classes = \is_array($classes) ? $classes : \iterator_to_array($classes);
++
+         foreach ($classes as $class) {
+             static::string($class, 'Expected class as a string. Got: %s');
+ 
+@@ -610,10 +620,10 @@ class Assert
+         }
+ 
+         $message = self::resolveMessage($message);
+-        static::reportInvalidArgument(\sprintf(
++        static::reportInvalidArgument(static::formatMessage(
+             $message ?: 'Expected an instance of any of %2$s. Got: %s',
+             static::typeToString($value),
+-            \implode(', ', \array_map(static::valueToString(...), \iterator_to_array($classes)))
++            \implode(', ', \array_map(static::valueToString(...), $classes))
+         ));
+     }
+ 
+@@ -633,15 +643,19 @@ class Assert
+     {
+         static::isIterable($classes);
+ 
++        // Materialised before the loop: the failure message below lists the same classes, and a
++        // Generator cannot be traversed twice.
++        $classes = \is_array($classes) ? $classes : \iterator_to_array($classes);
++
+         foreach ($classes as $class) {
+             static::string($class, 'Expected class as a string. Got: %s');
+ 
+             if ($value instanceof $class) {
+                 $message = self::resolveMessage($message);
+-                static::reportInvalidArgument(\sprintf(
++                static::reportInvalidArgument(static::formatMessage(
+                     $message ?: 'Expected not an instance of %2$s. Got: %s',
+                     static::typeToString($value),
+-                    \implode(', ', \array_map(static::valueToString(...), \iterator_to_array($classes)))
++                    \implode(', ', \array_map(static::valueToString(...), $classes))
+                 ));
+             }
+         }
+@@ -669,7 +683,7 @@ class Assert
+ 
+         if (!\is_a($value, $class, \is_string($value))) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an instance of this class or to this class among its parents "%2$s". Got: %s',
+                 static::valueToString($value),
+                 $class
+@@ -700,7 +714,7 @@ class Assert
+ 
+         if (\is_a($value, $class, \is_string($value))) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an instance of this class or to this class among its parents other than "%2$s". Got: %s',
+                 static::valueToString($value),
+                 $class
+@@ -728,6 +742,10 @@ class Assert
+         static::objectish($value, $message);
+         static::isIterable($classes);
+ 
++        // Materialised before the loop: the failure message below lists the same classes, and a
++        // Generator cannot be traversed twice.
++        $classes = \is_array($classes) ? $classes : \iterator_to_array($classes);
++
+         foreach ($classes as $class) {
+             static::string($class, 'Expected class as a string. Got: %s');
+ 
+@@ -737,10 +755,10 @@ class Assert
+         }
+ 
+         $message = self::resolveMessage($message);
+-        static::reportInvalidArgument(\sprintf(
++        static::reportInvalidArgument(static::formatMessage(
+             $message ?: 'Expected an instance of any of this classes or any of those classes among their parents "%2$s". Got: %s',
+             static::valueToString($value),
+-            \implode(', ', \iterator_to_array($classes))
++            \implode(', ', $classes)
+         ));
+     }
+ 
+@@ -757,9 +775,9 @@ class Assert
+      */
+     public static function isEmpty(mixed $value, string|callable $message = ''): mixed
+     {
+-        if (!empty($value)) {
++        if (!static::isEmptyValue($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an empty value. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -779,9 +797,9 @@ class Assert
+      */
+     public static function notEmpty(mixed $value, string|callable $message = ''): mixed
+     {
+-        if (empty($value)) {
++        if (static::isEmptyValue($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a non-empty value. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -803,7 +821,7 @@ class Assert
+     {
+         if (null !== $value) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected null. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -849,7 +867,7 @@ class Assert
+     {
+         if (true !== $value) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to be true. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -871,7 +889,7 @@ class Assert
+     {
+         if (false !== $value) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to be false. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -918,7 +936,7 @@ class Assert
+ 
+         if (false === \filter_var($value, \FILTER_VALIDATE_IP)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to be an IP. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -941,7 +959,7 @@ class Assert
+ 
+         if (false === \filter_var($value, \FILTER_VALIDATE_IP, \FILTER_FLAG_IPV4)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to be an IPv4. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -964,7 +982,7 @@ class Assert
+ 
+         if (false === \filter_var($value, \FILTER_VALIDATE_IP, \FILTER_FLAG_IPV6)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to be an IPv6. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -987,7 +1005,7 @@ class Assert
+ 
+         if (false === \filter_var($value, FILTER_VALIDATE_EMAIL, FILTER_FLAG_EMAIL_UNICODE)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to be a valid e-mail address. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -1011,13 +1029,13 @@ class Assert
+         static::isArray($values);
+ 
+         $allValues = \count($values);
+-        $uniqueValues = \count(\array_unique($values));
++        $uniqueValues = \count(\array_unique($values, \SORT_REGULAR));
+ 
+         if ($allValues !== $uniqueValues) {
+             $difference = $allValues - $uniqueValues;
+ 
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an array of unique values, but %s of them %s duplicated',
+                 $difference,
+                 1 === $difference ? 'is' : 'are'
+@@ -1036,7 +1054,7 @@ class Assert
+     {
+         if ($expect != $value) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value equal to %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($expect)
+@@ -1055,7 +1073,7 @@ class Assert
+     {
+         if ($expect == $value) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a different value than %s.',
+                 static::valueToString($expect)
+             ));
+@@ -1075,7 +1093,7 @@ class Assert
+     {
+         if ($expect !== $value) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value identical to %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($expect)
+@@ -1096,7 +1114,7 @@ class Assert
+     {
+         if ($expect === $value) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value not identical to %s.',
+                 static::valueToString($expect)
+             ));
+@@ -1114,9 +1132,9 @@ class Assert
+      */
+     public static function greaterThan(mixed $value, mixed $limit, string|callable $message = ''): mixed
+     {
+-        if ($value <= $limit) {
++        if (!static::comparable($value, $limit) || $value <= $limit) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value greater than %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($limit)
+@@ -1135,9 +1153,9 @@ class Assert
+      */
+     public static function greaterThanEq(mixed $value, mixed $limit, string|callable $message = ''): mixed
+     {
+-        if ($value < $limit) {
++        if (!static::comparable($value, $limit) || $value < $limit) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value greater than or equal to %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($limit)
+@@ -1156,9 +1174,9 @@ class Assert
+      */
+     public static function lessThan(mixed $value, mixed $limit, string|callable $message = ''): mixed
+     {
+-        if ($value >= $limit) {
++        if (!static::comparable($value, $limit) || $value >= $limit) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value less than %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($limit)
+@@ -1177,9 +1195,9 @@ class Assert
+      */
+     public static function lessThanEq(mixed $value, mixed $limit, string|callable $message = ''): mixed
+     {
+-        if ($value > $limit) {
++        if (!static::comparable($value, $limit) || $value > $limit) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value less than or equal to %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($limit)
+@@ -1200,9 +1218,9 @@ class Assert
+      */
+     public static function range(mixed $value, mixed $min, mixed $max, string|callable $message = ''): mixed
+     {
+-        if ($value < $min || $value > $max) {
++        if (!static::comparable($value, $min) || !static::comparable($value, $max) || $value < $min || $value > $max) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value between %2$s and %3$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($min),
+@@ -1244,7 +1262,7 @@ class Assert
+ 
+         if (!\in_array($value, $values, true)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected one of: %2$s. Got: %s',
+                 static::valueToString($value),
+                 \implode(', ', \array_map(static::valueToString(...), $values))
+@@ -1288,7 +1306,7 @@ class Assert
+ 
+         if (\in_array($value, $values, true)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: '%2$s was not expected to contain a value. Got: %s',
+                 static::valueToString($value),
+                 \implode(', ', \array_map(static::valueToString(...), $values))
+@@ -1312,7 +1330,7 @@ class Assert
+ 
+         if (!\str_contains($value, $subString)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($subString)
+@@ -1336,7 +1354,7 @@ class Assert
+ 
+         if (\str_contains($value, $subString)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: '%2$s was not expected to be contained in a value. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($subString)
+@@ -1359,7 +1377,7 @@ class Assert
+ 
+         if (\preg_match('/^\s*$/', $value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a non-whitespace string. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -1382,7 +1400,7 @@ class Assert
+ 
+         if (!\str_starts_with($value, $prefix)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to start with %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($prefix)
+@@ -1406,7 +1424,7 @@ class Assert
+ 
+         if (\str_starts_with($value, $prefix)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value not to start with %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($prefix)
+@@ -1438,7 +1456,7 @@ class Assert
+ 
+         if (!$valid) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to start with a letter. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -1461,7 +1479,7 @@ class Assert
+ 
+         if (!\str_ends_with($value, $suffix)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to end with %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($suffix)
+@@ -1485,7 +1503,7 @@ class Assert
+ 
+         if (\str_ends_with($value, $suffix)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value not to end with %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($suffix)
+@@ -1507,9 +1525,9 @@ class Assert
+         static::string($value);
+         static::string($pattern);
+ 
+-        if (!\preg_match($pattern, $value)) {
++        if (!static::matchPattern($pattern, $value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'The value %s does not match the expected pattern.',
+                 static::valueToString($value)
+             ));
+@@ -1530,9 +1548,9 @@ class Assert
+         static::string($value);
+         static::string($pattern);
+ 
+-        if (\preg_match($pattern, $value, $matches, PREG_OFFSET_CAPTURE)) {
++        if (static::matchPattern($pattern, $value, $matches, \PREG_OFFSET_CAPTURE)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'The value %s matches the pattern %s (at offset %d).',
+                 static::valueToString($value),
+                 static::valueToString($pattern),
+@@ -1556,7 +1574,7 @@ class Assert
+ 
+         if (!\preg_match('/^\p{L}+$/u', $value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain only Unicode letters. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -1583,7 +1601,7 @@ class Assert
+ 
+         if ($valid) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain only letters. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -1610,7 +1628,7 @@ class Assert
+ 
+         if ($valid) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain digits only. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -1637,7 +1655,7 @@ class Assert
+ 
+         if ($valid) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain letters and digits only. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -1668,7 +1686,7 @@ class Assert
+ 
+         if ($valid) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain lowercase characters only. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -1697,7 +1715,7 @@ class Assert
+ 
+         if ($valid) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain uppercase characters only. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -1720,7 +1738,7 @@ class Assert
+ 
+         if ($length !== static::strlen($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain %2$s characters. Got: %s',
+                 static::valueToString($value),
+                 $length
+@@ -1746,7 +1764,7 @@ class Assert
+ 
+         if (static::strlen($value) < $min) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain at least %2$s characters. Got: %s',
+                 static::valueToString($value),
+                 $min
+@@ -1772,7 +1790,7 @@ class Assert
+ 
+         if (static::strlen($value) > $max) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain at most %2$s characters. Got: %s',
+                 static::valueToString($value),
+                 $max
+@@ -1801,7 +1819,7 @@ class Assert
+ 
+         if ($length < $min || $length > $max) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a value to contain between %2$s and %3$s characters. Got: %s',
+                 static::valueToString($value),
+                 $min,
+@@ -1825,7 +1843,7 @@ class Assert
+ 
+         if (!\file_exists($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'The path %s does not exist.',
+                 static::valueToString($value)
+             ));
+@@ -1845,7 +1863,7 @@ class Assert
+ 
+         if (!\is_file($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'The path %s is not a file.',
+                 static::valueToString($value)
+             ));
+@@ -1865,7 +1883,7 @@ class Assert
+ 
+         if (!\is_dir($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'The path %s is not a directory.',
+                 static::valueToString($value)
+             ));
+@@ -1885,7 +1903,7 @@ class Assert
+ 
+         if (!\is_readable($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'The path %s is not readable.',
+                 static::valueToString($value)
+             ));
+@@ -1905,7 +1923,7 @@ class Assert
+ 
+         if (!\is_writable($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'The path %s is not writable.',
+                 static::valueToString($value)
+             ));
+@@ -1929,7 +1947,7 @@ class Assert
+ 
+         if (!\class_exists($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an existing class name. Got: %s',
+                 static::valueToString($value)
+             ));
+@@ -1959,7 +1977,7 @@ class Assert
+ 
+         if (!\is_subclass_of($value, $class)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected a sub-class of %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($class)
+@@ -1984,7 +2002,7 @@ class Assert
+ 
+         if (!\interface_exists($value)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an existing interface name. got %s',
+                 static::valueToString($value)
+             ));
+@@ -2015,9 +2033,11 @@ class Assert
+ 
+         static::isArray($implements);
+ 
+-        if (!\in_array($interface, $implements, true)) {
++        // PHP resolves interface names case-insensitively, and the sibling assertions
++        // subclassOf(), isAOf() and isNotA() inherit that from is_subclass_of() and is_a().
++        if (!\is_string($interface) || !\in_array(\strtolower($interface), \array_map('strtolower', $implements), true)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an implementation of %2$s. Got: %s',
+                 static::valueToString($value),
+                 static::valueToString($interface)
+@@ -2041,7 +2061,7 @@ class Assert
+ 
+         if (!\property_exists($classOrObject, $property)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected the property %s to exist.',
+                 static::valueToString($property)
+             ));
+@@ -2064,7 +2084,7 @@ class Assert
+     {
+         if (!(\is_string($classOrObject) || \is_object($classOrObject)) || \property_exists($classOrObject, $property)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected the property %s to not exist.',
+                 static::valueToString($property)
+             ));
+@@ -2089,7 +2109,7 @@ class Assert
+ 
+         if (!\method_exists($classOrObject, $method)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected the method %s to exist.',
+                 static::valueToString($method)
+             ));
+@@ -2114,7 +2134,7 @@ class Assert
+ 
+         if (\method_exists($classOrObject, $method)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected the method %s to not exist.',
+                 static::valueToString($method)
+             ));
+@@ -2137,7 +2157,7 @@ class Assert
+ 
+         if (!(isset($array[$key]) || \array_key_exists($key, $array))) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected the key %s to exist.',
+                 static::valueToString($key)
+             ));
+@@ -2160,7 +2180,7 @@ class Assert
+ 
+         if (isset($array[$key]) || \array_key_exists($key, $array)) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected the key %s to not exist.',
+                 static::valueToString($key)
+             ));
+@@ -2184,7 +2204,7 @@ class Assert
+     {
+         if (!(\is_int($value) || \is_string($value))) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected string or integer. Got: %s',
+                 static::typeToString($value)
+             ));
+@@ -2206,7 +2226,7 @@ class Assert
+         static::eq(
+             \count($array),
+             $number,
+-            fn () => static::resolveMessage($message) ?: \sprintf(
++            fn () => static::resolveMessage($message) ?: static::formatMessage(
+                 $message ?: 'Expected an array to contain %d elements. Got: %d.',
+                 $number,
+                 \count($array)
+@@ -2228,7 +2248,7 @@ class Assert
+ 
+         if (\count($array) < $min) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an array to contain at least %2$d elements. Got: %d',
+                 \count($array),
+                 $min
+@@ -2250,7 +2270,7 @@ class Assert
+ 
+         if (\count($array) > $max) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an array to contain at most %2$d elements. Got: %d',
+                 \count($array),
+                 $max
+@@ -2275,7 +2295,7 @@ class Assert
+ 
+         if ($count < $min || $count > $max) {
+             $message = self::resolveMessage($message);
+-            static::reportInvalidArgument(\sprintf(
++            static::reportInvalidArgument(static::formatMessage(
+                 $message ?: 'Expected an array to contain between %2$d and %3$d elements. Got: %d',
+                 $count,
+                 $min,
+@@ -2401,7 +2421,7 @@ class Assert
+         if ($reflection->isStatic()) {
+             $message = self::resolveMessage($message);
+             static::reportInvalidArgument(
+-                $message ?: 'Closure is not static.'
++                $message ?: 'Closure is static.'
+             );
+         }
+ 
+@@ -2465,7 +2485,7 @@ class Assert
+         }
+ 
+         $message = self::resolveMessage($message);
+-        static::reportInvalidArgument(\sprintf(
++        static::reportInvalidArgument(static::formatMessage(
+             $message ?: 'Value %s is not a valid UUID.',
+             static::valueToString($value)
+         ));
+@@ -2500,7 +2520,7 @@ class Assert
+ 
+         $message = self::resolveMessage($message);
+ 
+-        static::reportInvalidArgument($message ?: \sprintf(
++        static::reportInvalidArgument($message ?: static::formatMessage(
+             'Expected to throw "%s", got "%s"',
+             $class,
+             $actual
+@@ -2570,6 +2590,13 @@ class Assert
+             return '"'.$value.'"';
+         }
+ 
++        // PHP 8.5 warns when NAN is coerced to a string, and a warning raised while building a
++        // failure message escapes the assertion as an ErrorException wherever the host converts
++        // diagnostics to exceptions. These are the strings the cast itself would have produced.
++        if (\is_float($value) && !\is_finite($value)) {
++            return \is_nan($value) ? 'NAN' : ($value > 0 ? 'INF' : '-INF');
++        }
++
+         return (string) $value;
+     }
+ 
+@@ -2594,6 +2621,26 @@ class Assert
+         return \mb_strlen($value, $encoding);
+     }
+ 
++    /**
++     * Applies sprintf() to a message, falling back to the unformatted message when the
++     * format cannot be applied.
++     *
++     * Custom messages are written by hand, and a literal percent sign in one - "100% covered" -
++     * is a conversion specification to sprintf(). Without this fallback such a message raises a
++     * ValueError or an ArgumentCountError out of the assertion, in place of the
++     * InvalidArgumentException every assertion promises.
++     *
++     * @psalm-pure
++     */
++    protected static function formatMessage(string $message, mixed ...$args): string
++    {
++        try {
++            return \sprintf($message, ...$args);
++        } catch (ValueError|ArgumentCountError) {
++            return $message;
++        }
++    }
++
+     /**
+      * @psalm-pure this method is not supposed to perform side effects
+      *
+@@ -2614,6 +2661,131 @@ class Assert
+         return \is_callable($message) ? $message() : $message;
+     }
+ 
++    /**
++     * Whether two operands can be ordered against one another at all.
++     *
++     * PHP's relational operators answer for every pair, coercing until an answer exists: an
++     * object becomes 1, an array outranks every scalar, a non-numeric string outranks a number
++     * it never looked at, and NAN is below and above nothing. The ordering assertions ask this
++     * first, so a pair PHP could only have guessed at is reported as the failed assertion it is
++     * instead of a passed one.
++     *
++     * @psalm-pure
++     */
++    protected static function comparable(mixed $value, mixed $other): bool
++    {
++        if (\is_float($value) && \is_nan($value)) {
++            return false;
++        }
++
++        if (\is_float($other) && \is_nan($other)) {
++            return false;
++        }
++
++        if (\is_numeric($value) && \is_numeric($other)) {
++            return true;
++        }
++
++        if (\is_string($value) && \is_string($other)) {
++            return true;
++        }
++
++        if (\is_bool($value) && \is_bool($other)) {
++            return true;
++        }
++
++        if (\is_array($value) && \is_array($other)) {
++            return true;
++        }
++
++        return \is_object($value) && \is_object($other);
++    }
++
++    /**
++     * Whether a float can be compared against its own integer cast without PHP complaining.
++     *
++     * NAN, the infinities and any float outside the integer range raise a warning when cast,
++     * and none of them is integerish: an assertion that would have rejected them anyway must
++     * not raise a diagnostic on its way to saying so.
++     *
++     * @psalm-pure
++     */
++    protected static function castsToInteger(float $value): bool
++    {
++        return \is_finite($value) && $value >= (float) \PHP_INT_MIN && $value < (float) \PHP_INT_MAX;
++    }
++
++    /**
++     * Runs a pattern, telling a subject that does not match apart from a pattern that does not
++     * compile.
++     *
++     * preg_match() answers 0 for the first and false for the second, and prints the difference as
++     * a PHP warning rather than returning it. Read as a boolean - which is how both callers read
++     * it - a compile failure is indistinguishable from a clean no-match, so notRegex() accepts
++     * every value it is given and regex() blames the subject for the pattern's own defect.
++     *
++     * @psalm-pure
++     *
++     * @throws InvalidArgumentException if the pattern does not compile, or if a valid pattern
++     *                                  cannot be matched against this subject
++     */
++    protected static function matchPattern(string $pattern, string $value, ?array &$matches = null, int $flags = 0): int
++    {
++        $reason = null;
++        \set_error_handler(static function (int $severity, string $message) use (&$reason): bool {
++            $reason = $message;
++
++            return true;
++        });
++
++        try {
++            $result = \preg_match($pattern, $value, $matches, $flags);
++        } finally {
++            \restore_error_handler();
++        }
++
++        if (false !== $result) {
++            return $result;
++        }
++
++        // preg_match answers false for two failures that are not the same fault. A pattern that
++        // does not compile raises a warning naming the defect and leaves PREG_INTERNAL_ERROR
++        // behind; a valid pattern that exhausts the backtrack or JIT limits, or meets a subject
++        // that is not valid UTF-8 under /u, raises nothing and leaves its own error code. Blaming
++        // the pattern for those tells the caller to fix the one argument that is not at fault.
++        if (\PREG_INTERNAL_ERROR !== \preg_last_error()) {
++            // The subject is deliberately not rendered here. It is the argument these failures
++            // are about, it is long whenever the limits are what failed, and every one of them
++            // is reported by name instead.
++            static::reportInvalidArgument(static::formatMessage(
++                'The pattern %s could not be matched against the value: %s.',
++                static::valueToString($pattern),
++                \preg_last_error_msg()
++            ));
++        }
++
++        static::reportInvalidArgument(static::formatMessage(
++            'The pattern %s is not a valid regular expression: %s.',
++            static::valueToString($pattern),
++            $reason ?? 'compilation failed'
++        ));
++    }
++
++    /**
++     * empty() coerces its argument to bool, and PHP 8.5 warns when that argument is NAN. NAN is
++     * a non-zero float and so is never empty, which is what empty() would have answered.
++     *
++     * @psalm-pure
++     */
++    protected static function isEmptyValue(mixed $value): bool
++    {
++        if (\is_float($value) && \is_nan($value)) {
++            return false;
++        }
++
++        return empty($value);
++    }
++
+     private function __construct()
+     {
+     }
+diff --git a/src/HasAssert.php b/src/HasAssert.php
+index 11d144a..6c036f0 100644
+--- a/src/HasAssert.php
++++ b/src/HasAssert.php
+@@ -68,6 +68,7 @@ final class HasAssert
+         'nullorresource' => true,
+         'allresource' => true,
+         'allnullorresource' => true,
++        'isinitialized' => true,
+         'iscallable' => true,
+         'nulloriscallable' => true,
+         'alliscallable' => true,
+diff --git a/tests/AssertTest.php b/tests/AssertTest.php
+index f0ec064..7f898e1 100644
+--- a/tests/AssertTest.php
++++ b/tests/AssertTest.php
+@@ -19,6 +19,8 @@ use DateTime;
+ use DateTimeImmutable;
+ use Error;
+ use Exception;
++use Generator;
++use InvalidArgumentException;
+ use LogicException;
+ use PHPUnit\Framework\Attributes\DataProvider;
+ use PHPUnit\Framework\TestCase;
+@@ -64,6 +66,11 @@ class AssertTest extends TestCase
+         $b = new ToStringClass('testString');
+         $c = new ToStringClass('otherString');
+ 
++        // uniqueValues compares non-strictly, so these have to be told apart by property, not by string.
++        $plain = new stdClass();
++        $withProperty = new stdClass();
++        $withProperty->x = 1;
++
+         return [
+             ['string', ['value'], true],
+             ['string', [''], true],
+@@ -165,6 +172,10 @@ class AssertTest extends TestCase
+                 public mixed $a;
+                 public mixed $b = true;
+             }, 'b'], true],
++            ['isInitialized', [new class {
++                public mixed $b = true;
++            }, 'a'], false],
++            ['isInitialized', [new ArrayObject(), 'storage'], false],
+             ['isCallable', ['strlen'], true],
+             ['isCallable', [[self::class, 'getTests']], true],
+             ['isCallable', [function () {}], true],
+@@ -517,6 +528,10 @@ class AssertTest extends TestCase
+             ['implementsInterface', [new DateTimeImmutable(), 'Traversable'], false],
+             ['implementsInterface', [new ArrayIterator([]), 'DateTimeInterface'], false],
+             ['implementsInterface', [new ArrayIterator([]), 'Traversable'], true],
++            ['implementsInterface', ['ArrayIterator', 'traversable'], true],
++            ['implementsInterface', ['ArrayIterator', 'TRAVERSABLE'], true],
++            ['implementsInterface', [new ArrayIterator([]), 'traversable'], true],
++            ['implementsInterface', ['ArrayIterator', 'datetimeinterface'], false],
+             ['propertyExists', [(object) ['property' => 0], 'property'], true],
+             ['propertyExists', [(object) ['property' => null], 'property'], true],
+             ['propertyExists', [(object) ['property' => null], 'foo'], false],
+@@ -665,6 +680,11 @@ class AssertTest extends TestCase
+             ['uniqueValues', [[$a, $a]], false],
+             ['uniqueValues', [[$a, $b]], false],
+             ['uniqueValues', [[$a, $c]], true],
++            ['uniqueValues', [[[1], [2], [3]]], true],
++            ['uniqueValues', [[[1], [2], [1]]], false],
++            ['uniqueValues', [[$plain, $withProperty]], true],
++            ['uniqueValues', [[$plain, new stdClass()]], false],
++            ['uniqueValues', [[new stdClass(), new DateTime()]], true],
+             ['isStatic', [static function () {}], true],
+             ['isStatic', [function () {}], false],
+             ['notStatic', [static function () {}], false],
+@@ -726,6 +746,419 @@ class AssertTest extends TestCase
+         $this->assertSame($args[array_key_first($args)], $result);
+     }
+ 
++    /**
++     * isInstanceOfAny, isAnyOf and isNotInstanceOfAny all admit any iterable through isIterable()
++     * and then list the same classes again to build their failure message. Over a Generator that
++     * re-traversal used to escape a raw Exception in place of InvalidArgumentException.
++     */
++    public function testAnyOfAssertionsAcceptAGeneratorOfClasses(): void
++    {
++        $gen = static fn (): Generator => (static function () {
++            yield 'DateTime';
++            yield 'ArrayObject';
++        })();
++
++        foreach ([
++            ['isInstanceOfAny', new stdClass()],
++            ['isAnyOf', new stdClass()],
++        ] as [$method, $value]) {
++            try {
++                Assert::$method($value, $gen());
++                $this->fail($method.'() accepted a value matching none of the classes');
++            } catch (InvalidArgumentException $e) {
++                $this->assertStringContainsString('DateTime', $e->getMessage());
++            }
++        }
++
++        // The last element is the one that used to escape "Cannot rewind a generator".
++        try {
++            Assert::isNotInstanceOfAny(new ArrayObject(), $gen());
++            $this->fail('isNotInstanceOfAny() accepted a value matching one of the classes');
++        } catch (InvalidArgumentException $e) {
++            $this->assertStringContainsString('ArrayObject', $e->getMessage());
++        }
++
++        $this->assertInstanceOf(ArrayObject::class, Assert::isInstanceOfAny(new ArrayObject(), $gen()));
++        $this->assertInstanceOf(stdClass::class, Assert::isNotInstanceOfAny(new stdClass(), $gen()));
++    }
++
++    /**
++     * preg_match() also answers false when a valid pattern cannot be matched at all - the
++     * backtrack or JIT limits exhausted by a long subject, or a subject that is not valid UTF-8
++     * under a /u pattern - and raises no warning for any of them. Reported as a compile failure,
++     * those told the caller to fix the one argument that was not at fault.
++     */
++    public function testRunTimeMatchFailuresAreNotReportedAsInvalidPatterns(): void
++    {
++        $long = str_repeat('a', 100000);
++
++        $cases = [
++            'backtrack limit' => [$long.'b', '/(a+)+$/', 'Backtrack limit exhausted'],
++            'JIT stack limit' => [str_repeat('x', 200000), '/^(?:x)*$/', 'JIT stack limit exhausted'],
++            'malformed UTF-8 subject' => ["\xff\xfe", '/./u', 'Malformed UTF-8 characters'],
++        ];
++
++        $diagnostics = [];
++        set_error_handler(static function (int $severity, string $message) use (&$diagnostics): bool {
++            $diagnostics[] = $message;
++
++            return true;
++        });
++
++        try {
++            foreach ($cases as $label => [$subject, $pattern, $reason]) {
++                foreach (['regex', 'notRegex'] as $method) {
++                    $message = $this->messageOf(static fn () => Assert::$method($subject, $pattern));
++
++                    $this->assertStringContainsString('could not be matched against the value', $message, $label);
++                    $this->assertStringContainsString($reason, $message, $label);
++                    $this->assertStringNotContainsString('is not a valid regular expression', $message, $label);
++                    // The subject is what makes these fail, so it must not be rendered into the
++                    // message; the backtrack case would put 100000 characters into it.
++                    $this->assertLessThan(200, strlen($message), $label);
++                }
++            }
++        } finally {
++            restore_error_handler();
++        }
++
++        $this->assertSame([], $diagnostics);
++
++        // A pattern that genuinely does not compile keeps the message it was given.
++        $this->assertStringContainsString(
++            'is not a valid regular expression',
++            $this->messageOf(static fn () => Assert::regex('abc', '/[/'))
++        );
++
++        // And a valid pattern over an ordinary subject is untouched.
++        $this->assertSame('abc', Assert::regex('abc', '/b/'));
++        $this->assertSame('abc', Assert::notRegex('abc', '/z/'));
++    }
++
++    /**
++     * preg_match() answers 0 for a subject that does not match and false for a pattern that does
++     * not compile, and both callers read that as a boolean. A pattern that failed to compile was
++     * therefore swallowed: notRegex() accepted every value it was given, and regex() reported
++     * that the value did not match, blaming the subject for the pattern's own defect.
++     */
++    public function testInvalidPatternsAreReportedAsSuch(): void
++    {
++        $diagnostics = [];
++        set_error_handler(static function (int $severity, string $message) use (&$diagnostics): bool {
++            $diagnostics[] = $message;
++
++            return true;
++        });
++
++        try {
++            foreach (['/[/', 'abc', '/x'] as $pattern) {
++                foreach (['regex', 'notRegex'] as $method) {
++                    try {
++                        Assert::$method('abc', $pattern);
++                        $this->fail(sprintf('%s() accepted the invalid pattern %s', $method, $pattern));
++                    } catch (InvalidArgumentException $e) {
++                        $this->assertStringContainsString('is not a valid regular expression', $e->getMessage());
++                        $this->assertStringContainsString($pattern, $e->getMessage());
++                    }
++                }
++            }
++
++            // A custom message describes the value, so it must not be used to describe a broken
++            // pattern - that is how the developer never learns which of the two is at fault.
++            try {
++                Assert::notRegex('abc', '/[/', 'the value is wrong');
++                $this->fail('notRegex() accepted an invalid pattern');
++            } catch (InvalidArgumentException $e) {
++                $this->assertStringContainsString('is not a valid regular expression', $e->getMessage());
++            }
++        } finally {
++            restore_error_handler();
++        }
++
++        $this->assertSame([], $diagnostics);
++
++        // Valid patterns keep every verdict and every message they had.
++        $this->assertSame('abc', Assert::regex('abc', '/b/'));
++        $this->assertSame('abc', Assert::notRegex('abc', '/z/'));
++        $this->assertSame('The value "abc" does not match the expected pattern.', $this->messageOf(fn () => Assert::regex('abc', '/z/')));
++        $this->assertSame('The value "abc" matches the pattern "/b/" (at offset 1).', $this->messageOf(fn () => Assert::notRegex('abc', '/b/')));
++    }
++
++    /**
++     * Float NAN and INF reached PHP operations that emit a diagnostic - the string cast in
++     * valueToString, the integer cast in integerish, the bool cast empty() performs - so on PHP
++     * 8.5 an assertion raised an E_WARNING on its way to reporting failure. Wherever the host
++     * converts diagnostics to exceptions, which both dominant PHP frameworks do by default, that
++     * escaped as an ErrorException in place of the promised InvalidArgumentException.
++     * json_decode('{"x":1e999}') produces INF, so an untrusted payload reaches these paths.
++     */
++    public function testNonFiniteFloatsRaiseNoDiagnostic(): void
++    {
++        $diagnostics = [];
++        set_error_handler(static function (int $severity, string $message) use (&$diagnostics): bool {
++            $diagnostics[] = $message;
++
++            return true;
++        });
++
++        try {
++            // The integer cast in integerish(), including the finite float the int type cannot hold.
++            foreach ([NAN, INF, -INF, 9223372036854775808.0] as $value) {
++                try {
++                    Assert::integerish($value);
++                    $this->fail('integerish() accepted a value no integer can hold');
++                } catch (InvalidArgumentException $e) {
++                    $this->assertStringContainsString('Expected an integerish value', $e->getMessage());
++                }
++            }
++
++            // The bool cast empty() performs. NAN is a non-zero float, so it is never empty.
++            try {
++                Assert::isEmpty(NAN);
++                $this->fail('isEmpty() accepted NAN');
++            } catch (InvalidArgumentException $e) {
++                $this->assertStringContainsString('Expected an empty value', $e->getMessage());
++            }
++
++            $this->assertTrue(is_nan(Assert::notEmpty(NAN)));
++
++            // The string cast in valueToString(), reached through the message of any assertion
++            // that fails on one of these values.
++            $this->assertSame('Expected null. Got: NAN', $this->messageOf(fn () => Assert::null(NAN)));
++            $this->assertSame('Expected null. Got: INF', $this->messageOf(fn () => Assert::null(INF)));
++            $this->assertSame('Expected null. Got: -INF', $this->messageOf(fn () => Assert::null(-INF)));
++            $this->assertSame('Expected a non-negative integer. Got: NAN', $this->messageOf(fn () => Assert::natural(NAN)));
++            $this->assertSame('Expected a value identical to 1. Got: NAN', $this->messageOf(fn () => Assert::same(NAN, 1)));
++        } finally {
++            restore_error_handler();
++        }
++
++        $this->assertSame([], $diagnostics);
++
++        // Finite values keep every verdict they had.
++        $this->assertSame(2.0, Assert::integerish(2.0));
++        $this->assertSame(9223372036854774784.0, Assert::integerish(9223372036854774784.0));
++        $this->assertSame(0.0, Assert::isEmpty(0.0));
++        $this->assertSame(1.5, Assert::notEmpty(1.5));
++    }
++
++    private function messageOf(callable $assertion): string
++    {
++        try {
++            $assertion();
++        } catch (InvalidArgumentException $e) {
++            return $e->getMessage();
++        }
++
++        return 'accepted';
++    }
++
++    /**
++     * isInitialized built a ReflectionProperty before it tested anything, so an object that
++     * simply lacks the property escaped a raw ReflectionException in place of the
++     * InvalidArgumentException every assertion promises: Assert::isInitialized(json_decode('{}'),
++     * 'name') threw "Property stdClass::$name does not exist" straight past a caller catching
++     * the documented type, where the sibling Assert::propertyExists() rejected the same pair.
++     */
++    public function testIsInitializedRejectsAnAbsentProperty(): void
++    {
++        $absent = [
++            'a decoded payload without the key' => json_decode('{}'),
++            'an object carrying other properties' => new class {
++                public mixed $other = 1;
++            },
++            'an internal class' => new ArrayObject(),
++        ];
++
++        foreach ($absent as $label => $object) {
++            try {
++                Assert::isInitialized($object, 'name');
++                $this->fail(sprintf('isInitialized() accepted %s', $label));
++            } catch (InvalidArgumentException $e) {
++                $this->assertStringContainsString('name', $e->getMessage());
++            }
++        }
++
++        // The custom message still reaches the caller on the path that used to escape.
++        try {
++            Assert::isInitialized(json_decode('{}'), 'name', 'no name on %s');
++            $this->fail('isInitialized() accepted an object without the property');
++        } catch (InvalidArgumentException $e) {
++            $this->assertSame('no name on name', $e->getMessage());
++        }
++
++        // Every verdict that was already right is unchanged.
++        $payload = json_decode('{"name":"x"}');
++        $this->assertSame($payload, Assert::isInitialized($payload, 'name'));
++
++        $declared = new class {
++            public mixed $set = 1;
++            public mixed $unset;
++            private string $hidden;
++        };
++
++        $this->assertSame($declared, Assert::isInitialized($declared, 'set'));
++
++        foreach (['unset', 'hidden'] as $property) {
++            try {
++                Assert::isInitialized($declared, $property);
++                $this->fail(sprintf('isInitialized() accepted the uninitialized property %s', $property));
++            } catch (InvalidArgumentException $e) {
++                $this->assertStringContainsString('to be initialized', $e->getMessage());
++            }
++        }
++    }
++
++    /**
++     * The ordering assertions used to hand their operands straight to PHP's relational
++     * operators, which produce a verdict for any pair at all by coercing until one exists: an
++     * object became 1, an array outranked every scalar, a non-numeric string outranked a number
++     * it never looked at. Assert::lessThan(json_decode('{"nested":1}'), 100) passed.
++     */
++    public function testOrderingAssertionsRejectIncomparableOperands(): void
++    {
++        $rejects = function (string $method, array $args, string $label): void {
++            try {
++                Assert::$method(...$args);
++                $this->fail(sprintf('%s() accepted %s against a numeric bound', $method, $label));
++            } catch (InvalidArgumentException $e) {
++                $this->assertStringContainsString('Expected a value', $e->getMessage());
++            }
++        };
++
++        $incomparable = [
++            'an object' => new stdClass(),
++            'an array' => [1, 2],
++            'a non-numeric string' => 'abc',
++            'a boolean' => false,
++            'null' => null,
++        ];
++
++        foreach ($incomparable as $label => $value) {
++            foreach (['greaterThan', 'greaterThanEq', 'lessThan', 'lessThanEq'] as $method) {
++                $rejects($method, [$value, 10], $label);
++            }
++            $rejects('range', [$value, 1, 10], $label);
++        }
++
++        // NAN is numeric and orders against nothing at all, itself included. Building its
++        // rejection message still coerces it to a string, which PHP 8.5 warns about; that
++        // warning is a separate defect and is swallowed here rather than pinned, so this test
++        // keeps passing when it is fixed.
++        set_error_handler(static fn (): bool => true);
++
++        try {
++            foreach (['greaterThan', 'greaterThanEq', 'lessThan', 'lessThanEq'] as $method) {
++                $rejects($method, [NAN, 10], 'NAN');
++            }
++            $rejects('range', [NAN, 1, 10], 'NAN');
++        } finally {
++            restore_error_handler();
++        }
++
++        // The rejection replaces a comparison PHP only guessed at, so it must not emit the
++        // diagnostic that guess used to print.
++        $diagnostics = [];
++        set_error_handler(static function (int $severity, string $message) use (&$diagnostics): bool {
++            $diagnostics[] = $message;
++
++            return true;
++        });
++
++        try {
++            foreach (['greaterThan', 'greaterThanEq', 'lessThan', 'lessThanEq'] as $method) {
++                try {
++                    Assert::$method(new stdClass(), 10);
++                } catch (InvalidArgumentException) {
++                }
++            }
++
++            try {
++                Assert::range(new stdClass(), 1, 10);
++            } catch (InvalidArgumentException) {
++            }
++        } finally {
++            restore_error_handler();
++        }
++
++        $this->assertSame([], $diagnostics);
++
++        // Comparable pairs keep the verdicts they have always had.
++        $early = new DateTimeImmutable('2020-01-01');
++        $late = new DateTimeImmutable('2021-01-01');
++
++        $this->assertSame(5, Assert::lessThan(5, 10));
++        $this->assertSame('5', Assert::lessThan('5', 10));
++        $this->assertSame('abc', Assert::lessThan('abc', 'abd'));
++        $this->assertSame([1], Assert::lessThan([1], [1, 2]));
++        $this->assertSame($early, Assert::lessThan($early, $late));
++        $this->assertSame($late, Assert::greaterThan($late, $early));
++        $this->assertSame($early, Assert::range($early, $early, $late));
++        $this->assertTrue(Assert::greaterThan(true, false));
++        $this->assertSame(3, Assert::range(3, 3, 5));
++    }
++
++    /**
++     * notStatic used to report "Closure is not static." - isStatic's message - when the closure
++     * it rejected was static, telling the caller the opposite of the actual failure.
++     */
++    public function testStaticnessMessagesDescribeTheirOwnFailure(): void
++    {
++        $staticClosure = static function () {};
++        $boundClosure = function () { return $this; };
++
++        try {
++            Assert::notStatic($staticClosure);
++            $this->fail('notStatic() accepted a static closure');
++        } catch (InvalidArgumentException $e) {
++            $notStaticMessage = $e->getMessage();
++        }
++
++        try {
++            Assert::isStatic($boundClosure);
++            $this->fail('isStatic() accepted a bound closure');
++        } catch (InvalidArgumentException $e) {
++            $isStaticMessage = $e->getMessage();
++        }
++
++        $this->assertSame('Closure is static.', $notStaticMessage);
++        $this->assertSame('Closure is not static.', $isStaticMessage);
++        $this->assertNotSame($isStaticMessage, $notStaticMessage);
++    }
++
++    /**
++     * A custom message is applied as a sprintf() format string, so a literal percent sign in one
++     * used to raise a ValueError or an ArgumentCountError out of the assertion instead of the
++     * InvalidArgumentException every assertion promises. Drives every failing assertion path.
++     */
++    #[DataProvider('getTests')]
++    public function testCustomMessageWithLiteralPercent(string $method, array $args, bool $success, bool $multibyte = false): void
++    {
++        if (in_array($method, self::SKIP_CUSTOM_MESSAGE_TESTS)) {
++            $this->markTestSkipped("The method $method could have specific message handling instead of custom message.");
++        }
++
++        if ($args === []) {
++            $this->addToAssertionCount(1);
++
++            return;
++        }
++
++        if ($multibyte && !function_exists('mb_strlen')) {
++            $this->markTestSkipped('The function mb_strlen() is not available');
++        }
++
++        if (!$success) {
++            $this->expectException('\InvalidArgumentException');
++            $this->expectExceptionMessage('Custom 100% no');
++        }
++
++        $args['message'] = 'Custom 100% no';
++        $result = Assert::$method(...$args);
++
++        $this->assertSame($args[array_key_first($args)], $result);
++    }
++
+     #[DataProvider('getTests')]
+     public function testLazyMessageCallbackCalled(string $method, array $args, bool $success, bool $multibyte = false): void
+     {
+diff --git a/tests/static-analysis/assert-isInitialized-preserves-type.php b/tests/static-analysis/assert-isInitialized-preserves-type.php
+new file mode 100644
+index 0000000..bf5ab7b
+--- /dev/null
++++ b/tests/static-analysis/assert-isInitialized-preserves-type.php
+@@ -0,0 +1,33 @@
++<?php
++
++declare(strict_types=1);
++
++namespace Webmozart\Assert\Tests\StaticAnalysis;
++
++use Webmozart\Assert\Assert;
++
++final class InitializedWidget
++{
++    public mixed $property = null;
++
++    public function property(): mixed
++    {
++        return $this->property;
++    }
++}
++
++/**
++ * isInitialized carries `@psalm-assert object $value`, so it belongs in HasAssert::HAS_ASSERT,
++ * which is what makes the Psalm plugin restore the argument's own type over the declared
++ * `object` return type. Without that entry this check-type reports `$r = object`.
++ *
++ * @psalm-suppress RedundantCondition the argument is deliberately typed, so that the check-type
++ *                 below is about the plugin restoring that type rather than about narrowing
++ */
++function isInitializedPreservesTheArgumentType(InitializedWidget $widget): mixed
++{
++    $r = Assert::isInitialized($widget, 'property');
++    /** @psalm-check-type $r = InitializedWidget */
++
++    return $r->property();
++}
+diff --git a/tests/static-analysis/non-return/assert-isInitialized-preserves-type.php b/tests/static-analysis/non-return/assert-isInitialized-preserves-type.php
+new file mode 100644
+index 0000000..83f7f6d
+--- /dev/null
++++ b/tests/static-analysis/non-return/assert-isInitialized-preserves-type.php
+@@ -0,0 +1,33 @@
++<?php
++
++declare(strict_types=1);
++
++namespace Webmozart\Assert\Tests\StaticAnalysis\NonReturn;
++
++use Webmozart\Assert\Assert;
++
++final class InitializedWidget
++{
++    public mixed $property = null;
++
++    public function property(): mixed
++    {
++        return $this->property;
++    }
++}
++
++/**
++ * isInitialized carries `@psalm-assert object $value`, so it belongs in HasAssert::HAS_ASSERT,
++ * which is what makes the Psalm plugin restore the argument's own type over the declared
++ * `object` return type. Without that entry this check-type reports `$r = object`.
++ *
++ * @psalm-suppress RedundantCondition the argument is deliberately typed, so that the check-type
++ *                 below is about the plugin restoring that type rather than about narrowing
++ */
++function isInitializedPreservesTheArgumentType(InitializedWidget $widget): mixed
++{
++    $r = Assert::isInitialized($widget, 'property');
++    /** @psalm-check-type $r = InitializedWidget */
++
++    return $r->property();
++}
