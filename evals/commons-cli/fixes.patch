@@ -1,0 +1,546 @@
+diff --git a/.gitignore b/.gitignore
+index 5a3aaa1b..5cbc7662 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -27,3 +27,4 @@ site-content
+ # NetBeans files
+ nb-configuration.xml
+ nbactions.xml
++.claude/jeffy-loop.local.md
+diff --git a/src/main/java/org/apache/commons/cli/CommandLine.java b/src/main/java/org/apache/commons/cli/CommandLine.java
+index 2942d5f9..07f98931 100644
+--- a/src/main/java/org/apache/commons/cli/CommandLine.java
++++ b/src/main/java/org/apache/commons/cli/CommandLine.java
+@@ -111,14 +111,21 @@ public class CommandLine implements Serializable {
+         }
+ 
+         /**
+-         * Creates a new instance.
++         * Creates a new instance from a snapshot of this builder.
++         * <p>
++         * The returned {@link CommandLine} holds copies of the argument and option lists as they stand, so
++         * a builder may be reused: adding to it afterwards does not change an instance it already
++         * produced. Those copies are shallow. Every instance built from one builder holds the same
++         * {@link Option} objects the caller added, so mutating one of those options through its setters is
++         * seen by every instance already holding it.
++         * </p>
+          *
+          * @return A new instance.
+          * @since 1.10.0
+          */
+         @Override
+         public CommandLine get() {
+-            return new CommandLine(args, options, deprecatedHandler);
++            return new CommandLine(new LinkedList<>(args), new ArrayList<>(options), deprecatedHandler);
+         }
+ 
+         /**
+@@ -296,8 +303,8 @@ public class CommandLine implements Serializable {
+     /**
+      * Gets the map of values associated to the option. This is convenient for options specifying Java properties like
+      * <code>-Dparam1=value1
+-     * -Dparam2=value2</code>. All odd numbered values are property keys
+-     * and even numbered values are property values.  If there are an odd number of values
++     * -Dparam2=value2</code>. The values are read in pairs: the first of each pair is a property key
++     * and the second is its value.  If there are an odd number of values
+      * the last value is assumed to be a boolean flag and the value is "true".
+      *
+      * @param option name of the option.
+@@ -1013,8 +1020,8 @@ public class CommandLine implements Serializable {
+     }
+ 
+     /**
+-     * Parses a list of values as properties.  All odd numbered values are property keys
+-     * and even numbered values are property values.  If there are an odd number of values
++     * Parses a list of values as properties.  The values are read in pairs: the first of each pair is
++     * a property key and the second is its value.  If there are an odd number of values
+      * the last value is assumed to be a boolean with a value of "true".
+      *
+      * @param props The properties to update.
+diff --git a/src/main/java/org/apache/commons/cli/DefaultParser.java b/src/main/java/org/apache/commons/cli/DefaultParser.java
+index 4dd7dfec..e0fe5d74 100644
+--- a/src/main/java/org/apache/commons/cli/DefaultParser.java
++++ b/src/main/java/org/apache/commons/cli/DefaultParser.java
+@@ -505,15 +505,16 @@ public class DefaultParser implements CommandLineParser {
+             if (!cmd.hasOption(option) && !selected) {
+                 // get the value from the properties
+                 final String value = properties.getProperty(option);
+-                if (opt.hasArg()) {
+-                    if (opt.isValuesEmpty()) {
+-                        opt.processValue(stripLeadingAndTrailingQuotesDefaultOff(value));
+-                    }
+-                } else if (!("yes".equalsIgnoreCase(value) || "true".equalsIgnoreCase(value) || "1".equalsIgnoreCase(value))) {
++                if (!opt.hasArg() && !("yes".equalsIgnoreCase(value) || "true".equalsIgnoreCase(value) || "1".equalsIgnoreCase(value))) {
+                     // if the value is not yes, true or 1 then don't add the option to the CommandLine
+                     continue;
+                 }
++                // handleOption() clones opt; the value must land on that per-parse clone. Storing it on opt itself
++                // would leave the caller's Options carrying this parse's value for every later parse.
+                 handleOption(opt);
++                if (currentOption != null && currentOption.isValuesEmpty()) {
++                    currentOption.processValue(stripLeadingAndTrailingQuotesDefaultOff(value));
++                }
+                 currentOption = null;
+             }
+         }
+diff --git a/src/main/java/org/apache/commons/cli/HelpFormatter.java b/src/main/java/org/apache/commons/cli/HelpFormatter.java
+index 36178805..a5e12526 100644
+--- a/src/main/java/org/apache/commons/cli/HelpFormatter.java
++++ b/src/main/java/org/apache/commons/cli/HelpFormatter.java
+@@ -517,8 +517,10 @@ public class HelpFormatter {
+         }
+         appendable.append(rtrim(render.substring(0, pos))).append(getNewLine());
+         if (nextLineTabStopPos >= width) {
+-            // stops infinite loop happening
+-            nextLineTabStopPos = 1;
++            // The continuation padding has to leave at least one character of usable width. A
++            // padding of 1 at a width of 1 fills the line by itself, so no line consumes a
++            // character and the loop below never advances.
++            nextLineTabStopPos = width > 1 ? 1 : 0;
+         }
+         // all following lines must be padded with nextLineTabStop space characters
+         final String padding = createPadding(nextLineTabStopPos);
+diff --git a/src/main/java/org/apache/commons/cli/Option.java b/src/main/java/org/apache/commons/cli/Option.java
+index 6062d9d8..6d12137e 100644
+--- a/src/main/java/org/apache/commons/cli/Option.java
++++ b/src/main/java/org/apache/commons/cli/Option.java
+@@ -702,8 +702,9 @@ public class Option implements Cloneable, Serializable {
+      * Gets the specified value of this Option or {@code null} if there is no value.
+      *
+      * @param index The index of the value to be returned.
+-     * @return The specified value of this Option or {@code null} if there is no value.
+-     * @throws IndexOutOfBoundsException if index is less than 1 or greater than the number of the values for this Option.
++     * @return The specified value of this Option or {@code null} if this Option holds no value at all.
++     * @throws IndexOutOfBoundsException if this Option holds at least one value and {@code index} is negative or is not
++     *         less than the number of values it holds. An Option holding no values returns {@code null} for any index.
+      */
+     public String getValue(final int index) throws IndexOutOfBoundsException {
+         return isValuesEmpty() ? null : values.get(index);
+diff --git a/src/main/java/org/apache/commons/cli/Parser.java b/src/main/java/org/apache/commons/cli/Parser.java
+index d120ea21..a646171e 100644
+--- a/src/main/java/org/apache/commons/cli/Parser.java
++++ b/src/main/java/org/apache/commons/cli/Parser.java
+@@ -284,10 +284,14 @@ public abstract class Parser implements CommandLineParser {
+             if (!cmd.hasOption(option) && !selected) {
+                 // get the value from the properties instance
+                 final String value = properties.getProperty(option);
+-                if (opt.hasArg()) {
+-                    if (opt.isValuesEmpty()) {
++                // Work on a copy, as processOption() does: the value belongs to this parse, not to the
++                // Options the caller owns. Storing it on opt leaves the caller's Options carrying this
++                // parse's default afterwards, which poisons any later parse that does not clear values.
++                final Option copy = (Option) opt.clone();
++                if (copy.hasArg()) {
++                    if (copy.isValuesEmpty()) {
+                         try {
+-                            opt.processValue(value);
++                            copy.processValue(value);
+                         } catch (final RuntimeException exp) { // NOPMD
+                             // if we cannot add the value don't worry about it
+                         }
+@@ -297,8 +301,8 @@ public abstract class Parser implements CommandLineParser {
+                     // option to the CommandLine
+                     continue;
+                 }
+-                cmd.addOption(opt);
+-                updateRequiredOptions(opt);
++                cmd.addOption(copy);
++                updateRequiredOptions(copy);
+             }
+         }
+     }
+diff --git a/src/main/java/org/apache/commons/cli/TypeHandler.java b/src/main/java/org/apache/commons/cli/TypeHandler.java
+index 4709c781..f61c56f9 100644
+--- a/src/main/java/org/apache/commons/cli/TypeHandler.java
++++ b/src/main/java/org/apache/commons/cli/TypeHandler.java
+@@ -59,13 +59,11 @@ public class TypeHandler {
+     }
+ 
+     /**
+-     * Returns the date represented by {@code string}.
+-     * <p>
+-     * This method is not yet implemented and always throws an {@link UnsupportedOperationException}.
+-     * </p>
++     * Returns the date represented by {@code string}, parsed with {@link Converter#DATE}.
+      *
+-     * @param string The date string.
+-     * @return The date if {@code string} is a valid date string, otherwise return null.
++     * @param string The date string, in the format {@code EEE MMM dd HH:mm:ss zzz yyyy}.
++     * @return The date represented by {@code string}.
++     * @throws IllegalArgumentException if {@code string} is not a valid date string.
+      */
+     public static Date createDate(final String string) {
+         return createValueUnchecked(string, Date.class);
+diff --git a/src/main/java/org/apache/commons/cli/help/TextHelpAppendable.java b/src/main/java/org/apache/commons/cli/help/TextHelpAppendable.java
+index 2b053106..be0bc5c0 100644
+--- a/src/main/java/org/apache/commons/cli/help/TextHelpAppendable.java
++++ b/src/main/java/org/apache/commons/cli/help/TextHelpAppendable.java
+@@ -63,9 +63,14 @@ public class TextHelpAppendable extends FilterHelpAppendable {
+     // @formatter:on
+ 
+     /**
+-     * Finds the next text wrap position after {@code startPos} for the text in {@code text} with the column width {@code width}. The wrap point is the last
+-     * position before startPos+width having a whitespace character (space, \n, \r). If there is no whitespace character before startPos+width, it will return
+-     * startPos+width.
++     * Finds the next text wrap position after {@code startPos} for the text in {@code text} with the column width {@code width}, searching the window that
++     * begins at {@code startPos} and ends at startPos+width.
++     * <p>
++     * A break character in that window - a tab, newline, form feed, carriage return, or one of the Unicode separators - is the wrap point, and the first one
++     * found wins. Failing that, a window reaching the end of the text wraps at {@code text.length()}. Failing that, the wrap point is the last whitespace
++     * character after {@code startPos} and at or before startPos+width. A window holding no whitespace at all is chopped at startPos+width-1, one short of the
++     * window rather than at its end, and never below {@code startPos+1}, so that a caller looping on the returned position always advances.
++     * </p>
+      *
+      * @param text     The text being searched for the wrap position
+      * @param width    width of the wrapped text
+@@ -99,8 +104,10 @@ public class TextHelpAppendable extends FilterHelpAppendable {
+                 break;
+             }
+         }
+-        // if we found it return it, otherwise just chop at limit
+-        return pos > startPos ? pos : limit - 1;
++        // If we found it return it, otherwise chop at the limit. The chop has to land past
++        // startPos: at a width of 1 `limit - 1` is startPos itself, and a caller looping on this
++        // position never advances.
++        return pos > startPos ? pos : Math.max(startPos + 1, limit - 1);
+     }
+ 
+     /**
+@@ -306,6 +313,8 @@ public class TextHelpAppendable extends FilterHelpAppendable {
+      * @param columnData The string to wrap
+      * @param style      The TextStyle to guide the wrapping.
+      * @return A queue of the string wrapped.
++     * @throws IllegalArgumentException if the style's indent is not smaller than its maximum width, so that no width is
++     *                                  left for the second and subsequent lines. The message names both values.
+      */
+     protected Queue<String> makeColumnQueue(final CharSequence columnData, final TextStyle style) {
+         final String lpad = Util.repeatSpace(style.getLeftPad());
+@@ -316,6 +325,13 @@ public class TextHelpAppendable extends FilterHelpAppendable {
+         final int wrappedMaxWidth = style.getMaxWidth() - indent.length();
+         while (wrapPos < columnData.length()) {
+             final int workingWidth = wrapPos == 0 ? style.getMaxWidth() : wrappedMaxWidth;
++            // The caller set a max width; the indent is what consumed it. Reporting only the residue
++            // denies a value the caller never supplied, so name both numbers here.
++            if (wrapPos > 0 && workingWidth < 1) {
++                throw new IllegalArgumentException(String.format(
++                        "Max width must be greater than the indent: max width is %s, indent is %s, leaving %s for wrapped lines",
++                        style.getMaxWidth(), style.getIndent(), wrappedMaxWidth));
++            }
+             lastPos = indexOfWrap(columnData, workingWidth, wrapPos);
+             final CharSequence working = columnData.subSequence(wrapPos, lastPos);
+             result.add(lpad + style.pad(wrapPos > 0, working));
+diff --git a/src/test/java/org/apache/commons/cli/AbstractParserTestCase.java b/src/test/java/org/apache/commons/cli/AbstractParserTestCase.java
+index 58657821..c25ab603 100644
+--- a/src/test/java/org/apache/commons/cli/AbstractParserTestCase.java
++++ b/src/test/java/org/apache/commons/cli/AbstractParserTestCase.java
+@@ -862,4 +862,35 @@ public abstract class AbstractParserTestCase {
+         assertEquals("file", cl.getOptionValue("b"), "Confirm arg of -b");
+         assertTrue(cl.getArgList().isEmpty(), "Confirm NO of extra args");
+     }
++    /**
++     * Applying a Properties default must not write onto the Option the caller owns. Every parser that
++     * accepts Properties runs this, so the class is enumerated by provoking it at each of them rather
++     * than by reading the source.
++     *
++     * The legacy parsers hid this behind the value clearing they do at entry, which is why it survived:
++     * legacy-to-legacy reuse looked correct while the residue was still there, and a DefaultParser over
++     * the same Options - which correctly does not clear - then returned the legacy default and pushed
++     * the command line value into the leftover arguments.
++     */
++    @Test
++    void testPropertiesLeaveNoResidue() throws Exception {
++        final Options shared = new Options().addOption(Option.builder("v").hasArg().get());
++        final Properties defaults = new Properties();
++        defaults.setProperty("v", "fromProperties");
++
++        final CommandLine fromProperties = parse(parser, shared, new String[] {}, defaults);
++        assertEquals("fromProperties", fromProperties.getOptionValue("v"), "the default was not applied");
++        assertNull(shared.getOption("v").getValue(), "the parse left a value on the caller's Option");
++
++        // a second parse must see its own default, not the first parse's
++        final Properties second = new Properties();
++        second.setProperty("v", "second");
++        assertEquals("second", parse(parser, shared, new String[] {}, second).getOptionValue("v"));
++
++        // and a parser that never saw the properties must still see the command line
++        final CommandLine fresh = new DefaultParser().parse(shared, new String[] {"-v", "fromArgs"});
++        assertEquals("fromArgs", fresh.getOptionValue("v"), "an earlier default outlived its parse");
++        assertEquals(0, fresh.getArgs().length, "the command line value was pushed into the leftovers");
++    }
++
+ }
+diff --git a/src/test/java/org/apache/commons/cli/CommandLineTest.java b/src/test/java/org/apache/commons/cli/CommandLineTest.java
+index 98c7eb79..dd391c23 100644
+--- a/src/test/java/org/apache/commons/cli/CommandLineTest.java
++++ b/src/test/java/org/apache/commons/cli/CommandLineTest.java
+@@ -21,8 +21,11 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNotSame;
+ import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertSame;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ import java.io.ByteArrayOutputStream;
+ import java.io.PrintStream;
+@@ -1019,4 +1022,52 @@ class CommandLineTest {
+         assertNull(cmd.getOptionValue((OptionGroup) null));
+         assertNull(cmd.getParsedOptionValue((OptionGroup) null));
+     }
++    /**
++     * A Builder is a Supplier, so it may be reused. Handing the produced CommandLine the builder's
++     * own lists made every instance from one builder alias a single state, and made a later
++     * addition to the builder change an instance it had already produced.
++     */
++    @Test
++    void testBuilderReuseDoesNotAliasEarlierInstance() {
++        final CommandLine.Builder builder = CommandLine.builder();
++        builder.addOption(Option.builder("x").get()).addArg("one");
++        final CommandLine first = builder.get();
++        assertEquals(1, first.getOptions().length);
++        assertArrayEquals(new String[] {"one"}, first.getArgs());
++
++        builder.addOption(Option.builder("y").get()).addArg("two");
++        final CommandLine second = builder.get();
++
++        assertEquals(1, first.getOptions().length, "the earlier instance gained an option");
++        assertArrayEquals(new String[] {"one"}, first.getArgs(), "the earlier instance gained an argument");
++        assertEquals(2, second.getOptions().length);
++        assertArrayEquals(new String[] {"one", "two"}, second.getArgs());
++        assertNotSame(first.getArgList(), second.getArgList(), "two instances share one argument list");
++    }
++
++    /**
++     * The list copies {@code Builder.get()} makes are shallow, which is the boundary of the non-aliasing
++     * contract above: the instances hold the caller's own {@link Option} objects, so editing one of those
++     * options through its public setters is seen by every instance already holding it. The Javadoc once
++     * claimed two instances from one builder do not share state at all.
++     */
++    @Test
++    void testBuilderInstancesShareTheOptionObjectsAdded() {
++        final Option option = Option.builder("x").longOpt("xray").hasArg().get();
++        final CommandLine.Builder builder = CommandLine.builder();
++        builder.addOption(option);
++        final CommandLine first = builder.get();
++        final CommandLine second = builder.get();
++        assertTrue(first.hasOption("xray"));
++        assertTrue(second.hasOption("xray"));
++        assertSame(first.getOptions()[0], second.getOptions()[0], "the option object is not shared");
++
++        option.setLongOpt("zulu");
++
++        assertFalse(first.hasOption("xray"), "the earlier instance kept its own copy of the option");
++        assertFalse(second.hasOption("xray"), "the later instance kept its own copy of the option");
++        assertTrue(first.hasOption("zulu"));
++        assertTrue(second.hasOption("zulu"));
++    }
++
+ }
+diff --git a/src/test/java/org/apache/commons/cli/DefaultParserTest.java b/src/test/java/org/apache/commons/cli/DefaultParserTest.java
+index c162323f..5794f6d0 100644
+--- a/src/test/java/org/apache/commons/cli/DefaultParserTest.java
++++ b/src/test/java/org/apache/commons/cli/DefaultParserTest.java
+@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ import java.util.HashSet;
++import java.util.Properties;
+ import java.util.Set;
+ import java.util.stream.Stream;
+ 
+@@ -400,6 +401,31 @@ class DefaultParserTest extends AbstractParserTestCase {
+         assertTrue(e.getMessage().contains("-d"));
+     }
+ 
++    @Test
++    void testPropertiesDoNotLeakIntoLaterParse() throws ParseException {
++        final Options sharedOptions = new Options();
++        sharedOptions.addOption(Option.builder("f").hasArg().get());
++        final DefaultParser parser = new DefaultParser();
++
++        final Properties first = new Properties();
++        first.setProperty("f", "one");
++        assertEquals("one", parser.parse(sharedOptions, new String[] {}, first).getOptionValue("f"));
++
++        // A second parse must see its own default, not the one the first parse stored.
++        final Properties second = new Properties();
++        second.setProperty("f", "two");
++        assertEquals("two", parser.parse(sharedOptions, new String[] {}, second).getOptionValue("f"));
++
++        // An explicit command line value must win over any earlier default, and must not be pushed
++        // into the leftover arguments because the shared Option already looked satisfied.
++        final CommandLine fromArgs = parser.parse(sharedOptions, new String[] {"-f", "cli"});
++        assertEquals("cli", fromArgs.getOptionValue("f"));
++        assertEquals(0, fromArgs.getArgs().length);
++
++        // A parser that never saw the properties must be unaffected too.
++        assertEquals("cli2", new DefaultParser().parse(sharedOptions, new String[] {"-f", "cli2"}).getOptionValue("f"));
++    }
++
+     @Override
+     @Test
+     @Disabled("Test case handled in the parameterized tests as \"DEFAULT behavior\"")
+diff --git a/src/test/java/org/apache/commons/cli/HelpFormatterTest.java b/src/test/java/org/apache/commons/cli/HelpFormatterTest.java
+index c935229c..26d7e2df 100644
+--- a/src/test/java/org/apache/commons/cli/HelpFormatterTest.java
++++ b/src/test/java/org/apache/commons/cli/HelpFormatterTest.java
+@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertNotNull;
+ import static org.junit.jupiter.api.Assertions.assertNull;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+ import static org.mockito.Mockito.spy;
+ import static org.mockito.Mockito.when;
+ 
+@@ -31,6 +32,7 @@ import java.io.OutputStreamWriter;
+ import java.io.PrintWriter;
+ import java.io.StringWriter;
+ import java.io.UncheckedIOException;
++import java.time.Duration;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.stream.Stream;
+@@ -813,4 +815,29 @@ class HelpFormatterTest {
+ 
+         assertEquals("usage: create [--age=<arg>] [-f <arg>] [-s <SIZE>]", out.toString().trim());
+     }
++    /**
++     * A width of 1 leaves no room for the continuation padding, which once made
++     * {@code appendWrappedText} loop without consuming a character until the heap was exhausted.
++     * Every entry point that wraps must terminate at every width it accepts.
++     */
++    @Test
++    void testPrintHelpTerminatesAtNarrowWidths() {
++        final Options options = new Options();
++        options.addOption(Option.builder("b").longOpt("bfile").hasArg().argName("FILE")
++                .desc("a description long enough that it has to wrap somewhere").get());
++        assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
++            for (int width = 1; width <= 6; width++) {
++                final StringWriter help = new StringWriter();
++                new HelpFormatter().printHelp(new PrintWriter(help), width, "app", "header", options, 1, 3, "footer", true);
++                assertNotNull(help.toString());
++                final StringWriter usage = new StringWriter();
++                new HelpFormatter().printUsage(new PrintWriter(usage), width, "app", options);
++                assertNotNull(usage.toString());
++                final StringWriter wrapped = new StringWriter();
++                new HelpFormatter().printWrapped(new PrintWriter(wrapped), width, "alpha beta gamma delta");
++                assertNotNull(wrapped.toString());
++            }
++        });
++    }
++
+ }
+diff --git a/src/test/java/org/apache/commons/cli/help/TextHelpAppendableTest.java b/src/test/java/org/apache/commons/cli/help/TextHelpAppendableTest.java
+index 182cf50f..4dcc1e4e 100644
+--- a/src/test/java/org/apache/commons/cli/help/TextHelpAppendableTest.java
++++ b/src/test/java/org/apache/commons/cli/help/TextHelpAppendableTest.java
+@@ -16,10 +16,13 @@
+  */
+ package org.apache.commons.cli.help;
+ 
++import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+ 
+ import java.io.IOException;
++import java.time.Duration;
+ import java.io.StringReader;
+ import java.util.ArrayList;
+ import java.util.Arrays;
+@@ -495,4 +498,93 @@ final class TextHelpAppendableTest {
+         final List<String> actual = IOUtils.readLines(new StringReader(sb.toString()));
+         assertEquals(expected, actual);
+     }
++    /**
++     * Every wrapping entry point in this package, at every narrow width. A column width of 1 once
++     * made {@code indexOfWrap} return the position it was given, so the loops that advance by it
++     * never terminated; it is reached at a max width of 1 and again at 4, where the default indent
++     * of 3 leaves one usable column. Each entry point must either render or refuse the width with a
++     * clear exception - never hang, and never exhaust the heap.
++     */
++    @Test
++    void testNarrowWidthsTerminate() {
++        assertTimeoutPreemptively(Duration.ofSeconds(20), () -> {
++            for (int width = 1; width <= 8; width++) {
++                final StringBuilder sb = new StringBuilder();
++                final TextHelpAppendable underTest = new TextHelpAppendable(sb);
++                underTest.setMaxWidth(width);
++                try {
++                    underTest.appendParagraph("alpha beta gamma delta epsilon");
++                    underTest.printWrapped("alpha beta gamma delta epsilon");
++                    underTest.appendTitle("a title that is longer than the width");
++                    underTest.appendHeader(1, "a header that is longer than the width");
++                    underTest.appendList(true, Arrays.asList("alpha beta", "gamma delta"));
++                } catch (final IllegalArgumentException e) {
++                    // a width the indent leaves no room for is refused, which is a clear failure
++                }
++            }
++        });
++    }
++
++    /**
++     * A max width the indent consumes is refused with a message naming both numbers. The caller set the
++     * max width and never saw the residue, so a message about a width of 0 denies a value they never
++     * supplied. With the default indent of 3, widths 1, 2 and 3 are consumed and 4 is not.
++     */
++    @Test
++    void testIndentConsumingMaxWidthNamesBothValues() {
++        for (int width = 1; width <= 3; width++) {
++            final StringBuilder sb = new StringBuilder();
++            final TextHelpAppendable underTest = new TextHelpAppendable(sb);
++            underTest.setMaxWidth(width);
++            final IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
++                    () -> underTest.appendParagraph("alphabetagamma delta"), "width " + width);
++            assertEquals(String.format(
++                    "Max width must be greater than the indent: max width is %s, indent is 3, leaving %s for wrapped lines",
++                    width, width - 3), e.getMessage());
++        }
++        final StringBuilder sb = new StringBuilder();
++        final TextHelpAppendable underTest = new TextHelpAppendable(sb);
++        underTest.setMaxWidth(4);
++        assertDoesNotThrow(() -> underTest.appendParagraph("alphabetagamma delta"));
++    }
++
++    /**
++     * The wrap position at every branch of {@code indexOfWrap}, pinned against the Javadoc that
++     * describes them. The Javadoc once promised {@code startPos+width} for a window holding no
++     * whitespace, where the chop is one short of the window.
++     */
++    @Test
++    void testIndexOfWrapDocumentedPositions() {
++        // a break character inside the window is the wrap point
++        assertEquals(5, TextHelpAppendable.indexOfWrap("alpha\nbetagamma", 10, 0));
++        assertEquals(5, TextHelpAppendable.indexOfWrap("alpha\tbetagamma", 10, 0));
++        // a window reaching the end of the text wraps at the end
++        assertEquals(14, TextHelpAppendable.indexOfWrap("alphabetagamma", 20, 0));
++        // otherwise the last whitespace after startPos and at or before startPos+width
++        assertEquals(5, TextHelpAppendable.indexOfWrap("alpha betagamma", 8, 0));
++        // no whitespace in the window: chopped one short of startPos+width
++        for (int width = 2; width <= 6; width++) {
++            assertEquals(width - 1, TextHelpAppendable.indexOfWrap("alphabetagamma", width, 0), "width " + width);
++            assertEquals(3 + width - 1, TextHelpAppendable.indexOfWrap("alphabetagamma", width, 3), "width " + width + " at 3");
++        }
++        // a width of 1 cannot chop one short without standing still, so it advances by one instead
++        assertEquals(1, TextHelpAppendable.indexOfWrap("alphabetagamma", 1, 0));
++        assertEquals(4, TextHelpAppendable.indexOfWrap("alphabetagamma", 1, 3));
++    }
++
++    /**
++     * The wrap position must always advance past the position it was given, or a caller looping on
++     * it never terminates.
++     */
++    @Test
++    void testIndexOfWrapAlwaysAdvances() {
++        final String text = "alphabetagammadelta";
++        for (int width = 1; width <= 6; width++) {
++            for (int startPos = 0; startPos < text.length() - 1; startPos++) {
++                assertEquals(true, TextHelpAppendable.indexOfWrap(text, width, startPos) > startPos,
++                        "width " + width + " startPos " + startPos);
++            }
++        }
++    }
++
+ }

@@ -150,6 +150,7 @@ loss rather than hiding it.
 | xid | 1 | 10 | converged | evaluator countersigned | 0 |
 | uuid | 1 | 10 | converged | evaluator countersigned | 0 |
 | swift-log | 2 | 16 | converged | evaluator countersigned | 0 |
+| commons-cli | 2 | 20 | converged | evaluator countersigned | 1 |
 
 ## The convergence standard is not uniform, and here is the split
 
