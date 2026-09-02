@@ -1,0 +1,484 @@
+diff --git a/.gitignore b/.gitignore
+index 97e1c2c..34a813e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -31,3 +31,4 @@ tags
+ /target/
+ Cargo.lock
+ 
++.claude/jeffy-loop.local.md
+diff --git a/Cargo.toml b/Cargo.toml
+index a566782..baa0f64 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -13,11 +13,14 @@ categories = [
+ description = "A library to generate and parse UUIDs."
+ documentation = "https://docs.rs/uuid"
+ edition = "2021"
++# Anchored with a leading slash: these follow gitignore semantics, so an
++# unanchored `README.md` matches a file of that name at any depth and would
++# publish it alongside the crate's own.
+ include = [
+-    "src",
+-    "README.md",
+-    "LICENSE-APACHE",
+-    "LICENSE-MIT",
++    "/src",
++    "/README.md",
++    "/LICENSE-APACHE",
++    "/LICENSE-MIT",
+ ]
+ keywords = [
+     "guid",
+diff --git a/src/builder.rs b/src/builder.rs
+index 80ce43e..4afa737 100644
+--- a/src/builder.rs
++++ b/src/builder.rs
+@@ -562,12 +562,40 @@ impl Builder {
+ 
+     /// Creates a `Builder` for a version 7 UUID using the supplied Unix timestamp and counter bytes.
+     ///
+-    /// This method will set the variant field within the counter bytes without attempting to shift
+-    /// the data around it. Callers using the counter as a monotonic value should be careful not to
+-    /// store significant data in the 2 least significant bits of the 3rd byte.
++    /// This method writes the version and variant fields over the counter bytes without
++    /// attempting to shift the data around them, so two runs of bits do not survive into
++    /// the UUID: the 4 most significant bits of the 1st byte, which the version nibble
++    /// replaces, and the 2 most significant bits of the 3rd byte, which the variant
++    /// replaces. Every other bit of the 10 bytes is carried through unchanged. Callers
++    /// using the counter as a monotonic value should keep significant data out of those
++    /// six bit positions, or use [`Uuid::new_v7`] with a [`Timestamp`] carrying a counter,
++    /// which shifts the counter around both fields instead of overwriting it.
++    ///
++    /// [`Uuid::new_v7`]: struct.Uuid.html#method.new_v7
++    /// [`Timestamp`]: timestamp/struct.Timestamp.html
+     ///
+     /// # Examples
+     ///
++    /// Which bits of the counter bytes survive:
++    ///
++    /// ```
++    /// # use uuid::Builder;
++    /// let build = |bytes: [u8; 10]| Builder::from_unix_timestamp_millis(0, &bytes).into_uuid();
++    ///
++    /// let zero = build([0; 10]);
++    ///
++    /// // The 4 most significant bits of the 1st byte are the version nibble.
++    /// assert_eq!(zero, build([0b1111_0000, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
++    ///
++    /// // The 2 most significant bits of the 3rd byte are the variant.
++    /// assert_eq!(zero, build([0, 0, 0b1100_0000, 0, 0, 0, 0, 0, 0, 0]));
++    ///
++    /// // Everything else is carried through, including the rest of those two bytes.
++    /// assert_ne!(zero, build([0b0000_1111, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
++    /// assert_ne!(zero, build([0, 0, 0b0011_1111, 0, 0, 0, 0, 0, 0, 0]));
++    /// assert_ne!(zero, build([0, 0b1111_1111, 0, 0, 0, 0, 0, 0, 0, 0]));
++    /// ```
++    ///
+     /// Creating a UUID using the current system timestamp:
+     ///
+     /// ```
+diff --git a/src/error.rs b/src/error.rs
+index fcb48b2..2553a65 100644
+--- a/src/error.rs
++++ b/src/error.rs
+@@ -158,10 +158,12 @@ impl<'a> InvalidUuid<'a> {
+                 }
+             }
+ 
+-            // The last group must be too long
++            // The last group must be the wrong length. Measure it against the
++            // hyphenated slice rather than the whole input: a braced or URN
++            // input carries a wrapper the group is not part of.
+             Error(ErrorKind::ParseGroupLength {
+                 group: 4,
+-                len: input_str.len() - BLOCK_STARTS[4],
++                len: bounds.len() - BLOCK_STARTS[4],
+                 index: bounds.start + BLOCK_STARTS[4] + 1,
+             })
+         }
+diff --git a/src/external/serde_support.rs b/src/external/serde_support.rs
+index 4e48548..9da7f7d 100644
+--- a/src/external/serde_support.rs
++++ b/src/external/serde_support.rs
+@@ -86,34 +86,35 @@ impl<'vi, T: UuidDeserialize> de::Visitor<'vi> for UuidReadableVisitor<T> {
+         T::from_slice(value).map_err(de_error)
+     }
+ 
+-    fn visit_seq<A>(self, mut seq: A) -> Result<T, A::Error>
++    fn visit_seq<A>(self, seq: A) -> Result<T, A::Error>
+     where
+         A: de::SeqAccess<'vi>,
+     {
+-        #[rustfmt::skip]
+-        let bytes = [
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(0, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(1, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(2, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(3, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(4, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(5, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(6, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(7, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(8, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(9, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(10, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(11, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(12, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(13, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(14, &self)) },
+-            match seq.next_element()? { Some(e) => e, None => return Err(A::Error::invalid_length(15, &self)) },
+-        ];
+-
+-        T::from_bytes(bytes).map_err(de_error)
++        visit_seq_of_bytes(seq, &self)
+     }
+ }
+ 
++/// Read sixteen bytes out of a sequence.
++///
++/// Both visitors need this. A format that has no dedicated byte string type
++/// encodes `serialize_bytes` as a sequence of integers, so a visitor that only
++/// implements `visit_bytes` cannot read back what this crate wrote.
++fn visit_seq_of_bytes<'de, T: UuidDeserialize, A: de::SeqAccess<'de>>(
++    mut seq: A,
++    expecting: &dyn de::Expected,
++) -> Result<T, A::Error> {
++    let mut bytes = Bytes::default();
++
++    for (index, byte) in bytes.iter_mut().enumerate() {
++        match seq.next_element()? {
++            Some(value) => *byte = value,
++            None => return Err(A::Error::invalid_length(index, expecting)),
++        }
++    }
++
++    T::from_bytes(bytes).map_err(de_error)
++}
++
+ struct UuidBytesVisitor<T> {
+     _marker: PhantomData<T>,
+ }
+@@ -128,6 +129,13 @@ impl<'vi, T: UuidDeserialize> de::Visitor<'vi> for UuidBytesVisitor<T> {
+     fn visit_bytes<E: de::Error>(self, value: &[u8]) -> Result<T, E> {
+         T::from_slice(value).map_err(de_error)
+     }
++
++    fn visit_seq<A>(self, seq: A) -> Result<T, A::Error>
++    where
++        A: de::SeqAccess<'vi>,
++    {
++        visit_seq_of_bytes(seq, &self)
++    }
+ }
+ 
+ fn de_error<E: de::Error>(e: Error) -> E {
+@@ -437,6 +445,30 @@ pub mod bytes {
+                 ],
+             )
+         }
++
++        #[test]
++        fn test_bytes_roundtrip_through_a_sequence() {
++            // A format with no dedicated byte string type encodes
++            // `serialize_bytes` as a sequence of integers, so this adapter has
++            // to read back what it wrote there too.
++            #[derive(Serialize, Debug, Deserialize, PartialEq)]
++            struct UuidContainer {
++                #[serde(with = "crate::serde::bytes")]
++                u: crate::Uuid,
++            }
++
++            let container = UuidContainer {
++                u: crate::Uuid::from_slice(b"F9168C5E-CEB2-4F").unwrap(),
++            };
++
++            let json = serde_json::to_string(&container).unwrap();
++
++            assert_eq!(
++                container,
++                serde_json::from_str::<UuidContainer>(&json).unwrap(),
++                "serialized as {json}"
++            );
++        }
+     }
+ }
+ 
+@@ -1046,6 +1078,31 @@ mod serde_tests {
+         );
+     }
+ 
++    #[test]
++    fn test_deserialize_non_human_readable_from_a_sequence() {
++        // The compact form of `Uuid` shares its visitor with `serde::bytes`, so
++        // it has to accept the sequence a byte-string-less format produces.
++        let u = Uuid::from_slice(b"F9168C5E-CEB2-4F").unwrap();
++
++        let mut tokens = vec![Token::Seq { len: Some(16) }];
++        tokens.extend(u.as_bytes().iter().map(|b| Token::U8(*b)));
++        tokens.push(Token::SeqEnd);
++
++        serde_test::assert_de_tokens(&u.compact(), &tokens);
++    }
++
++    #[test]
++    fn test_deserialize_non_human_readable_from_a_short_sequence() {
++        let mut tokens = vec![Token::Seq { len: Some(15) }];
++        tokens.extend((0..15u8).map(Token::U8));
++        tokens.push(Token::SeqEnd);
++
++        serde_test::assert_de_tokens_error::<Compact<Uuid>>(
++            &tokens,
++            "invalid length 15, expected a 16 byte array",
++        );
++    }
++
+     #[test]
+     fn test_de_failure() {
+         serde_test::assert_de_tokens_error::<Readable<Uuid>>(
+diff --git a/src/parser.rs b/src/parser.rs
+index 47bed09..d8ba8f9 100644
+--- a/src/parser.rs
++++ b/src/parser.rs
+@@ -613,6 +613,54 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn test_group_length_is_measured_against_the_hyphenated_slice() {
++        // The braces and the `urn:uuid:` prefix are not part of any group, so
++        // the length reported for the last one must not count them.
++        // The index is where the group starts in the whole input, so it does
++        // move with the wrapper even though the length does not.
++        //
++        // There is no over-long URN case here: `urn:uuid:` plus a thirteen
++        // character last group is 46 bytes, and `into_err` reports a plain
++        // length error above 45 rather than looking for a group.
++        for (input, len, index) in [
++            ("F9168C5E-CEB2-4faa-B6BF-329BF39FA1E", 11, 25),
++            ("F9168C5E-CEB2-4faa-B6BF-329BF39FA1E45", 13, 25),
++            ("{F9168C5E-CEB2-4faa-B6BF-329BF39FA1E}", 11, 26),
++            ("{F9168C5E-CEB2-4faa-B6BF-329BF39FA1E45}", 13, 26),
++            ("urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E", 11, 34),
++        ] {
++            assert_eq!(
++                Err(Error(ErrorKind::ParseGroupLength {
++                    group: 4,
++                    len,
++                    index,
++                })),
++                Uuid::parse_str(input),
++                "for {input}"
++            );
++        }
++
++        // The typed parsers reach the same code with their own wrapper stripped.
++        assert_eq!(
++            Err(Error(ErrorKind::ParseGroupLength {
++                group: 4,
++                len: 11,
++                index: 26,
++            })),
++            Braced::from_str("{F9168C5E-CEB2-4faa-B6BF-329BF39FA1E}")
++        );
++
++        assert_eq!(
++            Err(Error(ErrorKind::ParseGroupLength {
++                group: 4,
++                len: 11,
++                index: 34,
++            })),
++            Urn::from_str("urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E")
++        );
++    }
++
+     #[test]
+     fn test_roundtrip_default() {
+         for uuid_orig in some_uuid_iter() {
+diff --git a/src/v7.rs b/src/v7.rs
+index cf399af..aeb1b0d 100644
+--- a/src/v7.rs
++++ b/src/v7.rs
+@@ -34,7 +34,11 @@ impl Uuid {
+     ///
+     /// This method accepts a [`Timestamp`] which may include a counter value.
+     /// Only up to 74 bits of the counter value will be used when constructing
+-    /// the UUID. Any unused counter bits will be filled with random data.
++    /// the UUID; a counter wider than that contributes its 74 most significant
++    /// bits, because those are the ones that order two values. The counter is
++    /// seated at the top of the UUID's payload, filling `rand_a` and then
++    /// `rand_b` around the variant field, and whatever it does not reach is
++    /// filled with random data.
+     ///
+     /// # Examples
+     ///
+@@ -74,51 +78,44 @@ impl Uuid {
+             .saturating_mul(1000)
+             .saturating_add(nanos as u64 / 1_000_000);
+ 
+-        let (counter, counter_bits) = ts.counter();
++        let (mut counter, counter_bits) = ts.counter();
++
++        // `Builder::from_unix_timestamp_millis` reads its ten bytes from the top of
++        // this value and spends the first four bits of them on the version nibble, so
++        // the payload of a version 7 UUID starts at bit 123: `rand_a` runs from bit
++        // 123 down to bit 112, the variant occupies bits 111 and 110, and `rand_b`
++        // runs from bit 109 down to bit 48.
++        const PAYLOAD_TOP: u32 = 123;
++        const RAND_A_BITS: u32 = 12;
++        const PAYLOAD_BITS: u32 = RAND_A_BITS + 62;
++
++        // A counter may declare more bits than the payload can carry. Keep its most
++        // significant ones, because those are the ones that order two UUIDs.
++        // `ClockSequence::usable_bits` is documented never to exceed 128, and a wider
++        // declaration is clamped here rather than shifted by more than a `u128` holds.
++        let mut counter_bits = cmp::min(counter_bits as u32, 128);
++        if counter_bits > PAYLOAD_BITS {
++            counter >>= counter_bits - PAYLOAD_BITS;
++            counter_bits = PAYLOAD_BITS;
++        }
+ 
+-        // If the counter intersects the variant field then shift around it.
+-        // This ensures that any bits set in the counter that would intersect
+-        // the variant are still preserved
+-        let shift_counter_over_variant = |mut counter: u128, mut counter_bits: u32| {
+-            let mask = u128::MAX << (cmp::min(128, counter_bits) - 12);
++        // If the counter reaches past `rand_a` then open a two bit gap where the
++        // variant will be written, so the counter bits that would land there are
++        // preserved on either side of it rather than overwritten.
++        if counter_bits > RAND_A_BITS {
++            let mask = u128::MAX << (counter_bits - RAND_A_BITS);
+             counter = (counter & !mask) | ((counter & mask) << 2);
+             counter_bits += 2;
++        }
+ 
+-            (counter, counter_bits)
+-        };
+-
+-        // Mask `counter_bits` of the `counter` into `dst`
+-        let mask_counter_into_random = |mut dst: u128, counter: u128, counter_bits: u32| {
+-            dst &= u128::MAX >> counter_bits;
+-            dst |= counter << (128 - counter_bits);
++        // Seat the counter at the top of the payload and fill whatever it leaves
++        // with random data.
++        let counter_and_random = if counter_bits == 0 {
++            rng::u128()
++        } else {
++            let shift = PAYLOAD_TOP + 1 - counter_bits;
+ 
+-            dst
+-        };
+-
+-        let counter_and_random = match counter_bits {
+-            // The counter doesn't contribute any bits
+-            0 => rng::u128(),
+-            // The counter doesn't intersect the variant field
+-            // It needs to be merged with random data
+-            ..12 => {
+-                let counter_bits = counter_bits as u32;
+-
+-                mask_counter_into_random(rng::u128(), counter, counter_bits)
+-            }
+-            // `rand_a` (12 bits) + `rand_b` (62 bits) + `var` (2 bits)
+-            // The counter needs to be shifted around the variant and merged with random data
+-            ..74 => {
+-                let (counter, counter_bits) =
+-                    shift_counter_over_variant(counter, counter_bits as u32);
+-
+-                mask_counter_into_random(rng::u128(), counter, counter_bits)
+-            }
+-            // The counter overrides all bits
+-            74.. => {
+-                let (counter, _) = shift_counter_over_variant(counter, counter_bits as u32);
+-
+-                counter
+-            }
++            (rng::u128() & (u128::MAX >> (128 - shift))) | (counter << shift)
+         };
+ 
+         Builder::from_unix_timestamp_millis(
+@@ -281,6 +278,84 @@ mod tests {
+         }
+     }
+ 
++    fn rand_a(uuid: &Uuid) -> u16 {
++        let b = uuid.as_bytes();
++
++        (((b[6] & 0x0f) as u16) << 8) | b[7] as u16
++    }
++
++    /// The part of a version 7 UUID a 42 bit counter is responsible for: all of
++    /// `rand_a` and the top 30 bits of `rand_b`, with the version and variant
++    /// fields masked out. Everything below this is random.
++    fn counter_field(uuid: &Uuid) -> (u16, u8, u8, u8, u8) {
++        let b = uuid.as_bytes();
++
++        (rand_a(uuid), b[8] & 0x3f, b[9], b[10], b[11])
++    }
++
++    #[test]
++    #[cfg_attr(
++        all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")),
++        wasm_bindgen_test
++    )]
++    fn test_counter_reaches_the_uuid() {
++        // Every bit of a counter narrow enough to fit must survive into the UUID.
++        // The most significant ones are the ones that order two values, and they
++        // are also the ones a misplaced counter loses first.
++        for bit in 0..42 {
++            let counter = 1u128 << bit;
++
++            let with = Uuid::new_v7(Timestamp::from_unix_time(0, 0, counter, 42));
++            let without = Uuid::new_v7(Timestamp::from_unix_time(0, 0, 0, 42));
++
++            assert_ne!(
++                counter_field(&with),
++                counter_field(&without),
++                "counter bit {bit} did not reach the UUID"
++            );
++        }
++
++        // A counter of all ones fills `rand_a` with ones: the two bit gap opened for
++        // the variant has to land on the variant, not inside `rand_a`.
++        let all_ones = Uuid::new_v7(Timestamp::from_unix_time(0, 0, (1 << 42) - 1, 42));
++        assert_eq!(0x0fff, rand_a(&all_ones));
++        assert_eq!(Variant::RFC4122, all_ones.get_variant());
++
++        // A carry into the high bits of the counter must sort upwards.
++        let before = Uuid::new_v7(Timestamp::from_unix_time(1, 0, 0x3f_ffff_ffff, 42));
++        let after = Uuid::new_v7(Timestamp::from_unix_time(1, 0, 0x40_0000_0000, 42));
++        assert!(before < after, "{before} should sort before {after}");
++    }
++
++    #[test]
++    #[cfg_attr(
++        all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")),
++        wasm_bindgen_test
++    )]
++    fn test_additional_precision_sorts_within_a_millisecond() {
++        // The whole purpose of the additional precision is that two UUIDs drawn from
++        // one context at two instants in the same millisecond sort in time order.
++        for start in (0..1_000_000).step_by(50_000) {
++            for delta in [50_000u32, 100_000, 200_000] {
++                if start + delta >= 1_000_000 {
++                    continue;
++                }
++
++                let context = crate::ContextV7::new().with_additional_precision();
++
++                let earlier = Uuid::new_v7(Timestamp::from_unix(&context, 1_700_000_000, start));
++                let later =
++                    Uuid::new_v7(Timestamp::from_unix(&context, 1_700_000_000, start + delta));
++
++                assert!(
++                    earlier < later,
++                    "{start}ns gave {earlier} and {}ns gave {later}",
++                    start + delta
++                );
++            }
++        }
++    }
++
+     #[test]
+     #[cfg_attr(
+         all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")),
