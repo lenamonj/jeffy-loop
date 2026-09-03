@@ -16,7 +16,7 @@ budget of 5 rounds of 10**.
 | Ledger at convergence | 2 Lows carried (see below) |
 | Evaluator | **1 invocation: PASS** |
 | Suite at convergence | `jvmTest` + `jsTest` + `wasmJsTest`: 1793 tests, 0 failed, 12 skipped (1781 at base) |
-| Upstream | [#649](https://github.com/Kotlin/kotlinx-datetime/pull/649) (KDT-1) and [#650](https://github.com/Kotlin/kotlinx-datetime/pull/650) (KDT-5), filed 2026-09-03 |
+| Upstream | [#650](https://github.com/Kotlin/kotlinx-datetime/pull/650) (KDT-5) **merged** 2026-09-03 by the maintainer; [#649](https://github.com/Kotlin/kotlinx-datetime/pull/649) (KDT-1) open, both filed 2026-09-03 |
 
 ## What the loop found
 
@@ -96,8 +96,9 @@ loop's own state file.
 
 ## Upstream
 
-`KDT-1` is filed as [#649](https://github.com/Kotlin/kotlinx-datetime/pull/649) and `KDT-5` as [#650](https://github.com/Kotlin/kotlinx-datetime/pull/650),
-both verified on a fresh clone at upstream HEAD (`e8019ead`, the base): the
+`KDT-5` is [#650](https://github.com/Kotlin/kotlinx-datetime/pull/650),
+merged by the maintainer about six hours after filing; `KDT-1` is
+[#649](https://github.com/Kotlin/kotlinx-datetime/pull/649), open. Both were verified on a fresh clone at upstream HEAD (`e8019ead`, the base): the
 new escaped-quote test fails before the `Unicode.kt` change and passes after
 it, and with both changes applied `jvmTest`, `jsTest` and `wasmJsTest` pass
 at 1784 tests and the compiled `linuxX64` test binary passes in full, with

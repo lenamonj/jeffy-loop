@@ -20,6 +20,7 @@ to Medium and made the loop fix it.
 | Ledger at convergence | 3 Lows carried, named in the closing entry |
 | Evaluator | **2 invocations: REJECT, PASS** |
 | Suite at convergence | `cargo test --all-features && cargo test --no-default-features && cargo fmt --check && cargo clippy -D warnings` green |
+| Upstream | [#836](https://github.com/console-rs/indicatif/pull/836) (IND-1) **merged** 2026-09-03 by the maintainer |
 
 ## What the loop found
 
@@ -68,6 +69,13 @@ can reach, IND-12 in the middle, wrapup. Run 2 (10 iterations): six Mediums
 closed back to back, the closing audit, gate invocation 1 - REJECT,
 re-scoring IND-8 - the IND-8 fix, then gate invocation 2, PASS, and the
 declaration in the same iteration. No run ended blocked.
+
+## Upstream
+
+`IND-1` is [#836](https://github.com/console-rs/indicatif/pull/836), the
+`draw_to_term` underflow, merged by the maintainer on 2026-09-03 after one
+review round. `IND-12` is held: the rayon adapter change is wider than the
+bar allows. The Mediums stay in the receipt.
 
 ## Environment
 

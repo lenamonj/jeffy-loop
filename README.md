@@ -29,7 +29,7 @@ Jeffy Loop is an autonomous engineering system built around a simple principle: 
 
 ## The receipts
 
-Twelve fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Eleven are patches this loop wrote and a maintainer merged, across eleven projects; the twelfth is a finding a maintainer found convincing enough to fix himself:
+Fourteen fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Thirteen projects merged patches this loop wrote; the fourteenth is a finding a maintainer found convincing enough to fix himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
@@ -42,6 +42,8 @@ Twelve fixes are in other people's code because a maintainer with no stake in th
 - **[go-runewidth](https://github.com/mattn/go-runewidth/pull/106) - merged.** `Wrap(s, 0)` panicked with an integer divide by zero in a capacity hint, and the package-level `CreateLUT` never rebuilt its table after a flag change, so every width stayed stale. Two PRs, both merged 2026-09-01 within an hour of filing.
 - **[console](https://github.com/console-rs/console/pull/296) - merged.** `truncate_str` without `ansi-parsing` sliced the string at a column count used as a byte offset and panicked mid-character on any multi-byte input. Merged 2026-09-02 after one review round. console is the terminal layer under indicatif and dialoguer.
 - **[nanostores](https://github.com/nanostores/nanostores/pull/425) - merged.** `batch()` called from inside a store listener re-ran listeners that had already fired in the same flush, and the unbind returned by lifecycle `on()` detached a different listener on its second call. Two PRs, both merged 2026-09-02 by the maintainer for the next minor release. nanostores is the store Astro's documentation recommends for sharing state between islands.
+- **[indicatif](https://github.com/console-rs/indicatif/pull/836) - merged.** `draw_to_term` underflowed its width arithmetic when the last drawn line was wider than the terminal and panicked on the next redraw. Merged 2026-09-03 after one review round; indicatif is the progress-bar layer above console.
+- **[kotlinx-datetime](https://github.com/Kotlin/kotlinx-datetime/pull/650) - merged.** The `ReplaceWith` metadata on the deprecated `Instant` pointed `toEpochMilliseconds()` at `nanosecondsOfSecond` and `isDistantFuture` at `isDistantPast`, so an IDE quick-fix silently changed the program's result. Merged 2026-09-03 by the maintainer, about six hours after filing.
 - **[chalk](https://github.com/chalk/chalk/pull/687) - fixed upstream.** The maintainer reproduced the finding, then wrote and merged his own fix, shipped in v6.0.0.
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
@@ -285,7 +287,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->125<!-- /count -->** | **<!-- count:fixed -->97<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->35<!-- /count -->** | **<!-- count:merged -->11<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->125<!-- /count -->** | **<!-- count:fixed -->97<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->36<!-- /count -->** | **<!-- count:merged -->13<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->96<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
@@ -304,6 +306,8 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | go-runewidth | Go | [details](evals/go-runewidth/REPORT.md) - Wrap panicked at width zero - [PR merged](https://github.com/mattn/go-runewidth/pull/106) | Fixed |
 | console | Rust | [details](evals/console/REPORT.md) - truncate_str panicked mid-character - [PR merged](https://github.com/console-rs/console/pull/296) | Fixed |
 | nanostores | JavaScript | [details](evals/nanostores/REPORT.md) - batch() inside a listener replayed listeners - [PR merged](https://github.com/nanostores/nanostores/pull/425) | Fixed |
+| kotlinx-datetime | Kotlin | [details](evals/kotlinx-datetime/REPORT.md) - byUnicodePattern dropped the escaped quote inside a literal, and deprecation quick-fixes pointed at the wrong member - [PR merged](https://github.com/Kotlin/kotlinx-datetime/pull/650), [PR open](https://github.com/Kotlin/kotlinx-datetime/pull/649) | Fixed |
+| indicatif | Rust | [details](evals/indicatif/REPORT.md) - draw-width underflow panic - [PR merged](https://github.com/console-rs/indicatif/pull/836) | Fixed |
 | chalk | JavaScript | [details](evals/chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](evals/dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](evals/yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
@@ -325,7 +329,6 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | kotlinx-io | Kotlin | [details](evals/kotlinx-io/REPORT.md) - the temporary directory was an empty path when TMPDIR was unset - [PR open](https://github.com/Kotlin/kotlinx-io/pull/521) | Fixed |
 | shouldly | C# | [details](evals/shouldly/REPORT.md) - a failing dictionary assertion over a pair sequence threw InvalidCastException - [PR open](https://github.com/shouldly/shouldly/pull/1335) | Fixed |
 | valinor | PHP | [details](evals/valinor/REPORT.md) - a captured closure earlier in the file made registerConstructor resolve a class that does not exist - [PR open](https://github.com/CuyZ/Valinor/pull/838) | Fixed |
-| kotlinx-datetime | Kotlin | [details](evals/kotlinx-datetime/REPORT.md) - byUnicodePattern dropped the escaped quote inside a literal, and deprecation quick-fixes pointed at the wrong member - [PR open](https://github.com/Kotlin/kotlinx-datetime/pull/649), [PR open](https://github.com/Kotlin/kotlinx-datetime/pull/650) | Fixed |
 | mustache.js | JavaScript | [details](evals/mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](evals/spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](evals/quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
@@ -360,7 +363,6 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | magic_enum | C++ | [details](evals/magic_enum/REPORT.md) - 6 members never compiled | Fixed |
 | vavr | Java | [details](evals/vavr/REPORT.md) - BitSet.removeAll threw | Fixed |
 | go-uuid | Go | [details](evals/go-uuid/REPORT.md) - SQL NULL returned stale UUID | Fixed |
-| indicatif | Rust | [details](evals/indicatif/REPORT.md) - draw-width underflow panic | Fixed |
 | ta | Python | [details](evals/ta/REPORT.md) - wrong numbers since 2023 | Fixed |
 | go-cmp | Go | [details](evals/go-cmp/REPORT.md) - 2 grouping bugs, +31/-13 | Fixed |
 | CLI11 | C++ | [details](evals/cli11/REPORT.md) - empty strtoX read as a value | Fixed |
