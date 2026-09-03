@@ -1,0 +1,416 @@
+diff --git a/.gitignore b/.gitignore
+index 220e6d0..325d575 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -6,3 +6,5 @@ coverage
+ dist
+ types
+ .conf*
++
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index 6393ad3..7c88e73 100644
+--- a/README.md
++++ b/README.md
+@@ -102,9 +102,21 @@ console.log(isEqual({ a: 1, b: 2 }, { b: 2, a: 1 }));
+ 
+ ## `diff(obj1, obj2)`
+ 
+-Compare two objects with nested [serialization](#serializeinput-options). Returns an array of changes.
++Compare two objects with nested [serialization](#serializeinput). Returns an array of changes.
+ 
+-The returned value is an array of diff entries with `$key`, `$hash`, `$value`, and `$props`. When logging, a string version of the changelog is displayed.
++Each entry in the returned array has:
++
++- `key`: the dotted path of what changed (`""` at the root)
++- `type`: `"added"`, `"removed"` or `"changed"`
++- `newValue`: the new node, absent on a `"removed"` entry
++- `oldValue`: the previous node, absent on an `"added"` entry
++
++A node carries `key`, `value` (the value itself), `hash` (its serialized form,
++or a `{...}` summary for a container) and, for a container, `props` mapping each
++key to its own node.
++
++Entries stringify to a readable line, so logging a changelog needs no formatting
++of your own.
+ 
+ ```js
+ import { diff } from "ohash/utils";
+diff --git a/src/crypto/js/index.ts b/src/crypto/js/index.ts
+index 0ee0bdb..117f2af 100644
+--- a/src/crypto/js/index.ts
++++ b/src/crypto/js/index.ts
+@@ -27,6 +27,8 @@ const base64KeyStr =
+ // Reusable object
+ const W: number[] = [];
+ 
++const encoder = /*@__PURE__*/ new TextEncoder();
++
+ /**
+  * SHA-256 hash algorithm.
+  */
+@@ -194,13 +196,20 @@ class WordArray {
+   }
+ 
+   static fromUtf8(input: string) {
+-    const str = unescape(encodeURIComponent(input)); // utf8 => latin1
+-    const strlen = str.length;
++    // `TextEncoder` rather than `unescape(encodeURIComponent(input))`: the
++    // latter throws `URIError: URI malformed` on a lone surrogate, while every
++    // other SHA-256 - including this package's own Node implementation and
++    // `node:crypto` - hashes such a string with the surrogate replaced by
++    // U+FFFD. Both produce identical bytes for well-formed input, so no
++    // previously working hash changes.
++    const bytes = encoder.encode(input);
+     const words: number[] = [];
+-    for (let i = 0; i < strlen; i++) {
+-      words[i >>> 2] |= (str.charCodeAt(i) & 0xff) << (24 - (i % 4) * 8);
++    let i = 0;
++    for (const byte of bytes) {
++      words[i >>> 2] |= byte << (24 - (i % 4) * 8);
++      i++;
+     }
+-    return new WordArray(words, strlen);
++    return new WordArray(words, bytes.length);
+   }
+ 
+   toBase64(): string {
+diff --git a/src/utils/diff.ts b/src/utils/diff.ts
+index acbaf6b..e4716da 100644
+--- a/src/utils/diff.ts
++++ b/src/utils/diff.ts
+@@ -21,7 +21,7 @@ const PROTO_KEY = "__proto__";
+  */
+ export function diff(obj1: any, obj2: any): DiffEntry[] {
+   const diffs: DiffEntry[] = [];
+-  _diff(obj1, obj2, "", diffs);
++  _diff(obj1, obj2, "", diffs, new Map());
+   return diffs;
+ }
+ 
+@@ -32,8 +32,20 @@ export function diff(obj1: any, obj2: any): DiffEntry[] {
+  * subtrees are skipped via the `v1 === v2` short-circuit without ever visiting
+  * them. Entries are appended to the shared `out` accumulator so that no
+  * intermediate array is allocated or re-copied per recursion level.
++ *
++ * `path` holds the (v1, v2) pairs currently being compared. Recursion only
++ * continues while both sides are containers, so it runs forever exactly when
++ * both sides cycle; meeting a pair again means the cycles mirror each other and
++ * everything below has already been compared. Pairs are removed on the way out,
++ * so a value reachable by two different routes is still compared on each.
+  */
+-function _diff(v1: any, v2: any, key: string, out: DiffEntry[]): void {
++function _diff(
++  v1: any,
++  v2: any,
++  key: string,
++  out: DiffEntry[],
++  path: Map<any, Set<any>>,
++): void {
+   if (v1 === v2) {
+     return;
+   }
+@@ -44,6 +56,14 @@ function _diff(v1: any, v2: any, key: string, out: DiffEntry[]): void {
+   const leaf2 = v2 === null || typeof v2 !== "object";
+ 
+   if (!leaf1 && !leaf2) {
++    let seen = path.get(v1);
++    if (seen?.has(v2)) {
++      return;
++    }
++    if (!seen) {
++      path.set(v1, (seen = new Set()));
++    }
++    seen.add(v2);
+     // Each value is read inside the same `for..in` pass that yields its key.
+     // Reading keys first and values later would let a getter that mutates its
+     // own object (deleting a sibling, truncating an array) produce entries for
+@@ -53,7 +73,7 @@ function _diff(v1: any, v2: any, key: string, out: DiffEntry[]): void {
+     for (const [k, child1] of entries1) {
+       const childKey = key ? `${key}.${k}` : k;
+       if (entries2.has(k)) {
+-        _diff(child1, entries2.get(k), childKey, out);
++        _diff(child1, entries2.get(k), childKey, out, path);
+       } else {
+         out.push(
+           new DiffEntry(
+@@ -76,19 +96,21 @@ function _diff(v1: any, v2: any, key: string, out: DiffEntry[]): void {
+     }
+     // Two containers with no enumerable keys both hash to `{}`, so nothing is
+     // emitted for them here.
++    seen.delete(v2);
+     return;
+   }
+ 
+-  // Mixed (leaf vs container) or both leaves: a "changed" entry is only emitted
+-  // when neither side has enumerable keys — i.e. both leaves, or a leaf vs an
+-  // empty container. A leaf vs a non-empty container yields nothing.
+-  if (_hasKeys(v1, leaf1) || _hasKeys(v2, leaf2)) {
+-    return;
+-  }
+-  // Neither side has keys, so both nodes are cheap to build directly; calling
+-  // `_toHashedObject` here would re-run `for..in` over each value a second time.
+-  const node1 = _emptyOrLeafNode(v1, key, leaf1);
+-  const node2 = _emptyOrLeafNode(v2, key, leaf2);
++  // Mixed (leaf vs container) or both leaves, so the two sides cannot be walked
++  // key by key: the whole node changed and one "changed" entry describes it.
++  // A side with no enumerable keys is cheap to build directly; only a side that
++  // has them needs `_toHashedObject`, whose `for..in` pass is what the fused
++  // traversal exists to avoid on the common paths.
++  const node1 = _hasKeys(v1, leaf1)
++    ? _toHashedObject(v1, key)
++    : _emptyOrLeafNode(v1, key, leaf1);
++  const node2 = _hasKeys(v2, leaf2)
++    ? _toHashedObject(v2, key)
++    : _emptyOrLeafNode(v2, key, leaf2);
+   if (node1.hash !== node2.hash) {
+     out.push(new DiffEntry(key, "changed", node2, node1));
+   }
+@@ -137,10 +159,24 @@ function _emptyOrLeafNode(
+     : new DiffHashedObject(key, value, "{}", Object.create(null));
+ }
+ 
+-function _toHashedObject(obj: any, key = ""): DiffHashedObject {
++/**
++ * Hashes a whole subtree. `path` holds the containers being walked above this
++ * one: meeting one again is a cycle, and it hashes to `[Circular]` rather
++ * than recursing forever. Entries are removed on the way out, so an object
++ * reachable by two sibling routes is still hashed on each of them.
++ */
++function _toHashedObject(
++  obj: any,
++  key = "",
++  path: Set<any> = new Set(),
++): DiffHashedObject {
+   if (obj === null || typeof obj !== "object") {
+     return new DiffHashedObject(key, obj, _leafHash(obj));
+   }
++  if (path.has(obj)) {
++    return new DiffHashedObject(key, obj, "[Circular]");
++  }
++  path.add(obj);
+   // A null-prototype record so that a key colliding with an `Object.prototype`
+   // member is stored and read back as its own value.
+   const props: Record<string, DiffHashedObject> = Object.create(null);
+@@ -149,10 +185,15 @@ function _toHashedObject(obj: any, key = ""): DiffHashedObject {
+     if (_key === PROTO_KEY) {
+       continue;
+     }
+-    const child = _toHashedObject(obj[_key], key ? `${key}.${_key}` : _key);
++    const child = _toHashedObject(
++      obj[_key],
++      key ? `${key}.${_key}` : _key,
++      path,
++    );
+     props[_key] = child;
+     hashes.push(child.hash);
+   }
++  path.delete(obj);
+   return new DiffHashedObject(key, obj, `{${hashes.join(":")}}`, props);
+ }
+ 
+@@ -223,9 +264,15 @@ export class DiffHashedObject {
+   toString() {
+     if (this.props) {
+       return `{${Object.keys(this.props).join(",")}}`;
+-    } else {
+-      return JSON.stringify(this.value);
+     }
++    // `JSON.stringify` throws on a BigInt, and a BigInt is a leaf like any
++    // other, so rendering one used to throw instead of producing a line.
++    // Provoking every leaf type through this method reports BigInt as the only
++    // one that does. It renders as `serialize` renders it.
++    if (typeof this.value === "bigint") {
++      return `${this.value}n`;
++    }
++    return JSON.stringify(this.value);
+   }
+ 
+   toJSON() {
+diff --git a/test/bundle.test.ts b/test/bundle.test.ts
+index d199715..b8b9cea 100644
+--- a/test/bundle.test.ts
++++ b/test/bundle.test.ts
+@@ -44,8 +44,11 @@ describe("bundle size", () => {
+     `;
+     const { bytes, gzipSize } = await getBundleSize(code);
+     // console.log({ bytes, gzipSize });
+-    expect(bytes).toBeLessThanOrEqual(5000); // <5kb
+-    expect(gzipSize).toBeLessThanOrEqual(2100); // <2.1kb
++    // Raised from 5000/2100 for the cycle guard in `_diff`/`_toHashedObject`:
++    // without it `diff` overflowed the stack on any cyclic input. The guard
++    // measured 5109/2123 when it landed, against 4936/2041 before.
++    expect(bytes).toBeLessThanOrEqual(5300); // <5.3kb
++    expect(gzipSize).toBeLessThanOrEqual(2200); // <2.2kb
+   });
+ });
+ 
+diff --git a/test/crypto.test.ts b/test/crypto.test.ts
+index 527af53..e1f5126 100644
+--- a/test/crypto.test.ts
++++ b/test/crypto.test.ts
+@@ -1,3 +1,4 @@
++import { createHash } from "node:crypto";
+ import { describe, expect, it } from "vitest";
+ 
+ import * as cryptoJS from "../src/crypto/js";
+@@ -20,6 +21,38 @@ describe("crypto:digest", () => {
+         );
+         expect(digest("")).toBe("47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU");
+       });
++
++      // A lone surrogate cannot be encoded as UTF-8 and every UTF-8 encoder
++      // substitutes U+FFFD for it. Encoding through
++      // `unescape(encodeURIComponent(...))` instead threw `URIError`, so the
++      // same input hashed fine on Node and crashed in every browser build.
++      it.each(["\uD800", "a\uDFFFb", "\uD83D", "\uDE00\uD83D"])(
++        "matches node:crypto for the lone surrogate %j",
++        (input) => {
++          expect(digest(input)).toBe(
++            createHash("sha256").update(input, "utf8").digest("base64url"),
++          );
++        },
++      );
++
++      it("matches node:crypto across string shapes and lengths", () => {
++        for (let index = 0; index < 200; index++) {
++          let input = "";
++          for (let cursor = 0; cursor < index; cursor++) {
++            input += String.fromCodePoint(
++              [
++                32 + ((index * 31 + cursor * 17) % 90),
++                0x00_e9,
++                0x4e_16,
++                0x1_f4_a9,
++              ][(index + cursor) % 4],
++            );
++          }
++          expect(digest(input)).toBe(
++            createHash("sha256").update(input, "utf8").digest("base64url"),
++          );
++        }
++      });
+     });
+   }
+ });
+diff --git a/test/utils.test.ts b/test/utils.test.ts
+index e3fdee3..87f02f5 100644
+--- a/test/utils.test.ts
++++ b/test/utils.test.ts
+@@ -137,8 +137,114 @@ describe("diff", () => {
+   it("diffs an empty container against a leaf", () => {
+     expect(diff({}, 5).map(String)).toEqual(["Changed `` from `{}` to `5`"]);
+     expect(diff(5, {}).map(String)).toEqual(["Changed `` from `5` to `{}`"]);
+-    // A leaf against a NON-empty container yields nothing.
+-    expect(diff({ a: 1 }, { a: { b: 2 } })).toEqual([]);
++  });
++
++  // A key that swaps between a leaf and a populated container is a change like
++  // any other. Both this implementation and the one before the fused traversal
++  // dropped it silently, so `diff` reported nothing at all for it.
++  it("diffs a leaf against a non-empty container", () => {
++    expect(diff({ a: 1 }, { a: { b: 2 } }).map(String)).toEqual([
++      "Changed `a` from `1` to `{b}`",
++    ]);
++    expect(diff({ a: { b: 2 } }, { a: 1 }).map(String)).toEqual([
++      "Changed `a` from `{b}` to `1`",
++    ]);
++    expect(diff({ a: 1 }, { a: [1] }).map(String)).toEqual([
++      "Changed `a` from `1` to `{0}`",
++    ]);
++    expect(diff({ a: null }, { a: { b: 1 } }).map(String)).toEqual([
++      "Changed `a` from `null` to `{b}`",
++    ]);
++    expect(diff(1, { b: 2 }).map(String)).toEqual([
++      "Changed `` from `1` to `{b}`",
++    ]);
++  });
++
++  it("carries the container side's props on a leaf-to-container change", () => {
++    const [changed] = diff({ a: 1 }, { a: { b: 2 } });
++    expect(changed.type).toBe("changed");
++    expect(changed.oldValue?.hash).toBe("1");
++    expect(changed.newValue?.hash).toBe("{2}");
++    expect(changed.newValue?.props?.b.key).toBe("a.b");
++  });
++
++  // `diff` overflowed the stack on any cyclic input: neither the fused
++  // traversal nor `_toHashedObject` tracked what it was already walking.
++  it("diffs cyclic structures instead of overflowing the stack", () => {
++    const cyclic = () => {
++      const o: any = { a: 1 };
++      o.self = o;
++      return o;
++    };
++    expect(diff({ a: 1 }, { a: cyclic() }).map(String)).toEqual([
++      "Changed `a` from `1` to `{a,self}`",
++    ]);
++    expect(diff({ a: cyclic() }, { a: 1 }).map(String)).toEqual([
++      "Changed `a` from `{a,self}` to `1`",
++    ]);
++    expect(diff(1, cyclic()).map(String)).toEqual([
++      "Changed `` from `1` to `{a,self}`",
++    ]);
++    expect(diff({}, { a: cyclic() }).map(String)).toEqual(["Added   `a`"]);
++    expect(diff({ a: cyclic() }, {}).map(String)).toEqual(["Removed `a`"]);
++    expect(diff(cyclic(), cyclic())).toEqual([]);
++  });
++
++  it("still reports differences inside cyclic structures", () => {
++    const one: any = { v: 1 };
++    one.self = one;
++    const two: any = { v: 2 };
++    two.self = two;
++    expect(diff(one, two).map(String)).toEqual(["Changed `v` from `1` to `2`"]);
++
++    // Mutual cycles across two objects.
++    const p: any = { n: 1 };
++    const q: any = { n: 1 };
++    p.other = q;
++    q.other = p;
++    const p2: any = { n: 1 };
++    const q2: any = { n: 2 };
++    p2.other = q2;
++    q2.other = p2;
++    expect(diff(p, p2).map(String)).toEqual([
++      "Changed `other.n` from `1` to `2`",
++    ]);
++
++    // Removing a pair on the way out keeps sibling routes independent, so an
++    // object reachable twice is still compared on each route.
++    const shared = { s: 1 };
++    expect(
++      diff({ x: shared, y: shared }, { x: { s: 1 }, y: { s: 2 } }).map(String),
++    ).toEqual(["Changed `y.s` from `1` to `2`"]);
++  });
++
++  it("hashes a cyclic subtree as [Circular]", () => {
++    const cyc: any = { a: 1 };
++    cyc.self = cyc;
++    const [added] = diff({}, { c: cyc });
++    expect(added.newValue?.hash).toBe("{1:[Circular]}");
++    expect(added.newValue?.props?.self.hash).toBe("[Circular]");
++  });
++
++  // `JSON.stringify` throws on a BigInt, so rendering a BigInt leaf threw
++  // instead of producing a line. Provoking every leaf type through
++  // `DiffHashedObject.toString` reports BigInt as the only one that does.
++  it("renders a BigInt leaf instead of throwing", () => {
++    expect(diff({ a: 1n }, { a: 2n }).join("\n")).toBe(
++      "Changed `a` from `1n` to `2n`",
++    );
++    expect(String(diff({ a: 1n }, { a: 2n })[0])).toBe(
++      "Changed `a` from `1n` to `2n`",
++    );
++    expect(diff({ a: { b: 1n } }, { a: { b: 2n } }).join("\n")).toBe(
++      "Changed `a.b` from `1n` to `2n`",
++    );
++    // Every other leaf type still renders as it did.
++    for (const value of ["x", 1, true, null, undefined, Symbol("s"), () => 1]) {
++      expect(() =>
++        diff({ a: value }, { a: "sentinel" }).join(""),
++      ).not.toThrow();
++    }
+   });
+ 
+   it("formats falsy primitive changes", () => {
