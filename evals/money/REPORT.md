@@ -79,7 +79,7 @@ head and JRuby legs were not run.
 
 ## Upstream
 
-Two PRs are prepared on main `4f107ecc` (still the tip): `F001` as
+Two PRs are filed on main `4f107ecc`, [#1227](https://github.com/RubyMoney/money/pull/1227) (F001) and [#1228](https://github.com/RubyMoney/money/pull/1228) (F009): `F001` as
 `import-rates-json-parse` and `F009` as `currency-reset-clears-keys`, each
 one line of library code plus a spec, verified red-then-green in a fresh
 clone with rubocop clean, and each carrying the CHANGELOG and AUTHORS lines

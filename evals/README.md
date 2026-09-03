@@ -4,7 +4,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->50<!-- /count -->** | **<!-- count:merged -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->55<!-- /count -->** | **<!-- count:merged -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->100<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
@@ -83,6 +83,9 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | shouldly | C# | [details](./shouldly/REPORT.md) - a failing dictionary assertion over a pair sequence threw InvalidCastException - [PR open](https://github.com/shouldly/shouldly/pull/1335) | Fixed |
 | valinor | PHP | [details](./valinor/REPORT.md) - a captured closure earlier in the file made registerConstructor resolve a class that does not exist - [PR open](https://github.com/CuyZ/Valinor/pull/838) | Fixed |
 | urfave/cli | Go | [details](./urfave-cli/REPORT.md) - a lone - ended flag parsing - [PR open](https://github.com/urfave/cli/pull/2423) | Fixed |
+| swift-http-types | Swift | [details](./swift-http-types/REPORT.md) - a schemeless URL trapped an Optional-returning conversion, and the fast path of == ignored two of a field's three stored properties - [PR open](https://github.com/apple/swift-http-types/pull/152), [PR open](https://github.com/apple/swift-http-types/pull/153) | Fixed |
+| money | Ruby | [details](./money/REPORT.md) - imported JSON rates went through JSON.load, and reset! kept a key cache that turned UnknownCurrency into NoMethodError - [PR open](https://github.com/RubyMoney/money/pull/1227), [PR open](https://github.com/RubyMoney/money/pull/1228) | Fixed |
+| ohash | TypeScript | [details](./ohash/REPORT.md) - the browser digest crashed on a lone surrogate, and diff dropped a leaf-to-container change and overflowed on cycles - [PR open](https://github.com/unjs/ohash/pull/204) | Fixed |
 | mustache.js | JavaScript | [details](./mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](./spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](./quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
@@ -145,9 +148,6 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | jansson | C | [details](./jansson/REPORT.md) - the CMake shared build exported 46 internal symbols | Fixed |
 | swift-system | Swift | [details](./swift-system/REPORT.md) - the Windows `open` skipped the documented permissions trap and nested temp directories leaked | Fixed |
 | commons-csv | Java | [details](./commons-csv/REPORT.md) - six documented promises the code did not keep, and a serialization skew the loop introduced and caught | Fixed |
-| swift-http-types | Swift | [details](./swift-http-types/REPORT.md) - a schemeless URL trapped an Optional-returning conversion, and the fast path of == ignored two of a field's three stored properties | Fixed |
-| money | Ruby | [details](./money/REPORT.md) - imported JSON rates went through JSON.load, and reset! kept a key cache that turned UnknownCurrency into NoMethodError | Fixed |
-| ohash | TypeScript | [details](./ohash/REPORT.md) - the browser digest crashed on a lone surrogate, and diff dropped a leaf-to-container change and overflowed on cycles | Fixed |
 | kotlinx-collections-immutable | Kotlin | [details](./kotlinx-collections-immutable/REPORT.md) - the vector builder broke its build() identity promise on a no-op set, and two pass-through sentences promised more than the code | Fixed |
 | BurntSushi/toml | Go | [details](./ATTEMPTS.md) - 5 runs, 52 iters, not converged | Failed |
 | Carbon | PHP | [details](./ATTEMPTS.md) - 4 runs, 17 iters, not converged | Failed |

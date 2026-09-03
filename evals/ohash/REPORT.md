@@ -82,12 +82,13 @@ own threshold has to say so.
 
 ## Upstream
 
-Two PRs are prepared on main `764b0a32` (still the tip): `OH-1` as
-`digest-lone-surrogate` and `OH-2` as `diff-leaf-vs-container`, each
-verified red-then-green in a fresh clone with the project's lint, prettier
-and type checks green, under the original bundle budget. `OH-7` and `OH-8`
-stay in the receipt: the cycle guard is a larger change that raises the
-project's size budget, which is the maintainers' call.
+`OH-1` is filed as [#204](https://github.com/unjs/ohash/pull/204) on main
+`764b0a32`, verified red-then-green in a fresh clone with the project's
+lint, prettier and type checks green, under the original bundle budget.
+`OH-2` is held: the project's own test documents "a leaf against a
+non-empty container yields nothing", so whether that is a defect is the
+maintainers' call. `OH-7` and `OH-8` stay in the receipt: the cycle guard
+is a larger change that raises the project's size budget.
 
 ## Files
 
