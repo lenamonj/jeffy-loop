@@ -27,42 +27,41 @@ Jeffy Loop is an autonomous engineering system built around a simple principle: 
   <img src="media/jeffy-loop-architecture.jpg" alt="Jeffy Loop Architecture" width="900">
 </div>
 
-## The receipts
+## The proof
 
-Every target, the merged patches and the greenfield builds: **[evals/README.md](evals/README.md)**.
+Jeffy was run against widely-used open-source projects with no connection to this repository, each project's own test suite as the oracle, and every run published in full.
 
-Behind them: **<!-- count:converged -->96<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **34 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+| Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| **<!-- count:tested -->125<!-- /count -->** | **<!-- count:fixed -->97<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->50<!-- /count -->** | **<!-- count:merged -->15<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**[Read the receipts table](evals/README.md)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
+**<!-- count:converged -->96<!-- /count --> projects run to convergence across <!-- count:languages -->13<!-- /count --> languages** with no language-specific analyzer or ruleset, and **34 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit.
 
-New to autonomous agent loops, or want the full argument? **The Jeffy Loop** is a 32-page white paper written for readers with no prior knowledge of agents: how loops got here from ReAct to AutoGPT to the Ralph Loop, what Anthropic recommends and what that guidance leaves open, then every rule explained from first principles - including an honest account of what this method still cannot do. It cites 28 sources, all linked. **[Download it here.](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
+A merged pull request is the one outcome the loop cannot award itself. Thirteen projects have merged its patches; four of them:
+
+- **[bat](https://github.com/sharkdp/bat/pull/3862)** - a just-merged security flag did nothing when piped; caught before it ever shipped.
+- **[mimalloc](https://github.com/microsoft/mimalloc/pull/1385)** - a documented zeroing allocator returned uninitialized heap memory above the small-size threshold; merged by the library's author.
+- **[ada](https://github.com/ada-url/ada/pull/1244)** - the URL parser inside Node.js reported `host_end` one byte short and truncated the host; merged forty minutes after filing.
+- **[PapaParse](https://github.com/mholt/PapaParse/pull/1135)** - header de-duplication re-ran after every resume and rewrote data in place; shipped in 5.7.0.
+
+**[The full scorecard, every merged patch, and every failure](evals/README.md)**, or the [record of every attempt ever started](evals/ATTEMPTS.md).
+
+## Five guarantees
+
+Each one is enforced by the iteration prompt, the state files, or the Stop hook, and each is checkable in this repository. [How they are enforced.](docs/how-it-works.md#five-guarantees)
+
+1. **It audits like an engineer, not a linter.** Every run opens with a real audit; a finding exists only if the loop can point at it and prove it with a runnable check.
+2. **It cannot wreck your repo.** Every iteration ends in a local checkpoint commit, a verify gate reverts any iteration that breaks the project, and nothing is pushed.
+3. **"Done" is not the agent's opinion.** A declaration needs a clean audit, a fully swept surface inventory, and an adversarial evaluator's countersignature, all re-checked in shell.
+4. **It cannot claim what it never looked at.** The whole public surface goes on a checklist before any finding is filed, and a swept row reopens when its code changes.
+5. **Lessons become machinery.** A rule learned the hard way binds every iteration after it; the engine itself is held to <!-- count:checks -->**312 behavioural checks**<!-- /count --> on Linux, Windows and macOS.
 
 ## Quickstart
 
 You need exactly two things. The installer handles everything else, including `jq`.
 
 1. **[Claude Code](https://claude.com/claude-code)** - installed and signed in once
-2. **[git](https://git-scm.com/downloads)** - confirm with `git --version`
-
-No git yet? One command for your platform:
-
-**Windows**
-
-```powershell
-winget install Git.Git
-```
-
-**macOS**
-
-```bash
-brew install git
-```
-
-**Debian/Ubuntu**
-
-```bash
-sudo apt-get install git
-```
+2. **[git](https://git-scm.com/downloads)** - confirm with `git --version`; otherwise `winget install Git.Git`, `brew install git`, or `sudo apt-get install git`
 
 Install Jeffy:
 
@@ -77,8 +76,6 @@ cd jeffy-loop
 
 The installer verifies the Claude Code CLI and `jq` (offering to install it via winget, Homebrew, or apt), copies the `/jeffy` and `/cancel-jeffy` skills - engine included - to `~/.claude/skills`, and registers the loop's hook in `~/.claude/settings.json`. Every step prints an [OK] or the exact fix.
 
-- **Update** - see [Already installed? Upgrade](docs/usage.md#already-installed-upgrade) below.
-
 Then open Claude Code in the project you want to improve and type `/jeffy 10`.
 
 > [!TIP]
@@ -86,24 +83,19 @@ Then open Claude Code in the project you want to improve and type `/jeffy 10`.
 
 When that run ends, close the session and start a new one to run it again. That restart is doing real work, and [why is worth two minutes](docs/usage.md#use-several-short-runs-not-one-long-one).
 
-## Usage
+## Documentation
 
-Flags, rounds and budgets, scoped mode, cancelling, upgrading: **[docs/usage.md](docs/usage.md)**.
-
-## Headless runs
-
-Budgeted rounds from bash or PowerShell, unattended: **[docs/headless.md](docs/headless.md)**.
-
-## How it works
-
-The run lifecycle, the five guarantees and the full rule set: **[docs/how-it-works.md](docs/how-it-works.md)**.
+| Page | What it covers |
+|:---|:---|
+| [Usage](docs/usage.md) | Flags, rounds and budgets, scoped mode, cancelling, [upgrading](docs/usage.md#already-installed-upgrade), uninstalling, and what to know before a first run |
+| [How it works](docs/how-it-works.md) | The run lifecycle, the five guarantees, the full rule set, what a converged stop looks like, and how the loop improves itself |
+| [Headless runs](docs/headless.md) | Running budgeted rounds unattended from bash or PowerShell |
+| [The receipts](evals/README.md) | Every open-source target with its outcome, the merged patches, the greenfield builds |
+| [Contributing](CONTRIBUTING.md) | The validator and the review bar |
+| [White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf) | 32 pages for readers new to agent loops: how loops got here, every rule from first principles, and what this method still cannot do |
 
 > [!IMPORTANT]
 > **Trust model.** The entire engine is one auditable shell script in this repo (`skills/jeffy/hooks/stop-hook.sh`) plus the small library it sources from `skills/jeffy/hooks/lib/`, registered as a Claude Code Stop hook. It fires at turn end but exits instantly unless the current project has a live Jeffy state file naming that session - zero cost and zero behavior outside a run. The installer's only writes outside this repo are the two skill folders it copies into `~/.claude/skills` (engine included), that one hook registration in `~/.claude/settings.json`, and - only when jq is missing and you answer yes to its prompt - a jq install through your system package manager (winget, Homebrew, or apt).
-
-## Contributing
-
-See **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 ## License
 
