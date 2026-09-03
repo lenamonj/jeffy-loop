@@ -1,0 +1,120 @@
+diff --git a/.gitignore b/.gitignore
+index 9eb9fda..f4c96d8 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,4 +7,6 @@ build
+ .kotlin
+ /kotlinx-collections-immutable/dependency-reduced-pom.xml
+ /benchmarks-runner/benchmarkResults
+-/benchmarks-runner/localReferenceBenchmarkResults
+\ No newline at end of file
++/benchmarks-runner/localReferenceBenchmarkResults.claude/jeffy-loop.local.md
++.jeffy/probes/_harness/classes/
++.jeffy/probes/benchmarks/classes/
+diff --git a/core/commonMain/src/extensions.kt b/core/commonMain/src/extensions.kt
+index 6671e62..2a3d7a4 100644
+--- a/core/commonMain/src/extensions.kt
++++ b/core/commonMain/src/extensions.kt
+@@ -640,6 +640,13 @@ public fun <T> Sequence<T>.toImmutableSet(): ImmutableSet<T> = toPersistentSet()
+  * Returns an immutable set of all characters.
+  *
+  * Elements of the returned set are iterated in the same order as in this char sequence.
++ *
++ * Unlike the other [toImmutableSet] overloads, which declare [ImmutableSet], this one declares the
++ * persistent type this overload returns. [PersistentSet] is a subtype of [ImmutableSet], so the
++ * difference takes nothing away: the result is still usable wherever an [ImmutableSet] is expected,
++ * and it additionally exposes the modification operations of [PersistentSet]. Narrowing the
++ * declaration to match its siblings would be a binary-incompatible change to a published signature,
++ * so it is left as it is and stated here instead.
+  */
+ public fun CharSequence.toImmutableSet(): PersistentSet<Char> = toPersistentSet()
+ 
+@@ -647,8 +654,11 @@ public fun CharSequence.toImmutableSet(): PersistentSet<Char> = toPersistentSet(
+ /**
+  * Returns a persistent set of all elements of this iterable.
+  *
+- * If the receiver is already a persistent set, returns it as is.
+- * If the receiver is a persistent set builder, calls `build` on it and returns the result.
++ * If the receiver is already a persistent set that iterates in insertion order, returns it as is.
++ * If the receiver is a builder of such a set, calls `build` on it and returns the result.
++ * A persistent set whose iteration order is unspecified, such as one returned by
++ * [persistentHashSetOf] or [toPersistentHashSet], is copied rather than returned as is, because it
++ * does not keep the order this function promises.
+  *
+  * Elements of the returned set are iterated in the same order as in this iterable.
+  */
+@@ -731,8 +741,11 @@ public fun <K, V> Map<K, V>.toImmutableMap(): ImmutableMap<K, V> =
+ /**
+  * Returns a persistent map containing all entries from this map.
+  *
+- * If the receiver is already a persistent map, returns it as is.
+- * If the receiver is a persistent map builder, calls `build` on it and returns the result.
++ * If the receiver is already a persistent map that iterates in insertion order, returns it as is.
++ * If the receiver is a builder of such a map, calls `build` on it and returns the result.
++ * A persistent map whose iteration order is unspecified, such as one returned by
++ * [persistentHashMapOf] or [toPersistentHashMap], is copied rather than returned as is, because it
++ * does not keep the order this function promises.
+  *
+  * Entries of the returned map are iterated in the same order as in this map.
+  */
+diff --git a/core/commonMain/src/implementations/immutableList/PersistentVectorBuilder.kt b/core/commonMain/src/implementations/immutableList/PersistentVectorBuilder.kt
+index 15df6dd..fc8a0c1 100644
+--- a/core/commonMain/src/implementations/immutableList/PersistentVectorBuilder.kt
++++ b/core/commonMain/src/implementations/immutableList/PersistentVectorBuilder.kt
+@@ -968,8 +968,18 @@ internal class PersistentVectorBuilder<E>(
+     }
+ 
+     override fun set(index: Int, element: E): E {
+-        // TODO: Should list[i] = list[i] make it mutable?
+         checkElementIndex(index, size)
++
++        // Writing back the element already stored modifies nothing, and `build()` promises the
++        // source instance while no operation has modified this builder. Making the buffer mutable
++        // here would break that promise and the structural sharing with it, so answer the question
++        // first. Only a builder that still holds `builtVector` can keep the promise, so only there
++        // is the extra read worth taking: once `builtVector` is null the promise is already void,
++        // and skipping the read keeps the cost of a loop of `set` calls exactly where it was.
++        if (builtVector != null && get(index) === element) {
++            return element
++        }
++
+         if (rootSize() <= index) {
+             val mutableTail = makeMutable(tail)
+ 
+diff --git a/core/commonTest/src/contract/list/ImmutableListTest.kt b/core/commonTest/src/contract/list/ImmutableListTest.kt
+index e0d76a5..69dd3cb 100644
+--- a/core/commonTest/src/contract/list/ImmutableListTest.kt
++++ b/core/commonTest/src/contract/list/ImmutableListTest.kt
+@@ -207,6 +207,32 @@ class ImmutableListTest {
+         }
+     }
+ 
++    @Test fun builderSetOfTheStoredElementIsNoOperation() {
++        // PersistentCollection.Builder.build() returns the source instance while no operation has
++        // modified the builder. Writing back the element already stored modifies nothing, so it
++        // must not cost that promise; the hash map and hash set builders already return early on
++        // an identical value.
++        for (size in listOf(1, 2, 32, 33, 1024, 2000)) {
++            val list = List(size) { Any() }.toPersistentList()
++            for (index in listOf(0, size / 2, size - 1)) {
++                val builder = list.builder()
++                builder[index] = list[index]
++                assertTrue(
++                    list === builder.build(),
++                    "set(index, the stored element) must not modify the builder: size=$size index=$index"
++                )
++            }
++            // A real replacement still builds a new list, and the source is left alone.
++            val builder = list.builder()
++            val replacement = Any()
++            builder[0] = replacement
++            val built = builder.build()
++            assertTrue(list !== built, "a real replacement builds a new list: size=$size")
++            assertTrue(replacement === built[0], "a real replacement is stored: size=$size")
++            assertTrue(list[0] !== built[0], "the source list is unchanged: size=$size")
++        }
++    }
++
+     fun <T> PersistentList<T>.testNoOperation(persistent: PersistentList<T>.() -> PersistentList<T>, mutating: MutableList<T>.() -> Unit) {
+         val result = this.persistent()
+         val buildResult = this.mutate(mutating)

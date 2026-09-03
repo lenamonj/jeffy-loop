@@ -489,6 +489,7 @@ stopped it was the map:
 | swift-http-types | 2 | 18 | converged | evaluator countersigned | 0 |
 | money | 1 | 10 | converged | evaluator countersigned | 0 |
 | ohash | 1 | 10 | converged | evaluator countersigned | 0 |
+| kotlinx-collections-immutable | 1 | 9 | converged | evaluator countersigned | 0 |
 
 **Thirty iterations, and the adversarial gate was never invoked once**, because
 convergence requires no unswept row and the declaration path therefore never

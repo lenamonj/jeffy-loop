@@ -33,9 +33,9 @@ Jeffy was run against widely-used open-source projects with no connection to thi
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->128<!-- /count -->** | **<!-- count:fixed -->100<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->50<!-- /count -->** | **<!-- count:merged -->15<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->50<!-- /count -->** | **<!-- count:merged -->15<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**<!-- count:converged -->99<!-- /count --> projects run to convergence across <!-- count:languages -->13<!-- /count --> languages** with no language-specific analyzer or ruleset. Of the <!-- count:tested -->128<!-- /count --> projects, <!-- count:failed -->28<!-- /count --> never converged. Counted per attempt rather than per project, the ledger holds **34 attempts that did not converge**: every budgeted retry of those 28, plus the first attempt at each project that converged only on a retry. Each one is published with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit.
+**<!-- count:converged -->100<!-- /count --> projects run to convergence across <!-- count:languages -->13<!-- /count --> languages** with no language-specific analyzer or ruleset. Of the <!-- count:tested -->129<!-- /count --> projects, <!-- count:failed -->28<!-- /count --> never converged. Counted per attempt rather than per project, the ledger holds **34 attempts that did not converge**: every budgeted retry of those 28, plus the first attempt at each project that converged only on a retry. Each one is published with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit.
 
 A merged pull request is the one outcome the loop cannot award itself. Thirteen projects have merged its patches; four of them:
 
