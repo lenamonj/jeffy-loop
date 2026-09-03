@@ -1,6 +1,6 @@
 """Render the converged-by-language pie to media/language-pie-{light,dark}.png at 2x.
 
-The slice data is derived from README.md's receipts table at render time, never
+The slice data is derived from evals/README.md's scorecard at render time, never
 typed in, so a rebuild after adding a receipt cannot publish a stale chart.
 Run this whenever a converged row is added:
 
@@ -15,10 +15,10 @@ import urllib.parse
 from playwright.sync_api import sync_playwright
 
 root = pathlib.Path(__file__).resolve().parent.parent
-readme = (root / "README.md").read_text(encoding="utf-8")
+readme = (root / "evals" / "README.md").read_text(encoding="utf-8")
 
 # Scorecard rows look like:
-#   | bat | Rust | [details](evals/bat/REPORT.md) - security flag no-op piped - [PR merged](...) | Fixed |
+#   | bat | Rust | [details](./bat/REPORT.md) - security flag no-op piped - [PR merged](...) | Fixed |
 #
 # A converged row is a Fixed row whose details cell does not open with the
 # italic *audit* tag (PapaParse); validate.sh check J classifies rows the same
@@ -37,12 +37,12 @@ for language, details in ROW.findall(readme):
 
 total = sum(counts.values())
 if total == 0:
-    raise SystemExit("no converged rows found in README.md - has the table shape changed?")
+    raise SystemExit("no converged rows found in evals/README.md - has the table shape changed?")
 
 marker = re.search(r"<!-- count:converged -->(\d+)<!-- /count -->", readme)
 if marker and int(marker.group(1)) != total:
     raise SystemExit(
-        f"README says {marker.group(1)} converged but the table has {total} rows; "
+        f"evals/README.md says {marker.group(1)} converged but the table has {total} rows; "
         "fix the disagreement before rendering"
     )
 

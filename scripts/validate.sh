@@ -606,8 +606,8 @@ else
   fi
 fi
 
-# J. Counts the README states are derived, never transcribed - the class
-#    that produced three drift incidents in one day across two codebases.
+# J. Counts the published pages state are derived, never transcribed - the
+#    class that produced three drift incidents in one day across two codebases.
 #    Source of truth is the scorecard table: one row per project,
 #    `| Project | Language | [details](...) ... | Fixed/Failed |`. A Fixed row
 #    whose details link an evals/*/REPORT.md is one receipt; a Fixed row whose
@@ -622,8 +622,8 @@ fi
 # totals from every published page, so the front page and the pages it links
 # can carry the same number and none of them can carry a different one. The
 # pages list is also what checks K and N read; add a page here, never inline.
-scorecard="README.md"
-pub_docs=(README.md)
+scorecard="evals/README.md"
+pub_docs=(README.md docs/usage.md docs/headless.md docs/how-it-works.md evals/README.md)
 receipts=0
 for receipt in evals/*/REPORT.md; do
   # An unmatched glob arrives as the literal pattern, so the -f test is what
@@ -641,9 +641,9 @@ tbl_merged="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep 
 tbl_issues="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -o '\[issue filed\](' | wc -l | tr -d ' ')"
 # Every marker of each kind, not the first: a second one is free to state a
 # different number. Reading them all means the message names the defect
-# rather than blaming the table for a number the README disagrees with itself
-# about. (M1) Extracted with grep -o, never a sed with a leading greedy .*,
-# because README.md ships two markers of one kind on a single line. (G1)
+# rather than blaming the table for a number the pages disagree among
+# themselves about. (M1) Extracted with grep -o, never a sed with a leading
+# greedy .*, because a page ships two markers of one kind on a single line. (G1)
 marker() { grep -oh "<!-- count:$1 -->[0-9][0-9]*<!-- /count -->" "${pub_docs[@]}" | tr -dc '0-9
 ' | grep -v '^$' | sort -u | tr '
 ' ' ' | sed 's/ $//'; }
@@ -674,7 +674,7 @@ fi
 #    three languages, caught only because the pie alt text is derived by
 #    script and disagreed with the prose beside it. Checkable subset, and
 #    deliberately strict: a per-language ordinal ("first <Language> target",
-#    "second <Language> target") in README.md or any receipt must match the
+#    "second <Language> target") in a published page or any receipt must match the
 #    converged rows' count for that language - "first" demands exactly one,
 #    so the durable wording for a historical first is the dated or
 #    "after <name>" form that stays true when the second lands. The "Nth
@@ -798,7 +798,7 @@ fi
 
 # L/M. Enumerations the product text asserts about the engine's own behaviour,
 #      derived from the engine rather than transcribed beside it. Check J
-#      covers the two totals README.md publishes; these two cover the other
+#      covers the totals the published pages carry; these two cover the other
 #      half of that class - a sentence that lists what the hook does,
 #      which drifts the moment the hook grows a case and the prose does not.
 #      Both are stated in more than one document, so both compare every
@@ -820,7 +820,7 @@ lm_hook="skills/jeffy/hooks/stop-hook.sh"
 lm_to_src="skills/jeffy/hooks/lib/quiet-verify.sh"
 # The published page that states the timeout chain and the verify bound
 # beside the rule they enforce; checks M and P both read it.
-chain_doc="README.md"
+chain_doc="docs/how-it-works.md"
 
 # L. The refused pager/truncator set, from the case arm that sets vc_lint.
 #    The extractor accounts for every alternative in that arm rather than
@@ -6977,12 +6977,12 @@ else
   fi
 fi
 
-# K. The check count the README publishes is derived from this run, never
-#    transcribed. Two README claims carry a derivation: the converged and
-#    language totals against the eval table (check J), and this count. Those
-#    two are the numbers this project publishes outside the repository, which
-#    is why they are the two that are machine-checked; every other figure in
-#    the README is ordinary prose and should be read as such. PLAN.md's
+# K. The check count the published pages state is derived from this run,
+#    never transcribed. Two published claims carry a derivation: the converged
+#    and language totals against the eval table (check J), and this count.
+#    Those two are the numbers this project publishes outside the repository,
+#    which is why they are the two that are machine-checked; every other figure
+#    in the pages is ordinary prose and should be read as such. PLAN.md's
 #    Derived and settled numbers section holds the full enumeration.
 #    Published means what a clone runs, so the derivation subtracts what only
 #    a maintainer tree adds: the CHANGELOG pairing above, this check itself,
