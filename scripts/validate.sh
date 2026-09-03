@@ -618,27 +618,33 @@ fi
 #    a typo'd marker just stopped counting.
 #    On failure, remember the surfaces grep cannot see: the GitHub About
 #    text, release bodies, and any live article state the same numbers.
+# The scorecard is read from one named file and the markers that restate its
+# totals from every published page, so the front page and the pages it links
+# can carry the same number and none of them can carry a different one. The
+# pages list is also what checks K and N read; add a page here, never inline.
+scorecard="README.md"
+pub_docs=(README.md)
 receipts=0
 for receipt in evals/*/REPORT.md; do
   # An unmatched glob arrives as the literal pattern, so the -f test is what
   # makes an empty evals/ count zero rather than one.
   if [ -f "$receipt" ]; then receipts=$((receipts + 1)); fi
 done
-tbl_rows="$(grep -cE '^\| [^|]+ \| [^|]+ \| \[details\]\(' README.md)"
-tbl_receipts="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' README.md | grep -c '\[details\](evals/[^)]*/REPORT\.md)')"
-tbl_fixed="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed") c++ } END { print c+0 }' README.md)"
-tbl_failed="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Failed") c++ } END { print c+0 }' README.md)"
-tbl_conv="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed" && $4 !~ /\[details\]\([^)]*\) - \*audit/) c++ } END { print c+0 }' README.md)"
-tbl_langs="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed") { gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3 } }' README.md | sort -u | wc -l | tr -d ' ')"
-tbl_odd="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r != "Fixed" && r != "Failed") print $2 }' README.md | wc -l | tr -d ' ')"
-tbl_merged="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' README.md | grep -o '\[PR merged\](' | wc -l | tr -d ' ')"
-tbl_issues="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' README.md | grep -o '\[issue filed\](' | wc -l | tr -d ' ')"
+tbl_rows="$(grep -cE '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard")"
+tbl_receipts="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -c '\[details\]([^)]*/REPORT\.md)')"
+tbl_fixed="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed") c++ } END { print c+0 }' "$scorecard")"
+tbl_failed="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Failed") c++ } END { print c+0 }' "$scorecard")"
+tbl_conv="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed" && $4 !~ /\[details\]\([^)]*\) - \*audit/) c++ } END { print c+0 }' "$scorecard")"
+tbl_langs="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed") { gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3 } }' "$scorecard" | sort -u | wc -l | tr -d ' ')"
+tbl_odd="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r != "Fixed" && r != "Failed") print $2 }' "$scorecard" | wc -l | tr -d ' ')"
+tbl_merged="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -o '\[PR merged\](' | wc -l | tr -d ' ')"
+tbl_issues="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -o '\[issue filed\](' | wc -l | tr -d ' ')"
 # Every marker of each kind, not the first: a second one is free to state a
 # different number. Reading them all means the message names the defect
 # rather than blaming the table for a number the README disagrees with itself
 # about. (M1) Extracted with grep -o, never a sed with a leading greedy .*,
 # because README.md ships two markers of one kind on a single line. (G1)
-marker() { grep -o "<!-- count:$1 -->[0-9][0-9]*<!-- /count -->" README.md   | tr -dc '0-9
+marker() { grep -oh "<!-- count:$1 -->[0-9][0-9]*<!-- /count -->" "${pub_docs[@]}" | tr -dc '0-9
 ' | grep -v '^$' | sort -u | tr '
 ' ' ' | sed 's/ $//'; }
 claim_conv="$(marker converged)"; claim_langs="$(marker languages)"
@@ -653,13 +659,13 @@ for pair in "converged:$claim_conv:$tbl_conv" "languages:$claim_langs:$tbl_langs
   fi
 done
 if [ "$tbl_receipts" != "$receipts" ]; then
-  fault "README scorecard links $tbl_receipts REPORT.md receipts but evals/ holds $receipts; a new eval landed without its row (and the About text and live articles need the same edit)"
+  fault "the scorecard ($scorecard) links $tbl_receipts REPORT.md receipts but evals/ holds $receipts; a new eval landed without its row (and the About text and live articles need the same edit)"
 elif [ "$tbl_odd" != "0" ]; then
-  fault "README scorecard has $tbl_odd row(s) whose result cell is neither Fixed nor Failed; such a row is silently absent from every derived count"
+  fault "the scorecard ($scorecard) has $tbl_odd row(s) whose result cell is neither Fixed nor Failed; such a row is silently absent from every derived count"
 elif [ -n "$count_bad" ]; then
-  fault "README counts are not derived from the scorecard: ${count_bad%; }"
+  fault "published counts are not derived from the scorecard: ${count_bad%; }"
 else
-  pass "README counts are derived from the scorecard ($tbl_rows tested, $tbl_fixed fixed, $tbl_conv converged, $tbl_failed failed, $tbl_langs languages, $tbl_merged merged)"
+  pass "published counts are derived from the scorecard ($tbl_rows tested, $tbl_fixed fixed, $tbl_conv converged, $tbl_failed failed, $tbl_langs languages, $tbl_merged merged)"
 fi
 
 # N. Corpus-position claims are queries over the receipts table (P2-39): a
@@ -699,7 +705,7 @@ ord_num() { # ordinal word (lowercased) -> number, 0 when unclassifiable
     nineteenth) echo 19 ;; twentieth) echo 20 ;; *) echo 0 ;;
   esac
 }
-ord_counts="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed" && $4 !~ /\[details\]\([^)]*\) - \*audit/) { gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3 } }' README.md | sort | uniq -c | awk '{print $1, $2}')"
+ord_counts="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r == "Fixed" && $4 !~ /\[details\]\([^)]*\) - \*audit/) { gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3 } }' "$scorecard" | sort | uniq -c | awk '{print $1, $2}')"
 if [ -z "$ord_counts" ]; then
   ord_bad="the receipts table yielded no converged row this check could read, so no ordinal was compared against anything; the extractor takes the language from column 3 and the result from column 5, and a table reshape blinds it while this check goes on reporting agreement; "
 fi
@@ -724,7 +730,7 @@ fi
 # than the value escaped: one pass with a pattern this check authored
 # captures every ordinal claim, and the language it captured is compared to
 # the table's languages as a string. Nothing derived reaches a regex.
-ord_claims="$(grep -rhoiE "($ord_words) [^[:space:]]+ target" README.md evals/*/REPORT.md 2>/dev/null | sort -u)"
+ord_claims="$(grep -rhoiE "($ord_words) [^[:space:]]+ target" "${pub_docs[@]}" evals/*/REPORT.md 2>/dev/null | sort -u)"
 while IFS= read -r pl_h; do
   [ -n "$pl_h" ] || continue
   pl_w="$(printf '%s' "$pl_h" | awk '{print tolower($1)}')"
@@ -763,7 +769,7 @@ ORDCNT
 done <<ORDHITS
 $ord_claims
 ORDHITS
-nth_langs="$(grep -rhoiE "the ($ord_words) language" README.md evals/*/REPORT.md 2>/dev/null | awk '{print tolower($2)}' | sort)"
+nth_langs="$(grep -rhoiE "the ($ord_words) language" "${pub_docs[@]}" evals/*/REPORT.md 2>/dev/null | awk '{print tolower($2)}' | sort)"
 if [ -n "$nth_langs" ]; then
   # No duplicate test: a receipt and its README row legitimately restate
   # the same ordinal, and the two are indistinguishable from a real
@@ -812,6 +818,9 @@ lm_hook="skills/jeffy/hooks/stop-hook.sh"
 # above still lives in the hook. Two derivations, two sources: pointing one
 # variable at both is what blinded this pair during that extraction.
 lm_to_src="skills/jeffy/hooks/lib/quiet-verify.sh"
+# The published page that states the timeout chain and the verify bound
+# beside the rule they enforce; checks M and P both read it.
+chain_doc="README.md"
 
 # L. The refused pager/truncator set, from the case arm that sets vc_lint.
 #    The extractor accounts for every alternative in that arm rather than
@@ -898,7 +907,7 @@ lm_to_init="$(grep -c '^[ \t]*vto=""$' "$lm_to_src")"
 lm_to_kept="$(sed -n 's/^[ \t]*vto=\([a-z][a-z]*\)$/\1/p' "$lm_to_src" | wc -l | tr -d '[:space:]')"
 lm_to_want=$((lm_to_cand - lm_to_init))
 lm_to_bad=""
-for lm_f in README.md SECURITY.md; do
+for lm_f in "$chain_doc" SECURITY.md; do
   lm_seen=0
   # The site list is hoisted so the SC2016 directive attaches to an assignment
   # rather than to a loop terminator, and it is replayed with printf rather
@@ -1005,7 +1014,7 @@ cat skills/jeffy/hooks/stop-hook.sh skills/jeffy/hooks/lib/quiet-verify.sh > "$p
 # exists to catch: a tracked path carrying whitespace split into fragments, the
 # membership grep failed on names that do not exist, and that document escaped
 # the comparison in silence while the check reported green. (L1)
-p_files="README.md
+p_files="$chain_doc
 skills/jeffy/SKILL.md
 skills/jeffy/references/plan-default.md"
 if [ ! -f "$p_hook" ]; then
@@ -6983,23 +6992,23 @@ fi
 #    Every marker, never the first: reading one with head -n 1 leaves a second
 #    marker free to state a different number. One marker carries this claim
 #    today, so this is the guard rather than a current disagreement. (M1)
-claim_checks="$(grep -o '<!-- count:checks -->\*\*[0-9][0-9]* behavioural checks\*\*<!-- /count -->' README.md \
+claim_checks="$(grep -oh '<!-- count:checks -->\*\*[0-9][0-9]* behavioural checks\*\*<!-- /count -->' "${pub_docs[@]}" \
   | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 if [ -z "$claim_checks" ]; then
-  fault "README carries no <!-- count:checks -->N behavioural checks<!-- /count --> marker; the engine's own check count is then an untracked claim"
+  fault "no published page carries a <!-- count:checks -->N behavioural checks<!-- /count --> marker; the engine's own check count is then an untracked claim"
 elif [ "${claim_checks#* }" != "$claim_checks" ]; then
-  fault "README states the behavioural check count as [$claim_checks]; its own count:checks markers disagree, so no single number is published"
+  fault "the published pages state the behavioural check count as [$claim_checks]; their count:checks markers disagree, so no single number is published"
 elif [ ! -f CHANGELOG.md ] || [ -z "$ps" ] \
   || ! command -v jq >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
-  skip "README check-count derivation (asserts in a maintainer tree with jq, git and PowerShell, where the marker is written)"
+  skip "published check-count derivation (asserts in a maintainer tree with jq, git and PowerShell, where the marker is written)"
 else
   cc_extra=2
   if command -v shellcheck >/dev/null 2>&1; then cc_extra=$((cc_extra + 1)); fi
   cc_derived=$((ok_n + 1 - cc_extra))
   if [ "$cc_derived" -eq "$claim_checks" ]; then
-    pass "README check count is derived, not transcribed ($claim_checks on a clone, $((ok_n + 1)) in this tree)"
+    pass "published check count is derived, not transcribed ($claim_checks on a clone, $((ok_n + 1)) in this tree)"
   else
-    fault "README claims $claim_checks behavioural checks but this run derives $cc_derived; the marker ships in the same commit as the scenarios that moved it"
+    fault "the published pages claim $claim_checks behavioural checks but this run derives $cc_derived; the marker ships in the same commit as the scenarios that moved it"
   fi
 fi
 
