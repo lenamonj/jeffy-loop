@@ -287,7 +287,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->125<!-- /count -->** | **<!-- count:fixed -->97<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->36<!-- /count -->** | **<!-- count:merged -->13<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->125<!-- /count -->** | **<!-- count:fixed -->97<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->35<!-- /count -->** | **<!-- count:merged -->13<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->96<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
@@ -311,7 +311,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | chalk | JavaScript | [details](evals/chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](evals/dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](evals/yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
-| typer | Python | [details](evals/typer/REPORT.md) - hash seed chose which app runs - [PR open](https://github.com/fastapi/typer/pull/1946) | Fixed |
+| typer | Python | [details](evals/typer/REPORT.md) - hash seed chose which app runs - [PR closed as a duplicate](https://github.com/fastapi/typer/pull/1946) | Fixed |
 | PHP-Parser | PHP | [details](evals/php-parser/REPORT.md) - test class ran no code - [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | Fixed |
 | python-dotenv | Python | [details](evals/python-dotenv/REPORT.md) - 8 runs, 48 findings - [PR open](https://github.com/theskumar/python-dotenv/pull/678) | Fixed |
 | PyPortfolioOpt | Python | [details](evals/pyportfolioopt/REPORT.md) - CI-red to 356 passing - [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |

@@ -99,6 +99,11 @@ flags (`-Xswiftc -warnings-as-errors --explicit-target-dependency-import-check
 error -Xswiftc -require-explicit-sendable`) on Swift 6.1.2, and
 `swift-format lint --strict` is clean on the changed files. macOS,
 Windows and the nightly toolchains run in the project's CI only.
+Disclosure: the first CI run on #503 failed its five Windows jobs. The
+new tests passed `#filePath` and asserted the module the 1.0 method
+derives from it, which is `n/a` on Windows because the path has no
+forward slash. Amended 2026-09-03 to pass a fixed POSIX path; the
+Android, macOS simulator and Wasm jobs fail the same way on `main`.
 
 ## Files
 
