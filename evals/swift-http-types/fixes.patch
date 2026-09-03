@@ -1,0 +1,1987 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..0e8a2eb
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,9 @@
++# Files that belong to this repository's own development loop and not to the package a consumer
++# depends on. `export-ignore` keeps them out of `git archive` output, which is what GitHub's source
++# tarballs and `swift package archive-source` are built from. It cannot keep them out of a `git
++# clone`, and nothing can: a consumer who clones the repository gets the repository.
++PLAN.md export-ignore
++BACKLOG.md export-ignore
++JOURNAL.md export-ignore
++JOURNAL-archive.md export-ignore
++.jeffy export-ignore
+diff --git a/.gitignore b/.gitignore
+index a6b3e03..a808a58 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -12,3 +12,5 @@ Package.resolved
+ 
+ # DocC generated files
+ .docc-build
++
++.claude/jeffy-loop.local.md
+diff --git a/Sources/HTTPTypes/HTTPFieldName.swift b/Sources/HTTPTypes/HTTPFieldName.swift
+index 937a584..a1cd378 100644
+--- a/Sources/HTTPTypes/HTTPFieldName.swift
++++ b/Sources/HTTPTypes/HTTPFieldName.swift
+@@ -57,8 +57,11 @@ extension HTTPField {
+         /// - Warning: Do not use directly with the `HTTPFields` struct which does not allow pseudo
+         ///            header fields.
+         ///
+-        /// - Parameter name: The name of the HTTP field or the HTTP pseudo header field. It must
+-        ///                   be lowercased.
++        /// - Parameter name: The name of the HTTP field or the HTTP pseudo header field. It is
++        ///                   expected to be lowercased, as HPACK and QPACK decoders produce; a
++        ///                   name that is not is accepted and canonicalized, so it compares and
++        ///                   looks up as the lowercased spelling. `rawName` keeps the spelling as
++        ///                   given either way.
+         @available(HTTPTypes 1.2, *)
+         public init?(parsed name: String) {
+             let token: Substring
+@@ -67,11 +70,20 @@ extension HTTPField {
+             } else {
+                 token = Substring(name)
+             }
+-            guard HTTPField.isValidToken(token) else {
++            switch HTTPField.tokenValidity(token) {
++            case .canonical:
++                // Already lowercased, which is what the decoders this initializer exists for emit,
++                // so the common path stores the name as it arrived and allocates nothing.
++                self.canonicalName = name
++            case .valid:
++                // `canonicalName` is what `==`, `hash(into:)` and every name-keyed lookup read, so
++                // storing an uppercased name there would produce a field invisible to the lookups
++                // that address it by name. This is what `init?(_:)` does with the same input.
++                self.canonicalName = name.lowercased()
++            case .invalid:
+                 return nil
+             }
+             self.rawName = name
+-            self.canonicalName = name
+         }
+ 
+         @inlinable
+diff --git a/Sources/HTTPTypes/HTTPFields.swift b/Sources/HTTPTypes/HTTPFields.swift
+index f93a9b5..23dfab2 100644
+--- a/Sources/HTTPTypes/HTTPFields.swift
++++ b/Sources/HTTPTypes/HTTPFields.swift
+@@ -205,13 +205,20 @@ extension HTTPFields: Equatable {
+         // Equal means: for every name, the same fields in the same order. Fields with different
+         // names may be interleaved differently on the two sides.
+         //
++        // Two fields are the same field when their whole `HTTPField` values are equal, which
++        // covers `indexingStrategy` and the raw value bytes rather than the lossy `value` String
++        // view. That is the single definition of field identity this type rests on: every branch
++        // below compares whole fields, `isEqualByNameIndex` compares whole fields, and
++        // `hash(into:)` combines whole fields, so no branch can disagree with another or with the
++        // hash. A branch that compares less than a whole field breaks the `Hashable` contract.
++        //
+         // When checking for equality we try two approaches:
+         //  1. We walk both fields' elements in lock-step. To support ordering differences within the
+         //     fields, we use `pending` arrays, to store elements that have not appeared in the other.
+         //     This approach is very fast if the two candidates have mostly the same order, however
+         //     if the orders are vastly different, this approach can scale quadratic. Because of this,
+         //     if the `pending` arrays grows too large (>= `maxFieldsToScan`) and there are enough fields
+-        //     remaining (>=`minFieldsToIndexByName`), we will stop the lockstep approach and instead
++        //     remaining (>=`minRemainingToIndexByName`), we will stop the lockstep approach and instead
+         //     fallback to:
+         //  2. An approach in which we build a dictionary from one field list and then remove items
+         //     from it based on the other one. This scales linear but has significant build costs,
+@@ -231,13 +238,13 @@ extension HTTPFields: Equatable {
+             // arrays. This is to ensure correct ordering. Unpaired elements must be considered
+             // before the current element.
+             if pendingLeft.isEmpty {
+-                if lhs._fields[index].name == rhs._fields[index].name {
+-                    if lhs._fields[index].value == rhs._fields[index].value {
+-                        continue
+-                    } else {
+-                        // Same name, different value, and no earlier candidate for either of them.
+-                        return false
+-                    }
++                if lhs._fields[index] == rhs._fields[index] {
++                    continue
++                } else if lhs._fields[index].name == rhs._fields[index].name {
++                    // Same name, different field, and no earlier candidate for either of them.
++                    // With both pending arrays empty every earlier field has paired in order, so
++                    // these two are the same occurrence of that name and pair only with each other.
++                    return false
+                 } else {
+                     // Disorder starts here
+                     let remaining = lhs._fields.count - index
+@@ -266,8 +273,8 @@ extension HTTPFields: Equatable {
+                 pendingRight.append(index)
+             }
+ 
+-            if pendingLeft.count >= Self.maxPendingFieldsBeforeIndexing,
+-                lhs._fields.count - index >= Self.minFieldsToIndexByName
++            if pendingLeft.count >= Self.maxPendingBeforeIndexing,
++                lhs._fields.count - index >= Self.minRemainingToIndexByName
+             {
+                 return Self.isEqualByNameIndex(lhs, rhs)
+             }
+@@ -278,13 +285,13 @@ extension HTTPFields: Equatable {
+ 
+     /// How many fields can be unmatched before the lock step walk hands off to
+     /// ``isEqualByNameIndex(_:_:)``.
+-    private static var maxPendingFieldsBeforeIndexing: Int { 32 }
++    private static var maxPendingBeforeIndexing: Int { 32 }
+ 
+     /// How many fields have to be left for building the index to pay for itself. If
+-    /// `maxPendingFieldsBeforeIndexing` is reached, but there are less than
+-    /// `minFieldsToIndexByName` remaining, the equality check will continue to
++    /// `maxPendingBeforeIndexing` is reached, but there are less than
++    /// `minRemainingToIndexByName` remaining, the equality check will continue to
+     /// compare in lock-step.
+-    private static var minFieldsToIndexByName: Int { 64 }
++    private static var minRemainingToIndexByName: Int { 64 }
+ 
+     /// Answers the same question as `==` in linear time, by indexing `rhs` by name and draining that
+     /// index while walking `lhs`.
+@@ -319,9 +326,21 @@ extension HTTPFields: Equatable {
+ 
+ extension HTTPFields: Hashable {
+     public func hash(into hasher: inout Hasher) {
++        // `==` compares, for every name, the same fields in the same order, and lets fields with
++        // different names be interleaved differently on the two sides. The hash therefore has to be
++        // invariant to that interleaving while staying sensitive to the order within a name: each
++        // name's fields are hashed as an ordered group, and the finished group hashes are combined
++        // with wrapping addition, which is commutative and so cannot see the interleaving.
++        var groups = [String: Hasher](minimumCapacity: self._fields.count)
+         for field in self._fields {
+-            hasher.combine(field)
++            groups[field.name.canonicalName, default: Hasher()].combine(field)
++        }
++        var combined = 0
++        for group in groups.values {
++            combined = combined &+ group.finalize()
+         }
++        hasher.combine(self._fields.count)
++        hasher.combine(combined)
+     }
+ }
+ 
+diff --git a/Sources/HTTPTypes/HTTPRequest+URL.swift b/Sources/HTTPTypes/HTTPRequest+URL.swift
+index c3bcf9b..e6b4fb3 100644
+--- a/Sources/HTTPTypes/HTTPRequest+URL.swift
++++ b/Sources/HTTPTypes/HTTPRequest+URL.swift
+@@ -27,6 +27,17 @@ import CoreFoundation
+ extension HTTPRequest {
+     /// The URL of the request synthesized from the scheme, authority, and path pseudo header
+     /// fields.
++    ///
++    /// Reading returns nil when there is no URL to synthesize: a CONNECT request without an
++    /// extended connect protocol, an OPTIONS request whose path is "*", or a request missing any
++    /// of the three pseudo header fields. Assigning nil clears those three fields.
++    ///
++    /// - Precondition: A URL assigned here must carry a scheme. A schemeless URL - one whose
++    ///                 `scheme` is nil, such as `URL(string: "example.com/path")` or a path-only
++    ///                 `URL(string: "/just/a/path")` - is a programmer error, not a runtime failure
++    ///                 to handle, and the assignment traps.
++    ///                 The message is "Schemeless URL is not supported".
++    ///                 Validate untrusted input before assigning it.
+     public var url: URL? {
+         get {
+             if (self.method == .connect && self.extendedConnectProtocol == nil)
+@@ -64,6 +75,12 @@ extension HTTPRequest {
+     }
+ 
+     /// Create an HTTP request with a method, a URL, and header fields.
++    ///
++    /// - Precondition: `url` must carry a scheme. A schemeless URL - one whose `scheme` is nil,
++    ///                 such as `URL(string: "example.com/path")` or a path-only
++    ///                 `URL(string: "/just/a/path")` - is a programmer error, not a runtime failure
++    ///                 to handle: this initializer traps with "Schemeless URL is not supported".
++    ///                 Validate untrusted input before passing it here.
+     /// - Parameters:
+     ///   - method: The request method, defaults to GET.
+     ///   - url: The URL to populate the scheme, authority, and path pseudo header fields.
+diff --git a/Sources/HTTPTypes/HTTPResponse.swift b/Sources/HTTPTypes/HTTPResponse.swift
+index 5e19b1c..d7d2abc 100644
+--- a/Sources/HTTPTypes/HTTPResponse.swift
++++ b/Sources/HTTPTypes/HTTPResponse.swift
+@@ -121,8 +121,12 @@ public struct HTTPResponse: Sendable, Hashable {
+         }
+ 
+         static func isValidReasonPhrase(_ reasonPhrase: String) -> Bool {
+-            reasonPhrase.utf8.allSatisfy {
+-                switch $0 {
++            // Judged per unicode scalar, not per UTF-8 byte. Every non-ASCII scalar encodes to
++            // bytes that all fall inside 0x80...0xFF, so a byte-wise test accepts scalars that are
++            // not representable in ISO Latin 1 at all, and this is the same set the legalizing
++            // path below replaces with spaces.
++            reasonPhrase.unicodeScalars.allSatisfy {
++                switch $0.value {
+                 case 0x09, 0x20:
+                     return true
+                 case 0x21...0x7E, 0x80...0xFF:
+diff --git a/Sources/HTTPTypesFoundation/URLRequest+HTTPTypes.swift b/Sources/HTTPTypesFoundation/URLRequest+HTTPTypes.swift
+index a464db1..0d27cc4 100644
+--- a/Sources/HTTPTypesFoundation/URLRequest+HTTPTypes.swift
++++ b/Sources/HTTPTypesFoundation/URLRequest+HTTPTypes.swift
+@@ -18,6 +18,14 @@ public import FoundationNetworking
+ public import Foundation
+ #endif
+ 
++// `URL.scheme` is declared in the module that defines `URL`, and `MemberImportVisibility` is on, so
++// that module has to be imported here even where `FoundationNetworking` already re-exports the type.
++#if canImport(FoundationEssentials)
++import FoundationEssentials
++#else
++import Foundation
++#endif
++
+ #if !os(WASI)
+ 
+ @available(HTTPTypes 1.0, *)
+@@ -65,9 +73,14 @@ extension URLRequest {
+     }
+ 
+     /// Convert the `URLRequest` into an `HTTPRequest`.
++    ///
++    /// Returns nil when the request carries no URL, when its method is not a valid HTTP method, or
++    /// when its URL has no scheme, because the ":scheme" pseudo header field has no value to take.
+     public var httpRequest: HTTPRequest? {
+         guard let method = HTTPRequest.Method(self.httpMethod ?? "GET"),
+-            let url
++            let url,
++            // `HTTPRequest(method:url:)` requires a scheme and traps without one.
++            url.scheme != nil
+         else {
+             return nil
+         }
+diff --git a/Tests/HTTPTypesFoundationTests/HTTPTypesFoundationTests.swift b/Tests/HTTPTypesFoundationTests/HTTPTypesFoundationTests.swift
+index 62546a8..ce9547c 100644
+--- a/Tests/HTTPTypesFoundationTests/HTTPTypesFoundationTests.swift
++++ b/Tests/HTTPTypesFoundationTests/HTTPTypesFoundationTests.swift
+@@ -43,6 +43,32 @@ import FoundationNetworking
+         #expect(urlRequest.value(forHTTPHeaderField: "cookie") == "a=b; c=d")
+     }
+ 
++    @Test func schemelessRequestFromFoundationIsNil() {
++        // Every one of these has no scheme, so there is no value for the ":scheme" pseudo header
++        // field and the conversion has to answer nil rather than trap.
++        let schemeless = [
++            "/relative/path",
++            "relative",
++            "foo/bar",
++            "//example.com/path",
++            "?query=1",
++            "#frag",
++        ]
++        for string in schemeless {
++            guard let url = URL(string: string) else {
++                Issue.record("URL(string: \"\(string)\") returned nil, so this case exercises nothing")
++                continue
++            }
++            #expect(url.scheme == nil)
++            #expect(URLRequest(url: url).httpRequest == nil, "\(string) should not convert")
++        }
++
++        // A relative URL resolved against a base does have a scheme and still converts.
++        let resolved = URL(string: "/foo", relativeTo: URL(string: "https://example.com")!)!
++        #expect(resolved.scheme == "https")
++        #expect(URLRequest(url: resolved).httpRequest?.path == "/foo")
++    }
++
+     @Test func requestFromFoundation() throws {
+         var urlRequest = URLRequest(url: URL(string: "https://www.example.com/")!)
+         urlRequest.httpMethod = "POST"
+diff --git a/Tests/HTTPTypesFoundationTests/ProbeFoundationBridgeTests.swift b/Tests/HTTPTypesFoundationTests/ProbeFoundationBridgeTests.swift
+new file mode 100644
+index 0000000..ac55844
+--- /dev/null
++++ b/Tests/HTTPTypesFoundationTests/ProbeFoundationBridgeTests.swift
+@@ -0,0 +1,201 @@
++//===----------------------------------------------------------------------===//
++//
++// This source file is part of the Swift open source project
++//
++// Copyright (c) 2026 Apple Inc. and the Swift project authors
++// Licensed under Apache License v2.0
++//
++// See LICENSE.txt for license information
++// See CONTRIBUTORS.txt for the list of Swift project authors
++//
++// SPDX-License-Identifier: Apache-2.0
++//
++//===----------------------------------------------------------------------===//
++
++import Foundation
++import HTTPTypesFoundation
++import Testing
++
++#if canImport(FoundationNetworking)
++import FoundationNetworking
++#endif
++
++/// Known-answer checks for the Foundation bridge: the ISO Latin 1 field encoding, the URLRequest and
++/// HTTPURLResponse conversions in both directions, the WebSocket translation, and the URLSession
++/// conveniences' conversion failure path.
++///
++/// This file imports only `HTTPTypesFoundation`, never `HTTPTypes`, so it also pins that the module
++/// re-exports the core types: if the `@_exported import HTTPTypes` were dropped, this file would not
++/// compile.
++@Suite struct ProbeFoundationBridge {
++    private static let url = URL(string: "https://example.com/p")!
++
++    // MARK: - ISO Latin 1 bridging
++
++    /// Field values cross into Foundation's `[String: String]` header dictionaries as ISO Latin 1,
++    /// so a byte in 0x80-0xFF has to become the scalar of the same value, not its UTF-8 decoding,
++    /// and the trip back has to restore the byte.
++    @Test func isoLatin1BridgingRoundTripsHighBytes() throws {
++        let request = HTTPRequest(
++            method: .get,
++            scheme: "https",
++            authority: "example.com",
++            path: "/p",
++            headerFields: [HTTPField.Name("X-Probe")!: "caf\u{E9}"]
++        )
++        let urlRequest = try #require(URLRequest(httpRequest: request))
++
++        // "café" as an HTTP field value is the two UTF-8 bytes 0xC3 0xA9, which read as ISO Latin 1
++        // are U+00C3 U+00A9.
++        #expect(urlRequest.value(forHTTPHeaderField: "X-Probe") == "caf\u{C3}\u{A9}")
++
++        let back = try #require(urlRequest.httpRequest)
++        #expect(back.headerFields[HTTPField.Name("X-Probe")!] == "caf\u{E9}", "the round trip restores the bytes")
++
++        // A pure ASCII value is untouched in both directions.
++        let ascii = HTTPRequest(
++            method: .get,
++            scheme: "https",
++            authority: "example.com",
++            path: "/p",
++            headerFields: [HTTPField.Name("X-Probe")!: "plain"]
++        )
++        let asciiRequest = try #require(URLRequest(httpRequest: ascii))
++        #expect(asciiRequest.value(forHTTPHeaderField: "X-Probe") == "plain")
++        #expect(try #require(asciiRequest.httpRequest).headerFields[HTTPField.Name("X-Probe")!] == "plain")
++    }
++
++    // MARK: - URLRequest bridge
++
++    /// Repeated fields collapse into one Foundation header, joined with the comma everywhere except
++    /// "Cookie", which joins with "; ". Both separators are checked in the same request.
++    @Test func repeatedFieldsJoinWithTheRightSeparator() throws {
++        let request = HTTPRequest(
++            method: .post,
++            scheme: "https",
++            authority: "example.com",
++            path: "/p",
++            headerFields: [
++                .acceptEncoding: "gzip",
++                .acceptEncoding: "br",
++                .cookie: "a=1",
++                .cookie: "b=2",
++                .accept: "*/*",
++            ]
++        )
++        let urlRequest = try #require(URLRequest(httpRequest: request))
++        #expect(urlRequest.httpMethod == "POST")
++        #expect(urlRequest.url == Self.url)
++        #expect(urlRequest.value(forHTTPHeaderField: "Accept-Encoding") == "gzip, br")
++        #expect(urlRequest.value(forHTTPHeaderField: "Cookie") == "a=1; b=2")
++        #expect(urlRequest.value(forHTTPHeaderField: "Accept") == "*/*")
++    }
++
++    /// The conversion answers nil rather than trapping or guessing when the request has no URL to
++    /// build, and when the URLRequest's URL has no scheme.
++    @Test func unconvertibleRequestsAnswerNil() {
++        // A plain CONNECT has no URL: the path is an authority, not a path.
++        let connect = HTTPRequest(
++            method: .connect,
++            scheme: "https",
++            authority: "example.com:443",
++            path: "example.com:443"
++        )
++        #expect(connect.url == nil)
++        #expect(URLRequest(httpRequest: connect) == nil)
++
++        // OPTIONS * likewise.
++        let asterisk = HTTPRequest(method: .options, scheme: "https", authority: "example.com", path: "*")
++        #expect(URLRequest(httpRequest: asterisk) == nil)
++
++        // And in the other direction, a URL with no scheme.
++        #expect(URLRequest(url: URL(string: "/relative")!).httpRequest == nil)
++
++        // A method Foundation reports that is not a token.
++        var badMethod = URLRequest(url: Self.url)
++        badMethod.httpMethod = "BAD METHOD"
++        #expect(badMethod.httpRequest == nil)
++    }
++
++    /// An extended-CONNECT WebSocket request is translated to the legacy ws/wss form on the way out
++    /// and back to extended CONNECT on the way in, for both schemes.
++    @Test func webSocketTranslationIsSymmetric() throws {
++        for (scheme, legacy) in [("https", "wss"), ("http", "ws")] {
++            var request = HTTPRequest(method: .connect, scheme: scheme, authority: "example.com", path: "/socket")
++            request.extendedConnectProtocol = "websocket"
++
++            let urlRequest = try #require(URLRequest(httpRequest: request))
++            #expect(urlRequest.httpMethod == "GET")
++            #expect(urlRequest.url?.scheme == legacy)
++
++            let back = try #require(urlRequest.httpRequest)
++            #expect(back.method == .connect)
++            #expect(back.scheme == scheme)
++            #expect(back.extendedConnectProtocol == "websocket")
++            #expect(back.path == "/socket")
++        }
++
++        // A scheme of the same length that is not ws or wss is left alone, since the translation
++        // switches on the length before it compares.
++        let plain = try #require(URLRequest(url: URL(string: "abc://example.com/p")!).httpRequest)
++        #expect(plain.method == .get)
++        #expect(plain.extendedConnectProtocol == nil)
++    }
++
++    // MARK: - HTTPURLResponse bridge
++
++    @Test func responseBridgeRoundTrips() throws {
++        let response = HTTPResponse(
++            status: .init(code: 201, reasonPhrase: "Created"),
++            headerFields: [.contentType: "text/plain", .server: "probe"]
++        )
++        let urlResponse = try #require(HTTPURLResponse(httpResponse: response, url: Self.url))
++        #expect(urlResponse.statusCode == 201)
++        #expect(urlResponse.url == Self.url)
++
++        let back = try #require(urlResponse.httpResponse)
++        #expect(back.status.code == 201)
++        #expect(back.headerFields[.contentType] == "text/plain")
++        #expect(back.headerFields[.server] == "probe")
++        #expect(back == response, "the reason phrase is outside equality, so the codes matching is enough")
++    }
++
++    /// The status code is the one thing the response bridge validates, and 0...999 is the range
++    /// `HTTPResponse.Status` accepts. Both sides of both ends are checked.
++    @Test func responseBridgeRejectsOutOfRangeStatuses() throws {
++        for code in [0, 999] {
++            let urlResponse = try #require(
++                HTTPURLResponse(url: Self.url, statusCode: code, httpVersion: "HTTP/1.1", headerFields: nil)
++            )
++            #expect(urlResponse.httpResponse?.status.code == code)
++        }
++        for code in [-1, 1000] {
++            let urlResponse = try #require(
++                HTTPURLResponse(url: Self.url, statusCode: code, httpVersion: "HTTP/1.1", headerFields: nil)
++            )
++            #expect(urlResponse.httpResponse == nil, "\(code) is outside the status range")
++        }
++    }
++
++    // MARK: - URLSession conveniences
++
++    /// The conveniences all funnel through the same conversion, and a request that cannot become a
++    /// URLRequest has to surface as a thrown error rather than a trap or a network call. No network
++    /// is involved: the conversion fails before any request is issued.
++    @Test func urlSessionConveniencesThrowOnAnUnconvertibleRequest() async {
++        let unconvertible = HTTPRequest(
++            method: .connect,
++            scheme: "https",
++            authority: "example.com:443",
++            path: "example.com:443"
++        )
++        #expect(URLRequest(httpRequest: unconvertible) == nil, "the conversion this test relies on does fail")
++
++        await #expect(throws: (any Error).self) {
++            _ = try await URLSession.shared.data(for: unconvertible)
++        }
++        await #expect(throws: (any Error).self) {
++            _ = try await URLSession.shared.upload(for: unconvertible, from: Data())
++        }
++    }
++}
+diff --git a/Tests/HTTPTypesTests/HTTPTypesTests.swift b/Tests/HTTPTypesTests/HTTPTypesTests.swift
+index 2f4a56c..bd04040 100644
+--- a/Tests/HTTPTypesTests/HTTPTypesTests.swift
++++ b/Tests/HTTPTypesTests/HTTPTypesTests.swift
+@@ -281,11 +281,78 @@ extension HTTPField.Name {
+         #expect(fields1 == fields2)
+ 
+         // Equal values must therefore hash equally.
+-        withKnownIssue("HTTPFields.hash(into:) is order sensitive while == is not") {
+-            #expect(fields1.hashValue == fields2.hashValue)
++        #expect(fields1.hashValue == fields2.hashValue)
++    }
++
++    @Test func equalFieldsCollapseInHashedCollections() {
++        let fields1: HTTPFields = [
++            .acceptEncoding: "br",
++            .acceptEncoding: "gzip",
++            .accept: "*/*",
++        ]
++
++        let fields2: HTTPFields = [
++            .acceptEncoding: "br",
++            .accept: "*/*",
++            .acceptEncoding: "gzip",
++        ]
++        #expect(fields1 == fields2)
++
++        var set: Set<HTTPFields> = [fields1]
++        #expect(set.contains(fields2))
++        set.insert(fields2)
++        #expect(set.count == 1)
++
++        var dictionary: [HTTPFields: String] = [fields1: "one"]
++        dictionary[fields2] = "two"
++        #expect(dictionary.count == 1)
++        #expect(dictionary[fields1] == "two")
++
++        // The requests carrying them inherit the conformance and must collapse too.
++        let request1 = HTTPRequest(
++            method: .get,
++            scheme: "https",
++            authority: "example.com",
++            path: "/",
++            headerFields: fields1
++        )
++        let request2 = HTTPRequest(
++            method: .get,
++            scheme: "https",
++            authority: "example.com",
++            path: "/",
++            headerFields: fields2
++        )
++        #expect(request1 == request2)
++        #expect(Set([request1]).contains(request2))
++    }
++
++    @Test func hashMatchesEqualityUnderRepeatedReordering() {
++        let names: [HTTPField.Name] = [.accept, .acceptEncoding, .acceptLanguage, .userAgent]
++        let values = ["1", "2", "3"]
++        var generator = SystemRandomNumberGenerator()
++
++        for _ in 0..<500 {
++            var pairs = [(HTTPField.Name, String)]()
++            for _ in 0..<Int.random(in: 2...6, using: &generator) {
++                pairs.append((names.randomElement(using: &generator)!, values.randomElement(using: &generator)!))
++            }
++            let fields1 = self.makeFields(pairs)
++            let fields2 = self.makeFields(pairs.shuffled(using: &generator))
++            if fields1 == fields2 {
++                #expect(fields1.hashValue == fields2.hashValue)
++            }
+         }
+     }
+ 
++    @Test func hashDistinguishesOrderWithinOneName() {
++        // Reordering fields that share a name is a different value, so `==` is false there and the
++        // hash is free to differ; this pins that the reordering really is a different value.
++        let fields1: HTTPFields = [.acceptEncoding: "br", .acceptEncoding: "gzip"]
++        let fields2: HTTPFields = [.acceptEncoding: "gzip", .acceptEncoding: "br"]
++        #expect(fields1 != fields2)
++    }
++
+     @Test func sendable() {
+         func isSendable(_ value: some Sendable) -> Bool { true }
+         func isSendable(_ value: Any) -> Bool { false }
+diff --git a/Tests/HTTPTypesTests/ProbeHTTPFieldNameTests.swift b/Tests/HTTPTypesTests/ProbeHTTPFieldNameTests.swift
+new file mode 100644
+index 0000000..452b983
+--- /dev/null
++++ b/Tests/HTTPTypesTests/ProbeHTTPFieldNameTests.swift
+@@ -0,0 +1,162 @@
++//===----------------------------------------------------------------------===//
++//
++// This source file is part of the Swift open source project
++//
++// Copyright (c) 2026 Apple Inc. and the Swift project authors
++// Licensed under Apache License v2.0
++//
++// See LICENSE.txt for license information
++// See CONTRIBUTORS.txt for the list of Swift project authors
++//
++// SPDX-License-Identifier: Apache-2.0
++//
++//===----------------------------------------------------------------------===//
++
++import Foundation
++import HTTPTypes
++import Testing
++
++/// Known-answer checks for field names: the RFC 9110 token character set, canonicalisation, the
++/// case-insensitive-but-case-preserving contract, and Codable. The expectations come from the
++/// grammar in RFC 9110 section 5.6.2, not from what the implementation returns.
++@Suite struct ProbeHTTPFieldName {
++    /// tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" /
++    /// "~" / DIGIT / ALPHA. Every one of those is accepted; the characters just outside each range
++    /// are rejected.
++    @Test func tokenCharacterSetMatchesTheGrammar() {
++        let symbols = ["!", "#", "$", "%", "&", "'", "*", "+", "-", ".", "^", "_", "`", "|", "~"]
++        for symbol in symbols {
++            #expect(HTTPField.Name("a\(symbol)b") != nil, "\(symbol) is a tchar")
++        }
++        for boundary in ["0", "9", "a", "z", "A", "Z"] {
++            #expect(HTTPField.Name("x\(boundary)") != nil, "\(boundary) is a tchar")
++        }
++
++        // Just outside the ranges, and the separators RFC 9110 excludes.
++        let rejected = [
++            "/", ":", "(", ")", "<", ">", "@", ",", ";", "\\", "\"", "[", "]", "?", "=", "{", "}", " ", "\t",
++        ]
++        for character in rejected {
++            #expect(HTTPField.Name("a\(character)b") == nil, "\(character.debugDescription) is not a tchar")
++        }
++        #expect(HTTPField.Name("a\u{0}b") == nil)
++        #expect(HTTPField.Name("caf\u{E9}") == nil, "non-ASCII is not a token")
++
++        // Empty is not a token: `1*tchar`.
++        #expect(HTTPField.Name("") == nil)
++    }
++
++    /// The name is case-insensitive for comparison and case-preserving for rendering.
++    @Test func namesAreCaseInsensitiveAndCasePreserving() {
++        let mixed = HTTPField.Name("Content-Type")!
++        let upper = HTTPField.Name("CONTENT-TYPE")!
++        let lower = HTTPField.Name("content-type")!
++
++        #expect(mixed == upper)
++        #expect(mixed == lower)
++        #expect(mixed.hashValue == upper.hashValue)
++        #expect(mixed.hashValue == lower.hashValue)
++
++        #expect(mixed.rawName == "Content-Type")
++        #expect(upper.rawName == "CONTENT-TYPE")
++        #expect(mixed.canonicalName == "content-type")
++        #expect(upper.canonicalName == "content-type")
++        #expect(mixed.description == "Content-Type", "description renders the preserved case")
++
++        #expect(mixed != HTTPField.Name("Content-Types")!)
++    }
++
++    /// A field stored under one spelling is found under any other spelling of the same name.
++    @Test func lookupIgnoresCase() {
++        var fields = HTTPFields()
++        fields.append(HTTPField(name: HTTPField.Name("X-Probe")!, value: "1"))
++
++        #expect(fields[HTTPField.Name("x-probe")!] == "1")
++        #expect(fields[HTTPField.Name("X-PROBE")!] == "1")
++        #expect(fields.contains(HTTPField.Name("x-PrObE")!))
++        #expect(fields[HTTPField.Name("x-probe2")!] == nil)
++    }
++
++    /// `init(parsed:)` is the decoder-facing entry point: it admits the pseudo header names, which
++    /// carry a leading ":" that the ordinary initializer rejects.
++    @Test func parsedAdmitsPseudoNamesThatTheOrdinaryInitializerRejects() {
++        for pseudo in [":method", ":scheme", ":authority", ":path", ":protocol", ":status"] {
++            #expect(HTTPField.Name(parsed: pseudo) != nil, "\(pseudo) is a pseudo header name")
++            #expect(HTTPField.Name(pseudo) == nil, "\(pseudo) is not a plain field name")
++        }
++        #expect(HTTPField.Name(parsed: "accept") != nil)
++        #expect(HTTPField.Name(parsed: ":") == nil, "a bare colon has no token after it")
++        #expect(HTTPField.Name(parsed: ":not a token") == nil)
++        #expect(HTTPField.Name(parsed: "not a token") == nil)
++    }
++
++    /// `init(parsed:)` canonicalizes exactly as `init(_:)` does. Its documented input is decoder
++    /// output, which is lowercased, but a name that is not has to compare, hash and look up as the
++    /// lowercased spelling: `canonicalName` is what all three read, and storing an uppercased name
++    /// there once produced a field no name-keyed lookup could reach.
++    @Test func parsedCanonicalizesNamesThatAreNotLowercased() throws {
++        for (given, canonical) in [
++            ("Content-Type", "content-type"),
++            ("X-PROBE", "x-probe"),
++            (":Method", ":method"),
++        ] {
++            let name = try #require(HTTPField.Name(parsed: given))
++            #expect(name.canonicalName == canonical)
++            #expect(name.rawName == given, "the spelling as given is preserved")
++            #expect(name == HTTPField.Name(parsed: canonical)!)
++            #expect(name.hashValue == HTTPField.Name(parsed: canonical)!.hashValue)
++        }
++
++        // A field carrying such a name is reachable through the constant that addresses it.
++        var fields = HTTPFields()
++        fields.append(HTTPField(name: HTTPField.Name(parsed: "Content-Type")!, value: "text/plain"))
++        #expect(fields[.contentType] == "text/plain")
++
++        // Already-lowercased names are stored as they arrive, and invalid tokens are still nil.
++        #expect(HTTPField.Name(parsed: "content-type")!.canonicalName == "content-type")
++        #expect(HTTPField.Name(parsed: "Not A Token") == nil)
++    }
++
++    /// Codable carries the preserved spelling, and rejects names that are not tokens.
++    @Test func codableRoundTripsAndRejectsInvalidNames() throws {
++        for spelling in ["Content-Type", "content-type", "X-Probe"] {
++            let name = HTTPField.Name(spelling)!
++            let decoded = try JSONDecoder().decode(
++                HTTPField.Name.self,
++                from: try JSONEncoder().encode(name)
++            )
++            #expect(decoded.rawName == spelling, "the encoded form carries the preserved case")
++            #expect(decoded == name)
++        }
++
++        for invalid in ["\"bad name\"", "\"\"", "\"a:b\"", "\":Method\""] {
++            #expect(throws: DecodingError.self) {
++                try JSONDecoder().decode(HTTPField.Name.self, from: Data(invalid.utf8))
++            }
++        }
++
++        // A lowercase pseudo name decodes, since that is what a decoder emits.
++        let pseudo = try JSONDecoder().decode(HTTPField.Name.self, from: Data("\":method\"".utf8))
++        #expect(pseudo.rawName == ":method")
++    }
++
++    /// Spot-check that the well-known constants behave as their spelling says. The whole table is
++    /// checked structurally by `.jeffy/probes/httpfield-name/check-constants.py`; this pins that the
++    /// values those literals build actually compare and look up as expected.
++    @Test func wellKnownConstantsMatchTheirSpelling() {
++        let samples: [(HTTPField.Name, String)] = [
++            (.accept, "Accept"),
++            (.acceptEncoding, "Accept-Encoding"),
++            (.contentType, "Content-Type"),
++            (.cookie, "Cookie"),
++            (.userAgent, "User-Agent"),
++            (.secWebSocketKey, "Sec-WebSocket-Key"),
++        ]
++        for (name, spelling) in samples {
++            #expect(name.rawName == spelling)
++            #expect(name.canonicalName == spelling.lowercased())
++            #expect(name == HTTPField.Name(spelling)!)
++            #expect(name == HTTPField.Name(spelling.uppercased())!)
++        }
++    }
++}
+diff --git a/Tests/HTTPTypesTests/ProbeHTTPFieldValueTests.swift b/Tests/HTTPTypesTests/ProbeHTTPFieldValueTests.swift
+new file mode 100644
+index 0000000..e26aeb4
+--- /dev/null
++++ b/Tests/HTTPTypesTests/ProbeHTTPFieldValueTests.swift
+@@ -0,0 +1,210 @@
++//===----------------------------------------------------------------------===//
++//
++// This source file is part of the Swift open source project
++//
++// Copyright (c) 2026 Apple Inc. and the Swift project authors
++// Licensed under Apache License v2.0
++//
++// See LICENSE.txt for license information
++// See CONTRIBUTORS.txt for the list of Swift project authors
++//
++// SPDX-License-Identifier: Apache-2.0
++//
++//===----------------------------------------------------------------------===//
++
++import Foundation
++import HTTPTypes
++import Testing
++
++/// Known-answer checks for the field value byte classification, legalization and ISO Latin 1
++/// transcoding. Every expectation here is a value computed by hand from RFC 9110's field-value
++/// grammar, never a restatement of what the implementation happens to return.
++@Suite struct ProbeHTTPFieldValue {
++    private static let name = HTTPField.Name("probe")!
++
++    private func value(_ bytes: [UInt8]) -> String {
++        HTTPField(name: Self.name, value: bytes).value
++    }
++
++    private func lenientValue(_ bytes: [UInt8]) -> [UInt8] {
++        HTTPField(name: Self.name, lenientValue: bytes).withUnsafeBytesOfValue { Array($0) }
++    }
++
++    /// RFC 9110 field-value: `*( field-content )`, where the interior admits VCHAR (0x21-0x7E),
++    /// obs-text (0x80-0xFF), SP and HTAB, and neither the first nor the last byte may be SP or
++    /// HTAB. Each byte below is classified from that grammar, both sides of every boundary.
++    @Test func isValidClassifiesEveryByteBoundary() {
++        let interiorLegal: [UInt8] = [0x09, 0x20, 0x21, 0x7E, 0x80, 0xFF]
++        let interiorIllegal: [UInt8] = [0x00, 0x01, 0x08, 0x0A, 0x0D, 0x1F, 0x7F]
++
++        for byte in interiorLegal {
++            #expect(HTTPField.isValidValue([0x61, byte, 0x62]), "0x\(String(byte, radix: 16)) is legal inside a value")
++        }
++        for byte in interiorIllegal {
++            #expect(
++                !HTTPField.isValidValue([0x61, byte, 0x62]),
++                "0x\(String(byte, radix: 16)) is illegal inside a value"
++            )
++        }
++
++        // Empty is legal; a lone SP or HTAB is not, because it is both first and last.
++        #expect(HTTPField.isValidValue([UInt8]()))
++        #expect(!HTTPField.isValidValue([0x20]))
++        #expect(!HTTPField.isValidValue([0x09]))
++
++        // Edge positions reject what the interior accepts.
++        #expect(!HTTPField.isValidValue([0x20, 0x61]))
++        #expect(!HTTPField.isValidValue([0x09, 0x61]))
++        #expect(!HTTPField.isValidValue([0x61, 0x20]))
++        #expect(!HTTPField.isValidValue([0x61, 0x09]))
++        #expect(HTTPField.isValidValue([0x61, 0x20, 0x62]))
++    }
++
++    /// The `String` and `Collection<UInt8>` overloads answer the same question about the same bytes.
++    @Test func isValidAgreesAcrossOverloads() {
++        let samples = ["", "a", " a", "a ", "a b", "a\tb", "a\nb", "a\u{0}b", "a\u{7F}b", "caf\u{E9}"]
++        for sample in samples {
++            #expect(
++                HTTPField.isValidValue(sample) == HTTPField.isValidValue(Array(sample.utf8)),
++                "overloads disagree on \(sample.debugDescription)"
++            )
++        }
++    }
++
++    /// Legalization: illegal interior bytes become SP, and leading and trailing SP or HTAB runs are
++    /// dropped. Each expected string is written out by hand.
++    @Test func legalizeProducesHandComputedValues() {
++        let cases: [([UInt8], String)] = [
++            ([0x61, 0x00, 0x62], "a b"),
++            ([0x61, 0x0A, 0x62], "a b"),
++            ([0x61, 0x0D, 0x0A, 0x62], "a  b"),
++            ([0x61, 0x7F, 0x62], "a b"),
++            ([0x61, 0x1F, 0x62], "a b"),
++            ([0x20, 0x09, 0x61, 0x09, 0x20], "a"),
++            ([0x00, 0x61], "a"),
++            ([0x61, 0x00], "a"),
++            ([0x00, 0x00], ""),
++            ([0x20], ""),
++            ([], ""),
++            ([0x61, 0x20, 0x62], "a b"),
++            ([0x61, 0x09, 0x62], "a\tb"),
++        ]
++        for (bytes, expected) in cases {
++            #expect(self.value(bytes) == expected, "legalize(\(bytes)) should be \(expected.debugDescription)")
++        }
++    }
++
++    /// A value that is already legal is stored unchanged, so legalization is idempotent.
++    @Test func legalizeIsIdempotent() {
++        let samples: [[UInt8]] = [
++            [], [0x61], [0x61, 0x20, 0x62], [0x61, 0x09, 0x62], [0x80, 0xFF], [0x61, 0x00, 0x62],
++        ]
++        for bytes in samples {
++            let once = self.value(bytes)
++            let twice = HTTPField(name: Self.name, value: once).value
++            #expect(once == twice, "legalize is not idempotent on \(bytes)")
++        }
++    }
++
++    /// The lenient initializer differs from the strict one exactly on the bytes it is documented to
++    /// keep: it replaces only NUL, LF and CR, and it does not trim the edges.
++    @Test func lenientKeepsWhatLegalizeDrops() {
++        #expect(self.lenientValue([0x61, 0x00, 0x62]) == [0x61, 0x20, 0x62])
++        #expect(self.lenientValue([0x61, 0x0A, 0x62]) == [0x61, 0x20, 0x62])
++        #expect(self.lenientValue([0x61, 0x0D, 0x62]) == [0x61, 0x20, 0x62])
++
++        // Kept by lenient, replaced or trimmed by legalize: this is the pair that separates them.
++        #expect(self.lenientValue([0x61, 0x7F, 0x62]) == [0x61, 0x7F, 0x62])
++        #expect(self.value([0x61, 0x7F, 0x62]) == "a b")
++        #expect(self.lenientValue([0x20, 0x61, 0x20]) == [0x20, 0x61, 0x20])
++        #expect(self.value([0x20, 0x61, 0x20]) == "a")
++        #expect(self.lenientValue([]) == [])
++    }
++
++    /// Values that are not UTF-8 keep their bytes, and the `value` view decodes them lossily rather
++    /// than losing them: the bytes are what round-trips.
++    @Test func nonUTF8BytesSurviveTheValueView() {
++        let latin1: [UInt8] = [0x63, 0x61, 0x66, 0xE9]  // "caf" + 0xE9, not valid UTF-8
++        let field = HTTPField(name: Self.name, value: latin1)
++        field.withUnsafeBytesOfValue { #expect(Array($0) == latin1) }
++        #expect(field.value != "caf\u{E9}", "0xE9 alone is not the UTF-8 encoding of U+00E9")
++
++        let utf8: [UInt8] = Array("caf\u{E9}".utf8)  // 0xC3 0xA9
++        #expect(utf8 == [0x63, 0x61, 0x66, 0xC3, 0xA9])
++        let utf8Field = HTTPField(name: Self.name, value: utf8)
++        #expect(utf8Field.value == "caf\u{E9}")
++        #expect(utf8Field != field, "different bytes are different values")
++    }
++
++    /// A value built from a String and the same value built from that String's bytes compare equal
++    /// and hash equal, across both storage representations.
++    @Test func stringAndByteStorageAgree() {
++        for sample in ["", "a", "a b", "caf\u{E9}", "\u{1F600}"] {
++            let fromString = HTTPField(name: Self.name, value: sample)
++            let fromBytes = HTTPField(name: Self.name, value: Array(sample.utf8))
++            #expect(fromString == fromBytes, "storage disagrees for \(sample.debugDescription)")
++            #expect(fromString.hashValue == fromBytes.hashValue)
++        }
++
++        // Non-UTF-8 bytes stay in byte storage and still compare by bytes.
++        let a = HTTPField(name: Self.name, value: [0xE9] as [UInt8])
++        let b = HTTPField(name: Self.name, value: [0xE9] as [UInt8])
++        #expect(a == b)
++        #expect(a.hashValue == b.hashValue)
++        #expect(a != HTTPField(name: Self.name, value: [0xEA] as [UInt8]))
++    }
++
++    /// Codable carries the value through ISO Latin 1, so a byte in 0x80-0xFF has to come back as
++    /// the same byte rather than as its UTF-8 encoding.
++    @Test func codableRoundTripPreservesHighBytes() throws {
++        let bytes: [UInt8] = [0x63, 0x61, 0x66, 0xE9]
++        let field = HTTPField(name: Self.name, value: bytes)
++        let encoded = try JSONEncoder().encode(field)
++        let decoded = try JSONDecoder().decode(HTTPField.self, from: encoded)
++        decoded.withUnsafeBytesOfValue { #expect(Array($0) == bytes) }
++        #expect(decoded == field)
++
++        for sample in ["", "a b", "caf\u{E9}"] {
++            let original = HTTPField(name: Self.name, value: sample)
++            let roundTripped = try JSONDecoder().decode(
++                HTTPField.self,
++                from: try JSONEncoder().encode(original)
++            )
++            #expect(roundTripped == original, "round trip changed \(sample.debugDescription)")
++        }
++    }
++
++    /// `description` is documented as the field's wire-ish rendering, and it renders the preserved
++    /// case of the name rather than the canonical one.
++    @Test func descriptionRendersRawNameAndLegalizedValue() {
++        let mixed = HTTPField(name: HTTPField.Name("Content-Type")!, value: "text/plain")
++        #expect(mixed.description == "Content-Type: text/plain")
++        #expect(HTTPField(name: Self.name, value: "a\u{0}b").description == "probe: a b")
++        #expect(HTTPField(name: Self.name, value: "").description == "probe: ")
++    }
++
++    /// The indexing strategy is a documented parameter of the field, so it has to change something:
++    /// it separates two otherwise identical fields and survives a Codable round trip.
++    @Test func indexingStrategyChangesTheValue() throws {
++        var automatic = HTTPField(name: Self.name, value: "x")
++        #expect(automatic.indexingStrategy == .automatic)
++
++        for strategy in [HTTPField.DynamicTableIndexingStrategy.prefer, .avoid, .disallow] {
++            var other = HTTPField(name: Self.name, value: "x")
++            other.indexingStrategy = strategy
++            #expect(other != automatic, "\(strategy) should not equal .automatic")
++            let roundTripped = try JSONDecoder().decode(
++                HTTPField.self,
++                from: try JSONEncoder().encode(other)
++            )
++            #expect(roundTripped.indexingStrategy == strategy)
++            #expect(roundTripped == other)
++        }
++
++        automatic.indexingStrategy = .prefer
++        var alsoPrefer = HTTPField(name: Self.name, value: "x")
++        alsoPrefer.indexingStrategy = .prefer
++        #expect(automatic == alsoPrefer)
++        #expect(automatic.hashValue == alsoPrefer.hashValue)
++    }
++}
+diff --git a/Tests/HTTPTypesTests/ProbeHTTPFieldsTests.swift b/Tests/HTTPTypesTests/ProbeHTTPFieldsTests.swift
+new file mode 100644
+index 0000000..703bed0
+--- /dev/null
++++ b/Tests/HTTPTypesTests/ProbeHTTPFieldsTests.swift
+@@ -0,0 +1,394 @@
++//===----------------------------------------------------------------------===//
++//
++// This source file is part of the Swift open source project
++//
++// Copyright (c) 2026 Apple Inc. and the Swift project authors
++// Licensed under Apache License v2.0
++//
++// See LICENSE.txt for license information
++// See CONTRIBUTORS.txt for the list of Swift project authors
++//
++// SPDX-License-Identifier: Apache-2.0
++//
++//===----------------------------------------------------------------------===//
++
++import Foundation
++@_spi(HTTPTypesBenchmarking) import HTTPTypes
++import Testing
++
++/// Known-answer and invariant checks for the field collection: name-keyed access, the collection
++/// conformances, equality against an independent reference implementation, the hash contract, and
++/// the literal, debug and Codable conformances.
++@Suite struct ProbeHTTPFields {
++    private static let names = ["a", "b", "c", "d"].map { HTTPField.Name($0)! }
++
++    private func fields(_ pairs: [(String, String)]) -> HTTPFields {
++        var fields = HTTPFields()
++        for (name, value) in pairs {
++            fields.append(HTTPField(name: HTTPField.Name(name)!, value: value))
++        }
++        return fields
++    }
++
++    private func rendered(_ fields: HTTPFields) -> String {
++        fields.map { "\($0.name.canonicalName)=\($0.value)" }.joined(separator: ",")
++    }
++
++    /// The documented meaning of `==`: for every name, the same fields in the same order, with
++    /// fields of different names free to interleave differently. This reference implements that
++    /// sentence directly, by grouping, and has nothing in common with the optimised comparison.
++    private func referenceEqual(_ lhs: [HTTPField], _ rhs: [HTTPField]) -> Bool {
++        if lhs.count != rhs.count { return false }
++        var left = [String: [HTTPField]]()
++        var right = [String: [HTTPField]]()
++        for field in lhs { left[field.name.canonicalName, default: []].append(field) }
++        for field in rhs { right[field.name.canonicalName, default: []].append(field) }
++        if Set(left.keys) != Set(right.keys) { return false }
++        for (name, leftGroup) in left {
++            guard let rightGroup = right[name], leftGroup.count == rightGroup.count else { return false }
++            for index in leftGroup.indices where leftGroup[index] != rightGroup[index] { return false }
++        }
++        return true
++    }
++
++    private static let strategies: [HTTPField.DynamicTableIndexingStrategy] = [
++        .automatic, .prefer, .avoid, .disallow,
++    ]
++
++    /// The generator varies every stored property of `HTTPField`, not only the two the documented
++    /// meaning of `==` discusses. A differential whose generator holds a property constant agrees
++    /// with its reference on that axis for the wrong reason, however much volume it runs: both
++    /// sides are blind to the same thing. The byte-storage draws are two distinct raw values whose
++    /// lossy `value` String view is the same replacement character, so a comparison reading that
++    /// view instead of the stored bytes cannot tell them apart either.
++    private func randomFields(
++        count: Int,
++        names: [HTTPField.Name],
++        using generator: inout SystemRandomNumberGenerator
++    ) -> [HTTPField] {
++        (0..<count).map { _ in
++            let name = names.randomElement(using: &generator)!
++            var field: HTTPField
++            switch Int.random(in: 0..<6, using: &generator) {
++            case 0:
++                field = HTTPField(name: name, value: [0xFE] as [UInt8])
++            case 1:
++                field = HTTPField(name: name, value: [0xFF] as [UInt8])
++            default:
++                field = HTTPField(name: name, value: ["1", "2", "3"].randomElement(using: &generator)!)
++            }
++            field.indexingStrategy = Self.strategies.randomElement(using: &generator)!
++            return field
++        }
++    }
++
++    // MARK: - Name-keyed access
++
++    /// Reading a name joins its fields, with the comma separator everywhere except "Cookie", which
++    /// RFC 6265 joins with "; ".
++    @Test func readingANameJoinsItsFields() {
++        let fields = self.fields([("a", "1"), ("b", "x"), ("a", "2"), ("a", "3")])
++        #expect(fields[HTTPField.Name("a")!] == "1, 2, 3")
++        #expect(fields[HTTPField.Name("b")!] == "x")
++        #expect(fields[HTTPField.Name("c")!] == nil)
++        #expect(fields[values: HTTPField.Name("a")!] == ["1", "2", "3"])
++        #expect(fields[values: HTTPField.Name("c")!] == [])
++
++        var cookies = HTTPFields()
++        cookies[.cookie] = "a=1; b=2; c=3"
++        #expect(cookies[fields: .cookie].count == 3, "a Cookie value is split into one field per pair")
++        #expect(cookies[values: .cookie] == ["a=1", "b=2", "c=3"])
++        #expect(cookies[.cookie] == "a=1; b=2; c=3", "and joined back with the same separator")
++    }
++
++    /// Writing a name overwrites its fields in place while new ones last, appends the surplus, and
++    /// deletes the leftovers. Each expected rendering is written out by hand.
++    @Test func writingANameRewritesOnlyThatName() {
++        var shrink = self.fields([("a", "1"), ("b", "x"), ("a", "2"), ("a", "3")])
++        shrink[values: HTTPField.Name("a")!] = ["z"]
++        #expect(self.rendered(shrink) == "a=z,b=x")
++
++        var grow = self.fields([("a", "1"), ("b", "x")])
++        grow[values: HTTPField.Name("a")!] = ["p", "q", "r"]
++        #expect(self.rendered(grow) == "a=p,b=x,a=q,a=r")
++
++        var same = self.fields([("a", "1"), ("b", "x"), ("a", "2")])
++        same[values: HTTPField.Name("a")!] = ["p", "q"]
++        #expect(self.rendered(same) == "a=p,b=x,a=q")
++
++        var deleted = self.fields([("a", "1"), ("b", "x"), ("a", "2")])
++        deleted[HTTPField.Name("a")!] = nil
++        #expect(self.rendered(deleted) == "b=x")
++
++        var added = self.fields([("b", "x")])
++        added[HTTPField.Name("a")!] = "1"
++        #expect(self.rendered(added) == "b=x,a=1")
++
++        var emptied = self.fields([("a", "1")])
++        emptied[values: HTTPField.Name("a")!] = []
++        #expect(self.rendered(emptied) == "")
++        #expect(emptied.isEmpty)
++    }
++
++    /// `contains` answers for the canonical name, so any spelling finds it, and it is false once the
++    /// last field of that name is gone.
++    @Test func containsFollowsTheCanonicalName() {
++        var fields = self.fields([("a", "1"), ("b", "x")])
++        #expect(fields.contains(HTTPField.Name("A")!))
++        #expect(!fields.contains(HTTPField.Name("c")!))
++        fields[HTTPField.Name("A")!] = nil
++        #expect(!fields.contains(HTTPField.Name("a")!))
++    }
++
++    // MARK: - Collection conformances
++
++    /// The collection conformances index the storage order, which is the order fields were added.
++    @Test func collectionWalksStorageOrder() {
++        let fields = self.fields([("a", "1"), ("b", "x"), ("a", "2")])
++        #expect(fields.count == 3)
++        #expect(fields.startIndex == 0)
++        #expect(fields.endIndex == 3)
++        #expect(fields[0].value == "1")
++        #expect(fields[1].value == "x")
++        #expect(fields[2].value == "2")
++        #expect(Array(fields).count == 3)
++        #expect(HTTPFields().isEmpty)
++        #expect(!fields.isEmpty)
++    }
++
++    /// `replaceSubrange` is what every RangeReplaceableCollection mutation funnels through, so it is
++    /// exercised at the front, in the middle, at the end, and with an empty replacement.
++    @Test func replaceSubrangeAtEveryPosition() {
++        let base: [(String, String)] = [("a", "1"), ("b", "x"), ("c", "2")]
++
++        var front = self.fields(base)
++        front.replaceSubrange(0..<1, with: [HTTPField(name: HTTPField.Name("d")!, value: "9")])
++        #expect(self.rendered(front) == "d=9,b=x,c=2")
++
++        var middle = self.fields(base)
++        middle.replaceSubrange(1..<2, with: [HTTPField(name: HTTPField.Name("d")!, value: "9")])
++        #expect(self.rendered(middle) == "a=1,d=9,c=2")
++
++        var end = self.fields(base)
++        end.replaceSubrange(3..<3, with: [HTTPField(name: HTTPField.Name("d")!, value: "9")])
++        #expect(self.rendered(end) == "a=1,b=x,c=2,d=9")
++
++        var removal = self.fields(base)
++        removal.replaceSubrange(1..<2, with: [HTTPField]())
++        #expect(self.rendered(removal) == "a=1,c=2")
++
++        var growth = self.fields(base)
++        growth.replaceSubrange(
++            1..<2,
++            with: [
++                HTTPField(name: HTTPField.Name("d")!, value: "9"),
++                HTTPField(name: HTTPField.Name("e")!, value: "8"),
++            ]
++        )
++        #expect(self.rendered(growth) == "a=1,d=9,e=8,c=2")
++
++        var inserted = self.fields(base)
++        inserted.insert(HTTPField(name: HTTPField.Name("d")!, value: "9"), at: 0)
++        #expect(self.rendered(inserted) == "d=9,a=1,b=x,c=2")
++
++        var removedAt = self.fields(base)
++        removedAt.remove(at: 2)
++        #expect(self.rendered(removedAt) == "a=1,b=x")
++    }
++
++    /// The MutableCollection setter replaces one element and leaves the rest alone.
++    @Test func mutableCollectionSetterReplacesOneElement() {
++        var fields = self.fields([("a", "1"), ("b", "x")])
++        fields[1] = HTTPField(name: HTTPField.Name("c")!, value: "9")
++        #expect(self.rendered(fields) == "a=1,c=9")
++
++        // Assigning an equal element is a no-op rather than a rewrite.
++        let before = fields
++        fields[0] = HTTPField(name: HTTPField.Name("a")!, value: "1")
++        #expect(fields == before)
++    }
++
++    // MARK: - Equality
++
++    /// `==` is compared against the reference implementation of its own documented sentence, over
++    /// short lists where the lock-step walk runs.
++    @Test func equalityAgreesWithTheReferenceOnShortLists() {
++        var generator = SystemRandomNumberGenerator()
++        for _ in 0..<2000 {
++            let lhs = self.randomFields(
++                count: Int.random(in: 0...8, using: &generator),
++                names: Self.names,
++                using: &generator
++            )
++            var rhs = lhs
++            if Bool.random(using: &generator) { rhs.shuffle(using: &generator) }
++            if Bool.random(using: &generator), !rhs.isEmpty {
++                rhs[Int.random(in: 0..<rhs.count, using: &generator)] = HTTPField(
++                    name: Self.names.randomElement(using: &generator)!,
++                    value: "9"
++                )
++            }
++            var left = HTTPFields()
++            left.append(contentsOf: lhs)
++            var right = HTTPFields()
++            right.append(contentsOf: rhs)
++            #expect((left == right) == self.referenceEqual(lhs, rhs))
++            #expect((left == right) == (right == left), "equality has to be symmetric")
++        }
++    }
++
++    /// Long, heavily reordered lists take the by-name-index fallback instead of the lock-step walk.
++    /// Both paths have to answer what the reference answers, and each other.
++    @Test func equalityAgreesWithTheReferenceOnLongLists() {
++        var generator = SystemRandomNumberGenerator()
++        let names = (0..<40).map { HTTPField.Name("h\($0)")! }
++        for _ in 0..<200 {
++            let lhs = self.randomFields(
++                count: Int.random(in: 100...160, using: &generator),
++                names: names,
++                using: &generator
++            )
++            var rhs = lhs
++            rhs.shuffle(using: &generator)
++            if Bool.random(using: &generator) {
++                rhs[Int.random(in: 0..<rhs.count, using: &generator)] = HTTPField(
++                    name: names.randomElement(using: &generator)!,
++                    value: "9"
++                )
++            }
++            var left = HTTPFields()
++            left.append(contentsOf: lhs)
++            var right = HTTPFields()
++            right.append(contentsOf: rhs)
++            let expected = self.referenceEqual(lhs, rhs)
++            #expect((left == right) == expected)
++            #expect(HTTPFields.isEqualByNameIndex(left, right) == expected, "the fallback path disagrees")
++        }
++    }
++
++    /// Order within one name is part of the value; order across names is not.
++    @Test func equalityKnownAnswers() {
++        #expect(self.fields([("a", "1"), ("b", "x")]) == self.fields([("b", "x"), ("a", "1")]))
++        #expect(self.fields([("a", "1"), ("a", "2")]) != self.fields([("a", "2"), ("a", "1")]))
++        #expect(self.fields([("a", "1")]) != self.fields([("a", "1"), ("a", "1")]))
++        #expect(self.fields([("a", "1")]) != self.fields([("A", "2")]))
++        #expect(self.fields([("a", "1")]) == self.fields([("A", "1")]), "names compare canonically")
++        #expect(HTTPFields() == HTTPFields())
++        #expect(
++            self.fields([("a", "1"), ("b", "x"), ("a", "2")]) == self.fields([("a", "1"), ("a", "2"), ("b", "x")])
++        )
++    }
++
++    /// Every branch of `==` rests on one definition of field identity: the whole `HTTPField` value,
++    /// which is what `isEqualByNameIndex` compares and what `hash(into:)` combines. The lock-step
++    /// branch once compared only `name` and the lossy `value` String view, so it answered true for
++    /// fields every other branch called different, and `==` disagreed with itself and with the hash.
++    @Test func equalityComparesWholeFields() {
++        func indexed(_ strategy: HTTPField.DynamicTableIndexingStrategy) -> HTTPField {
++            var field = HTTPField(name: .accept, value: "1")
++            field.indexingStrategy = strategy
++            return field
++        }
++        let other = HTTPField(name: .acceptEncoding, value: "x")
++        let pairs: [(HTTPField, HTTPField)] = [
++            (indexed(.automatic), indexed(.disallow)),
++            // Distinct raw bytes whose lossy UTF-8 `value` view is the same replacement character.
++            (
++                HTTPField(name: .accept, value: [0xFE] as [UInt8]),
++                HTTPField(name: .accept, value: [0xFF] as [UInt8])
++            ),
++        ]
++
++        for (left, right) in pairs {
++            #expect(left != right, "the two fields differ as fields")
++
++            // Lock-step branch: the differing fields sit at the same index on both sides.
++            var lockStepLeft = HTTPFields()
++            lockStepLeft.append(left)
++            var lockStepRight = HTTPFields()
++            lockStepRight.append(right)
++            #expect(lockStepLeft != lockStepRight)
++            #expect(!HTTPFields.isEqualByNameIndex(lockStepLeft, lockStepRight))
++            #expect(!self.referenceEqual(Array(lockStepLeft), Array(lockStepRight)))
++
++            // Pending branch: a differently-named field is interleaved on one side only, which is
++            // the same pair of values reaching `==` by another route.
++            var interleavedLeft = HTTPFields()
++            interleavedLeft.append(contentsOf: [left, other])
++            var interleavedRight = HTTPFields()
++            interleavedRight.append(contentsOf: [other, right])
++            #expect(interleavedLeft != interleavedRight, "== must not disagree with itself on interleaving")
++
++            var set: Set<HTTPFields> = [lockStepLeft]
++            set.insert(lockStepRight)
++            #expect(set.count == 2)
++        }
++    }
++
++    // MARK: - Hashing
++
++    /// The Hashable contract: equal values hash equally. Reordering across names produces an equal
++    /// value, so it has to produce an equal hash.
++    @Test func hashHoldsUnderReordering() {
++        var generator = SystemRandomNumberGenerator()
++        var equalPairs = 0
++        for _ in 0..<1000 {
++            let lhs = self.randomFields(
++                count: Int.random(in: 2...6, using: &generator),
++                names: Self.names,
++                using: &generator
++            )
++            var left = HTTPFields()
++            left.append(contentsOf: lhs)
++            var right = HTTPFields()
++            right.append(contentsOf: lhs.shuffled(using: &generator))
++            if left == right {
++                equalPairs += 1
++                #expect(left.hashValue == right.hashValue)
++            }
++        }
++        #expect(equalPairs > 0, "the run produced no equal reordered pair, so it checked nothing")
++    }
++
++    /// Hashed collections must collapse equal values and separate unequal ones.
++    @Test func hashedCollectionsBehave() {
++        let a = self.fields([("a", "1"), ("b", "x"), ("a", "2")])
++        let b = self.fields([("a", "1"), ("a", "2"), ("b", "x")])
++        let c = self.fields([("a", "2"), ("a", "1"), ("b", "x")])
++
++        #expect(a == b)
++        #expect(a != c)
++
++        var set: Set<HTTPFields> = [a]
++        set.insert(b)
++        #expect(set.count == 1)
++        set.insert(c)
++        #expect(set.count == 2)
++        #expect(set.contains(b))
++    }
++
++    // MARK: - Literal, debug and Codable
++
++    @Test func literalDebugAndCodable() throws {
++        let literal: HTTPFields = [.accept: "1", .acceptEncoding: "x"]
++        #expect(self.rendered(literal) == "accept=1,accept-encoding=x")
++        let emptyLiteral: HTTPFields = [:]
++        #expect(emptyLiteral.isEmpty)
++
++        #expect(literal.debugDescription.contains("Accept: 1"))
++        #expect(literal.debugDescription.contains("Accept-Encoding: x"))
++
++        let fields = self.fields([("a", "1"), ("b", "x"), ("a", "2")])
++        let decoded = try JSONDecoder().decode(
++            HTTPFields.self,
++            from: try JSONEncoder().encode(fields)
++        )
++        #expect(decoded == fields)
++        #expect(self.rendered(decoded) == self.rendered(fields), "storage order survives the round trip")
++
++        // A pseudo header field is not a header field, and decoding one is rejected.
++        #expect(throws: DecodingError.self) {
++            try JSONDecoder().decode(HTTPFields.self, from: Data(#"[{"name":":method","value":"GET"}]"#.utf8))
++        }
++    }
++}
+diff --git a/Tests/HTTPTypesTests/ProbeHTTPMessageTests.swift b/Tests/HTTPTypesTests/ProbeHTTPMessageTests.swift
+new file mode 100644
+index 0000000..d31fb65
+--- /dev/null
++++ b/Tests/HTTPTypesTests/ProbeHTTPMessageTests.swift
+@@ -0,0 +1,332 @@
++//===----------------------------------------------------------------------===//
++//
++// This source file is part of the Swift open source project
++//
++// Copyright (c) 2026 Apple Inc. and the Swift project authors
++// Licensed under Apache License v2.0
++//
++// See LICENSE.txt for license information
++// See CONTRIBUTORS.txt for the list of Swift project authors
++//
++// SPDX-License-Identifier: Apache-2.0
++//
++//===----------------------------------------------------------------------===//
++
++import Foundation
++import HTTPTypes
++import Testing
++
++/// Known-answer checks for `HTTPRequest`: the method token, the pseudo header accessors, the
++/// copy-on-write storage behind them, and the value conformances.
++@Suite struct ProbeHTTPRequest {
++    private func request() -> HTTPRequest {
++        HTTPRequest(method: .get, scheme: "https", authority: "example.com", path: "/p")
++    }
++
++    /// A method is an RFC 9110 token, so the same character set that governs field names governs it.
++    @Test func methodAcceptsTokensAndRejectsTheRest() {
++        for valid in ["GET", "POST", "PATCH", "M-SEARCH", "a", "x!#$%&'*+-.^_`|~"] {
++            #expect(HTTPRequest.Method(valid)?.rawValue == valid)
++            #expect(HTTPRequest.Method(rawValue: valid)?.rawValue == valid)
++        }
++        for invalid in ["", "GET ", " GET", "GE T", "GET/1", "GET:", "caf\u{E9}"] {
++            #expect(HTTPRequest.Method(invalid) == nil, "\(invalid.debugDescription) is not a token")
++        }
++        #expect(HTTPRequest.Method("GET")!.description == "GET")
++        #expect(HTTPRequest.Method("get") != HTTPRequest.Method("GET"), "methods are case sensitive")
++    }
++
++    /// Each pseudo header accessor reads and writes exactly its own field, and the optional ones
++    /// remove the field when set to nil. Every accessor is exercised at two values plus nil.
++    @Test func pseudoAccessorsReadAndWriteTheirOwnField() {
++        var request = self.request()
++
++        request.method = .post
++        #expect(request.method == .post)
++        #expect(request.pseudoHeaderFields.method.value == "POST")
++        #expect(request.scheme == "https", "changing the method left the scheme alone")
++
++        for value in ["http", "wss"] {
++            request.scheme = value
++            #expect(request.scheme == value)
++            #expect(request.pseudoHeaderFields.scheme?.value == value)
++        }
++        request.scheme = nil
++        #expect(request.scheme == nil)
++        #expect(request.pseudoHeaderFields.scheme == nil)
++
++        for value in ["example.com", "example.com:8443"] {
++            request.authority = value
++            #expect(request.authority == value)
++        }
++        request.authority = nil
++        #expect(request.authority == nil)
++
++        for value in ["/", "/a/b?c=d"] {
++            request.path = value
++            #expect(request.path == value)
++        }
++        request.path = nil
++        #expect(request.path == nil)
++
++        #expect(request.extendedConnectProtocol == nil)
++        for value in ["websocket", "connect-udp"] {
++            request.extendedConnectProtocol = value
++            #expect(request.extendedConnectProtocol == value)
++        }
++        request.extendedConnectProtocol = nil
++        #expect(request.extendedConnectProtocol == nil)
++
++        // Pseudo header values are legalized like any other field value.
++        request.authority = "exam\u{0}ple.com"
++        #expect(request.authority == "exam ple.com")
++    }
++
++    /// The pseudo header fields sit behind a reference-counted box, so a copy that is mutated must
++    /// not reach back into the value it was copied from.
++    @Test func pseudoHeaderFieldsAreCopyOnWrite() {
++        let original = self.request()
++
++        var copy = original
++        copy.scheme = "http"
++        copy.authority = "other.example"
++        copy.path = "/changed"
++        copy.method = .put
++        copy.extendedConnectProtocol = "websocket"
++
++        #expect(original.scheme == "https")
++        #expect(original.authority == "example.com")
++        #expect(original.path == "/p")
++        #expect(original.method == .get)
++        #expect(original.extendedConnectProtocol == nil)
++
++        #expect(copy.scheme == "http")
++        #expect(copy != original)
++
++        // The same through the underlying field type.
++        var viaFields = original
++        viaFields.pseudoHeaderFields.scheme = HTTPField(name: viaFields.pseudoHeaderFields.scheme!.name, value: "ftp")
++        #expect(original.scheme == "https")
++        #expect(viaFields.scheme == "ftp")
++    }
++
++    /// Equality and hashing cover the pseudo header fields and the header fields together.
++    @Test func requestEqualityCoversBothHalves() {
++        let base = self.request()
++        #expect(base == self.request())
++        #expect(base.hashValue == self.request().hashValue)
++
++        var differentPath = self.request()
++        differentPath.path = "/other"
++        #expect(differentPath != base)
++
++        var withHeaders = self.request()
++        withHeaders.headerFields[.accept] = "*/*"
++        #expect(withHeaders != base)
++
++        var sameHeadersOtherOrder = HTTPRequest(
++            method: .get,
++            scheme: "https",
++            authority: "example.com",
++            path: "/p",
++            headerFields: [.accept: "*/*", .acceptEncoding: "gzip"]
++        )
++        let interleaved = HTTPRequest(
++            method: .get,
++            scheme: "https",
++            authority: "example.com",
++            path: "/p",
++            headerFields: [.acceptEncoding: "gzip", .accept: "*/*"]
++        )
++        #expect(sameHeadersOtherOrder == interleaved)
++        #expect(sameHeadersOtherOrder.hashValue == interleaved.hashValue)
++        sameHeadersOtherOrder.method = .head
++        #expect(sameHeadersOtherOrder != interleaved)
++    }
++
++    @Test func requestDebugAndCodable() throws {
++        let request = HTTPRequest(
++            method: .get,
++            scheme: "https",
++            authority: "example.com",
++            path: "/p",
++            headerFields: [.accept: "*/*"]
++        )
++        #expect(request.debugDescription == "(GET) https://example.com/p")
++
++        var noScheme = request
++        noScheme.scheme = nil
++        #expect(noScheme.debugDescription == "(GET) example.com/p")
++
++        let decoded = try JSONDecoder().decode(
++            HTTPRequest.self,
++            from: try JSONEncoder().encode(request)
++        )
++        #expect(decoded == request)
++        #expect(decoded.headerFields[.accept] == "*/*")
++        #expect(decoded.extendedConnectProtocol == nil)
++
++        var extended = request
++        extended.method = .connect
++        extended.extendedConnectProtocol = "websocket"
++        let decodedExtended = try JSONDecoder().decode(
++            HTTPRequest.self,
++            from: try JSONEncoder().encode(extended)
++        )
++        #expect(decodedExtended == extended)
++        #expect(decodedExtended.extendedConnectProtocol == "websocket")
++    }
++}
++
++/// Known-answer checks for `HTTPResponse`: the status code, its kind classification, reason-phrase
++/// legalization, and the value conformances.
++@Suite struct ProbeHTTPResponse {
++    /// `kind` partitions the code space at every hundred boundary, and everything outside
++    /// 100...599 is invalid. Both sides of each boundary are checked.
++    @Test func kindPartitionsAtEveryBoundary() {
++        let expected: [(Int, String)] = [
++            (0, "invalid"), (99, "invalid"),
++            (100, "informational"), (199, "informational"),
++            (200, "successful"), (299, "successful"),
++            (300, "redirection"), (399, "redirection"),
++            (400, "clientError"), (499, "clientError"),
++            (500, "serverError"), (599, "serverError"),
++            (600, "invalid"), (999, "invalid"),
++        ]
++        for (code, kind) in expected {
++            #expect("\(HTTPResponse.Status(code: code).kind)" == kind, "\(code) should be \(kind)")
++        }
++    }
++
++    /// The reason phrase admits the same bytes a field value admits, minus the edge rule, and
++    /// anything else - including scalars past ISO Latin 1 - becomes a space.
++    @Test func reasonPhraseIsLegalized() {
++        let cases: [(String, String)] = [
++            ("OK", "OK"),
++            ("", ""),
++            ("Not Found", "Not Found"),
++            (" leading and trailing ", " leading and trailing "),
++            ("a\u{0}b", "a b"),
++            ("a\nb", "a b"),
++            ("a\u{7F}b", "a b"),
++            ("caf\u{E9}", "caf\u{E9}"),
++            ("tab\tseparated", "tab\tseparated"),
++            ("emoji \u{1F600}", "emoji  "),
++            ("\u{4F60}\u{597D}", "  "),
++            ("\u{FF}", "\u{FF}"),
++            ("\u{100}", " "),
++        ]
++        for (input, expected) in cases {
++            #expect(
++                HTTPResponse.Status(code: 200, reasonPhrase: input).reasonPhrase == expected,
++                "reason phrase \(input.debugDescription)"
++            )
++        }
++        #expect(HTTPResponse.Status(code: 404, reasonPhrase: "Not Found").description == "404 Not Found")
++
++        // Legalization must not depend on what else is in the phrase. The same scalar has to get
++        // the same treatment whether or not another byte forces the slower path.
++        for scalar in ["\u{1F600}", "\u{4F60}", "\u{100}"] {
++            let alone = HTTPResponse.Status(code: 200, reasonPhrase: "a\(scalar)b").reasonPhrase
++            let forced = HTTPResponse.Status(code: 200, reasonPhrase: "a\u{0}\(scalar)b").reasonPhrase
++            #expect(alone == "a b", "\(scalar.debugDescription) alone")
++            #expect(forced == "a  b", "\(scalar.debugDescription) beside a control byte")
++        }
++
++        // Everything a legalized phrase holds is representable in ISO Latin 1, which is the
++        // encoding the type documents for serializing it.
++        for input in ["emoji \u{1F600}", "\u{4F60}\u{597D}", "caf\u{E9}", "a\u{0}b", ""] {
++            let legalized = HTTPResponse.Status(code: 200, reasonPhrase: input).reasonPhrase
++            #expect(legalized.unicodeScalars.allSatisfy { $0.value <= 0xFF }, "\(input.debugDescription)")
++        }
++    }
++
++    /// Whatever the initializer produces has to decode again, and a payload carrying a scalar the
++    /// initializer would have replaced is rejected rather than smuggled past it.
++    @Test func codableAgreesWithLegalization() throws {
++        for input in ["OK", "caf\u{E9}", "emoji \u{1F600}", "\u{4F60}\u{597D}", "a\u{0}b", ""] {
++            let response = HTTPResponse(status: .init(code: 200, reasonPhrase: input))
++            let decoded = try JSONDecoder().decode(
++                HTTPResponse.self,
++                from: try JSONEncoder().encode(response)
++            )
++            #expect(decoded.status.reasonPhrase == response.status.reasonPhrase, "\(input.debugDescription)")
++        }
++
++        // The shape is the encoder's own, copied from a real encoding, so the decode fails on the
++        // reason phrase rather than on a key it could not find.
++        let valid = #"{"headerFields":[],"reasonPhrase":"OK","pseudoHeaderFields":[{"name":":status","value":"200"}]}"#
++        #expect(throws: Never.self) {
++            try JSONDecoder().decode(HTTPResponse.self, from: Data(valid.utf8))
++        }
++
++        let smuggled = valid.replacingOccurrences(of: #""OK""#, with: #""emoji \#u{1F600}""#)
++        #expect(smuggled != valid, "the substitution has to have happened")
++        #expect(throws: (any Error).self) {
++            try JSONDecoder().decode(HTTPResponse.self, from: Data(smuggled.utf8))
++        }
++    }
++
++    /// Two statuses with the same code are the same status whatever their reason phrases say, which
++    /// is what lets a response compare equal across HTTP versions that drop the phrase.
++    @Test func statusComparesByCodeAlone() {
++        let ok = HTTPResponse.Status(code: 200, reasonPhrase: "OK")
++        let fine = HTTPResponse.Status(code: 200, reasonPhrase: "Fine")
++        #expect(ok == fine)
++        #expect(ok.hashValue == fine.hashValue)
++        #expect(ok != HTTPResponse.Status(code: 201))
++
++        let literal: HTTPResponse.Status = 204
++        #expect(literal.code == 204)
++        #expect(literal.reasonPhrase == "")
++        #expect(literal == HTTPResponse.Status(code: 204, reasonPhrase: "No Content"))
++    }
++
++    /// The status is stored in the ":status" pseudo header field as exactly three digits, so codes
++    /// below 100 keep their leading zeros and survive a round trip.
++    @Test func statusRoundTripsThroughThePseudoField() throws {
++        for code in [0, 7, 99, 100, 200, 404, 599, 999] {
++            var response = HTTPResponse(status: .init(code: code, reasonPhrase: "phrase"))
++            #expect(response.status.code == code)
++            #expect(response.pseudoHeaderFields.status.value.count == 3, "the field value is always three digits")
++
++            response.status = .init(code: 302, reasonPhrase: "Found")
++            #expect(response.status.code == 302)
++            #expect(response.status.reasonPhrase == "Found")
++            #expect(response.pseudoHeaderFields.status.value == "302")
++        }
++    }
++
++    @Test func responseEqualityDebugAndCodable() throws {
++        let response = HTTPResponse(status: .ok, headerFields: [.contentType: "text/plain"])
++        #expect(response == HTTPResponse(status: 200, headerFields: [.contentType: "text/plain"]))
++        #expect(response != HTTPResponse(status: .created, headerFields: [.contentType: "text/plain"]))
++        #expect(response != HTTPResponse(status: .ok))
++        #expect(response.debugDescription == "200 OK", "the response renders as its status")
++        #expect(HTTPResponse(status: .init(code: 200)).debugDescription == "200 ")
++
++        let decoded = try JSONDecoder().decode(
++            HTTPResponse.self,
++            from: try JSONEncoder().encode(response)
++        )
++        #expect(decoded == response)
++        #expect(decoded.headerFields[.contentType] == "text/plain")
++
++        // The reason phrase rides the encoding even though it is outside equality.
++        let phrased = HTTPResponse(status: .init(code: 404, reasonPhrase: "Not Found"))
++        let decodedPhrase = try JSONDecoder().decode(
++            HTTPResponse.self,
++            from: try JSONEncoder().encode(phrased)
++        )
++        #expect(decodedPhrase.status.reasonPhrase == "Not Found")
++    }
++
++    /// Copy-on-write for the response's pseudo header storage, the same box `HTTPRequest` uses.
++    @Test func responsePseudoHeaderFieldsAreCopyOnWrite() {
++        let original = HTTPResponse(status: .ok)
++        var copy = original
++        copy.status = .notFound
++        #expect(original.status == .ok)
++        #expect(copy.status == .notFound)
++    }
++}
+diff --git a/Tests/HTTPTypesTests/ProbeHTTPRequestURLTests.swift b/Tests/HTTPTypesTests/ProbeHTTPRequestURLTests.swift
+new file mode 100644
+index 0000000..22eb67b
+--- /dev/null
++++ b/Tests/HTTPTypesTests/ProbeHTTPRequestURLTests.swift
+@@ -0,0 +1,92 @@
++//===----------------------------------------------------------------------===//
++//
++// This source file is part of the Swift open source project
++//
++// Copyright (c) 2026 Apple Inc. and the Swift project authors
++// Licensed under Apache License v2.0
++//
++// See LICENSE.txt for license information
++// See CONTRIBUTORS.txt for the list of Swift project authors
++//
++// SPDX-License-Identifier: Apache-2.0
++//
++//===----------------------------------------------------------------------===//
++
++import HTTPTypes
++import Testing
++
++#if canImport(FoundationEssentials)
++import FoundationEssentials
++#else
++import Foundation
++#endif
++
++/// Known-answer checks for the URL bridge that `HTTPTypesURLTests` does not cover: the `url`
++/// setter, the three pseudo fields the getter requires, and the round trip between them.
++@Suite struct ProbeHTTPRequestURL {
++    /// The getter synthesizes a URL only when all three of scheme, authority and path are present.
++    /// Each is removed in turn, and the getter has to answer nil for each.
++    @Test func theGetterNeedsAllThreeComponents() {
++        let complete = HTTPRequest(method: .get, scheme: "https", authority: "example.com", path: "/p")
++        #expect(complete.url?.absoluteString == "https://example.com/p")
++
++        var noScheme = complete
++        noScheme.scheme = nil
++        #expect(noScheme.url == nil)
++
++        var noAuthority = complete
++        noAuthority.authority = nil
++        #expect(noAuthority.url == nil)
++
++        var noPath = complete
++        noPath.path = nil
++        #expect(noPath.url == nil)
++    }
++
++    /// The setter writes all three pseudo fields, and setting nil clears all three at once.
++    @Test func theSetterWritesAndClearsAllThreeComponents() {
++        var request = HTTPRequest(method: .get, scheme: "https", authority: "example.com", path: "/p")
++
++        request.url = URL(string: "http://other.example:8080/a/b?c=d")!
++        #expect(request.scheme == "http")
++        #expect(request.authority == "other.example:8080")
++        #expect(request.path == "/a/b?c=d")
++        #expect(request.method == .get, "the method is not part of the URL")
++
++        request.url = URL(string: "https://third.example")!
++        #expect(request.scheme == "https")
++        #expect(request.authority == "third.example")
++        #expect(request.path == "/", "an empty path becomes the origin-form slash")
++
++        request.url = nil
++        #expect(request.scheme == nil)
++        #expect(request.authority == nil)
++        #expect(request.path == nil)
++        #expect(request.url == nil)
++        #expect(request.method == .get, "clearing the URL leaves the method alone")
++    }
++
++    /// A URL that survives the round trip has to come back byte-identical, and the initializer and
++    /// the setter have to agree on how they decompose it.
++    @Test func initializerAndSetterAgreeAndRoundTrip() {
++        let urls = [
++            "https://example.com/",
++            "https://example.com/a/b",
++            "https://example.com/a?b=c",
++            "https://example.com:8443/p",
++            "https://[::1]:443/p",
++        ]
++        for string in urls {
++            let url = URL(string: string)!
++
++            let constructed = HTTPRequest(method: .post, url: url)
++            var assigned = HTTPRequest(method: .post, scheme: nil, authority: nil, path: nil)
++            assigned.url = url
++
++            #expect(constructed.scheme == assigned.scheme, "\(string)")
++            #expect(constructed.authority == assigned.authority, "\(string)")
++            #expect(constructed.path == assigned.path, "\(string)")
++            #expect(constructed.url?.absoluteString == string, "\(string) did not round trip")
++        }
++    }
++}
+diff --git a/Tests/HTTPTypesTests/ProbeParsedAndErrorCodeTests.swift b/Tests/HTTPTypesTests/ProbeParsedAndErrorCodeTests.swift
+new file mode 100644
+index 0000000..80b1d57
+--- /dev/null
++++ b/Tests/HTTPTypesTests/ProbeParsedAndErrorCodeTests.swift
+@@ -0,0 +1,178 @@
++//===----------------------------------------------------------------------===//
++//
++// This source file is part of the Swift open source project
++//
++// Copyright (c) 2026 Apple Inc. and the Swift project authors
++// Licensed under Apache License v2.0
++//
++// See LICENSE.txt for license information
++// See CONTRIBUTORS.txt for the list of Swift project authors
++//
++// SPDX-License-Identifier: Apache-2.0
++//
++//===----------------------------------------------------------------------===//
++
++import Foundation
++import HTTPTypes
++import Testing
++
++/// Known-answer checks for the decoder-facing `init(parsed:)` entry points. These are the type's
++/// validation boundary against a field list decoded from the wire, so each rule it enforces is
++/// driven from both sides: a list that satisfies it and a list that breaks exactly that rule.
++@Suite struct ProbeHTTPParsedFields {
++    private func field(_ name: String, _ value: String) -> HTTPField {
++        HTTPField(name: HTTPField.Name(parsed: name)!, value: value)
++    }
++
++    private var requestFields: [HTTPField] {
++        [
++            self.field(":method", "GET"),
++            self.field(":scheme", "https"),
++            self.field(":authority", "example.com"),
++            self.field(":path", "/p"),
++            self.field("accept", "*/*"),
++        ]
++    }
++
++    private var responseFields: [HTTPField] {
++        [self.field(":status", "200"), self.field("content-type", "text/plain")]
++    }
++
++    @Test func aWellFormedRequestParses() throws {
++        let request = try HTTPRequest(parsed: self.requestFields)
++        #expect(request.method == .get)
++        #expect(request.scheme == "https")
++        #expect(request.authority == "example.com")
++        #expect(request.path == "/p")
++        #expect(request.headerFields.count == 1, "pseudo fields do not land in the header fields")
++        #expect(request.headerFields[.accept] == "*/*")
++        #expect(request.extendedConnectProtocol == nil)
++
++        var extended = self.requestFields
++        extended.insert(self.field(":protocol", "websocket"), at: 4)
++        #expect(try HTTPRequest(parsed: extended).extendedConnectProtocol == "websocket")
++    }
++
++    @Test func requestRulesAreEnforced() {
++        // No :method.
++        #expect(throws: (any Error).self) {
++            try HTTPRequest(parsed: self.requestFields.filter { $0.name.rawName != ":method" })
++        }
++        // A :method that is not a token.
++        #expect(throws: (any Error).self) {
++            try HTTPRequest(parsed: [self.field(":method", "GET NOW"), self.field(":path", "/")])
++        }
++        // A response pseudo field in a request.
++        #expect(throws: (any Error).self) {
++            try HTTPRequest(parsed: self.requestFields + [self.field(":status", "200")])
++        }
++        // A pseudo field after a regular field.
++        #expect(throws: (any Error).self) {
++            try HTTPRequest(parsed: [self.field("accept", "*/*"), self.field(":method", "GET")])
++        }
++        // The same pseudo field twice.
++        #expect(throws: (any Error).self) {
++            try HTTPRequest(parsed: self.requestFields + [self.field(":method", "POST")])
++        }
++        // A pseudo name that is not one of the six.
++        #expect(throws: (any Error).self) {
++            try HTTPRequest(parsed: self.requestFields + [self.field(":nonsense", "x")])
++        }
++    }
++
++    @Test func responseRulesAreEnforced() throws {
++        let response = try HTTPResponse(parsed: self.responseFields)
++        #expect(response.status == .ok)
++        #expect(response.headerFields[.contentType] == "text/plain")
++
++        // No :status.
++        #expect(throws: (any Error).self) {
++            try HTTPResponse(parsed: [self.field("content-type", "text/plain")])
++        }
++        // A :status that is not three digits.
++        for bad in ["20", "2000", "abc", "20a", ""] {
++            #expect(throws: (any Error).self) {
++                try HTTPResponse(parsed: [self.field(":status", bad)])
++            }
++        }
++        // A request pseudo field in a response.
++        #expect(throws: (any Error).self) {
++            try HTTPResponse(parsed: [self.field(":status", "200"), self.field(":method", "GET")])
++        }
++        // Three digits is enough, whatever the code means.
++        #expect(try HTTPResponse(parsed: [self.field(":status", "000")]).status.code == 0)
++        #expect(try HTTPResponse(parsed: [self.field(":status", "999")]).status.code == 999)
++    }
++
++    @Test func trailerFieldsRejectEveryPseudoField() throws {
++        let trailers = try HTTPFields(parsedTrailerFields: [self.field("x-checksum", "abc")])
++        #expect(trailers.count == 1)
++
++        for pseudo in [":method", ":scheme", ":authority", ":path", ":protocol", ":status"] {
++            #expect(throws: (any Error).self) {
++                try HTTPFields(parsedTrailerFields: [self.field(pseudo, "x")])
++            }
++        }
++    }
++
++    /// Fields that must not disagree with themselves: repeating one with the same value is legal,
++    /// repeating it with a different value is a request smuggling shape and is rejected.
++    @Test func repeatedSingletonFieldsMustAgree() {
++        for name in ["content-length", "content-disposition", "location"] {
++            let agreeing = [self.field(":status", "200"), self.field(name, "1"), self.field(name, "1")]
++            #expect(throws: Never.self) { try HTTPResponse(parsed: agreeing) }
++
++            let disagreeing = [self.field(":status", "200"), self.field(name, "1"), self.field(name, "2")]
++            #expect(throws: (any Error).self, "\(name) may not disagree with itself") {
++                try HTTPResponse(parsed: disagreeing)
++            }
++        }
++    }
++}
++
++/// Known-answer checks for the HTTP/2 and HTTP/3 error code types. The whole registry is checked
++/// structurally by `.jeffy/probes/error-codes/check-error-codes.py`; these pin the behaviour of the
++/// values and of `description`, including for codes that are not registered.
++@Suite struct ProbeErrorCodes {
++    @Test func http2CodesCarryTheirRegisteredValues() {
++        let expected: [(HTTP2ErrorCode, UInt32, String)] = [
++            (.noError, 0x00, "NO_ERROR (0x0)"),
++            (.protocolError, 0x01, "PROTOCOL_ERROR (0x1)"),
++            (.cancel, 0x08, "CANCEL (0x8)"),
++            (.connectError, 0x0a, "CONNECT_ERROR (0xa)"),
++            (.http11Required, 0x0d, "HTTP_1_1_REQUIRED (0xd)"),
++        ]
++        for (code, rawValue, description) in expected {
++            #expect(code.rawValue == rawValue)
++            #expect(code.description == description)
++            #expect(HTTP2ErrorCode(rawValue: rawValue) == code)
++        }
++
++        // Unregistered codes are legal and render as bare hex.
++        #expect(HTTP2ErrorCode(rawValue: 0x0e).description == "0xe")
++        #expect(HTTP2ErrorCode(rawValue: 0xFFFF_FFFF).description == "0xffffffff")
++        #expect(HTTP2ErrorCode(rawValue: 0x08) != HTTP2ErrorCode(rawValue: 0x09))
++        #expect(HTTP2ErrorCode(rawValue: 0x08).hashValue == HTTP2ErrorCode.cancel.hashValue)
++    }
++
++    @Test func http3CodesCarryTheirRegisteredValues() {
++        let expected: [(HTTP3ErrorCode, UInt64, String)] = [
++            (.noError, 0x0100, "H3_NO_ERROR (0x100)"),
++            (.requestCancelled, 0x010c, "H3_REQUEST_CANCELLED (0x10c)"),
++            (.versionFallback, 0x0110, "H3_VERSION_FALLBACK (0x110)"),
++            (.qpackDecompressionFailed, 0x0200, "QPACK_DECOMPRESSION_FAILED (0x200)"),
++            (.qpackDecoderStreamError, 0x0202, "QPACK_DECODER_STREAM_ERROR (0x202)"),
++        ]
++        for (code, rawValue, description) in expected {
++            #expect(code.rawValue == rawValue)
++            #expect(code.description == description)
++            #expect(HTTP3ErrorCode(rawValue: rawValue) == code)
++        }
++
++        #expect(HTTP3ErrorCode(rawValue: 0x21).description == "0x21")
++        // The largest value a QUIC variable-length integer can carry is accepted.
++        #expect(HTTP3ErrorCode(rawValue: 0x3fff_ffff_ffff_ffff).rawValue == 0x3fff_ffff_ffff_ffff)
++        #expect(HTTP3ErrorCode(rawValue: 0x0100) != HTTP3ErrorCode(rawValue: 0x0101))
++        #expect(HTTP3ErrorCode(rawValue: 0x0100).hashValue == HTTP3ErrorCode.noError.hashValue)
++    }
++}
