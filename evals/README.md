@@ -4,9 +4,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->126<!-- /count -->** | **<!-- count:fixed -->98<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->50<!-- /count -->** | **<!-- count:merged -->15<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->127<!-- /count -->** | **<!-- count:fixed -->99<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->50<!-- /count -->** | **<!-- count:merged -->15<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->97<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->98<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
 ## Merged upstream
 
@@ -35,7 +35,7 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../media/language-pie-dark.png">
-  <img src="../media/language-pie-light.png" alt="Pie chart of the 97 converged public targets by language: Python 19 at 19.6 percent, Rust 14 at 14.4 percent, Go 12 at 12.4 percent, JavaScript 10 at 10.3 percent, C++ 7 at 7.2 percent, C 5 at 5.2 percent, Java 5 at 5.2 percent, PHP 5 at 5.2 percent, Ruby 5 at 5.2 percent, Swift 5 at 5.2 percent, TypeScript 4 at 4.1 percent, C# 3 at 3.1 percent, Kotlin 3 at 3.1 percent." width="900">
+  <img src="../media/language-pie-light.png" alt="Pie chart of the 98 converged public targets by language: Python 19 at 19.4 percent, Rust 14 at 14.3 percent, Go 12 at 12.2 percent, JavaScript 10 at 10.2 percent, C++ 7 at 7.1 percent, Ruby 6 at 6.1 percent, C 5 at 5.1 percent, Java 5 at 5.1 percent, PHP 5 at 5.1 percent, Swift 5 at 5.1 percent, TypeScript 4 at 4.1 percent, C# 3 at 3.1 percent, Kotlin 3 at 3.1 percent." width="900">
 </picture>
 
 <sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="../scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="../media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
@@ -146,6 +146,7 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | swift-system | Swift | [details](./swift-system/REPORT.md) - the Windows `open` skipped the documented permissions trap and nested temp directories leaked | Fixed |
 | commons-csv | Java | [details](./commons-csv/REPORT.md) - six documented promises the code did not keep, and a serialization skew the loop introduced and caught | Fixed |
 | swift-http-types | Swift | [details](./swift-http-types/REPORT.md) - a schemeless URL trapped an Optional-returning conversion, and the fast path of == ignored two of a field's three stored properties | Fixed |
+| money | Ruby | [details](./money/REPORT.md) - imported JSON rates went through JSON.load, and reset! kept a key cache that turned UnknownCurrency into NoMethodError | Fixed |
 | BurntSushi/toml | Go | [details](./ATTEMPTS.md) - 5 runs, 52 iters, not converged | Failed |
 | Carbon | PHP | [details](./ATTEMPTS.md) - 4 runs, 17 iters, not converged | Failed |
 | casbin | Go | [details](./casbin/REPORT.md) - 5 runs, 46 iters, not converged - [PR open](https://github.com/apache/casbin/pull/1753) | Failed |

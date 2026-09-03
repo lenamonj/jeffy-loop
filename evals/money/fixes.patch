@@ -1,0 +1,341 @@
+diff --git a/.gitignore b/.gitignore
+index 2c1ccc2..c21a17b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -24,3 +24,4 @@ doc/
+ rbs_collection.lock.yaml
+ .idea
+ spec/examples.txt
++.claude/jeffy-loop.local.md
+diff --git a/lib/money/bank/variable_exchange.rb b/lib/money/bank/variable_exchange.rb
+index bd269a6..cfdd272 100644
+--- a/lib/money/bank/variable_exchange.rb
++++ b/lib/money/bank/variable_exchange.rb
+@@ -130,8 +130,18 @@ class Money
+         )
+       end
+ 
++      # Rational#to_s is "5/4", which BigDecimal() cannot parse, so a Rational
++      # rate is converted the way Money#as_d converts one - through #to_d at
++      # Money.conversion_precision - rather than through its String form.
++      def rate_as_decimal(rate)
++        return rate.to_d(Money.conversion_precision) if rate.is_a?(Rational)
++
++        BigDecimal(rate.to_s)
++      end
++      private :rate_as_decimal
++
+       def exchange(fractional, rate, &)
+-        ex = fractional * BigDecimal(rate.to_s)
++        ex = fractional * rate_as_decimal(rate)
+         if block_given?
+           yield ex
+         elsif @rounding_method
+@@ -267,7 +277,16 @@ class Money
+         end
+ 
+         store.transaction do
+-          data = FORMAT_SERIALIZERS[format].load(string)
++          data =
++            if format == :json
++              # JSON.load honours `json_class` keys and would instantiate
++              # arbitrary objects out of the rates document. JSON.parse never
++              # does, which is what makes :json the safe alternative the
++              # warning above claims it is.
++              JSON.parse(string)
++            else
++              FORMAT_SERIALIZERS[format].load(string)
++            end
+ 
+           data.each do |key, rate|
+             from, to = key.split(SERIALIZER_SEPARATOR)
+diff --git a/lib/money/currency.rb b/lib/money/currency.rb
+index 1b630fe..6b4fc9f 100644
+--- a/lib/money/currency.rb
++++ b/lib/money/currency.rb
+@@ -204,8 +204,14 @@ class Money
+           else
+             curr.downcase.to_sym
+           end
+-        existed = @table.delete(key)
+-        @stringified_keys = nil if existed
++        # table, not @table: the currency table is memoized on first read, and a
++        # process whose first Currency call is unregister has not filled it yet.
++        existed = table.delete(key)
++        if existed
++          @@mutex.synchronize { _instances.delete(key.to_s) }
++          @stringified_keys = nil
++          clear_iso_numeric_cache
++        end
+         existed ? true : false
+       end
+       # rubocop:enable Naming/PredicateMethod
+@@ -217,6 +223,10 @@ class Money
+       def reset!
+         @@instances = {}
+         @table = Loader.load_currencies
++        # Every site that replaces the table clears the key set too: `new`
++        # gates on it, so a stale set admits ids the table no longer holds and
++        # `initialize_data!` then dereferences nil.
++        @stringified_keys = nil
+         clear_iso_numeric_cache
+       end
+ 
+@@ -280,7 +290,6 @@ class Money
+ 
+     alias separator decimal_mark
+     alias delimiter thousands_separator
+-    alias eql? ==
+ 
+     # Create a new +Currency+ object.
+     #
+@@ -336,6 +345,12 @@ class Money
+       equal?(other) || compare_ids(other)
+     end
+ 
++    # Alias of +#==+, and defined after it: `alias` resolves the method as the
++    # class body is read, so an alias placed above this definition would bind
++    # to +Comparable#==+ and dispatch through +#<=>+, raising NoMethodError for
++    # every argument that is not a Currency.
++    alias eql? ==
++
+     # Returns a Integer hash value based on the +id+ attribute in order to use
+     # functions like & (intersection), group_by, etc.
+     #
+diff --git a/lib/money/money/allocation.rb b/lib/money/money/allocation.rb
+index 9ef208a..9aa3ee9 100644
+--- a/lib/money/money/allocation.rb
++++ b/lib/money/money/allocation.rb
+@@ -20,18 +20,10 @@ class Money
+     #   Defaults to true (whole amounts).
+     #
+     # @return [Array<Numeric>] An array containing the allocated amounts.
+-    # @raise [ArgumentError] If parts is empty or not provided.
++    # @raise [ArgumentError] If parts is empty, not provided, or contains a
++    #   negative proportion.
+     def self.generate(amount, parts, decimal_cutoff = true)
+-      parts =
+-        if parts.is_a?(Numeric)
+-          Array.new(parts, 1)
+-        elsif parts.all?(&:zero?)
+-          Array.new(parts.count, 1)
+-        else
+-          parts.dup
+-        end
+-
+-      raise ArgumentError, "need at least one part" if parts.empty?
++      parts = normalize_parts(parts)
+ 
+       if [amount, *parts].any? { |i| i.is_a?(BigDecimal) || i.is_a?(Float) || i.is_a?(Rational) }
+         amount = convert_to_big_decimal(amount)
+@@ -69,6 +61,33 @@ class Money
+       result
+     end
+ 
++    # Turns the parts argument into an array of proportions, rejecting the
++    # shapes that cannot produce a total equal to the amount.
++    #
++    # @param parts [Numeric, Array<Numeric>] Number of parts, or proportions.
++    # @return [Array<Numeric>] The proportions to allocate against.
++    # @raise [ArgumentError] If parts is empty or holds a negative proportion.
++    def self.normalize_parts(parts)
++      parts =
++        if parts.is_a?(Numeric)
++          Array.new(parts, 1)
++        elsif parts.all?(&:zero?)
++          Array.new(parts.count, 1)
++        else
++          parts.dup
++        end
++
++      raise ArgumentError, "need at least one part" if parts.empty?
++      # A negative proportion breaks the total this method promises: the
++      # parts_sum guard in generate zeroes a split rather than dividing by a
++      # sum that has passed through zero, and the amount that split should
++      # have carried is then either lost or duplicated.
++      raise ArgumentError, "parts must not be negative" if parts.any?(&:negative?)
++
++      parts
++    end
++    private_class_method :normalize_parts
++
+     # Converts a given number to BigDecimal.
+     # This method supports inputs of BigDecimal, Rational, and other numeric types by ensuring they are all returned
+     # as BigDecimal instances for consistent handling.
+diff --git a/sig/lib/money/currency.rbs b/sig/lib/money/currency.rbs
+index 0a03219..49a1297 100644
+--- a/sig/lib/money/currency.rbs
++++ b/sig/lib/money/currency.rbs
+@@ -177,8 +177,6 @@ class Money
+ 
+     alias delimiter thousands_separator
+ 
+-    alias eql? ==
+-
+     # Create a new +Currency+ object.
+     #
+     # @param [String, Symbol, #to_s] id Used to look into +table+ and retrieve
+@@ -219,6 +217,10 @@ class Money
+     #   c1 == c2 #=> false
+     def ==: (Money::Currency? other_currency) -> bool
+ 
++    # Alias of +#==+, declared after it to mirror lib/money/currency.rb, where
++    # the ordering is load-bearing.
++    alias eql? ==
++
+     private
+ 
+     def compare_ids: (untyped other_currency) -> untyped
+diff --git a/spec/money/allocation_spec.rb b/spec/money/allocation_spec.rb
+index 264a27c..bdf9351 100644
+--- a/spec/money/allocation_spec.rb
++++ b/spec/money/allocation_spec.rb
+@@ -7,6 +7,27 @@ RSpec.describe Money::Allocation do
+       expect { described_class.generate(100, -1) }.to raise_error(ArgumentError)
+     end
+ 
++    it "rejects a negative proportion" do
++      # A negative proportion silently broke the documented total: [-1, 2] of
++      # 100 returned parts summing to 200, and [-5] returned parts summing to 0.
++      [[-1, 2], [2, -1], [-1, 1], [1, -2, 3], [-5], [0, -1]].each do |parts|
++        expect { described_class.generate(100, parts) }
++          .to raise_error(ArgumentError, /negative/), "parts #{parts.inspect}"
++      end
++    end
++
++    it "always returns parts totalling the amount" do
++      amounts = [0, 1, 2, 5, 7, 100, 101, 999, -101, -1, 10_000]
++      weights = [1, 2, 3, 7, [1], [1, 1], [1, 2], [3, 7], [0, 3], [3, 0], [0, 0, 5],
++                 [1, 1, 0], [1, 1, 1, 1, 1, 1, 7], [5, 5], [2, 3, 5], [0, 0]]
++      amounts.each do |amount|
++        weights.each do |parts|
++          expect(described_class.generate(amount, parts).sum)
++            .to eq(amount), "amount #{amount}, parts #{parts.inspect}"
++        end
++      end
++    end
++
+     context "with whole amounts" do
+       it "returns the amount when 1 is given" do
+         expect(described_class.generate(100, 1)).to eq([100])
+diff --git a/spec/money/bank/variable_exchange_spec.rb b/spec/money/bank/variable_exchange_spec.rb
+index f1fdc99..7376e3a 100644
+--- a/spec/money/bank/variable_exchange_spec.rb
++++ b/spec/money/bank/variable_exchange_spec.rb
+@@ -108,6 +108,18 @@ RSpec.describe Money::Bank::VariableExchange do
+     end
+   end
+ 
++  describe "#exchange_with rate types" do
++    it "handles every Numeric kind the rate is documented to accept" do
++      { 1.25 => 125, 2 => 200, BigDecimal("1.25") => 125, Rational(5, 4) => 125 }
++        .each do |rate, expected|
++          bank = described_class.new
++          bank.add_rate("USD", "EUR", rate)
++          expect(bank.exchange_with(Money.new(100, "USD"), "EUR").fractional)
++            .to eq(expected), "rate #{rate.inspect} (#{rate.class})"
++        end
++    end
++  end
++
+   describe "#add_rate" do
+     it "delegates to store#add_rate" do
+       allow(bank.store).to receive(:add_rate).and_return 1.25
+@@ -225,6 +237,19 @@ RSpec.describe Money::Bank::VariableExchange do
+         expect(bank.get_rate("USD", "EUR")).to eq 1.25
+         expect(bank.get_rate("USD", "JPY")).to eq 2.55
+       end
++
++      it "does not instantiate objects named by a json_class key" do
++        gadget = Class.new do
++          def self.json_create(_object)
++            raise "json_create must never be called while importing rates"
++          end
++        end
++        stub_const("JsonGadget", gadget)
++
++        bank.import_rates(:json, '{"USD_TO_EUR":{"json_class":"JsonGadget"}}')
++
++        expect(bank.get_rate("USD", "EUR")).to eq({ "json_class" => "JsonGadget" })
++      end
+     end
+ 
+     context "with format == :ruby" do
+diff --git a/spec/money/currency_spec.rb b/spec/money/currency_spec.rb
+index 6252fc2..00ba41a 100644
+--- a/spec/money/currency_spec.rb
++++ b/spec/money/currency_spec.rb
+@@ -218,6 +218,25 @@ RSpec.describe Money::Currency do
+   end
+ 
+   describe ".unregister" do
++    context "when maintaining the caches it invalidates" do
++      after { described_class.reset! }
++
++      it "works when the currency table has not been read yet" do
++        # The table is memoized on first read, so unregister must go through
++        # the reader rather than the raw instance variable.
++        described_class.instance_variable_set(:@table, nil)
++        expect { described_class.unregister("XXX") }.not_to raise_error
++      end
++
++      it "rebuilds the iso_numeric index" do
++        # ANG and XCG both carry ISO numeric 532, so dropping one must leave
++        # the other findable by that numeric rather than a stale index entry.
++        expect(described_class.find_by_iso_numeric(532)&.id).to eq :xcg
++        described_class.unregister("xcg")
++        expect(described_class.find_by_iso_numeric(532)&.id).to eq :ang
++      end
++    end
++
+     it "unregisters a currency" do
+       described_class.register(iso_code: "XXX")
+       expect(described_class.find("XXX")).not_to be_nil # Sanity check
+@@ -376,6 +395,14 @@ RSpec.describe Money::Currency do
+       expect(described_class.new(:eur).eql?(described_class.new(:eur))).to be true
+       expect(described_class.new(:eur).eql?(described_class.new(:usd))).to be false
+     end
++
++    it "agrees with #== for every kind of argument" do
++      eur = described_class.new(:eur)
++      [described_class.new(:eur), described_class.new(:usd), "eur", "usd", :eur, nil, 5]
++        .each do |other|
++          expect(eur.eql?(other)).to be(eur == other), "disagreed on #{other.inspect}"
++        end
++    end
+   end
+ 
+   describe "#hash" do
+@@ -533,5 +560,32 @@ RSpec.describe Money::Currency do
+       described_class.reset!
+       expect(described_class.find(:cad).decimal_mark).not_to eq modified_mark
+     end
++
++    it "drops a registered currency it no longer holds" do
++      described_class.register(iso_code: "ZZZ", subunit_to_unit: 100, priority: 1)
++      # The lookup is load-bearing: it memoizes the key set that `new` gates on,
++      # which reset! must invalidate along with the table itself.
++      described_class.new("ZZZ")
++
++      described_class.reset!
++
++      expect(described_class.find(:zzz)).to be_nil
++      expect { described_class.new("ZZZ") }
++        .to raise_error(described_class::UnknownCurrency)
++    end
++
++    it "restores a shipped currency that was unregistered" do
++      # AWG rather than USD: unregistering USD would break the suite-wide hook
++      # that sets Money.default_currency, far from this example.
++      described_class.unregister("AWG")
++      # Load-bearing: this memoizes a key set that no longer admits AWG, which
++      # reset! must discard when it reloads the table.
++      described_class.stringified_keys
++
++      described_class.reset!
++
++      expect(described_class.find(:awg)).not_to be_nil
++      expect(described_class.stringified_keys).to include "awg"
++    end
+   end
+ end
