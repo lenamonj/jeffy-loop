@@ -1,0 +1,324 @@
+diff --git a/.gitignore b/.gitignore
+index 658eac9..ba91e81 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,3 +7,4 @@ build
+ /local.properties
+ benchmarks.jar
+ .kotlin
++.claude/jeffy-loop.local.md
+diff --git a/README.md b/README.md
+index 9771d8c..ab75990 100644
+--- a/README.md
++++ b/README.md
+@@ -550,7 +550,12 @@ is severe enough to justify this tradeoff.
+ 
+ ##### Note about time zones in JS
+ 
+-By default, there's only one time zone available in Kotlin/JS: the `SYSTEM` time zone with a fixed offset.
++By default, Kotlin/JS makes only two time zones available: `TimeZone.UTC`, and the host's own time zone,
++whose `id` is `SYSTEM`. `TimeZoneContext.System.availableZoneIds()` returns just `UTC`, and asking for any
++region-based zone such as `Europe/Berlin` throws `IllegalTimeZoneException`.
++The `SYSTEM` zone is not a fixed-offset zone: it derives the offset from the JavaScript `Date` object for
++each instant separately, so it follows whatever daylight saving rules the host is configured with.
++What it cannot do is answer for any zone other than the host's own.
+ 
+ If you want to use all time zones in the Kotlin/JS platform, you need to add the following npm dependency
+ (replace X.X.X below with the latest version [from here](https://www.npmjs.com/package/@js-joda/timezone?activeTab=versions)):
+diff --git a/core/common/src/DeprecatedInstant.kt b/core/common/src/DeprecatedInstant.kt
+index b5827f8..05bdb64 100644
+--- a/core/common/src/DeprecatedInstant.kt
++++ b/core/common/src/DeprecatedInstant.kt
+@@ -98,7 +98,7 @@ public expect class Instant : Comparable<Instant> {
+      */
+     @Deprecated("kotlinx.datetime.Instant is superseded by kotlin.time.Instant",
+         level = DeprecationLevel.WARNING,
+-        replaceWith = ReplaceWith("this.toStdlibInstant().nanosecondsOfSecond")
++        replaceWith = ReplaceWith("this.toStdlibInstant().toEpochMilliseconds()")
+     )
+     public fun toEpochMilliseconds(): Long
+ 
+@@ -319,7 +319,7 @@ public val Instant.isDistantPast: Boolean
+  */
+ @Deprecated("kotlinx.datetime.Instant is superseded by kotlin.time.Instant",
+     level = DeprecationLevel.WARNING,
+-    replaceWith = ReplaceWith("this.toStdlibInstant().isDistantPast", "kotlin.time.isDistantFuture")
++    replaceWith = ReplaceWith("this.toStdlibInstant().isDistantFuture", "kotlin.time.isDistantFuture")
+ )
+ public val Instant.isDistantFuture: Boolean
+     get() = this >= Instant.DISTANT_FUTURE
+diff --git a/core/common/src/Exceptions.kt b/core/common/src/Exceptions.kt
+index 0f43109..e14c415 100644
+--- a/core/common/src/Exceptions.kt
++++ b/core/common/src/Exceptions.kt
+@@ -43,3 +43,14 @@ internal class DateTimeFormatException: IllegalArgumentException {
+         private const val serialVersionUID: Long = 4231196759387994100L
+     }
+ }
++
++/**
++ * A [DateTimeFormatException] that says what [context] failed *and* why, by appending the diagnostic [cause]
++ * carries. Callers commonly log only `message`, so a wrapper that leaves the diagnostic on the cause alone
++ * tells them nothing about where the input was rejected.
++ */
++internal fun parseFailure(context: String, cause: Throwable): DateTimeFormatException =
++    when (val diagnostic = cause.message) {
++        null -> DateTimeFormatException(context, cause)
++        else -> DateTimeFormatException("$context: $diagnostic", cause)
++    }
+diff --git a/core/common/src/Instant.kt b/core/common/src/Instant.kt
+index 9dd591f..469e070 100644
+--- a/core/common/src/Instant.kt
++++ b/core/common/src/Instant.kt
+@@ -45,7 +45,7 @@ public fun Instant.Companion.parse(
+ ): Instant = try {
+     format.parse(input).toInstantUsingOffset()
+ } catch (e: IllegalArgumentException) {
+-    throw DateTimeFormatException("Failed to parse an instant from '$input'", e)
++    throw parseFailure("Failed to parse an instant from '$input'", e)
+ }
+ 
+ /**
+diff --git a/core/common/src/LocalIsoWeekDate.kt b/core/common/src/LocalIsoWeekDate.kt
+index 2e0174a..eb6ff1b 100644
+--- a/core/common/src/LocalIsoWeekDate.kt
++++ b/core/common/src/LocalIsoWeekDate.kt
+@@ -237,7 +237,7 @@ public class LocalIsoWeekDate private constructor(
+                     try {
+                         return LocalIsoWeekDate(year, weekNumber, dayOfWeek)
+                     } catch (e: IllegalArgumentException) {
+-                        throw DateTimeFormatException("Invalid ISO week date: $isoString", e)
++                        throw parseFailure("Invalid ISO week date: $isoString", e)
+                     }
+                 }
+             )
+diff --git a/core/common/src/format/DateTimeFormat.kt b/core/common/src/format/DateTimeFormat.kt
+index ec46d3e..bac89db 100644
+--- a/core/common/src/format/DateTimeFormat.kt
++++ b/core/common/src/format/DateTimeFormat.kt
+@@ -133,7 +133,7 @@ internal sealed class AbstractDateTimeFormat<T, U : Copyable<U>> : DateTimeForma
+             // without the fully qualified name, the compilation fails for some reason
+             Parser(actualFormat.parser()).match(input, emptyIntermediate)
+         } catch (e: ParseException) {
+-            throw DateTimeFormatException("Failed to parse value from '$input'", e)
++            throw parseFailure("Failed to parse value from '$input'", e)
+         }
+         try {
+             return valueFromIntermediate(matched)
+diff --git a/core/common/src/format/Unicode.kt b/core/common/src/format/Unicode.kt
+index 908ac64..8881692 100644
+--- a/core/common/src/format/Unicode.kt
++++ b/core/common/src/format/Unicode.kt
+@@ -172,14 +172,24 @@ internal sealed interface UnicodeFormat {
+             var literal = ""
+             var lastCharacter: Char? = null
+             var lastCharacterCount = 0
+-            for (character in pattern) {
++            var index = 0
++            while (index < pattern.length) {
++                val character = pattern[index]
++                ++index
+                 if (character == lastCharacter) {
+                     ++lastCharacterCount
+                 } else if (insideLiteral) {
+                     if (character == '\'') {
+-                        groups.last()?.add(StringLiteral(literal.ifEmpty { "'" }))
+-                        insideLiteral = false
+-                        literal = ""
++                        // `''` inside a quoted literal is the escape for a single quote, as in Java Time's
++                        // `DateTimeFormatter`: only a lone `'` ends the literal.
++                        if (index < pattern.length && pattern[index] == '\'') {
++                            literal += '\''
++                            ++index
++                        } else {
++                            groups.last()?.add(StringLiteral(literal.ifEmpty { "'" }))
++                            insideLiteral = false
++                            literal = ""
++                        }
+                     } else literal += character
+                 } else {
+                     if (lastCharacterCount > 0) {
+@@ -578,7 +588,9 @@ internal sealed interface UnicodeFormat {
+                     when (formatLength) {
+                         1, 2, 3 -> builder.offset(zOnZero = false, useSeparator = false)
+                         4 -> LocalizedZoneOffset(4).addToFormat(builder)
+-                        5 -> builder.offset(zOnZero = false, useSeparator = true)
++                        // `ZZZZZ` is documented on the same row as `XXXXX` in the directive table
++                        // above, and java.time's DateTimeFormatter also emits `Z` for a zero offset.
++                        5 -> builder.offset(zOnZero = true, useSeparator = true)
+                         else -> unknownLength()
+                     }
+                 }
+diff --git a/core/common/test/InstantTest.kt b/core/common/test/InstantTest.kt
+index 9a57977..06900b6 100644
+--- a/core/common/test/InstantTest.kt
++++ b/core/common/test/InstantTest.kt
+@@ -6,6 +6,7 @@
+ package kotlinx.datetime.test
+ 
+ import kotlinx.datetime.*
++import kotlinx.datetime.format.*
+ import kotlinx.datetime.internal.NANOS_PER_ONE
+ import kotlinx.datetime.plus
+ import kotlin.random.Random
+@@ -503,6 +504,22 @@ class InstantTest {
+     private fun assertPeriodSameSign(period: DateTimePeriod) {
+         assertTrue(period.hasSameSign(), "Period $period has different signs for months, days and nanoseconds")
+     }
++
++    /**
++     * `parse` wraps the format engine's failure to add the type it was parsing for; the wrapper must not drop the
++     * diagnostic underneath it, or a caller that logs `message` learns only that parsing failed.
++     */
++    @Test
++    fun testParseFailureMessageCarriesTheDiagnostic() {
++        val input = "2024-03-05TXX:00:00Z"
++        val exception = assertFailsWith<DateTimeFormatException> {
++            Instant.parse(input, DateTimeComponents.Formats.ISO_DATE_TIME_OFFSET)
++        }
++        val message = assertNotNull(exception.message)
++        assertContains(message, input)
++        assertContains(message, assertNotNull(assertNotNull(exception.cause).message))
++        assertContains(message.lowercase(), "position 11")
++    }
+ }
+ 
+ class InstantRangeTest {
+diff --git a/core/common/test/format/DateTimeFormatTest.kt b/core/common/test/format/DateTimeFormatTest.kt
+index 830124c..c68cf7d 100644
+--- a/core/common/test/format/DateTimeFormatTest.kt
++++ b/core/common/test/format/DateTimeFormatTest.kt
+@@ -114,6 +114,64 @@ class DateTimeFormatTest {
+         }
+     }
+ 
++    /**
++     * Check that `''` inside a quoted literal of a Unicode pattern is the escape for a single quote,
++     * as in Java Time's `DateTimeFormatter`, and that a lone `'` still ends the literal.
++     */
++    @OptIn(FormatStringsInDatetimeFormats::class)
++    @Test
++    fun testEscapedQuoteInUnicodePatternLiteral() {
++        val time = LocalTime(23, 53)
++        // the expected values are what `java.time.format.DateTimeFormatter.ofPattern` produces
++        for ((pattern, expected) in listOf(
++            "'o''clock' HH:mm" to "o'clock 23:53",
++            "'don''t' HH" to "don't 23",
++            "'a''b'" to "a'b",
++            "'''x' HH" to "'x 23",
++            "'x''' HH" to "x' 23",
++            "'a''''b' HH" to "a''b 23",
++            "''" to "'",
++            "''''" to "'",
++            "'at' HH:mm" to "at 23:53",
++            "HH'h'mm" to "23h53",
++        )) {
++            val format = LocalTime.Format { byUnicodePattern(pattern) }
++            assertEquals(expected, format.format(time), "formatting with the pattern <$pattern>")
++        }
++        // the apostrophe survives a parse of what was formatted
++        val format = LocalTime.Format { byUnicodePattern("'o''clock' HH:mm") }
++        assertEquals(time, format.parse(format.format(time)))
++    }
++
++    /**
++     * Check the representation of a zero UTC offset for every offset directive, which the
++     * `byUnicodePattern` KDoc states in its own table: the `X` family and `ZZZZZ` use `Z`,
++     * the `x` family and `Z`, `ZZ`, `ZZZ` spell the zero out.
++     */
++    @OptIn(FormatStringsInDatetimeFormats::class)
++    @Test
++    fun testZeroOffsetRepresentationOfUnicodeOffsetDirectives() {
++        // the expected values are what `java.time.format.DateTimeFormatter.ofPattern` produces
++        for ((pattern, expected) in listOf(
++            "X" to "Z", "XX" to "Z", "XXX" to "Z", "XXXX" to "Z", "XXXXX" to "Z", "ZZZZZ" to "Z",
++            "x" to "+00", "xx" to "+0000", "xxx" to "+00:00", "xxxx" to "+0000", "xxxxx" to "+00:00",
++            "Z" to "+0000", "ZZ" to "+0000", "ZZZ" to "+0000",
++        )) {
++            val format = DateTimeComponents.Format { byUnicodePattern(pattern) }
++            assertEquals(expected, format.format { setOffset(UtcOffset.ZERO) },
++                "the zero offset under the pattern <$pattern>")
++        }
++        // and a non-zero offset must still carry its separator and its seconds where the table says so
++        for ((pattern, expected) in listOf(
++            "ZZZZZ" to "+01:01:01", "XXXXX" to "+01:01:01", "xxxxx" to "+01:01:01",
++            "ZZZ" to "+0101", "XXX" to "+01:01",
++        )) {
++            val format = DateTimeComponents.Format { byUnicodePattern(pattern) }
++            assertEquals(expected, format.format { setOffset(UtcOffset(hours = 1, minutes = 1, seconds = 1)) },
++                "a one-hour-one-minute-one-second offset under the pattern <$pattern>")
++        }
++    }
++
+     @Test
+     fun testParseStringWithNumbers() {
+         val formats = listOf(
+@@ -180,6 +238,24 @@ class DateTimeFormatTest {
+         }
+         formatWithNonAsciiNumberInString.parse("99٩٩99")
+     }
++
++    /**
++     * The engine's diagnostic names the position at which the input was rejected. It has to reach the message of
++     * the exception the caller catches: logging `message` is the common shape, and a diagnostic that lives only on
++     * `cause` is one such a caller never sees.
++     */
++    @Test
++    fun testParseFailureMessageCarriesTheDiagnostic() {
++        val format = LocalDate.Format { year(); char('-'); monthNumber(); char('-'); day() }
++        for (input in listOf("2024-XX-05", "2024-03-XX", "2024-03-05T00:00")) {
++            val exception = assertFailsWith<DateTimeFormatException> { format.parse(input) }
++            val message = assertNotNull(exception.message, "no message for '$input'")
++            assertContains(message, input)
++            val diagnostic = assertNotNull(assertNotNull(exception.cause).message, "no cause message for '$input'")
++            assertContains(message, diagnostic)
++            assertContains(message.lowercase(), "position")
++        }
++    }
+ }
+ 
+ fun <T> DateTimeFormat<T>.assertCanNotParse(input: String) {
+diff --git a/core/commonKotlin/src/DeprecatedInstant.kt b/core/commonKotlin/src/DeprecatedInstant.kt
+index d4aeac2..b065b5c 100644
+--- a/core/commonKotlin/src/DeprecatedInstant.kt
++++ b/core/commonKotlin/src/DeprecatedInstant.kt
+@@ -57,7 +57,7 @@ public actual class Instant internal constructor(
+ 
+     @Deprecated("kotlinx.datetime.Instant is superseded by kotlin.time.Instant",
+         level = DeprecationLevel.WARNING,
+-        replaceWith = ReplaceWith("this.toStdlibInstant().nanosecondsOfSecond")
++        replaceWith = ReplaceWith("this.toStdlibInstant().toEpochMilliseconds()")
+     )
+     // org.threeten.bp.Instant#toEpochMilli
+     public actual fun toEpochMilliseconds(): Long = try {
+@@ -192,7 +192,7 @@ public actual class Instant internal constructor(
+         public actual fun parse(input: CharSequence, format: DateTimeFormat<DateTimeComponents>): Instant = try {
+             format.parse(input).toInstantUsingOffset().toDeprecatedInstant()
+         } catch (e: IllegalArgumentException) {
+-            throw DateTimeFormatException("Failed to parse an instant from '$input'", e)
++            throw parseFailure("Failed to parse an instant from '$input'", e)
+         }
+ 
+         @Deprecated("This overload is only kept for binary compatibility", level = DeprecationLevel.HIDDEN)
+diff --git a/core/jvm/src/DeprecatedInstant.kt b/core/jvm/src/DeprecatedInstant.kt
+index c2ba9cf..095681f 100644
+--- a/core/jvm/src/DeprecatedInstant.kt
++++ b/core/jvm/src/DeprecatedInstant.kt
+@@ -42,7 +42,7 @@ public actual class Instant internal constructor(internal val value: java.time.I
+ 
+     @Deprecated("kotlinx.datetime.Instant is superseded by kotlin.time.Instant",
+         level = DeprecationLevel.WARNING,
+-        replaceWith = ReplaceWith("this.toStdlibInstant().nanosecondsOfSecond")
++        replaceWith = ReplaceWith("this.toStdlibInstant().toEpochMilliseconds()")
+     )
+     public actual fun toEpochMilliseconds(): Long = try {
+         value.toEpochMilli()
+@@ -113,7 +113,7 @@ public actual class Instant internal constructor(internal val value: java.time.I
+              */
+             format.parse(input).toInstantUsingOffset().toDeprecatedInstant()
+         } catch (e: IllegalArgumentException) {
+-            throw DateTimeFormatException("Failed to parse an instant from '$input'", e)
++            throw parseFailure("Failed to parse an instant from '$input'", e)
+         }
+ 
+         @Deprecated("This overload is only kept for binary compatibility", level = DeprecationLevel.HIDDEN)
