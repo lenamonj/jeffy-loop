@@ -483,6 +483,7 @@ stopped it was the map:
 | run 1 | 4 of 23 | 19 | **0** |
 | run 2 | 14 of 23 | 9 | **0** |
 | run 3 | 17 of 23 | 6 | **0** |
+| swift-system | 1 | 10 | converged | evaluator countersigned | 0 |
 
 **Thirty iterations, and the adversarial gate was never invoked once**, because
 convergence requires no unswept row and the declaration path therefore never
