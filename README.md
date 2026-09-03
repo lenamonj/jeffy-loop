@@ -46,7 +46,7 @@ Twelve fixes are in other people's code because a maintainer with no stake in th
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
-Behind them: **<!-- count:converged -->94<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **34 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+Behind them: **<!-- count:converged -->95<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **34 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#real-world-validation-on-open-source-repositories)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
 
@@ -272,7 +272,7 @@ Five guarantees. Each one is enforced by the iteration prompt, the state files, 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
-  <img src="media/language-pie-light.png" alt="Pie chart of the 94 converged public targets by language: Python 19 at 20.2 percent, Rust 14 at 14.9 percent, Go 12 at 12.8 percent, JavaScript 10 at 10.6 percent, C++ 7 at 7.4 percent, C 5 at 5.3 percent, PHP 5 at 5.3 percent, Ruby 5 at 5.3 percent, Java 4 at 4.3 percent, Swift 4 at 4.3 percent, TypeScript 4 at 4.3 percent, C# 3 at 3.2 percent, Kotlin 2 at 2.1 percent." width="900">
+  <img src="media/language-pie-light.png" alt="Pie chart of the 95 converged public targets by language: Python 19 at 20.0 percent, Rust 14 at 14.7 percent, Go 12 at 12.6 percent, JavaScript 10 at 10.5 percent, C++ 7 at 7.4 percent, C 5 at 5.3 percent, Java 5 at 5.3 percent, PHP 5 at 5.3 percent, Ruby 5 at 5.3 percent, Swift 4 at 4.2 percent, TypeScript 4 at 4.2 percent, C# 3 at 3.2 percent, Kotlin 2 at 2.1 percent." width="900">
 </picture>
 
 <sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
@@ -285,9 +285,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->123<!-- /count -->** | **<!-- count:fixed -->95<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->33<!-- /count -->** | **<!-- count:merged -->11<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->124<!-- /count -->** | **<!-- count:fixed -->96<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->33<!-- /count -->** | **<!-- count:merged -->11<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->94<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->95<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
 <sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md).</sub>
 
@@ -388,6 +388,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | commons-cli | Java | [details](evals/commons-cli/REPORT.md) - Properties defaults were written onto the caller's Option | Fixed |
 | jansson | C | [details](evals/jansson/REPORT.md) - the CMake shared build exported 46 internal symbols | Fixed |
 | swift-system | Swift | [details](evals/swift-system/REPORT.md) - the Windows `open` skipped the documented permissions trap and nested temp directories leaked | Fixed |
+| commons-csv | Java | [details](evals/commons-csv/REPORT.md) - six documented promises the code did not keep, and a serialization skew the loop introduced and caught | Fixed |
 | BurntSushi/toml | Go | [details](evals/ATTEMPTS.md) - 5 runs, 52 iters, not converged | Failed |
 | Carbon | PHP | [details](evals/ATTEMPTS.md) - 4 runs, 17 iters, not converged | Failed |
 | casbin | Go | [details](evals/casbin/REPORT.md) - 5 runs, 46 iters, not converged - [PR open](https://github.com/apache/casbin/pull/1753) | Failed |

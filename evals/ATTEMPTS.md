@@ -484,6 +484,7 @@ stopped it was the map:
 | run 2 | 14 of 23 | 9 | **0** |
 | run 3 | 17 of 23 | 6 | **0** |
 | swift-system | 1 | 10 | converged | evaluator countersigned | 0 |
+| commons-csv | 2 | 18 | converged | evaluator countersigned | 1 |
 
 **Thirty iterations, and the adversarial gate was never invoked once**, because
 convergence requires no unswept row and the declaration path therefore never

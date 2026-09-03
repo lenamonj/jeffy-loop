@@ -1,0 +1,664 @@
+diff --git a/.gitignore b/.gitignore
+index 2ff17ae4..9b77ebdf 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -26,3 +26,4 @@ buildNumber.properties
+ # NetBeans files
+ nb-configuration.xml
+ nbactions.xml
++.claude/jeffy-loop.local.md
+diff --git a/src/main/java/org/apache/commons/csv/CSVFormat.java b/src/main/java/org/apache/commons/csv/CSVFormat.java
+index 891c424b..37551056 100644
+--- a/src/main/java/org/apache/commons/csv/CSVFormat.java
++++ b/src/main/java/org/apache/commons/csv/CSVFormat.java
+@@ -815,6 +815,14 @@ public final class CSVFormat implements Serializable {
+         }
+ 
+         private Builder setQuotedNullString() {
++            // Only a null string that exists has a quoted form. Deriving one from a null nullString produced the
++            // literal "null", which nothing ever reads - print() checks nullString first - but which equals and
++            // hashCode compare, so it made a format unequal to the one it was derived from with no observable
++            // difference between them.
++            if (nullString == null) {
++                this.quotedNullString = null;
++                return this;
++            }
+             final Character quote = quoteCharacter != null ? quoteCharacter : Constants.DOUBLE_QUOTE_CHAR;
+             this.quotedNullString = quote + nullString + quote;
+             return this;
+@@ -835,8 +843,12 @@ public final class CSVFormat implements Serializable {
+          * Sets the record separator to use for output.
+          *
+          * <p>
+-         * <strong>Note:</strong> This setting is only used during printing and does not affect parsing. Parsing currently only works for inputs with '\n', '\r'
+-         * and "\r\n"
++         * <strong>Note:</strong> This setting is only used during printing and does not affect parsing: the parser ends a
++         * record at {@code '\n'}, {@code '\r'} or {@code "\r\n"} whatever this is set to. Output therefore reads back
++         * only when the separator is exactly one of those three. Any other separator leaves the characters it carries
++         * before the line break, or the whole separator when it holds no line break at all, at the end of the last field
++         * when the same format parses that output: with the default delimiter, a separator of {@code ",\n"} prints
++         * {@code "a"} and {@code "b"} as {@code a,b,} followed by a line break, which reads back as three fields.
+          * </p>
+          *
+          * @param recordSeparator The record separator to use for output.
+@@ -851,8 +863,12 @@ public final class CSVFormat implements Serializable {
+          * Sets the record separator to use for output.
+          *
+          * <p>
+-         * <strong>Note:</strong> This setting is only used during printing and does not affect parsing. Parsing currently only works for inputs with '\n', '\r'
+-         * and "\r\n"
++         * <strong>Note:</strong> This setting is only used during printing and does not affect parsing: the parser ends a
++         * record at {@code '\n'}, {@code '\r'} or {@code "\r\n"} whatever this is set to. Output therefore reads back
++         * only when the separator is exactly one of those three. Any other separator leaves the characters it carries
++         * before the line break, or the whole separator when it holds no line break at all, at the end of the last field
++         * when the same format parses that output: with the default delimiter, a separator of {@code ",\n"} prints
++         * {@code "a"} and {@code "b"} as {@code a,b,} followed by a line break, which reads back as three fields.
+          * </p>
+          *
+          * @param recordSeparator The record separator to use for output.
+@@ -1608,6 +1624,12 @@ public final class CSVFormat implements Serializable {
+     private final Character quoteCharacter;
+ 
+     /** Set to {@code quoteCharacter + nullString + quoteCharacter} */
++    /**
++     * The quoted form of {@link #nullString}, derived whenever the null string or the quote character is set. It is
++     * deliberately absent from {@link #equals(Object)} and {@link #hashCode()}: it is a function of those two fields,
++     * which are both compared, so comparing it distinguishes nothing, while a value carried in from an instance
++     * serialized by an earlier release would make that instance unequal to its freshly built twin.
++     */
+     private final String quotedNullString;
+ 
+     /** The quote policy output fields. */
+@@ -1689,6 +1711,13 @@ public final class CSVFormat implements Serializable {
+ 
+     /**
+      * Creates a copy of this instance.
++     * <p>
++     * This is not redundant, although this class is final and every other field of it is final: each copy carries its
++     * own {@code writeLock}, which is the monitor the public {@link #print(Object, Appendable, boolean)} and
++     * {@link #println(Appendable)} paths synchronize on. {@link CSVParser} and {@link CSVPrinter} copy the format they
++     * are handed so that each one gets its own monitor; returning {@code this} instead would serialize every printer
++     * built from a shared format constant, such as {@link #DEFAULT}, on a single lock.
++     * </p>
+      *
+      * @return A copy of this instance.
+      */
+@@ -1739,7 +1768,7 @@ public final class CSVFormat implements Serializable {
+                 ignoreEmptyLines == other.ignoreEmptyLines && ignoreHeaderCase == other.ignoreHeaderCase &&
+                 ignoreSurroundingSpaces == other.ignoreSurroundingSpaces && lenientEof == other.lenientEof && maxRows == other.maxRows &&
+                 Objects.equals(nullString, other.nullString) && Objects.equals(quoteCharacter, other.quoteCharacter) && quoteMode == other.quoteMode &&
+-                Objects.equals(quotedNullString, other.quotedNullString) && Objects.equals(recordSeparator, other.recordSeparator) &&
++                Objects.equals(recordSeparator, other.recordSeparator) &&
+                 skipHeaderRecord == other.skipHeaderRecord && trailingData == other.trailingData && trailingDelimiter == other.trailingDelimiter &&
+                 trim == other.trim;
+     }
+@@ -1751,9 +1780,26 @@ public final class CSVFormat implements Serializable {
+ 
+     /**
+      * Formats the specified values as a CSV record string.
++     * <p>
++     * This method builds the record with a {@link CSVPrinter}, whose constructor writes the format's header comments and
++     * header record before anything else, so the returned string holds the formatted values alone only when this format
++     * carries neither of them:
++     * </p>
++     * <ul>
++     * <li>a format whose header is set precedes the values with its header record, unless
++     * {@link Builder#setSkipHeaderRecord(boolean)} is {@code true};</li>
++     * <li>a format whose header comments and comment marker are both set precedes the values with one comment line per
++     * header comment. Header comments on a format with no comment marker are not written.</li>
++     * </ul>
++     * <p>
++     * The header material is separated from the values by this format's record separator, so a format built with
++     * {@link Builder#setRecordSeparator(String)} of {@code null} runs the two together. To format one record at a time
++     * against a header-carrying format, clear the header on a copy of it, or write through a {@link CSVPrinter}, which
++     * writes the header once for the whole document.
++     * </p>
+      *
+      * @param values The values to format.
+-     * @return The formatted values.
++     * @return The formatted values, preceded by this format's header comments and header record as described above.
+      */
+     public String format(final Object... values) {
+         return Uncheck.get(() -> format_(values));
+@@ -2087,8 +2133,8 @@ public final class CSVFormat implements Serializable {
+         result = prime * result + Arrays.hashCode(headerComments);
+         result = prime * result + Arrays.hashCode(headers);
+         result = prime * result + Objects.hash(allowMissingColumnNames, autoFlush, commentMarker, delimiter, duplicateHeaderMode, escapeCharacter,
+-                ignoreEmptyLines, ignoreHeaderCase, ignoreSurroundingSpaces, lenientEof, maxRows, nullString, quoteCharacter, quoteMode, quotedNullString,
+-                recordSeparator, skipHeaderRecord, trailingData, trailingDelimiter, trim);
++                ignoreEmptyLines, ignoreHeaderCase, ignoreSurroundingSpaces, lenientEof, maxRows, nullString, quoteCharacter, quoteMode, recordSeparator,
++                skipHeaderRecord, trailingData, trailingDelimiter, trim);
+         return result;
+     }
+ 
+@@ -2659,6 +2705,29 @@ public final class CSVFormat implements Serializable {
+         }
+     }
+ 
++    /**
++     * Returns a diagnostic description of this format's settings.
++     * <p>
++     * Every setting {@link #equals(Object)} compares appears here when it differs from the quiet default, so a format that differs from another in any
++     * single setting almost always says so. Two descriptions being equal is not proof that two formats are: four of the settings {@code equals} compares
++     * can differ while this text does not, because each of them is either rendered for reading or reported over only part of its domain.
++     * </p>
++     * <ul>
++     * <li>The header and header comment arrays are rendered for reading, so {@code setHeader("a, b")} and {@code setHeader("a", "b")} render alike.</li>
++     * <li>A duplicate header mode of {@code null}, which {@link #newFormat(char)} leaves behind, is as quiet as
++     * {@link DuplicateHeaderMode#ALLOW_ALL}, which {@link Builder#create()} installs.</li>
++     * <li>The maximum row count is reported only when it is positive, while {@code equals} compares it by value, so any two of the values at or below
++     * zero that {@link Builder#setMaxRows(long)} documents as no limit are alike here.</li>
++     * </ul>
++     * <p>
++     * Compare formats with {@code equals}, and read this text.
++     * </p>
++     * <p>
++     * The text is for logs and debuggers: it is not parseable, and neither its wording nor its ordering is part of the API.
++     * </p>
++     *
++     * @return A diagnostic description of this format's settings.
++     */
+     @Override
+     public String toString() {
+         final StringBuilder sb = new StringBuilder();
+@@ -2697,6 +2766,32 @@ public final class CSVFormat implements Serializable {
+             sb.append(" IgnoreHeaderCase:ignored");
+         }
+         sb.append(" SkipHeaderRecord:").append(skipHeaderRecord);
++        // Emitted only when set, in the same style as the settings above, so a format that leaves them alone
++        // describes itself exactly as it did before these were reported.
++        if (allowMissingColumnNames) {
++            sb.append(" AllowMissingColumnNames:true");
++        }
++        if (autoFlush) {
++            sb.append(" AutoFlush:true");
++        }
++        if (duplicateHeaderMode != null && duplicateHeaderMode != DuplicateHeaderMode.ALLOW_ALL) {
++            sb.append(" DuplicateHeaderMode:").append(duplicateHeaderMode);
++        }
++        if (lenientEof) {
++            sb.append(" LenientEof:true");
++        }
++        if (useMaxRows()) {
++            sb.append(" MaxRows:").append(maxRows);
++        }
++        if (trailingData) {
++            sb.append(" TrailingData:true");
++        }
++        if (trailingDelimiter) {
++            sb.append(" TrailingDelimiter:true");
++        }
++        if (trim) {
++            sb.append(" Trim:true");
++        }
+         if (headerComments != null) {
+             sb.append(Constants.SP);
+             sb.append("HeaderComments:").append(Arrays.toString(headerComments));
+diff --git a/src/main/java/org/apache/commons/csv/CSVPrinter.java b/src/main/java/org/apache/commons/csv/CSVPrinter.java
+index 32343170..4e75e44b 100644
+--- a/src/main/java/org/apache/commons/csv/CSVPrinter.java
++++ b/src/main/java/org/apache/commons/csv/CSVPrinter.java
+@@ -179,9 +179,20 @@ public final class CSVPrinter implements Flushable, Closeable {
+     }
+ 
+     /**
+-     * Gets the record count printed, this does not include comments or headers.
++     * Gets the count of records printed so far.
++     * <p>
++     * Exactly three things add to this count: {@link #printRecord(Object...) printRecord} and its overloads, one per call;
++     * {@link #printRecords(Object...) printRecords} and its overloads, one per record they emit; and the header record this printer's constructor writes
++     * when the {@link CSVFormat} carries a header and {@link CSVFormat#getSkipHeaderRecord()} is {@code false}.
++     * </p>
++     * <p>
++     * Nothing else adds to it, so the count is not always the number of lines written. The header comments the constructor writes,
++     * {@link #printComment(String)}, {@link #printHeaders(ResultSet)}, and a record you assemble yourself from {@link #print(Object)} and
++     * {@link #println()} all write a line without counting it. In particular {@link #printRecords(ResultSet, boolean) printRecords(resultSet, true)}
++     * writes one line more than it counts, because it writes its header through {@code printHeaders}.
++     * </p>
+      *
+-     * @return The record count, this does not include comments or headers.
++     * @return The count of records printed so far, which is not always the number of lines written.
+      * @since 1.13.0
+      */
+     public long getRecordCount() {
+@@ -332,6 +343,10 @@ public final class CSVPrinter implements Flushable, Closeable {
+      * separator to the output after printing the record, so there is no need to call {@link #println()}.
+      * </p>
+      *
++     * <p>
++     * {@link CSVFormat.Builder#setMaxRows(long)} does not bound this method; it bounds the {@code printRecords} overloads.
++     * </p>
++     *
+      * @param values
+      *            values to output.
+      * @throws IOException
+@@ -356,6 +371,10 @@ public final class CSVPrinter implements Flushable, Closeable {
+      * separator to the output after printing the record, so there is no need to call {@link #println()}.
+      * </p>
+      *
++     * <p>
++     * {@link CSVFormat.Builder#setMaxRows(long)} does not bound this method; it bounds the {@code printRecords} overloads.
++     * </p>
++     *
+      * @param values
+      *            values to output.
+      * @throws IOException
+@@ -373,6 +392,10 @@ public final class CSVPrinter implements Flushable, Closeable {
+      * separator to the output after printing the record, so there is no need to call {@link #println()}.
+      * </p>
+      *
++     * <p>
++     * {@link CSVFormat.Builder#setMaxRows(long)} does not bound this method; it bounds the {@code printRecords} overloads.
++     * </p>
++     *
+      * @param stream
+      *            values to output.
+      * @throws IOException
+@@ -438,6 +461,11 @@ public final class CSVPrinter implements Flushable, Closeable {
+      * }
+      * </pre>
+      *
++     * <p>
++     * You can use {@link CSVFormat.Builder#setMaxRows(long)} to limit how many records this method prints; records past that limit are not
++     * written. The single-record {@code printRecord} overloads are not bounded by it.
++     * </p>
++     *
+      * @param values
+      *            the values to print.
+      * @throws IOException
+@@ -480,6 +508,11 @@ public final class CSVPrinter implements Flushable, Closeable {
+      * }
+      * </pre>
+      *
++     * <p>
++     * You can use {@link CSVFormat.Builder#setMaxRows(long)} to limit how many records this method prints; records past that limit are not
++     * written. The single-record {@code printRecord} overloads are not bounded by it.
++     * </p>
++     *
+      * @param values
+      *            the values to print.
+      * @throws IOException
+@@ -585,6 +618,11 @@ public final class CSVPrinter implements Flushable, Closeable {
+      * }
+      * </pre>
+      *
++     * <p>
++     * You can use {@link CSVFormat.Builder#setMaxRows(long)} to limit how many records this method prints; records past that limit are not
++     * written. The single-record {@code printRecord} overloads are not bounded by it.
++     * </p>
++     *
+      * @param values
+      *            the values to print.
+      * @throws IOException
+diff --git a/src/main/java/org/apache/commons/csv/CSVRecord.java b/src/main/java/org/apache/commons/csv/CSVRecord.java
+index 9e807137..57711db0 100644
+--- a/src/main/java/org/apache/commons/csv/CSVRecord.java
++++ b/src/main/java/org/apache/commons/csv/CSVRecord.java
+@@ -25,6 +25,7 @@ import java.util.Iterator;
+ import java.util.LinkedHashMap;
+ import java.util.List;
+ import java.util.Map;
++import java.util.Objects;
+ import java.util.stream.Collectors;
+ import java.util.stream.Stream;
+ 
+@@ -293,6 +294,9 @@ public final class CSVRecord implements Serializable, Iterable<String> {
+      * @since 1.9.0
+      */
+     public <M extends Map<String, String>> M putIn(final M map) {
++        // Checked before the header lookup: the documented contract is unconditional, and a record with no
++        // header mapping used to return the null argument instead of rejecting it.
++        Objects.requireNonNull(map, "map");
+         final Map<String, Integer> headerMap = getHeaderMapRaw();
+         if (headerMap == null) {
+             return map;
+diff --git a/src/test/java/org/apache/commons/csv/CSVFormatTest.java b/src/test/java/org/apache/commons/csv/CSVFormatTest.java
+index 5c5056ec..f7aed634 100644
+--- a/src/test/java/org/apache/commons/csv/CSVFormatTest.java
++++ b/src/test/java/org/apache/commons/csv/CSVFormatTest.java
+@@ -26,6 +26,7 @@ import static org.apache.commons.csv.Constants.LF;
+ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+ import static org.junit.jupiter.api.Assertions.assertNotEquals;
+ import static org.junit.jupiter.api.Assertions.assertNotNull;
+ import static org.junit.jupiter.api.Assertions.assertNotSame;
+@@ -38,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.fail;
+ import java.io.ByteArrayInputStream;
+ import java.io.ByteArrayOutputStream;
+ import java.io.IOException;
++import java.io.InputStream;
+ import java.io.InvalidObjectException;
+ import java.io.ObjectInputStream;
+ import java.io.ObjectOutputStream;
+@@ -50,6 +52,7 @@ import java.sql.ResultSet;
+ import java.sql.SQLException;
+ import java.time.Duration;
+ import java.util.Arrays;
++import java.util.List;
+ import java.util.Objects;
+ import java.util.concurrent.CountDownLatch;
+ import java.util.concurrent.TimeUnit;
+@@ -401,6 +404,78 @@ class CSVFormatTest {
+         assertNotEqualsFlip(left, right);
+     }
+ 
++    @Test
++    void testEqualsIgnoresTheQuotedFormOfAnAbsentNullString() {
++        // The quoted null string is derived by setNullString and setQuote alone, and nothing reads it unless a
++        // null string is set, because print() checks that first. Deriving one from an absent null string
++        // produced the literal "null", which made a format unequal to the one it was derived from with no
++        // observable difference between the two.
++        final CSVFormat bare = CSVFormat.newFormat(',');
++        assertEquals(bare, bare.builder().setNullString(null).get());
++        assertEquals(bare.hashCode(), bare.builder().setNullString(null).get().hashCode());
++        assertEquals(bare, bare.builder().setQuote(null).get());
++        assertEquals(bare.hashCode(), bare.builder().setQuote(null).get().hashCode());
++        // A null string that is set still gets its quoted form, and that is what QuoteMode.ALL writes.
++        final CSVFormat quoted = CSVFormat.DEFAULT.builder().setNullString("NULL").setQuoteMode(QuoteMode.ALL).get();
++        assertEquals("\"NULL\",\"x\",\"NULL\"", quoted.format(null, "x", null));
++        final CSVFormat apostrophe = quoted.builder().setQuote('\'').get();
++        assertEquals("'NULL','x','NULL'", apostrophe.format(null, "x", null));
++        assertNotEqualsFlip(quoted, apostrophe);
++    }
++
++    /**
++     * Pins what the setRecordSeparator Note promises: output reads back exactly when the separator is one of the three
++     * line breaks the parser recognizes, and any other separator leaves what it carries in the last field.
++     */
++    @Test
++    void testRecordSeparatorReadsBackOnlyWhenItIsExactlyALineBreak() throws IOException {
++        for (final String separator : new String[] { "\n", "\r", "\r\n" }) {
++            final CSVFormat format = CSVFormat.DEFAULT.builder().setRecordSeparator(separator).get();
++            final StringBuilder out = new StringBuilder();
++            try (CSVPrinter printer = format.print(out)) {
++                printer.printRecord("a", "b");
++            }
++            assertEquals("a,b" + separator, out.toString());
++            try (CSVParser parser = CSVParser.parse(new StringReader(out.toString()), format)) {
++                final List<CSVRecord> records = parser.getRecords();
++                assertEquals(1, records.size(), () -> "separator " + separator);
++                assertEquals(Arrays.asList("a", "b"), records.get(0).toList(), () -> "separator " + separator);
++            }
++        }
++        // Not one of the three: the delimiter it carries becomes a third, empty field on the way back.
++        final CSVFormat carrying = CSVFormat.DEFAULT.builder().setRecordSeparator(",\n").get();
++        final StringBuilder out = new StringBuilder();
++        try (CSVPrinter printer = carrying.print(out)) {
++            printer.printRecord("a", "b");
++        }
++        assertEquals("a,b,\n", out.toString());
++        try (CSVParser parser = CSVParser.parse(new StringReader(out.toString()), carrying)) {
++            final List<CSVRecord> records = parser.getRecords();
++            assertEquals(1, records.size());
++            assertEquals(Arrays.asList("a", "b", ""), records.get(0).toList());
++        }
++    }
++
++    /**
++     * Deserializes a {@link CSVFormat#DEFAULT} written before the quoted null string stopped being derived from an
++     * absent null string. That stream carries the old derived value, so this pins that a format read back from an
++     * earlier release still equals, and hashes as, the one built here, and still prints the same wire.
++     */
++    @Test
++    void testFormatFromAnEarlierReleaseEqualsItsFreshTwin() throws IOException, ClassNotFoundException {
++        try (InputStream in = ClassLoader.getSystemClassLoader()
++                .getResourceAsStream("org/apache/commons/csv/serialization/csvFormatDefaultWithDerivedQuotedNullString.bin");
++                ObjectInputStream ois = new ObjectInputStream(in)) {
++            final Object object = ois.readObject();
++            assertInstanceOf(CSVFormat.class, object);
++            final CSVFormat deserialized = (CSVFormat) object;
++            assertNull(deserialized.getNullString());
++            assertEquals(CSVFormat.DEFAULT, deserialized);
++            assertEquals(CSVFormat.DEFAULT.hashCode(), deserialized.hashCode());
++            assertEquals(CSVFormat.DEFAULT.format("a", null, "b"), deserialized.format("a", null, "b"));
++        }
++    }
++
+     @Test
+     void testEqualsMaxRows() {
+         final CSVFormat right = CSVFormat.DEFAULT.builder().setMaxRows(10).get();
+@@ -743,6 +818,33 @@ class CSVFormatTest {
+         assertEquals("\"x,y\",z", format.format("x,y", "z"));
+     }
+ 
++    /**
++     * Pins what {@link CSVFormat#format(Object...)} writes ahead of the values it is given, which is what its Javadoc
++     * describes: the header comments first, then the header record, each gated as the Javadoc says it is.
++     */
++    @Test
++    void testFormatPrependsHeaderCommentsAndHeaderRecord() {
++        final CSVFormat plain = CSVFormat.DEFAULT;
++        assertEquals("a", plain.format("a"));
++
++        final CSVFormat withHeader = plain.builder().setHeader("h").get();
++        assertEquals("h\r\na", withHeader.format("a"));
++
++        // the header record is gated by skipHeaderRecord
++        assertEquals("a", withHeader.builder().setSkipHeaderRecord(true).get().format("a"));
++
++        // header comments are gated by the comment marker
++        final CSVFormat commented = plain.builder().setCommentMarker('#').get();
++        assertEquals("# hc\r\na", commented.builder().setHeaderComments("hc").get().format("a"));
++        assertEquals("a", plain.builder().setHeaderComments("hc").get().format("a"));
++
++        // both, in the order the CSVPrinter constructor writes them
++        assertEquals("# hc\r\nh\r\na", commented.builder().setHeaderComments("hc").setHeader("h").get().format("a"));
++
++        // the record separator is what divides them, so a null one runs them together
++        assertEquals("ha", withHeader.builder().setRecordSeparator(null).get().format("a"));
++    }
++
+     @Test // I assume this to be a defect.
+     void testFormatThrowsNullPointerException() {
+ 
+@@ -772,6 +874,67 @@ class CSVFormatTest {
+                 format.toString());
+     }
+ 
++    @Test
++    void testToStringDistinguishesEveryFormatThatEqualsReportsAsDifferent() {
++        // toString is a diagnostic, so every setting equals() compares has to be visible in it. Without this,
++        // a format with eight non-default settings described itself exactly as CSVFormat.DEFAULT does. Both
++        // bases are driven: DEFAULT carries DuplicateHeaderMode.ALLOW_ALL, newFormat leaves it null, and a
++        // description that suppressed both made those two indistinguishable.
++        for (final CSVFormat base : Arrays.asList(CSVFormat.DEFAULT, CSVFormat.newFormat(','))) {
++            for (final CSVFormat moved : movedOffEachSetting(base)) {
++                assertNotEquals(base, moved);
++                assertNotEquals(base.toString(), moved.toString(),
++                        () -> "toString does not report the setting that makes this format differ from " + base + ": " + moved);
++            }
++        }
++        // The claim is about settings, not an identity: the header arrays are rendered for reading, so two
++        // formats that differ can still describe themselves alike. The Javadoc says so, and this pins it.
++        assertEquals(CSVFormat.DEFAULT.builder().setHeader("a, b").get().toString(),
++                CSVFormat.DEFAULT.builder().setHeader("a", "b").get().toString());
++        assertNotEquals(CSVFormat.DEFAULT.builder().setHeader("a, b").get(), CSVFormat.DEFAULT.builder().setHeader("a", "b").get());
++        // The second known limit: newFormat leaves duplicateHeaderMode null and Builder.create installs
++        // ALLOW_ALL, and both are quiet. Reporting null instead would change the description of every
++        // newFormat-derived format, which the CSVFileParser fixture files under src/test/resources pin.
++        final CSVFormat bare = CSVFormat.newFormat(',');
++        final CSVFormat allowAll = bare.builder().setDuplicateHeaderMode(DuplicateHeaderMode.ALLOW_ALL).get();
++        assertEquals(bare.toString(), allowAll.toString());
++        assertNotEquals(bare, allowAll);
++        // The third limit: the maximum row count is reported only when positive, while equals compares it by
++        // value, so any two of the values at or below zero that setMaxRows documents as no limit are alike here.
++        final CSVFormat negativeLimit = CSVFormat.DEFAULT.builder().setMaxRows(-1).get();
++        final CSVFormat zeroLimit = CSVFormat.DEFAULT.builder().setMaxRows(0).get();
++        assertEquals(CSVFormat.DEFAULT.toString(), negativeLimit.toString());
++        assertNotEquals(CSVFormat.DEFAULT, negativeLimit);
++        assertEquals(zeroLimit.toString(), negativeLimit.toString());
++        assertNotEquals(zeroLimit, negativeLimit);
++    }
++
++    /** Returns {@code base} with each setting equals() compares moved off its value, one format per setting. */
++    private List<CSVFormat> movedOffEachSetting(final CSVFormat base) {
++        return Arrays.asList(
++                base.builder().setAllowMissingColumnNames(true).get(),
++                base.builder().setAutoFlush(true).get(),
++                base.builder().setCommentMarker('#').get(),
++                base.builder().setDelimiter(';').get(),
++                base.builder().setDuplicateHeaderMode(DuplicateHeaderMode.DISALLOW).get(),
++                base.builder().setEscape('\\').get(),
++                base.builder().setHeader("x").get(),
++                base.builder().setHeaderComments("hc").get(),
++                base.builder().setIgnoreEmptyLines(!base.getIgnoreEmptyLines()).get(),
++                base.builder().setIgnoreHeaderCase(true).get(),
++                base.builder().setIgnoreSurroundingSpaces(true).get(),
++                base.builder().setLenientEof(true).get(),
++                base.builder().setMaxRows(5).get(),
++                base.builder().setNullString("N").get(),
++                base.builder().setQuote('\'').get(),
++                base.builder().setQuoteMode(QuoteMode.ALL).get(),
++                base.builder().setRecordSeparator("\n\n").get(),
++                base.builder().setSkipHeaderRecord(true).get(),
++                base.builder().setTrailingData(true).get(),
++                base.builder().setTrailingDelimiter(true).get(),
++                base.builder().setTrim(true).get());
++    }
++
+     @Test
+     void testGetAllowDuplicateHeaderNames() {
+         final Builder builder = CSVFormat.DEFAULT.builder();
+diff --git a/src/test/java/org/apache/commons/csv/CSVPrinterTest.java b/src/test/java/org/apache/commons/csv/CSVPrinterTest.java
+index f1f910bb..f6f2fb0b 100644
+--- a/src/test/java/org/apache/commons/csv/CSVPrinterTest.java
++++ b/src/test/java/org/apache/commons/csv/CSVPrinterTest.java
+@@ -828,6 +828,109 @@ class CSVPrinterTest {
+         }
+     }
+ 
++    @Test
++    void testRecordCountIncludesAWrittenHeaderRecordButNeverAComment() throws IOException {
++        // A record is one printed line of values, so a header the constructor writes counts and a comment never does.
++        // testHeader and testJdbcPrinterWithResultSetMetaData pin the same model from the other direction.
++        try (CSVPrinter printer = new CSVPrinter(new StringWriter(), CSVFormat.DEFAULT)) {
++            assertEquals(0, printer.getRecordCount());
++            printer.printRecord("a");
++            assertEquals(1, printer.getRecordCount());
++        }
++        try (CSVPrinter printer = new CSVPrinter(new StringWriter(), CSVFormat.DEFAULT.builder().setHeader("h1", "h2").get())) {
++            assertEquals(1, printer.getRecordCount(), "a header record that was written is counted");
++            printer.printRecord("a", "b");
++            assertEquals(2, printer.getRecordCount());
++        }
++        try (CSVPrinter printer = new CSVPrinter(new StringWriter(),
++                CSVFormat.DEFAULT.builder().setHeader("h1").setSkipHeaderRecord(true).get())) {
++            assertEquals(0, printer.getRecordCount(), "a header the format suppresses is never written and never counted");
++            printer.printRecord("a");
++            assertEquals(1, printer.getRecordCount());
++        }
++        try (CSVPrinter printer = new CSVPrinter(new StringWriter(),
++                CSVFormat.DEFAULT.builder().setCommentMarker('#').setHeaderComments("hc").get())) {
++            assertEquals(0, printer.getRecordCount(), "header comments are not records");
++            printer.printComment("c");
++            assertEquals(0, printer.getRecordCount(), "a comment is not a record");
++            printer.printRecord("a");
++            assertEquals(1, printer.getRecordCount());
++        }
++    }
++
++    @Test
++    void testRecordCountIsAddedToOnlyByTheEnumeratedRoutes() throws ClassNotFoundException, IOException, SQLException {
++        // The enumeration behind the getRecordCount Javadoc, driven route by route rather than read off the
++        // source. Everything here writes at least one line; only printRecord, printRecords and the header
++        // record the constructor writes add to the count.
++        assertEquals(1, countOf(CSVFormat.DEFAULT.builder().setHeader("h1", "h2").get(), printer -> { }),
++                "the constructor's header record is counted");
++        assertEquals(0, countOf(CSVFormat.DEFAULT.builder().setCommentMarker('#').setHeaderComments("hc").get(), printer -> { }),
++                "the constructor's header comments are not");
++        assertEquals(1, countOf(CSVFormat.DEFAULT, printer -> printer.printRecord("a", "b")), "printRecord(Object...)");
++        assertEquals(1, countOf(CSVFormat.DEFAULT, printer -> printer.printRecord(Arrays.asList("a", "b"))), "printRecord(Iterable)");
++        assertEquals(1, countOf(CSVFormat.DEFAULT, printer -> printer.printRecord(Stream.of("a", "b"))), "printRecord(Stream)");
++        assertEquals(2, countOf(CSVFormat.DEFAULT, printer -> printer.printRecords("a", "b")), "printRecords(Object...)");
++        assertEquals(2, countOf(CSVFormat.DEFAULT, printer -> printer.printRecords(Arrays.asList(new String[] { "a" }, new String[] { "b" }))),
++                "printRecords(Iterable)");
++        assertEquals(2, countOf(CSVFormat.DEFAULT, printer -> printer.printRecords(Stream.of(new String[] { "a" }, new String[] { "b" }))),
++                "printRecords(Stream)");
++        assertEquals(0, countOf(CSVFormat.DEFAULT, printer -> {
++            printer.print("a");
++            printer.print("b");
++            printer.println();
++        }), "a record assembled from print and println is not counted");
++        assertEquals(0, countOf(CSVFormat.DEFAULT, printer -> printer.println()), "println alone is not counted");
++        assertEquals(0, countOf(CSVFormat.DEFAULT.builder().setCommentMarker('#').get(), printer -> printer.printComment("c")),
++                "printComment is not counted");
++        try (Connection connection = getH2Connection()) {
++            setUpTable(connection);
++            try (Statement stmt = connection.createStatement()) {
++                assertEquals(0, countOf(CSVFormat.DEFAULT, printer -> {
++                    try (ResultSet resultSet = stmt.executeQuery("select ID, NAME from TEST")) {
++                        printer.printHeaders(resultSet);
++                    }
++                }), "printHeaders is not counted");
++                assertEquals(TABLE_RECORD_COUNT, countOf(CSVFormat.DEFAULT, printer -> {
++                    try (ResultSet resultSet = stmt.executeQuery("select ID, NAME from TEST")) {
++                        printer.printRecords(resultSet);
++                    }
++                }), "printRecords(ResultSet)");
++                // The case the Javadoc calls out: one line more written than counted, because the header
++                // goes through printHeaders.
++                final StringWriter sw = new StringWriter();
++                final long counted;
++                try (CSVPrinter printer = new CSVPrinter(sw, CSVFormat.DEFAULT)) {
++                    try (ResultSet resultSet = stmt.executeQuery("select ID, NAME from TEST")) {
++                        printer.printRecords(resultSet, true);
++                    }
++                    counted = printer.getRecordCount();
++                }
++                assertEquals(TABLE_RECORD_COUNT, counted);
++                assertEquals(TABLE_AND_HEADER_RECORD_COUNT, sw.toString().split(RECORD_SEPARATOR).length);
++            }
++        }
++    }
++
++    /** Runs {@code op} on a printer over a throwaway target and returns the record count it ended with. */
++    private long countOf(final CSVFormat format, final PrinterOp op) throws IOException {
++        try (CSVPrinter printer = new CSVPrinter(new StringWriter(), format)) {
++            try {
++                op.run(printer);
++            } catch (final IOException | RuntimeException e) {
++                throw e;
++            } catch (final Exception e) {
++                throw new IllegalStateException(e);
++            }
++            return printer.getRecordCount();
++        }
++    }
++
++    /** A block of printer calls that may throw anything checked. */
++    private interface PrinterOp {
++        void run(CSVPrinter printer) throws Exception;
++    }
++
+     @Test
+     void testHeaderCommentExcel() throws IOException {
+         final StringWriter sw = new StringWriter();
+diff --git a/src/test/java/org/apache/commons/csv/CSVRecordTest.java b/src/test/java/org/apache/commons/csv/CSVRecordTest.java
+index 82153297..ff32b56d 100644
+--- a/src/test/java/org/apache/commons/csv/CSVRecordTest.java
++++ b/src/test/java/org/apache/commons/csv/CSVRecordTest.java
+@@ -265,6 +265,18 @@ class CSVRecordTest {
+         validateMap(map2, false);
+     }
+ 
++    @Test
++    void testPutInNullMapIsRejectedWithOrWithoutAHeader() throws IOException {
++        // The Javadoc promises NullPointerException unconditionally; the header-less early return used to
++        // hand the null argument straight back.
++        assertThrows(NullPointerException.class, () -> recordWithHeader.putIn(null));
++        try (CSVParser parser = CSVParser.parse("v1,v2", CSVFormat.DEFAULT)) {
++            final CSVRecord noHeader = parser.iterator().next();
++            assertNull(noHeader.getParser().getHeaderMap());
++            assertThrows(NullPointerException.class, () -> noHeader.putIn(null));
++        }
++    }
++
+     @Test
+     void testRemoveAndAddColumns() throws IOException {
+         // do:
+diff --git a/src/test/resources/org/apache/commons/csv/serialization/csvFormatDefaultWithDerivedQuotedNullString.bin b/src/test/resources/org/apache/commons/csv/serialization/csvFormatDefaultWithDerivedQuotedNullString.bin
+new file mode 100644
+index 00000000..7fa5d480
+Binary files /dev/null and b/src/test/resources/org/apache/commons/csv/serialization/csvFormatDefaultWithDerivedQuotedNullString.bin differ
