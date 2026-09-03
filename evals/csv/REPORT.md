@@ -109,6 +109,8 @@ one for them. Both lines exist only because the loop was in the tree.
 
 ## Upstream
 
+**Update 2026-09-03**: #592 and #593 merged by the maintainer the same day. On #591 the maintainer objected that the format is user input and that appending `|` is an opinionated restriction; the objection is right, the reply conceded it and offered a documentation note instead.
+
 `CSV-12`, `CSV-14` and `CSV-10` are filed as
 [#591](https://github.com/thephpleague/csv/pull/591),
 [#592](https://github.com/thephpleague/csv/pull/592) and

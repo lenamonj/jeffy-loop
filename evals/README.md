@@ -4,13 +4,13 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->50<!-- /count -->** | **<!-- count:merged -->15<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->50<!-- /count -->** | **<!-- count:merged -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->100<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
 ## Merged upstream
 
-Fourteen fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Thirteen projects merged patches this loop wrote; the fourteenth is a finding a maintainer found convincing enough to fix himself:
+Fifteen fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Fourteen projects merged patches this loop wrote; the fifteenth is a finding a maintainer found convincing enough to fix himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
@@ -61,6 +61,7 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | nanostores | JavaScript | [details](./nanostores/REPORT.md) - batch() inside a listener replayed listeners - [PR merged](https://github.com/nanostores/nanostores/pull/425), [PR merged](https://github.com/nanostores/nanostores/pull/426) | Fixed |
 | kotlinx-datetime | Kotlin | [details](./kotlinx-datetime/REPORT.md) - byUnicodePattern dropped the escaped quote inside a literal, and deprecation quick-fixes pointed at the wrong member - [PR merged](https://github.com/Kotlin/kotlinx-datetime/pull/650), [PR open](https://github.com/Kotlin/kotlinx-datetime/pull/649) | Fixed |
 | indicatif | Rust | [details](./indicatif/REPORT.md) - draw-width underflow panic - [PR merged](https://github.com/console-rs/indicatif/pull/836) | Fixed |
+| csv | PHP | [details](./csv/REPORT.md) - the TimeField separator was matched as a regex, and an empty field was escaped as a formula - [PR merged](https://github.com/thephpleague/csv/pull/592), [PR merged](https://github.com/thephpleague/csv/pull/593), [PR open](https://github.com/thephpleague/csv/pull/591) | Fixed |
 | chalk | JavaScript | [details](./chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](./dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](./yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
@@ -81,7 +82,6 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | kotlinx-io | Kotlin | [details](./kotlinx-io/REPORT.md) - the temporary directory was an empty path when TMPDIR was unset - [PR open](https://github.com/Kotlin/kotlinx-io/pull/521) | Fixed |
 | shouldly | C# | [details](./shouldly/REPORT.md) - a failing dictionary assertion over a pair sequence threw InvalidCastException - [PR open](https://github.com/shouldly/shouldly/pull/1335) | Fixed |
 | valinor | PHP | [details](./valinor/REPORT.md) - a captured closure earlier in the file made registerConstructor resolve a class that does not exist - [PR open](https://github.com/CuyZ/Valinor/pull/838) | Fixed |
-| csv | PHP | [details](./csv/REPORT.md) - a date-only schema format took its time of day from the wall clock - [PR open](https://github.com/thephpleague/csv/pull/591), [PR open](https://github.com/thephpleague/csv/pull/592), [PR open](https://github.com/thephpleague/csv/pull/593) | Fixed |
 | urfave/cli | Go | [details](./urfave-cli/REPORT.md) - a lone - ended flag parsing - [PR open](https://github.com/urfave/cli/pull/2423) | Fixed |
 | mustache.js | JavaScript | [details](./mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](./spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
