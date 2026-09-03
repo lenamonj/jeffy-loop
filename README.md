@@ -287,7 +287,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->125<!-- /count -->** | **<!-- count:fixed -->97<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->35<!-- /count -->** | **<!-- count:merged -->13<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->125<!-- /count -->** | **<!-- count:fixed -->97<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->50<!-- /count -->** | **<!-- count:merged -->15<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->96<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
@@ -297,21 +297,20 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 |:---|:---|:---|:---|
 | bat | Rust | [details](evals/bat/REPORT.md) - security flag no-op piped - [PR merged](https://github.com/sharkdp/bat/pull/3862) | Fixed |
 | fasthttp | Go | [details](evals/fasthttp/REPORT.md) - bad Content-Length accepted - [PR merged](https://github.com/valyala/fasthttp/pull/2343) | Fixed |
-| PapaParse | JavaScript | [details](evals/papaparse/REPORT.md) - *audit*; 4 Highs in streaming - [PR merged](https://github.com/mholt/PapaParse/pull/1135) | Fixed |
+| PapaParse | JavaScript | [details](evals/papaparse/REPORT.md) - *audit*; 4 Highs in streaming - [PR merged](https://github.com/mholt/PapaParse/pull/1135), [PR open](https://github.com/mholt/PapaParse/pull/1133), [PR open](https://github.com/mholt/PapaParse/pull/1134), [PR open](https://github.com/mholt/PapaParse/pull/1136) | Fixed |
 | jsoncpp | C++ | [details](evals/jsoncpp/REPORT.md) - secure build never compiled - [PR merged](https://github.com/open-source-parsers/jsoncpp/pull/1709) | Fixed |
 | mimalloc | C | [details](evals/mimalloc/REPORT.md) - zalloc returned dirty memory - [PR merged](https://github.com/microsoft/mimalloc/pull/1385) | Fixed |
 | ada | C++ | [details](evals/ada/REPORT.md) - host_end truncated the host - [PR merged](https://github.com/ada-url/ada/pull/1244) | Fixed |
 | nanoid | JavaScript | [details](evals/nanoid/REPORT.md) - empty alphabet hung the generator - [PR merged](https://github.com/ai/nanoid/pull/609) | Fixed |
 | unicode-segmentation | Rust | [details](evals/unicode-segmentation/REPORT.md) - empty-string size_hint panic - [PR merged](https://github.com/unicode-rs/unicode-segmentation/pull/181) | Fixed |
-| go-runewidth | Go | [details](evals/go-runewidth/REPORT.md) - Wrap panicked at width zero - [PR merged](https://github.com/mattn/go-runewidth/pull/106) | Fixed |
+| go-runewidth | Go | [details](evals/go-runewidth/REPORT.md) - Wrap panicked at width zero - [PR merged](https://github.com/mattn/go-runewidth/pull/106), [PR merged](https://github.com/mattn/go-runewidth/pull/107) | Fixed |
 | console | Rust | [details](evals/console/REPORT.md) - truncate_str panicked mid-character - [PR merged](https://github.com/console-rs/console/pull/296) | Fixed |
-| nanostores | JavaScript | [details](evals/nanostores/REPORT.md) - batch() inside a listener replayed listeners - [PR merged](https://github.com/nanostores/nanostores/pull/425) | Fixed |
+| nanostores | JavaScript | [details](evals/nanostores/REPORT.md) - batch() inside a listener replayed listeners - [PR merged](https://github.com/nanostores/nanostores/pull/425), [PR merged](https://github.com/nanostores/nanostores/pull/426) | Fixed |
 | kotlinx-datetime | Kotlin | [details](evals/kotlinx-datetime/REPORT.md) - byUnicodePattern dropped the escaped quote inside a literal, and deprecation quick-fixes pointed at the wrong member - [PR merged](https://github.com/Kotlin/kotlinx-datetime/pull/650), [PR open](https://github.com/Kotlin/kotlinx-datetime/pull/649) | Fixed |
 | indicatif | Rust | [details](evals/indicatif/REPORT.md) - draw-width underflow panic - [PR merged](https://github.com/console-rs/indicatif/pull/836) | Fixed |
 | chalk | JavaScript | [details](evals/chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](evals/dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](evals/yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
-| typer | Python | [details](evals/typer/REPORT.md) - hash seed chose which app runs - [PR closed as a duplicate](https://github.com/fastapi/typer/pull/1946) | Fixed |
 | PHP-Parser | PHP | [details](evals/php-parser/REPORT.md) - test class ran no code - [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | Fixed |
 | python-dotenv | Python | [details](evals/python-dotenv/REPORT.md) - 8 runs, 48 findings - [PR open](https://github.com/theskumar/python-dotenv/pull/678) | Fixed |
 | PyPortfolioOpt | Python | [details](evals/pyportfolioopt/REPORT.md) - CI-red to 356 passing - [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
@@ -320,27 +319,28 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | rouge | Ruby | [details](evals/rouge/REPORT.md) - unknown theme crashed the CLI - [PR open](https://github.com/rouge-ruby/rouge/pull/2332) | Fixed |
 | pflag | Go | [details](evals/pflag/REPORT.md) - deprecated flag field ignored - [PR open](https://github.com/spf13/pflag/pull/507) | Fixed |
 | classnames | JavaScript | [details](evals/classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR open](https://github.com/JedWatson/classnames/pull/579) | Fixed |
-| assert | PHP | [details](evals/assert/REPORT.md) - isInitialized threw the wrong exception - [PR open](https://github.com/webmozarts/assert/pull/365) | Fixed |
+| assert | PHP | [details](evals/assert/REPORT.md) - isInitialized threw the wrong exception - [PR open](https://github.com/webmozarts/assert/pull/365), [PR open](https://github.com/webmozarts/assert/pull/366) | Fixed |
 | natsort | Python | [details](evals/natsort/REPORT.md) - locale sentinel was three ASCII bytes - [PR open](https://github.com/SethMMorton/natsort/pull/196) | Fixed |
-| commons-text | Java | [details](evals/commons-text/REPORT.md) - LevenshteinDetailedDistance over-reported the distance - [PR open](https://github.com/apache/commons-text/pull/767) | Fixed |
+| commons-text | Java | [details](evals/commons-text/REPORT.md) - LevenshteinDetailedDistance over-reported the distance - [PR open](https://github.com/apache/commons-text/pull/767), [PR open](https://github.com/apache/commons-text/pull/768), [PR open](https://github.com/apache/commons-text/pull/769) | Fixed |
 | uuid | Rust | [details](evals/uuid/REPORT.md) - v7 counter lost its top four bits to the version nibble - [PR open](https://github.com/uuid-rs/uuid/pull/907) | Fixed |
-| swift-log | Swift | [details](evals/swift-log/REPORT.md) - a handler implementing only `log(event:)` overflowed the stack on the 1.0 entry point - [PR open](https://github.com/apple/swift-log/pull/503) | Fixed |
-| i18n | Ruby | [details](evals/i18n/REPORT.md) - a pluralized lookup handed out the store's own String - [PR open](https://github.com/ruby-i18n/i18n/pull/751) | Fixed |
+| swift-log | Swift | [details](evals/swift-log/REPORT.md) - a handler implementing only `log(event:)` overflowed the stack on the 1.0 entry point - [PR open](https://github.com/apple/swift-log/pull/503), [PR open](https://github.com/apple/swift-log/pull/504) | Fixed |
+| i18n | Ruby | [details](evals/i18n/REPORT.md) - a pluralized lookup handed out the store's own String - [PR open](https://github.com/ruby-i18n/i18n/pull/751), [PR open](https://github.com/ruby-i18n/i18n/pull/752) | Fixed |
 | kotlinx-io | Kotlin | [details](evals/kotlinx-io/REPORT.md) - the temporary directory was an empty path when TMPDIR was unset - [PR open](https://github.com/Kotlin/kotlinx-io/pull/521) | Fixed |
 | shouldly | C# | [details](evals/shouldly/REPORT.md) - a failing dictionary assertion over a pair sequence threw InvalidCastException - [PR open](https://github.com/shouldly/shouldly/pull/1335) | Fixed |
 | valinor | PHP | [details](evals/valinor/REPORT.md) - a captured closure earlier in the file made registerConstructor resolve a class that does not exist - [PR open](https://github.com/CuyZ/Valinor/pull/838) | Fixed |
+| csv | PHP | [details](evals/csv/REPORT.md) - a date-only schema format took its time of day from the wall clock - [PR open](https://github.com/thephpleague/csv/pull/591), [PR open](https://github.com/thephpleague/csv/pull/592), [PR open](https://github.com/thephpleague/csv/pull/593) | Fixed |
+| urfave/cli | Go | [details](evals/urfave-cli/REPORT.md) - a lone - ended flag parsing - [PR open](https://github.com/urfave/cli/pull/2423) | Fixed |
 | mustache.js | JavaScript | [details](evals/mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](evals/spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](evals/quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
 | records | Python | [details](evals/records/REPORT.md) - 4 High data-loss bugs - [issue filed](https://github.com/kennethreitz/records/issues/236) | Fixed |
-| csv | PHP | [details](evals/csv/REPORT.md) - a date-only schema format took its time of day from the wall clock - [PRs open](https://github.com/thephpleague/csv/pull/591) | Fixed |
+| typer | Python | [details](evals/typer/REPORT.md) - hash seed chose which app runs - [PR closed as a duplicate](https://github.com/fastapi/typer/pull/1946) | Fixed |
 | cobra | Go | [details](evals/cobra/REPORT.md) - timezone-dependent build | Fixed |
 | zod | TypeScript | [details](evals/zod/REPORT.md) - cyclic value validated | Fixed |
 | commander.js | JavaScript | [details](evals/commander-js/REPORT.md) - error named wrong argument | Fixed |
 | underscore | JavaScript | [details](evals/underscore/REPORT.md) - __proto__ prototype write | Fixed |
 | gson | Java | [details](evals/gson/REPORT.md) - one audit, nothing changed | Fixed |
 | rack | Ruby | [details](evals/rack/REPORT.md) - multipart limits off by one | Fixed |
-| urfave/cli | Go | [details](evals/urfave-cli/REPORT.md) - a lone - ended flag parsing | Fixed |
 | Catch2 | C++ | [details](evals/catch2/REPORT.md) - 18 findings, 6 High | Fixed |
 | validator | Go | [details](evals/validator/REPORT.md) - cyclic struct killed process | Fixed |
 | clap | Rust | [details](evals/clap/REPORT.md) - 35 rows over 4 runs | Fixed |
@@ -412,7 +412,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | libuv | C | [details](evals/ATTEMPTS.md) - started, then abandoned | Failed |
 | mruby | C | [details](evals/ATTEMPTS.md) - 10 runs, 113 iters, not converged | Failed |
 | node-semver | JavaScript | [details](evals/ATTEMPTS.md) - 4 runs, 30 iters, not converged | Failed |
-| picomatch | JavaScript | [details](evals/ATTEMPTS.md) - 5 runs, 45 iters, not converged - [PR open](https://github.com/micromatch/picomatch/pull/204) | Failed |
+| picomatch | JavaScript | [details](evals/ATTEMPTS.md) - 5 runs, 45 iters, not converged - [PR open](https://github.com/micromatch/picomatch/pull/204), [PR open](https://github.com/micromatch/picomatch/pull/205) | Failed |
 | shopspring/decimal | Go | [details](evals/ATTEMPTS.md) - 4 runs, 33 iters, not converged | Failed |
 | spdlog | C++ | [details](evals/ATTEMPTS.md) - 4 runs, 40 iters, not converged | Failed |
 | tenacity | Python | [details](evals/ATTEMPTS.md) - 2 runs, 20 iters, not converged | Failed |
