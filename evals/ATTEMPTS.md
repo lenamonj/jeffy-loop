@@ -153,6 +153,7 @@ loss rather than hiding it.
 | commons-cli | 2 | 20 | converged | evaluator countersigned | 1 |
 | jansson | 1 | 10 | converged | evaluator countersigned | 0 |
 | shouldly | 1 | 8 | converged | evaluator countersigned | 0 |
+| valinor | 2 | 17 | converged | evaluator countersigned | 0 |
 | i18n | 2 | 14 | converged | evaluator countersigned | 0 |
 | kotlinx-io | 2 | 19 | converged | evaluator countersigned | 0 |
 | csv | 4 | 37 | converged | evaluator countersigned | 0 |

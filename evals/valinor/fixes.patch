@@ -1,0 +1,702 @@
+diff --git a/.gitattributes b/.gitattributes
+index 16fef4d..ea3dd31 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -1,6 +1,7 @@
+ *.php text eol=lf
+ 
+ /.github/ export-ignore
++/.jeffy/ export-ignore
+ /docs/ export-ignore
+ /qa/Benchmark/ export-ignore
+ /qa/StaticAnalysis/ export-ignore
+@@ -20,4 +21,9 @@
+ /rector.php export-ignore
+ /renovate.json5 export-ignore
+ 
++/BACKLOG.md export-ignore
++/JOURNAL.md export-ignore
++/JOURNAL-archive.md export-ignore
++/PLAN.md export-ignore
++
+ *.stub linguist-language=PHP
+diff --git a/.gitignore b/.gitignore
+index c459287..0cf56a2 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -4,3 +4,5 @@ vendor
+ phpstan.neon
+ .phpbench
+ .phpunit.result.cache
++
++.claude/jeffy-loop.local.md
+diff --git a/src/Type/IntegerType.php b/src/Type/IntegerType.php
+index 7443c31..fd25003 100644
+--- a/src/Type/IntegerType.php
++++ b/src/Type/IntegerType.php
+@@ -5,4 +5,17 @@ declare(strict_types=1);
+ namespace CuyZ\Valinor\Type;
+ 
+ /** @internal */
+-interface IntegerType extends ScalarType {}
++interface IntegerType extends ScalarType
++{
++    /**
++     * The lowest integer this type accepts. Together with `max`, it is the
++     * interval that orders the integer types, and `matches` is containment of
++     * one interval in another.
++     */
++    public function min(): int;
++
++    /**
++     * The highest integer this type accepts.
++     */
++    public function max(): int;
++}
+diff --git a/src/Type/Parser/Lexer/Token/ArrayToken.php b/src/Type/Parser/Lexer/Token/ArrayToken.php
+index 88d5f27..e7eb0b6 100644
+--- a/src/Type/Parser/Lexer/Token/ArrayToken.php
++++ b/src/Type/Parser/Lexer/Token/ArrayToken.php
+@@ -157,6 +157,13 @@ final class ArrayToken implements TraversingToken
+         $unsealedType = null;
+         $hasExplicitKeys = null;
+ 
++        // Every truncation inside the loop below throws, but a signature that
++        // ends right after the opening bracket never enters it, and would
++        // otherwise be read as the empty sealed shape rather than refused.
++        if ($stream->done()) {
++            throw new ShapedArrayClosingBracketMissing($this->signature($elements));
++        }
++
+         while (! $stream->done()) {
+             if ($stream->next() instanceof ClosingCurlyBracketToken) {
+                 $stream->forward();
+diff --git a/src/Type/Types/IntegerRangeType.php b/src/Type/Types/IntegerRangeType.php
+index 4532f54..972f76b 100644
+--- a/src/Type/Types/IntegerRangeType.php
++++ b/src/Type/Types/IntegerRangeType.php
+@@ -19,6 +19,8 @@ use function sprintf;
+ /** @internal */
+ final class IntegerRangeType implements IntegerType
+ {
++    use MatchesIntegerBounds;
++
+     public function __construct(
+         private int $min,
+         private int $max
+@@ -51,39 +53,6 @@ final class IntegerRangeType implements IntegerType
+             ->and($node->isLessOrEqualsTo(value($this->max)));
+     }
+ 
+-    public function matches(Type $other): bool
+-    {
+-        if ($other instanceof UnionType) {
+-            return $other->isMatchedBy($this);
+-        }
+-
+-        if ($other instanceof NativeIntegerType || $other instanceof ScalarConcreteType || $other instanceof MixedType) {
+-            return true;
+-        }
+-
+-        if ($other instanceof IntegerValueType && $this->accepts($other->value())) {
+-            return true;
+-        }
+-
+-        if ($other instanceof NegativeIntegerType && $this->max < 0) {
+-            return true;
+-        }
+-
+-        if ($other instanceof PositiveIntegerType && $this->min > 0) {
+-            return true;
+-        }
+-
+-        if ($other instanceof ArrayKeyType) {
+-            return $other->isMatchedBy($this);
+-        }
+-
+-        if ($other instanceof self) {
+-            return $other->min === $this->min && $other->max === $this->max;
+-        }
+-
+-        return false;
+-    }
+-
+     public function inferGenericsFrom(Type $other, Generics $generics): Generics
+     {
+         return $generics;
+diff --git a/src/Type/Types/IntegerValueType.php b/src/Type/Types/IntegerValueType.php
+index 2c7fe63..a4dcd3e 100644
+--- a/src/Type/Types/IntegerValueType.php
++++ b/src/Type/Types/IntegerValueType.php
+@@ -33,6 +33,16 @@ final class IntegerValueType implements IntegerType, FixedType
+         return $other->accepts($this->value);
+     }
+ 
++    public function min(): int
++    {
++        return $this->value;
++    }
++
++    public function max(): int
++    {
++        return $this->value;
++    }
++
+     public function inferGenericsFrom(Type $other, Generics $generics): Generics
+     {
+         return $generics;
+diff --git a/src/Type/Types/MatchesIntegerBounds.php b/src/Type/Types/MatchesIntegerBounds.php
+new file mode 100644
+index 0000000..36b1139
+--- /dev/null
++++ b/src/Type/Types/MatchesIntegerBounds.php
+@@ -0,0 +1,38 @@
++<?php
++
++declare(strict_types=1);
++
++namespace CuyZ\Valinor\Type\Types;
++
++use CuyZ\Valinor\Type\IntegerType;
++use CuyZ\Valinor\Type\Type;
++
++/**
++ * @internal
++ *
++ * The integer types form a lattice ordered by the interval each one accepts,
++ * and `matches` is subtype compatibility, so one integer type matches another
++ * exactly when its interval is contained in the other's. Deciding that from the
++ * bounds keeps the relation in one place: each type used to name the siblings
++ * it matched, which left every pair nobody thought of - `positive-int` against
++ * `non-negative-int`, one range against a wider one - silently denied.
++ */
++trait MatchesIntegerBounds
++{
++    public function matches(Type $other): bool
++    {
++        if ($other instanceof UnionType) {
++            return $other->isMatchedBy($this);
++        }
++
++        if ($other instanceof ArrayKeyType) {
++            return $other->isMatchedBy($this);
++        }
++
++        if ($other instanceof IntegerType) {
++            return $other->min() <= $this->min() && $other->max() >= $this->max();
++        }
++
++        return $other instanceof ScalarConcreteType || $other instanceof MixedType;
++    }
++}
+diff --git a/src/Type/Types/NativeIntegerType.php b/src/Type/Types/NativeIntegerType.php
+index c6abbe9..662d488 100644
+--- a/src/Type/Types/NativeIntegerType.php
++++ b/src/Type/Types/NativeIntegerType.php
+@@ -18,6 +18,7 @@ use function is_int;
+ final class NativeIntegerType implements IntegerType
+ {
+     use IsSingleton;
++    use MatchesIntegerBounds;
+ 
+     public function accepts(mixed $value): bool
+     {
+@@ -29,19 +30,14 @@ final class NativeIntegerType implements IntegerType
+         return call('is_int', [$node]);
+     }
+ 
+-    public function matches(Type $other): bool
++    public function min(): int
+     {
+-        if ($other instanceof UnionType) {
+-            return $other->isMatchedBy($this);
+-        }
+-
+-        if ($other instanceof ArrayKeyType) {
+-            return $other->isMatchedBy($this);
+-        }
++        return PHP_INT_MIN;
++    }
+ 
+-        return $other instanceof self
+-            || $other instanceof ScalarConcreteType
+-            || $other instanceof MixedType;
++    public function max(): int
++    {
++        return PHP_INT_MAX;
+     }
+ 
+     public function inferGenericsFrom(Type $other, Generics $generics): Generics
+diff --git a/src/Type/Types/NegativeIntegerType.php b/src/Type/Types/NegativeIntegerType.php
+index 7df1b7f..b96f777 100644
+--- a/src/Type/Types/NegativeIntegerType.php
++++ b/src/Type/Types/NegativeIntegerType.php
+@@ -18,6 +18,7 @@ use function is_int;
+ final class NegativeIntegerType implements IntegerType
+ {
+     use IsSingleton;
++    use MatchesIntegerBounds;
+ 
+     public function accepts(mixed $value): bool
+     {
+@@ -29,20 +30,14 @@ final class NegativeIntegerType implements IntegerType
+         return call('is_int', [$node])->and($node->isLessThan(value(0)));
+     }
+ 
+-    public function matches(Type $other): bool
++    public function min(): int
+     {
+-        if ($other instanceof UnionType) {
+-            return $other->isMatchedBy($this);
+-        }
+-
+-        if ($other instanceof ArrayKeyType) {
+-            return $other->isMatchedBy($this);
+-        }
++        return PHP_INT_MIN;
++    }
+ 
+-        return $other instanceof self
+-            || $other instanceof NativeIntegerType
+-            || $other instanceof ScalarConcreteType
+-            || $other instanceof MixedType;
++    public function max(): int
++    {
++        return -1;
+     }
+ 
+     public function inferGenericsFrom(Type $other, Generics $generics): Generics
+diff --git a/src/Type/Types/NonNegativeIntegerType.php b/src/Type/Types/NonNegativeIntegerType.php
+index cb3b1b9..665d5f4 100644
+--- a/src/Type/Types/NonNegativeIntegerType.php
++++ b/src/Type/Types/NonNegativeIntegerType.php
+@@ -18,6 +18,7 @@ use function is_int;
+ final class NonNegativeIntegerType implements IntegerType
+ {
+     use IsSingleton;
++    use MatchesIntegerBounds;
+ 
+     public function accepts(mixed $value): bool
+     {
+@@ -29,20 +30,14 @@ final class NonNegativeIntegerType implements IntegerType
+         return call('is_int', [$node])->and($node->isGreaterOrEqualsTo(value(0)));
+     }
+ 
+-    public function matches(Type $other): bool
++    public function min(): int
+     {
+-        if ($other instanceof UnionType) {
+-            return $other->isMatchedBy($this);
+-        }
+-
+-        if ($other instanceof ArrayKeyType) {
+-            return $other->isMatchedBy($this);
+-        }
++        return 0;
++    }
+ 
+-        return $other instanceof self
+-            || $other instanceof NativeIntegerType
+-            || $other instanceof ScalarConcreteType
+-            || $other instanceof MixedType;
++    public function max(): int
++    {
++        return PHP_INT_MAX;
+     }
+ 
+     public function inferGenericsFrom(Type $other, Generics $generics): Generics
+diff --git a/src/Type/Types/NonPositiveIntegerType.php b/src/Type/Types/NonPositiveIntegerType.php
+index 0c67c30..79c85de 100644
+--- a/src/Type/Types/NonPositiveIntegerType.php
++++ b/src/Type/Types/NonPositiveIntegerType.php
+@@ -18,6 +18,7 @@ use function is_int;
+ final class NonPositiveIntegerType implements IntegerType
+ {
+     use IsSingleton;
++    use MatchesIntegerBounds;
+ 
+     public function accepts(mixed $value): bool
+     {
+@@ -29,20 +30,14 @@ final class NonPositiveIntegerType implements IntegerType
+         return call('is_int', [$node])->and($node->isLessOrEqualsTo(value(0)));
+     }
+ 
+-    public function matches(Type $other): bool
++    public function min(): int
+     {
+-        if ($other instanceof UnionType) {
+-            return $other->isMatchedBy($this);
+-        }
+-
+-        if ($other instanceof ArrayKeyType) {
+-            return $other->isMatchedBy($this);
+-        }
++        return PHP_INT_MIN;
++    }
+ 
+-        return $other instanceof self
+-            || $other instanceof NativeIntegerType
+-            || $other instanceof ScalarConcreteType
+-            || $other instanceof MixedType;
++    public function max(): int
++    {
++        return 0;
+     }
+ 
+     public function inferGenericsFrom(Type $other, Generics $generics): Generics
+diff --git a/src/Type/Types/PositiveIntegerType.php b/src/Type/Types/PositiveIntegerType.php
+index 19ea284..e7e434e 100644
+--- a/src/Type/Types/PositiveIntegerType.php
++++ b/src/Type/Types/PositiveIntegerType.php
+@@ -18,6 +18,7 @@ use function is_int;
+ final class PositiveIntegerType implements IntegerType
+ {
+     use IsSingleton;
++    use MatchesIntegerBounds;
+ 
+     public function accepts(mixed $value): bool
+     {
+@@ -29,20 +30,14 @@ final class PositiveIntegerType implements IntegerType
+         return call('is_int', [$node])->and($node->isGreaterThan(value(0)));
+     }
+ 
+-    public function matches(Type $other): bool
++    public function min(): int
+     {
+-        if ($other instanceof UnionType) {
+-            return $other->isMatchedBy($this);
+-        }
+-
+-        if ($other instanceof ArrayKeyType) {
+-            return $other->isMatchedBy($this);
+-        }
++        return 1;
++    }
+ 
+-        return $other instanceof self
+-            || $other instanceof NativeIntegerType
+-            || $other instanceof ScalarConcreteType
+-            || $other instanceof MixedType;
++    public function max(): int
++    {
++        return PHP_INT_MAX;
+     }
+ 
+     public function inferGenericsFrom(Type $other, Generics $generics): Generics
+diff --git a/src/Utility/Reflection/TokenParser.php b/src/Utility/Reflection/TokenParser.php
+index 2096273..d064aeb 100644
+--- a/src/Utility/Reflection/TokenParser.php
++++ b/src/Utility/Reflection/TokenParser.php
+@@ -7,7 +7,9 @@ namespace CuyZ\Valinor\Utility\Reflection;
+ use LogicException;
+ use PhpToken;
+ 
++use function array_pop;
+ use function count;
++use function end;
+ use function explode;
+ use function strtolower;
+ 
+@@ -54,22 +56,43 @@ final class TokenParser
+         $currentNamespace = '';
+         $statements = [];
+ 
++        /** @var list<bool> $blocks Whether each currently open brace opened a class-like body. */
++        $blocks = [];
++        $classLikeDeclaration = false;
++        $previous = null;
++
+         while ($token = $this->next()) {
+-            if ($currentNamespace === $namespaceName && $token->is(T_USE)) {
+-                $statements = [...$statements, ...$this->parseUseStatement()];
+-                continue;
+-            }
++            if ($token->is([T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM])) {
++                // `Foo::class` yields a `T_CLASS` token too, and opens no body.
++                $classLikeDeclaration = ! ($previous?->is(T_DOUBLE_COLON) ?? false);
++            } elseif ($token->is('{') || $token->text === '${') {
++                $blocks[] = $classLikeDeclaration;
++                $classLikeDeclaration = false;
++            } elseif ($token->is('}')) {
++                array_pop($blocks);
++            } elseif ($token->is(T_USE)) {
++                // Two other constructs are spelled `use` and import nothing: a
++                // trait imported into a class-like body, and a closure
++                // capturing variables, which is always followed by a
++                // parenthesis. Parsing either as an import statement lets the
++                // surrounding code leak into the alias map.
++                $isImport = $currentNamespace === $namespaceName
++                    && end($blocks) !== true
++                    && ! ($this->peek()?->is('(') ?? false);
++
++                if ($isImport) {
++                    $statements = [...$statements, ...$this->parseUseStatement()];
++                }
++            } elseif ($token->is(T_NAMESPACE)) {
++                $currentNamespace = $this->parseNamespace();
+ 
+-            if (! $token->is(T_NAMESPACE)) {
+-                continue;
++                // Get fresh array for new namespace. This is to prevent the parser
++                // to collect the use statements for a previous namespace with the
++                // same name (this is the case if a namespace is defined twice).
++                $statements = [];
+             }
+ 
+-            $currentNamespace = $this->parseNamespace();
+-
+-            // Get fresh array for new namespace. This is to prevent the parser
+-            // to collect the use statements for a previous namespace with the
+-            // same name (this is the case if a namespace is defined twice).
+-            $statements = [];
++            $previous = $token;
+         }
+ 
+         return $statements;
+@@ -134,6 +157,17 @@ final class TokenParser
+         return null;
+     }
+ 
++    private function peek(): ?PhpToken
++    {
++        for ($i = $this->pointer; $i < $this->numTokens; $i++) {
++            if (! $this->tokens[$i]->isIgnorable()) {
++                return $this->tokens[$i];
++            }
++        }
++
++        return null;
++    }
++
+     private function parseNamespace(): string
+     {
+         while ($token = $this->next()) {
+diff --git a/tests/Unit/Type/Parser/LexingParserTest.php b/tests/Unit/Type/Parser/LexingParserTest.php
+index be8d5b6..b907f6d 100644
+--- a/tests/Unit/Type/Parser/LexingParserTest.php
++++ b/tests/Unit/Type/Parser/LexingParserTest.php
+@@ -1583,6 +1583,22 @@ final class LexingParserTest extends UnitTestCase
+         self::assertSame('Missing closing curly bracket in `list{string`.', $type->message());
+     }
+ 
++    public function test_shaped_array_missing_closing_bracket_with_no_element_throws_exception(): void
++    {
++        $type = $this->parse('array{');
++
++        self::assertInstanceOf(UnresolvableType::class, $type);
++        self::assertSame('Missing closing curly bracket in `array{`.', $type->message());
++    }
++
++    public function test_shaped_list_missing_closing_bracket_with_no_element_throws_exception(): void
++    {
++        $type = $this->parse('list{');
++
++        self::assertInstanceOf(UnresolvableType::class, $type);
++        self::assertSame('Missing closing curly bracket in `list{`.', $type->message());
++    }
++
+     public function test_shaped_list_missing_closing_bracket_after_optional_element_throws_exception(): void
+     {
+         $type = $this->parse('list{0: string, 1?: int');
+diff --git a/tests/Unit/Type/Types/IntegerRangeTypeTest.php b/tests/Unit/Type/Types/IntegerRangeTypeTest.php
+index 8e0183c..3c7a7ef 100644
+--- a/tests/Unit/Type/Types/IntegerRangeTypeTest.php
++++ b/tests/Unit/Type/Types/IntegerRangeTypeTest.php
+@@ -15,6 +15,8 @@ use CuyZ\Valinor\Type\Types\IntegerRangeType;
+ use CuyZ\Valinor\Type\Types\IntegerValueType;
+ use CuyZ\Valinor\Type\Types\MixedType;
+ use CuyZ\Valinor\Type\Types\NegativeIntegerType;
++use CuyZ\Valinor\Type\Types\NonNegativeIntegerType;
++use CuyZ\Valinor\Type\Types\NonPositiveIntegerType;
+ use CuyZ\Valinor\Type\Types\PositiveIntegerType;
+ use CuyZ\Valinor\Type\Types\ScalarConcreteType;
+ use CuyZ\Valinor\Type\Types\UnionType;
+@@ -85,14 +87,28 @@ final class IntegerRangeTypeTest extends UnitTestCase
+         self::assertTrue((new IntegerRangeType(-42, 42))->matches(new IntegerRangeType(-42, 42)));
+     }
+ 
+-    public function test_does_not_match_same_type_with_different_range(): void
++    public function test_matches_wider_range(): void
+     {
+-        self::assertFalse((new IntegerRangeType(-42, 42))->matches(new IntegerRangeType(-1337, 42)));
++        self::assertTrue((new IntegerRangeType(-42, 42))->matches(new IntegerRangeType(-1337, 42)));
++        self::assertTrue((new IntegerRangeType(-42, 42))->matches(new IntegerRangeType(-1337, 1337)));
+     }
+ 
+-    public function test_matches_integer_value_when_value_is_in_range(): void
++    public function test_does_not_match_narrower_range(): void
+     {
+-        self::assertTrue((new IntegerRangeType(42, 1337))->matches(new IntegerValueType(42)));
++        self::assertFalse((new IntegerRangeType(-1337, 42))->matches(new IntegerRangeType(-42, 42)));
++        self::assertFalse((new IntegerRangeType(-1337, 1337))->matches(new IntegerRangeType(-42, 42)));
++    }
++
++    public function test_does_not_match_overlapping_range(): void
++    {
++        self::assertFalse((new IntegerRangeType(0, 100))->matches(new IntegerRangeType(50, 150)));
++    }
++
++    public function test_does_not_match_integer_value_in_range(): void
++    {
++        // A range is not a subtype of one of its own values: an `int<42, 1337>`
++        // is not necessarily 42.
++        self::assertFalse((new IntegerRangeType(42, 1337))->matches(new IntegerValueType(42)));
+     }
+ 
+     public function test_does_not_match_integer_value_when_value_is_not_in_range(): void
+@@ -100,6 +116,18 @@ final class IntegerRangeTypeTest extends UnitTestCase
+         self::assertFalse((new IntegerRangeType(42, 1337))->matches(new IntegerValueType(-1337)));
+     }
+ 
++    public function test_matches_non_negative_integer_when_range_is_non_negative(): void
++    {
++        self::assertTrue((new IntegerRangeType(0, 1337))->matches(new NonNegativeIntegerType()));
++        self::assertFalse((new IntegerRangeType(-1, 1337))->matches(new NonNegativeIntegerType()));
++    }
++
++    public function test_matches_non_positive_integer_when_range_is_non_positive(): void
++    {
++        self::assertTrue((new IntegerRangeType(-1337, 0))->matches(new NonPositiveIntegerType()));
++        self::assertFalse((new IntegerRangeType(-1337, 1))->matches(new NonPositiveIntegerType()));
++    }
++
+     public function test_matches_positive_integer_when_range_is_positive(): void
+     {
+         self::assertTrue((new IntegerRangeType(42, 1337))->matches(new PositiveIntegerType()));
+diff --git a/tests/Unit/Type/Types/PositiveIntegerTypeTest.php b/tests/Unit/Type/Types/PositiveIntegerTypeTest.php
+index 5b82080..f0367ad 100644
+--- a/tests/Unit/Type/Types/PositiveIntegerTypeTest.php
++++ b/tests/Unit/Type/Types/PositiveIntegerTypeTest.php
+@@ -12,6 +12,7 @@ use CuyZ\Valinor\Type\Types\ArrayKeyType;
+ use CuyZ\Valinor\Type\Types\MixedType;
+ use CuyZ\Valinor\Type\Types\NativeIntegerType;
+ use CuyZ\Valinor\Type\Types\NegativeIntegerType;
++use CuyZ\Valinor\Type\Types\NonNegativeIntegerType;
+ use CuyZ\Valinor\Type\Types\PositiveIntegerType;
+ use CuyZ\Valinor\Type\Types\ScalarConcreteType;
+ use CuyZ\Valinor\Type\Types\UnionType;
+@@ -67,6 +68,14 @@ final class PositiveIntegerTypeTest extends UnitTestCase
+         self::assertFalse($this->positiveIntegerType->matches(new NegativeIntegerType()));
+     }
+ 
++    public function test_matches_non_negative_integer_type(): void
++    {
++        // Every positive integer is non-negative, so the interval [1, max] is
++        // contained in [0, max]; the reverse does not hold.
++        self::assertTrue($this->positiveIntegerType->matches(new NonNegativeIntegerType()));
++        self::assertFalse((new NonNegativeIntegerType())->matches($this->positiveIntegerType));
++    }
++
+     public function test_does_not_match_other_type(): void
+     {
+         self::assertFalse($this->positiveIntegerType->matches(new FakeType()));
+diff --git a/tests/Unit/Utility/Reflection/Fixtures/ClassWithTraitImport.php b/tests/Unit/Utility/Reflection/Fixtures/ClassWithTraitImport.php
+new file mode 100644
+index 0000000..ea25d9d
+--- /dev/null
++++ b/tests/Unit/Utility/Reflection/Fixtures/ClassWithTraitImport.php
+@@ -0,0 +1,32 @@
++<?php
++
++declare(strict_types=1);
++
++namespace CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures;
++
++use Closure;
++use CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures\SubDir\Bar as BarAlias;
++use CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures\SubDir\Foo;
++
++trait TraitForImport
++{
++    public function traitMethod(): string
++    {
++        return self::class;
++    }
++}
++
++final class ClassWithTraitImport
++{
++    // A trait import is spelled `use` and imports no namespace. Read as an
++    // import statement, its aliasing block makes `foo` resolve to the trait
++    // name concatenated with the aliased method name.
++    use TraitForImport {
++        traitMethod as foo;
++    }
++
++    public function closure(): Closure
++    {
++        return fn (BarAlias $bar): Foo => new Foo();
++    }
++}
+diff --git a/tests/Unit/Utility/Reflection/Fixtures/FunctionAfterClosureWithCapture.php b/tests/Unit/Utility/Reflection/Fixtures/FunctionAfterClosureWithCapture.php
+new file mode 100644
+index 0000000..20edc10
+--- /dev/null
++++ b/tests/Unit/Utility/Reflection/Fixtures/FunctionAfterClosureWithCapture.php
+@@ -0,0 +1,22 @@
++<?php
++
++declare(strict_types=1);
++
++namespace CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures;
++
++use CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures\SubDir\Bar as BarAlias;
++use CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures\SubDir\Foo;
++
++function function_with_closure_capture(bool $captured): callable
++{
++    // A closure capture is spelled `use` and imports nothing. Read as an import
++    // statement, it makes every name this body mentions resolve to the closure's
++    // return type concatenated with that name.
++    return static function (object $value) use ($captured): bool {
++        $accepted = [Foo::class, BarAlias::class];
++
++        return $captured && $accepted[0] === $value::class;
++    };
++}
++
++function function_after_closure_with_capture(Foo $foo, BarAlias $bar): void {}
+diff --git a/tests/Unit/Utility/Reflection/PhpParserTest.php b/tests/Unit/Utility/Reflection/PhpParserTest.php
+index 7ed84ab..88016e5 100644
+--- a/tests/Unit/Utility/Reflection/PhpParserTest.php
++++ b/tests/Unit/Utility/Reflection/PhpParserTest.php
+@@ -10,6 +10,7 @@ use CuyZ\Valinor\Tests\Fixtures\WithAliasB\ClassB;
+ use CuyZ\Valinor\Tests\Unit\UnitTestCase;
+ use CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures\ClassInSingleNamespace;
+ use CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures\ClassWithImport;
++use CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures\ClassWithTraitImport;
+ use CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures\SubDir\Bar;
+ use CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures\SubDir\Foo;
+ use CuyZ\Valinor\Utility\Reflection\PhpParser;
+@@ -28,6 +29,7 @@ require_once __DIR__ . '/Fixtures/TwoClassesInDifferentNamespaces.php';
+ require_once __DIR__ . '/Fixtures/FunctionInRootNamespace.php';
+ require_once __DIR__ . '/Fixtures/FunctionWithSeveralImportStatementsInSameUseStatement.php';
+ require_once __DIR__ . '/Fixtures/FunctionWithGroupedImportStatements.php';
++require_once __DIR__ . '/Fixtures/FunctionAfterClosureWithCapture.php';
+ 
+ final class PhpParserTest extends UnitTestCase
+ {
+@@ -185,6 +187,23 @@ final class PhpParserTest extends UnitTestCase
+                 'foo' => Foo::class,
+             ]
+         ];
++
++        yield 'function declared after a closure capturing variables' => [
++            new ReflectionFunction('\CuyZ\Valinor\Tests\Unit\Utility\Reflection\Fixtures\function_after_closure_with_capture'),
++            [
++                'baralias' => Bar::class,
++                'foo' => Foo::class,
++            ]
++        ];
++
++        yield 'closure declared in a class importing a trait' => [
++            new ReflectionFunction((new ClassWithTraitImport())->closure()),
++            [
++                'closure' => Closure::class,
++                'baralias' => Bar::class,
++                'foo' => Foo::class,
++            ]
++        ];
+     }
+ 
+     public function test_can_parse_namespace_for_closure_with_one_level_namespace(): void

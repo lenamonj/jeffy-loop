@@ -46,7 +46,7 @@ Twelve fixes are in other people's code because a maintainer with no stake in th
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](evals/claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
-Behind them: **<!-- count:converged -->92<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **34 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
+Behind them: **<!-- count:converged -->93<!-- /count --> open-source projects run to convergence across <!-- count:languages -->13<!-- /count --> languages**, every run published in full - and **34 attempts that did not converge**, each with the budget it was given before it started and the reason it ran out. Three greenfield builds converged from empty directories under judges the loop could not edit, one of them against a deliberately mutated specification where recalling the real format produces wrong answers.
 
 **[Read the receipts table](#real-world-validation-on-open-source-repositories)**, or the [full record of every attempt ever started](evals/ATTEMPTS.md).
 
@@ -272,7 +272,7 @@ Five guarantees. Each one is enforced by the iteration prompt, the state files, 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
-  <img src="media/language-pie-light.png" alt="Pie chart of the 92 converged public targets by language: Python 19 at 20.7 percent, Rust 14 at 15.2 percent, Go 12 at 13.0 percent, JavaScript 10 at 10.9 percent, C++ 7 at 7.6 percent, C 5 at 5.4 percent, Ruby 5 at 5.4 percent, Java 4 at 4.3 percent, PHP 4 at 4.3 percent, TypeScript 4 at 4.3 percent, C# 3 at 3.3 percent, Swift 3 at 3.3 percent, Kotlin 2 at 2.2 percent." width="900">
+  <img src="media/language-pie-light.png" alt="Pie chart of the 93 converged public targets by language: Python 19 at 20.4 percent, Rust 14 at 15.1 percent, Go 12 at 12.9 percent, JavaScript 10 at 10.8 percent, C++ 7 at 7.5 percent, C 5 at 5.4 percent, PHP 5 at 5.4 percent, Ruby 5 at 5.4 percent, Java 4 at 4.3 percent, TypeScript 4 at 4.3 percent, C# 3 at 3.2 percent, Swift 3 at 3.2 percent, Kotlin 2 at 2.2 percent." width="900">
 </picture>
 
 <sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
@@ -285,9 +285,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->121<!-- /count -->** | **<!-- count:fixed -->93<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->32<!-- /count -->** | **<!-- count:merged -->11<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->122<!-- /count -->** | **<!-- count:fixed -->94<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->33<!-- /count -->** | **<!-- count:merged -->11<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->92<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->93<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence; every one is published.
 
 <sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](evals/ATTEMPTS.md).</sub>
 
@@ -324,6 +324,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 | i18n | Ruby | [details](evals/i18n/REPORT.md) - a pluralized lookup handed out the store's own String - [PR open](https://github.com/ruby-i18n/i18n/pull/751) | Fixed |
 | kotlinx-io | Kotlin | [details](evals/kotlinx-io/REPORT.md) - the temporary directory was an empty path when TMPDIR was unset - [PR open](https://github.com/Kotlin/kotlinx-io/pull/521) | Fixed |
 | shouldly | C# | [details](evals/shouldly/REPORT.md) - a failing dictionary assertion over a pair sequence threw InvalidCastException - [PR open](https://github.com/shouldly/shouldly/pull/1335) | Fixed |
+| valinor | PHP | [details](evals/valinor/REPORT.md) - a captured closure earlier in the file made registerConstructor resolve a class that does not exist - [PR open](https://github.com/CuyZ/Valinor/pull/838) | Fixed |
 | mustache.js | JavaScript | [details](evals/mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](evals/spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](evals/quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
