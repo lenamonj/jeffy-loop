@@ -151,6 +151,7 @@ loss rather than hiding it.
 | uuid | 1 | 10 | converged | evaluator countersigned | 0 |
 | swift-log | 2 | 16 | converged | evaluator countersigned | 0 |
 | commons-cli | 2 | 20 | converged | evaluator countersigned | 1 |
+| jansson | 1 | 10 | converged | evaluator countersigned | 0 |
 | i18n | 2 | 14 | converged | evaluator countersigned | 0 |
 | kotlinx-io | 2 | 19 | converged | evaluator countersigned | 0 |
 | csv | 4 | 37 | converged | evaluator countersigned | 0 |

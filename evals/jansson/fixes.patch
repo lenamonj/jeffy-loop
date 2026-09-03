@@ -1,0 +1,148 @@
+diff --git a/.gitignore b/.gitignore
+index 0a985b4..6d56eaf 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -34,4 +34,5 @@ stamp-h1
+ .idea
+ cmake-build-debug/
+ *.log
+-*.trs
+\ No newline at end of file
++*.trs
++.claude/jeffy-loop.local.md
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c5d7a7b..6466cd8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -318,8 +318,20 @@ if(JANSSON_BUILD_SHARED_LIBS)
+ 
+    if (SYMVER_WORKS)
+       set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--default-symver")
++# An anonymous version node restricts the exported set without naming a version
++# of its own, so the symbols keep the default version --default-symver gives
++# them and the ABI is unchanged.
++      file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/jansson.sym" "{
++    global:
++          json_*;
++          jansson_*;
++    local:
++          *;
++};
++")
+    else()
+-# some linkers may only support --version-script
++# some linkers may only support --version-script, and there the script also
++# carries the version name the symbols would otherwise not have
+       file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/jansson.sym" "JANSSON_${JANSSON_SOVERSION} {
+     global:
+           json_*;
+@@ -328,8 +340,16 @@ if(JANSSON_BUILD_SHARED_LIBS)
+           *;
+ };
+ ")
+-      list(APPEND CMAKE_REQUIRED_LIBRARIES "-shared -Wl,--version-script,${CMAKE_CURRENT_BINARY_DIR}/jansson.sym")
+-      check_c_source_compiles(
++   endif()
++
++# Either way the version script is what limits the exported set to the public
++# API, matching the autotools build's -export-symbols-regex '^json_|^jansson_'
++# in src/Makefile.am. Without it the shared library also exports every internal
++# symbol - dtoa, gethex, the hashtable_, jsonp_, strbuffer_ and utf8_ families -
++# where they can be interposed by, or interpose on, another library in the same
++# process.
++   list(APPEND CMAKE_REQUIRED_LIBRARIES "-shared -Wl,--version-script,${CMAKE_CURRENT_BINARY_DIR}/jansson.sym")
++   check_c_source_compiles(
+    "
+    int function (void)
+    {
+@@ -338,10 +358,9 @@ if(JANSSON_BUILD_SHARED_LIBS)
+    "
+    VSCRIPT_WORKS
+    )
+-      list(REMOVE_ITEM CMAKE_REQUIRED_LIBRARIES "-shared -Wl,--version-script,${CMAKE_CURRENT_BINARY_DIR}/jansson.sym")
+-      if (VSCRIPT_WORKS)
+-         set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--version-script,${CMAKE_CURRENT_BINARY_DIR}/jansson.sym")
+-      endif()
++   list(REMOVE_ITEM CMAKE_REQUIRED_LIBRARIES "-shared -Wl,--version-script,${CMAKE_CURRENT_BINARY_DIR}/jansson.sym")
++   if (VSCRIPT_WORKS)
++      set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--version-script,${CMAKE_CURRENT_BINARY_DIR}/jansson.sym")
+    endif()
+ 
+    set_target_properties(jansson PROPERTIES
+@@ -508,7 +527,8 @@ if (NOT JANSSON_WITHOUT_TESTS)
+          test_pack
+          test_simple
+          test_sprintf
+-         test_unpack)
++         test_unpack
++         test_version)
+ 
+    # Doing arithmetic on void pointers is not allowed by Microsofts compiler
+    # such as secure_malloc and secure_free is doing, so exclude it for now.
+@@ -577,6 +597,20 @@ if (NOT JANSSON_WITHOUT_TESTS)
+        endforeach ()
+    endforeach ()
+ 
++   # Symbol visibility of the shared library: the set it exports must be
++   # exactly what src/jansson.def promises, no more and no less. Nothing else
++   # in this test path grades that, which is how a shared build that also
++   # exported every internal symbol - dtoa, gethex, the hashtable_, jsonp_,
++   # strbuffer_ and utf8_ families - went unnoticed here while the autotools
++   # build hid them. The script exits 77 where "nm -D" is not the GNU one.
++   if (JANSSON_BUILD_SHARED_LIBS AND UNIX)
++      add_test(NAME check-exports
++               COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/test/suites/api/check-exports
++                       $<TARGET_FILE:jansson>
++                       ${CMAKE_CURRENT_SOURCE_DIR}/src/jansson.def)
++      set_tests_properties(check-exports PROPERTIES SKIP_RETURN_CODE 77)
++   endif ()
++
+    if (JANSSON_COVERAGE)
+       SETUP_TARGET_FOR_COVERAGE(coverage coverage ctest)
+    endif ()
+diff --git a/doc/apiref.rst b/doc/apiref.rst
+index b19f62e..3b75d65 100644
+--- a/doc/apiref.rst
++++ b/doc/apiref.rst
+@@ -1948,7 +1948,7 @@ behavior is needed.
+    Jansson's API functions to ensure that all memory operations use
+    the same functions.
+ 
+-.. function:: void json_set_alloc_funcs2(json_malloc_t malloc_fn, json_relloc_t relloc_fn, json_free_t free_fn)
++.. function:: void json_set_alloc_funcs2(json_malloc_t malloc_fn, json_realloc_t realloc_fn, json_free_t free_fn)
+ 
+    Use *malloc_fn* instead of :func:`malloc()`, *realloc_fn* instead of :func:`realloc()` and *free_fn* instead
+    of :func:`free()`. This function has to be called before any other
+diff --git a/test/suites/api/check-exports b/test/suites/api/check-exports
+index 5c82064..2145417 100755
+--- a/test/suites/api/check-exports
++++ b/test/suites/api/check-exports
+@@ -3,16 +3,25 @@
+ # This test checks that libjansson.so exports the correct symbols.
+ #
+ 
+-SOFILE="../src/.libs/libjansson.so"
++# The autotools suite runs this with $top_srcdir and $test_log already set and
++# the library in its libtool output directory. The CMake suite passes the two
++# paths as arguments instead, because it builds elsewhere and has no $test_log.
++SOFILE="${1:-../src/.libs/libjansson.so}"
++DEFFILE="${2:-$top_srcdir/src/jansson.def}"
++
++if [ -z "$test_log" ]; then
++    test_log=$(mktemp -d) || exit 1
++    trap 'rm -rf "$test_log"' EXIT
++fi
+ 
+ # The list of symbols, which the shared object should export, is read
+ # from the def file, which is used in Windows builds
+-grep 'json_\|jansson_' $top_srcdir/src/jansson.def \
++grep 'json_\|jansson_' "$DEFFILE" \
+     | sed -e 's/ //g' \
+     | sort \
+     >$test_log/exports
+ 
+-nm -D $SOFILE >/dev/null >$test_log/symbols 2>/dev/null \
++nm -D "$SOFILE" >/dev/null >$test_log/symbols 2>/dev/null \
+     || exit 77  # Skip if "nm -D" doesn't seem to work
+ 
+ grep ' [DT] ' $test_log/symbols | cut -d' ' -f3 | grep -v '^_' | sed 's/@@libjansson.*//' | sort >$test_log/output
