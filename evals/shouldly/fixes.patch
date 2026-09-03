@@ -1,0 +1,418 @@
+diff --git a/.gitignore b/.gitignore
+index 56399af5..ec5e81e5 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -38,3 +38,4 @@ src/*.Tests/report.xml
+ .idea.*
+ UpgradeLog*.htm
+ UpgradeLog*.XML
++.claude/jeffy-loop.local.md
+diff --git a/src/Shouldly.Tests/Dictionaries/NonDictionaryKeyValueSequences.cs b/src/Shouldly.Tests/Dictionaries/NonDictionaryKeyValueSequences.cs
+new file mode 100644
+index 00000000..fc1e0c8e
+--- /dev/null
++++ b/src/Shouldly.Tests/Dictionaries/NonDictionaryKeyValueSequences.cs
+@@ -0,0 +1,111 @@
++namespace Shouldly.Tests.Dictionaries;
++
++/// <summary>
++/// The dictionary assertions accept any <see cref="IEnumerable{T}"/> of <see cref="KeyValuePair{TKey,TValue}"/>,
++/// which is wider than the non-generic <see cref="System.Collections.IDictionary"/>. The value-side message
++/// generators used to cast to <c>IDictionary</c>, so a failure over a plain pair sequence — a list, an array,
++/// or any LINQ projection over a dictionary — threw <see cref="System.InvalidCastException"/> instead of
++/// reporting the failure. Only the failing path was affected, so the assertion looked healthy until it was
++/// asked to diagnose something. See SH-005.
++/// </summary>
++public class NonDictionaryKeyValueSequences
++{
++    private static IEnumerable<KeyValuePair<string, int>> PairList() =>
++        new List<KeyValuePair<string, int>> { new("a", 1) };
++
++    private static Dictionary<string, int> Dictionary() =>
++        new() { ["a"] = 1 };
++
++    [Fact]
++    public void ShouldContainKeyAndValueReportsAWrongValue()
++    {
++        var exception = Should.Throw<ShouldAssertException>(() =>
++            PairList().ShouldContainKeyAndValue("a", 2));
++
++        exception.Message.ShouldContain("a");
++        exception.Message.ShouldContain("but value was");
++    }
++
++    [Fact]
++    public void ShouldContainKeyAndValueReportsAMissingKey()
++    {
++        var exception = Should.Throw<ShouldAssertException>(() =>
++            PairList().ShouldContainKeyAndValue("z", 1));
++
++        exception.Message.ShouldContain("but the key does not exist");
++    }
++
++    [Fact]
++    public void ShouldNotContainValueForKeyReportsAPresentPair()
++    {
++        var exception = Should.Throw<ShouldAssertException>(() =>
++            PairList().ShouldNotContainValueForKey("a", 1));
++
++        exception.Message.ShouldContain("but does");
++    }
++
++    [Fact]
++    public void ShouldNotContainValueForKeyReportsAMissingKey()
++    {
++        var exception = Should.Throw<ShouldAssertException>(() =>
++            PairList().ShouldNotContainValueForKey("z", 1));
++
++        exception.Message.ShouldContain("but the key does not exist");
++    }
++
++    [Fact]
++    public void ArrayOfPairsReportsAWrongValue()
++    {
++        KeyValuePair<string, int>[] pairs = [new("a", 1)];
++
++        Should.Throw<ShouldAssertException>(() =>
++            pairs.ShouldContainKeyAndValue("a", 2));
++    }
++
++    [Fact]
++    public void LinqProjectionOverADictionaryReportsAWrongValue()
++    {
++        var exception = Should.Throw<ShouldAssertException>(() =>
++            Dictionary().Where(pair => true).ShouldContainKeyAndValue("a", 999));
++
++        exception.Message.ShouldContain("but value was");
++    }
++
++    [Fact]
++    public void LinqProjectionOverADictionaryReportsAPresentPair()
++    {
++        Should.Throw<ShouldAssertException>(() =>
++            Dictionary().Select(pair => pair).ShouldNotContainValueForKey("a", 1));
++    }
++
++    [Fact]
++    public void PassingAssertionsAreUnaffected()
++    {
++        PairList().ShouldContainKeyAndValue("a", 1);
++        PairList().ShouldNotContainValueForKey("a", 2);
++        PairList().ShouldContainKey("a");
++        PairList().ShouldNotContainKey("z");
++    }
++
++    [Fact]
++    public void CollectionValuesStillCompareStructurallyOverAPairSequence()
++    {
++        IEnumerable<KeyValuePair<string, int[]>> pairs =
++            new List<KeyValuePair<string, int[]>> { new("k", [1, 2, 3]) };
++
++        pairs.ShouldContainKeyAndValue("k", [1, 2, 3]);
++        Should.Throw<ShouldAssertException>(() => pairs.ShouldContainKeyAndValue("k", [1, 2, 4]));
++    }
++
++    [Fact]
++    public void NullValuesAreReportedOverAPairSequence()
++    {
++        IEnumerable<KeyValuePair<string, string?>> pairs =
++            new List<KeyValuePair<string, string?>> { new("k", null) };
++
++        var exception = Should.Throw<ShouldAssertException>(() =>
++            pairs.ShouldContainKeyAndValue("k", "x"));
++
++        exception.Message.ShouldContain("but value was");
++    }
++}
+diff --git a/src/Shouldly.Tests/ShouldBe/HalfScenarios.cs b/src/Shouldly.Tests/ShouldBe/HalfScenarios.cs
+index 9ab9d2f7..688c9aa0 100644
+--- a/src/Shouldly.Tests/ShouldBe/HalfScenarios.cs
++++ b/src/Shouldly.Tests/ShouldBe/HalfScenarios.cs
+@@ -18,6 +18,81 @@ public class HalfScenarios
+         object h2 = (Half)12345;
+         h1.ShouldBe(h2);
+     }
++
++    // Half is accepted by the numeric-type test but does not implement IConvertible,
++    // so every Convert.To* path in the comparison cascade used to throw
++    // InvalidCastException when a boxed Half met a numeric of any other type. That
++    // is 22 pairings - eleven other numeric types, either operand position - and all
++    // of them crashed out of the library rather than returning a verdict. See SH-001.
++
++    public static TheoryData<object> OtherNumericOne() =>
++    [
++        1.0d, 1.0f, 1.0m, 1, 1u, 1L, 1UL, (short)1, (ushort)1, (byte)1, (sbyte)1
++    ];
++
++    [Theory]
++    [MemberData(nameof(OtherNumericOne))]
++    public void MixedWithAnotherNumericType_ComparesEqualWhenNumericallyEqual(object other)
++    {
++        object half = (Half)1;
++
++        half.ShouldBe(other);
++        other.ShouldBe(half);
++    }
++
++    [Theory]
++    [MemberData(nameof(OtherNumericOne))]
++    public void MixedWithAnotherNumericType_ComparesUnequalWhenNumericallyDifferent(object other)
++    {
++        object half = (Half)2;
++
++        Should.Throw<ShouldAssertException>(() => half.ShouldBe(other));
++        Should.Throw<ShouldAssertException>(() => other.ShouldBe(half));
++    }
++
++    [Fact]
++    public void MixedWithAnotherNumericType_HonoursFractionalValues()
++    {
++        object half = (Half)1.5f;
++
++        half.ShouldBe((object)1.5d);
++        half.ShouldBe((object)1.5f);
++        Should.Throw<ShouldAssertException>(() => half.ShouldBe((object)1));
++        Should.Throw<ShouldAssertException>(() => half.ShouldBe((object)1.6f));
++    }
++
++    [Fact]
++    public void MixedWithAnotherNumericType_HonoursNegativeValues()
++    {
++        object half = (Half)(-2);
++
++        half.ShouldBe((object)(-2));
++        Should.Throw<ShouldAssertException>(() => half.ShouldBe((object)2));
++    }
++
++    [Fact]
++    public void MixedWithAnotherNumericType_KeepsNaNAndInfinitySemantics()
++    {
++        ((object)Half.NaN).ShouldBe((object)double.NaN);
++        ((object)Half.PositiveInfinity).ShouldBe((object)double.PositiveInfinity);
++        Should.Throw<ShouldAssertException>(() => ((object)Half.PositiveInfinity).ShouldBe((object)1.0d));
++    }
++
++    [Fact]
++    public void MixedWithAnotherNumericType_WorksInsideCollections()
++    {
++        new object[] { (Half)1 }.ShouldBe(new object[] { 1.0f });
++        Should.Throw<ShouldAssertException>(() => new object[] { (Half)1 }.ShouldBe(new object[] { 2.0f }));
++    }
++
++    [Fact]
++    public void MixedWithAnotherNumericType_WorksForShouldNotBe()
++    {
++        object half = (Half)1;
++
++        half.ShouldNotBe((object)2);
++        Should.Throw<ShouldAssertException>(() => half.ShouldNotBe((object)1));
++    }
+ }
+ 
+ #endif
+\ No newline at end of file
+diff --git a/src/Shouldly/Internals/Numerics.cs b/src/Shouldly/Internals/Numerics.cs
+index 066fd2b8..edb02a39 100644
+--- a/src/Shouldly/Internals/Numerics.cs
++++ b/src/Shouldly/Internals/Numerics.cs
+@@ -31,6 +31,10 @@ static class Numerics
+     /// <returns>True if the values are equal</returns>
+     public static bool AreEqual(object expected, object actual, ref Tolerance tolerance)
+     {
++#if NET5_0_OR_GREATER
++        WidenMixedHalf(ref expected, ref actual);
++#endif
++
+         if (expected is double || actual is double)
+             return AreEqual(Convert.ToDouble(expected), Convert.ToDouble(actual), ref tolerance);
+ 
+@@ -307,6 +311,36 @@ static class Numerics
+         }
+     }
+ 
++#if NET5_0_OR_GREATER
++    /// <summary>
++    ///     Widens a <see cref="Half" /> to <see cref="double" /> when it is paired with a
++    ///     numeric of any other type.
++    /// </summary>
++    /// <remarks>
++    ///     <see cref="IsNumericType" /> accepts <see cref="Half" />, but <see cref="Half" /> does not
++    ///     implement <see cref="IConvertible" />, so every <c>Convert.To*</c> call in the cascades below
++    ///     throws <see cref="InvalidCastException" /> when handed one. Comparing a boxed
++    ///     <see cref="Half" /> against any other numeric type therefore crashed out of the library
++    ///     instead of returning a verdict. Widening to <see cref="double" /> is exact - a
++    ///     <see cref="Half" /> has an 11-bit significand and a <see cref="double" /> has 53 - so the
++    ///     comparison the caller asked for is performed rather than approximated.
++    ///
++    ///     A Half-to-Half pair is deliberately left alone: <c>AreEqual</c> has its own branch for it,
++    ///     which supports only <see cref="ToleranceMode.None" /> and rejects the other modes, and
++    ///     widening here would silently change that contract.
++    /// </remarks>
++    private static void WidenMixedHalf(ref object expected, ref object actual)
++    {
++        if (expected is Half && actual is Half)
++            return;
++
++        if (expected is Half left)
++            expected = (double)left;
++        else if (actual is Half right)
++            actual = (double)right;
++    }
++#endif
++
+     /// <summary>
+     ///     Compare two numeric values, performing the usual numeric conversions.
+     /// </summary>
+@@ -318,6 +352,14 @@ static class Numerics
+         if (!IsNumericType(expected) || !IsNumericType(actual))
+             throw new ArgumentException("Both arguments must be numeric");
+ 
++#if NET5_0_OR_GREATER
++        // Compare has no Half branch of its own, so an all-Half pair is widened
++        // here too rather than falling through to Convert.ToInt32.
++        WidenMixedHalf(ref expected, ref actual);
++        if (expected is Half bothLeft) expected = (double)bothLeft;
++        if (actual is Half bothRight) actual = (double)bothRight;
++#endif
++
+         if (expected is double or float || actual is double or float)
+             return Convert.ToDouble(expected).CompareTo(Convert.ToDouble(actual));
+ 
+diff --git a/src/Shouldly/MessageGenerators/DictionaryMessageLookup.cs b/src/Shouldly/MessageGenerators/DictionaryMessageLookup.cs
+new file mode 100644
+index 00000000..5b7556cc
+--- /dev/null
++++ b/src/Shouldly/MessageGenerators/DictionaryMessageLookup.cs
+@@ -0,0 +1,81 @@
++namespace Shouldly.MessageGenerators;
++
++/// <summary>
++/// Looks a key up in the value the dictionary assertions were handed, for the sole purpose of
++/// formatting their failure message.
++/// </summary>
++/// <remarks>
++/// The dictionary assertions accept <see cref="IEnumerable{T}"/> of <see cref="KeyValuePair{TKey,TValue}"/>
++/// (see the comment in <c>ShouldBeDictionaryTestExtensions</c>), which is deliberately wider than the
++/// non-generic <see cref="IDictionary"/>: a <c>List&lt;KeyValuePair&lt;,&gt;&gt;</c>, an array of pairs and any
++/// LINQ projection over a dictionary all satisfy it without implementing <see cref="IDictionary"/>. The
++/// message generators used to cast to <see cref="IDictionary"/> outright, which turned every failure over
++/// one of those shapes into an <see cref="InvalidCastException"/> — and only on the failing path, so the
++/// assertion looked healthy right up to the moment it was supposed to report a problem. See SH-005.
++/// </remarks>
++static class DictionaryMessageLookup
++{
++    /// <summary>
++    /// Returns whether <paramref name="key"/> is present in <paramref name="actual"/>, and its value when it is.
++    /// </summary>
++    public static bool TryGetValue(object? actual, object key, out object? value)
++    {
++        // Fast path, and the one that preserves the dictionary's own key comparer: every BCL
++        // dictionary reaches this branch, so their messages are produced exactly as before.
++        if (actual is IDictionary dictionary)
++        {
++            if (dictionary.Contains(key))
++            {
++                value = dictionary[key];
++                return true;
++            }
++
++            value = null;
++            return false;
++        }
++
++        if (actual is IEnumerable sequence)
++        {
++            foreach (var entry in sequence)
++            {
++                if (entry == null)
++                    continue;
++
++                if (TryReadPair(entry, out var entryKey, out var entryValue) && Equals(entryKey, key))
++                {
++                    value = entryValue;
++                    return true;
++                }
++            }
++        }
++
++        value = null;
++        return false;
++    }
++
++    // The element is a boxed KeyValuePair<TKey, TValue> whose closed generic type is already
++    // constructed by the caller, so its Key and Value properties are read off that type directly —
++    // no MakeGenericType, and nothing that native AOT cannot resolve. The same shape is used by
++    // ReflectionShapeProvider for dictionary entries.
++    [UnconditionalSuppressMessage("Trimming", "IL2075",
++        Justification = "Targets KeyValuePair<TKey, TValue> — a BCL type whose public Key and Value properties are part of its stable contract and preserved by the trimmer.")]
++    private static bool TryReadPair(object entry, out object? key, out object? value)
++    {
++        var type = entry.GetType();
++        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(KeyValuePair<,>))
++        {
++            var keyProperty = type.GetProperty(nameof(KeyValuePair<int, int>.Key));
++            var valueProperty = type.GetProperty(nameof(KeyValuePair<int, int>.Value));
++            if (keyProperty != null && valueProperty != null)
++            {
++                key = keyProperty.GetValue(entry);
++                value = valueProperty.GetValue(entry);
++                return true;
++            }
++        }
++
++        key = null;
++        value = null;
++        return false;
++    }
++}
+diff --git a/src/Shouldly/MessageGenerators/DictionaryShouldContainKeyAndValueMessageGenerator.cs b/src/Shouldly/MessageGenerators/DictionaryShouldContainKeyAndValueMessageGenerator.cs
+index 266da1ea..0a89fd39 100644
+--- a/src/Shouldly/MessageGenerators/DictionaryShouldContainKeyAndValueMessageGenerator.cs
++++ b/src/Shouldly/MessageGenerators/DictionaryShouldContainKeyAndValueMessageGenerator.cs
+@@ -9,7 +9,6 @@ class DictionaryShouldContainKeyAndValueMessageGenerator : ShouldlyMessageGenera
+ 
+     public override string GenerateErrorMessage(IShouldlyAssertionContext context)
+     {
+-        Debug.Assert(context.Actual is IDictionary);
+         Debug.Assert(context.Key is object);
+ 
+         const string format =
+@@ -23,14 +22,13 @@ class DictionaryShouldContainKeyAndValueMessageGenerator : ShouldlyMessageGenera
+             """;
+ 
+         var codePart = context.CodePart;
+-        var dictionary = (IDictionary)context.Actual;
+-        var keyExists = dictionary.Contains(context.Key);
++        var keyExists = DictionaryMessageLookup.TryGetValue(context.Actual, context.Key, out var actualValue);
+         var expected = context.Expected.ToStringAwesomely();
+         var keyValue = context.Key.ToStringAwesomely();
+ 
+         if (keyExists)
+         {
+-            var actualValueString = dictionary[context.Key].ToStringAwesomely();
++            var actualValueString = actualValue.ToStringAwesomely();
+             var valueString =
+                 $"""
+                      but value was
+diff --git a/src/Shouldly/MessageGenerators/DictionaryShouldNotContainValueForKeyMessageGenerator.cs b/src/Shouldly/MessageGenerators/DictionaryShouldNotContainValueForKeyMessageGenerator.cs
+index 17729d4d..53971fb3 100644
+--- a/src/Shouldly/MessageGenerators/DictionaryShouldNotContainValueForKeyMessageGenerator.cs
++++ b/src/Shouldly/MessageGenerators/DictionaryShouldNotContainValueForKeyMessageGenerator.cs
+@@ -8,7 +8,6 @@ class DictionaryShouldNotContainValueForKeyMessageGenerator : ShouldlyMessageGen
+ 
+     public override string GenerateErrorMessage(IShouldlyAssertionContext context)
+     {
+-        Debug.Assert(context.Actual is IDictionary);
+         Debug.Assert(context.Key is object);
+ 
+         const string format =
+@@ -22,8 +21,7 @@ class DictionaryShouldNotContainValueForKeyMessageGenerator : ShouldlyMessageGen
+             """;
+ 
+         var codePart = context.CodePart;
+-        var dictionary = (IDictionary)context.Actual;
+-        var keyExists = dictionary.Contains(context.Key);
++        var keyExists = DictionaryMessageLookup.TryGetValue(context.Actual, context.Key, out _);
+         var expected = context.Expected.ToStringAwesomely();
+         var keyValue = context.Key.ToStringAwesomely();
+ 
