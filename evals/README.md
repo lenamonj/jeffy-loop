@@ -4,7 +4,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->56<!-- /count -->** | **<!-- count:merged -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->57<!-- /count -->** | **<!-- count:merged -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->100<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
@@ -113,7 +113,7 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | qs | JavaScript | [details](./qs/REPORT.md) - global state leaked | Fixed |
 | claude-code-action | TypeScript | [details](./claude-code-action/REPORT.md) - converged on attempt 2 | Fixed |
 | path-to-regexp | TypeScript | [details](./path-to-regexp/REPORT.md) - 4 REJECTs on evidence | Fixed |
-| claude-agent-sdk-python | Python | [details](./claude-agent-sdk-python/REPORT.md) - converged on attempt 2 | Fixed |
+| claude-agent-sdk-python | Python | [details](./claude-agent-sdk-python/REPORT.md) - converged on attempt 2 - [PR open](https://github.com/anthropics/claude-agent-sdk-python/pull/1247) | Fixed |
 | marshmallow | Python | [details](./marshmallow/REPORT.md) - 3 Highs in load path | Fixed |
 | swift-algorithms | Swift | [details](./swift-algorithms/REPORT.md) - doc examples did not compile | Fixed |
 | magic_enum | C++ | [details](./magic_enum/REPORT.md) - 6 members never compiled | Fixed |
