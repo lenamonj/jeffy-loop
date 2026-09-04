@@ -4,7 +4,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->54<!-- /count -->** | **<!-- count:merged -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->55<!-- /count -->** | **<!-- count:merged -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->100<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
@@ -90,7 +90,7 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | Spectre.Console | C# | [details](./spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](./quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
 | records | Python | [details](./records/REPORT.md) - 4 High data-loss bugs - [issue filed](https://github.com/kennethreitz/records/issues/236) | Fixed |
-| typer | Python | [details](./typer/REPORT.md) - hash seed chose which app runs - [PR closed as a duplicate](https://github.com/fastapi/typer/pull/1946) | Fixed |
+| typer | Python | [details](./typer/REPORT.md) - hash seed chose which app runs - [PR open](https://github.com/fastapi/typer/pull/1952), [PR closed as a duplicate](https://github.com/fastapi/typer/pull/1946) | Fixed |
 | cobra | Go | [details](./cobra/REPORT.md) - timezone-dependent build | Fixed |
 | zod | TypeScript | [details](./zod/REPORT.md) - cyclic value validated | Fixed |
 | commander.js | JavaScript | [details](./commander-js/REPORT.md) - error named wrong argument | Fixed |

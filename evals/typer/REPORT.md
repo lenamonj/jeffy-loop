@@ -19,7 +19,7 @@ extension for the gate-and-declare sequence.
 | Ledger at convergence | 5 Lows carried, named in the closing entry |
 | Evaluator | **1 invocation: PASS** |
 | Suite at convergence | pytest 1372 passed + the 1 declared baseline red |
-| Upstream | [#1946](https://github.com/fastapi/typer/pull/1946) (T2, `docs --output` encoding) closed 2026-08-31 as a duplicate of the open [#1881](https://github.com/fastapi/typer/pull/1881), which the pre-filing search missed; T1 held |
+| Upstream | [#1946](https://github.com/fastapi/typer/pull/1946) (T2, `docs --output` encoding) closed 2026-08-31 as a duplicate of the open [#1881](https://github.com/fastapi/typer/pull/1881), which the pre-filing search missed; T1 filed 2026-09-04 as [#1952](https://github.com/fastapi/typer/pull/1952) after re-verifying it against master `82b8395` (five of eight hash seeds pick the second app) and reading every commit to `typer/cli.py` and the closed issues on the command |
 
 ## What the loop found
 
