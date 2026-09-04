@@ -39,10 +39,10 @@ Jeffy was run against widely-used open-source projects with no connection to thi
 
 A merged pull request is the one outcome the loop cannot award itself. Fifteen projects have merged its patches; four of them:
 
-- **[bat](https://github.com/sharkdp/bat/pull/3862)** - a just-merged security flag did nothing when piped; caught before it ever shipped.
-- **[mimalloc](https://github.com/microsoft/mimalloc/pull/1385)** - a documented zeroing allocator returned uninitialized heap memory above the small-size threshold; merged by the library's author.
-- **[ada](https://github.com/ada-url/ada/pull/1244)** - the URL parser inside Node.js reported `host_end` one byte short and truncated the host; merged forty minutes after filing.
-- **[PapaParse](https://github.com/mholt/PapaParse/pull/1135)** - header de-duplication re-ran after every resume and rewrote data in place; shipped in 5.7.0.
+- **Apple, [swift-log](https://github.com/apple/swift-log/pull/504)** - the attributes setter documented a no-op and asserted instead; merged by the maintainer after he asked for the doc-only form.
+- **Microsoft, [mimalloc](https://github.com/microsoft/mimalloc/pull/1385)** - a documented zeroing allocator returned uninitialized heap memory above the small-size threshold; merged by the library's author the same day.
+- **Node.js, [ada](https://github.com/ada-url/ada/pull/1244)** - the URL parser inside Node.js reported `host_end` one byte short and truncated the host; merged twelve minutes after filing.
+- **JetBrains, [kotlinx-datetime](https://github.com/Kotlin/kotlinx-datetime/pull/650)** - deprecation quick-fixes pointed developers at the wrong replacement; merged within two hours.
 
 **[The full scorecard, every merged patch, and every failure](evals/README.md)**, or the [record of every attempt ever started](evals/ATTEMPTS.md).
 
