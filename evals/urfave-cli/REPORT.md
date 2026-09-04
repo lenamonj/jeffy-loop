@@ -77,3 +77,7 @@ rather than the suite.
 
 Full iteration record: [journal.md](journal.md). Complete shipped diff:
 [fixes.patch](fixes.patch).
+
+## Upstream
+
+[#2423](https://github.com/urfave/cli/pull/2423) (positional arguments keep their whitespace) was filed 2026-08-30 and **merged 2026-09-04** by dearchap, after a reviewer asked how four quoted flag-like inputs behave and got a measured table: unchanged in all four, only a genuine positional now keeps its whitespace.
