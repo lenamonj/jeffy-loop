@@ -16,7 +16,7 @@ of 5 rounds of 10**.
 | Ledger at convergence | 3 Lows carried (see below) |
 | Evaluator | **3 invocations: REJECT, REJECT (round 1, terminal), PASS (round 2)** |
 | Suite at convergence | `mvn -o -Drat.skip=true test`: 980 tests, 0 failures, 11 skipped (972 at base) |
-| Upstream | none - nothing High |
+| Upstream | [#633](https://github.com/apache/commons-csv/pull/633) (CSV-P1, Javadoc only), filed 2026-09-04 after reading JIRA CSV-313 and its commit, whose own test asserts the header is counted |
 
 ## What the loop found
 
