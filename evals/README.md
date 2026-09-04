@@ -4,13 +4,13 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->57<!-- /count -->** | **<!-- count:merged -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->57<!-- /count -->** | **<!-- count:merged -->18<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->100<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
 ## Merged upstream
 
-Fifteen fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Fourteen projects merged patches this loop wrote; the fifteenth is a finding a maintainer found convincing enough to fix himself:
+Sixteen fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Fifteen projects merged patches this loop wrote; the sixteenth is a finding a maintainer found convincing enough to fix himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
@@ -62,6 +62,7 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | kotlinx-datetime | Kotlin | [details](./kotlinx-datetime/REPORT.md) - byUnicodePattern dropped the escaped quote inside a literal, and deprecation quick-fixes pointed at the wrong member - [PR merged](https://github.com/Kotlin/kotlinx-datetime/pull/650), [PR open](https://github.com/Kotlin/kotlinx-datetime/pull/649) | Fixed |
 | indicatif | Rust | [details](./indicatif/REPORT.md) - draw-width underflow panic - [PR merged](https://github.com/console-rs/indicatif/pull/836) | Fixed |
 | csv | PHP | [details](./csv/REPORT.md) - the TimeField separator was matched as a regex, and an empty field was escaped as a formula - [PR merged](https://github.com/thephpleague/csv/pull/592), [PR merged](https://github.com/thephpleague/csv/pull/593), [PR open](https://github.com/thephpleague/csv/pull/591) | Fixed |
+| swift-log | Swift | [details](./swift-log/REPORT.md) - a handler implementing only `log(event:)` overflowed the stack on the 1.0 entry point - [PR merged](https://github.com/apple/swift-log/pull/504), [PR open](https://github.com/apple/swift-log/pull/503) | Fixed |
 | chalk | JavaScript | [details](./chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](./dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](./yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
@@ -77,7 +78,6 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | natsort | Python | [details](./natsort/REPORT.md) - locale sentinel was three ASCII bytes - [PR open](https://github.com/SethMMorton/natsort/pull/196) | Fixed |
 | commons-text | Java | [details](./commons-text/REPORT.md) - LevenshteinDetailedDistance over-reported the distance - [PR open](https://github.com/apache/commons-text/pull/767), [PR open](https://github.com/apache/commons-text/pull/768), [PR open](https://github.com/apache/commons-text/pull/769) | Fixed |
 | uuid | Rust | [details](./uuid/REPORT.md) - v7 counter lost its top four bits to the version nibble - [PR open](https://github.com/uuid-rs/uuid/pull/907) | Fixed |
-| swift-log | Swift | [details](./swift-log/REPORT.md) - a handler implementing only `log(event:)` overflowed the stack on the 1.0 entry point - [PR open](https://github.com/apple/swift-log/pull/503), [PR open](https://github.com/apple/swift-log/pull/504) | Fixed |
 | i18n | Ruby | [details](./i18n/REPORT.md) - a pluralized lookup handed out the store's own String - [PR open](https://github.com/ruby-i18n/i18n/pull/751), [PR open](https://github.com/ruby-i18n/i18n/pull/752) | Fixed |
 | kotlinx-io | Kotlin | [details](./kotlinx-io/REPORT.md) - the temporary directory was an empty path when TMPDIR was unset - [PR open](https://github.com/Kotlin/kotlinx-io/pull/521) | Fixed |
 | shouldly | C# | [details](./shouldly/REPORT.md) - a failing dictionary assertion over a pair sequence threw InvalidCastException - [PR open](https://github.com/shouldly/shouldly/pull/1335) | Fixed |
@@ -86,11 +86,13 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | swift-http-types | Swift | [details](./swift-http-types/REPORT.md) - a schemeless URL trapped an Optional-returning conversion, and the fast path of == ignored two of a field's three stored properties - [PR open](https://github.com/apple/swift-http-types/pull/152), [PR closed](https://github.com/apple/swift-http-types/pull/153) | Fixed |
 | money | Ruby | [details](./money/REPORT.md) - imported JSON rates went through JSON.load, and reset! kept a key cache that turned UnknownCurrency into NoMethodError - [PR open](https://github.com/RubyMoney/money/pull/1227), [PR open](https://github.com/RubyMoney/money/pull/1228) | Fixed |
 | ohash | TypeScript | [details](./ohash/REPORT.md) - the browser digest crashed on a lone surrogate, and diff dropped a leaf-to-container change and overflowed on cycles - [PR open](https://github.com/unjs/ohash/pull/204) | Fixed |
+| typer | Python | [details](./typer/REPORT.md) - hash seed chose which app runs - [PR open](https://github.com/fastapi/typer/pull/1952), [PR closed as a duplicate](https://github.com/fastapi/typer/pull/1946) | Fixed |
+| claude-agent-sdk-python | Python | [details](./claude-agent-sdk-python/REPORT.md) - converged on attempt 2 - [PR open](https://github.com/anthropics/claude-agent-sdk-python/pull/1247) | Fixed |
+| commons-csv | Java | [details](./commons-csv/REPORT.md) - six documented promises the code did not keep, and a serialization skew the loop introduced and caught - [PR open](https://github.com/apache/commons-csv/pull/633) | Fixed |
 | mustache.js | JavaScript | [details](./mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](./spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](./quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
 | records | Python | [details](./records/REPORT.md) - 4 High data-loss bugs - [issue filed](https://github.com/kennethreitz/records/issues/236) | Fixed |
-| typer | Python | [details](./typer/REPORT.md) - hash seed chose which app runs - [PR open](https://github.com/fastapi/typer/pull/1952), [PR closed as a duplicate](https://github.com/fastapi/typer/pull/1946) | Fixed |
 | cobra | Go | [details](./cobra/REPORT.md) - timezone-dependent build | Fixed |
 | zod | TypeScript | [details](./zod/REPORT.md) - cyclic value validated | Fixed |
 | commander.js | JavaScript | [details](./commander-js/REPORT.md) - error named wrong argument | Fixed |
@@ -113,7 +115,6 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | qs | JavaScript | [details](./qs/REPORT.md) - global state leaked | Fixed |
 | claude-code-action | TypeScript | [details](./claude-code-action/REPORT.md) - converged on attempt 2 | Fixed |
 | path-to-regexp | TypeScript | [details](./path-to-regexp/REPORT.md) - 4 REJECTs on evidence | Fixed |
-| claude-agent-sdk-python | Python | [details](./claude-agent-sdk-python/REPORT.md) - converged on attempt 2 - [PR open](https://github.com/anthropics/claude-agent-sdk-python/pull/1247) | Fixed |
 | marshmallow | Python | [details](./marshmallow/REPORT.md) - 3 Highs in load path | Fixed |
 | swift-algorithms | Swift | [details](./swift-algorithms/REPORT.md) - doc examples did not compile | Fixed |
 | magic_enum | C++ | [details](./magic_enum/REPORT.md) - 6 members never compiled | Fixed |
@@ -147,7 +148,6 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | commons-cli | Java | [details](./commons-cli/REPORT.md) - Properties defaults were written onto the caller's Option | Fixed |
 | jansson | C | [details](./jansson/REPORT.md) - the CMake shared build exported 46 internal symbols | Fixed |
 | swift-system | Swift | [details](./swift-system/REPORT.md) - the Windows `open` skipped the documented permissions trap and nested temp directories leaked | Fixed |
-| commons-csv | Java | [details](./commons-csv/REPORT.md) - six documented promises the code did not keep, and a serialization skew the loop introduced and caught - [PR open](https://github.com/apache/commons-csv/pull/633) | Fixed |
 | kotlinx-collections-immutable | Kotlin | [details](./kotlinx-collections-immutable/REPORT.md) - the vector builder broke its build() identity promise on a no-op set, and two pass-through sentences promised more than the code | Fixed |
 | BurntSushi/toml | Go | [details](./ATTEMPTS.md) - 5 runs, 52 iters, not converged | Failed |
 | Carbon | PHP | [details](./ATTEMPTS.md) - 4 runs, 17 iters, not converged | Failed |
