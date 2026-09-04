@@ -94,7 +94,7 @@ package does not build here.
 
 ## Upstream
 
-Two PRs are filed on upstream main `6c8ca82`, [#152](https://github.com/apple/swift-http-types/pull/152) (HT-8) and [#153](https://github.com/apple/swift-http-types/pull/153) (HT-2), (which carries #143 and
+Two PRs are filed on upstream main `6c8ca82`, [#152](https://github.com/apple/swift-http-types/pull/152) (HT-8) and [#153](https://github.com/apple/swift-http-types/pull/153) (HT-2; closed the same day after the maintainer pointed at #98, where a schemeless URL was already ruled a programmer error that should trap), (which carries #143 and
 #150, both merged 2026-09-03 after the pin): HT-8 as
 `fields-equality-whole-field` and HT-2 as `urlrequest-schemeless-nil`, each
 verified red-then-green in a fresh clone under CI's
