@@ -17,7 +17,7 @@ within a **pre-registered budget of 5 rounds of 10**.
 | Ledger at convergence | 0 open; 1 Medium blocked on a maintainer decision |
 | Evaluator | **1 invocation: PASS** |
 | Suite at convergence | `mvn test`: `Tests run: 1912, Failures: 0, Errors: 0, Skipped: 4` (1891 at base) |
-| Upstream | [#767](https://github.com/apache/commons-text/pull/767) (T5), [#768](https://github.com/apache/commons-text/pull/768) (T6), [#769](https://github.com/apache/commons-text/pull/769) (T1), filed 2026-09-02 |
+| Upstream | [#767](https://github.com/apache/commons-text/pull/767) (T5), [#768](https://github.com/apache/commons-text/pull/768) (T6, MERGED 2026-09-04 by Gary Gregory after one review round that reshaped the tests), [#769](https://github.com/apache/commons-text/pull/769) (T1), filed 2026-09-02 |
 
 ## What the loop found
 

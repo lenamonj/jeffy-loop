@@ -4,13 +4,13 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->57<!-- /count -->** | **<!-- count:merged -->18<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->57<!-- /count -->** | **<!-- count:merged -->19<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->100<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
 ## Merged upstream
 
-Sixteen fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Fifteen projects merged patches this loop wrote; the sixteenth is a finding a maintainer found convincing enough to fix himself:
+Seventeen fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Sixteen projects merged patches this loop wrote; the seventeenth is a finding a maintainer found convincing enough to fix himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
@@ -26,6 +26,7 @@ Sixteen fixes are in other people's code because a maintainer with no stake in t
 - **[indicatif](https://github.com/console-rs/indicatif/pull/836) - merged.** `draw_to_term` underflowed its width arithmetic when the last drawn line was wider than the terminal and panicked on the next redraw. Merged 2026-09-03 after one review round; indicatif is the progress-bar layer above console.
 - **JetBrains, [kotlinx-datetime](https://github.com/Kotlin/kotlinx-datetime/pull/650) - merged.** The `ReplaceWith` metadata on the deprecated `Instant` pointed `toEpochMilliseconds()` at `nanosecondsOfSecond` and `isDistantFuture` at `isDistantPast`, so an IDE quick-fix silently changed the program's result. Merged 2026-09-03 by the maintainer, about six hours after filing.
 - **Apple, [swift-log](https://github.com/apple/swift-log/pull/504) - merged.** `Logger.MetadataValue.attributes` documented its setter as a no-op on `.dictionary` and `.array` values and called `assertionFailure` there instead, so debug builds trapped where release builds silently dropped the write. The maintainer wanted the assertion kept as a programmer error; the merged change is the documentation saying so and pointing handler authors at leaf values. Merged 2026-09-04.
+- **Apache, [commons-text](https://github.com/apache/commons-text/pull/768) - merged.** `StringMatcher.isMatch(CharSequence, int, int, int)` forwarded `bufferEnd` where `bufferStart` belongs, so a custom matcher searching a `TextStringBuilder` through `StringSubstitutor` was handed a window that began at its own end and never matched. One argument fixed, with tests the reviewer shaped. Merged 2026-09-04 by Gary Gregory, fifty minutes after the requested rework.
 - **[chalk](https://github.com/chalk/chalk/pull/687) - fixed upstream.** The maintainer reproduced the finding, then wrote and merged his own fix, shipped in v6.0.0.
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](./claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
@@ -64,6 +65,7 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | indicatif | Rust | [details](./indicatif/REPORT.md) - draw-width underflow panic - [PR merged](https://github.com/console-rs/indicatif/pull/836) | Fixed |
 | csv | PHP | [details](./csv/REPORT.md) - the TimeField separator was matched as a regex, and an empty field was escaped as a formula - [PR merged](https://github.com/thephpleague/csv/pull/592), [PR merged](https://github.com/thephpleague/csv/pull/593), [PR open](https://github.com/thephpleague/csv/pull/591) | Fixed |
 | swift-log | Swift | [details](./swift-log/REPORT.md) - a handler implementing only `log(event:)` overflowed the stack on the 1.0 entry point - [PR merged](https://github.com/apple/swift-log/pull/504), [PR open](https://github.com/apple/swift-log/pull/503) | Fixed |
+| commons-text | Java | [details](./commons-text/REPORT.md) - LevenshteinDetailedDistance over-reported the distance - [PR merged](https://github.com/apache/commons-text/pull/768), [PR open](https://github.com/apache/commons-text/pull/767), [PR open](https://github.com/apache/commons-text/pull/769) | Fixed |
 | chalk | JavaScript | [details](./chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](./dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](./yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
@@ -77,7 +79,6 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | classnames | JavaScript | [details](./classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR open](https://github.com/JedWatson/classnames/pull/579) | Fixed |
 | assert | PHP | [details](./assert/REPORT.md) - isInitialized threw the wrong exception - [PR open](https://github.com/webmozarts/assert/pull/365), [PR open](https://github.com/webmozarts/assert/pull/366) | Fixed |
 | natsort | Python | [details](./natsort/REPORT.md) - locale sentinel was three ASCII bytes - [PR open](https://github.com/SethMMorton/natsort/pull/196) | Fixed |
-| commons-text | Java | [details](./commons-text/REPORT.md) - LevenshteinDetailedDistance over-reported the distance - [PR open](https://github.com/apache/commons-text/pull/767), [PR open](https://github.com/apache/commons-text/pull/768), [PR open](https://github.com/apache/commons-text/pull/769) | Fixed |
 | uuid | Rust | [details](./uuid/REPORT.md) - v7 counter lost its top four bits to the version nibble - [PR open](https://github.com/uuid-rs/uuid/pull/907) | Fixed |
 | i18n | Ruby | [details](./i18n/REPORT.md) - a pluralized lookup handed out the store's own String - [PR open](https://github.com/ruby-i18n/i18n/pull/751), [PR open](https://github.com/ruby-i18n/i18n/pull/752) | Fixed |
 | kotlinx-io | Kotlin | [details](./kotlinx-io/REPORT.md) - the temporary directory was an empty path when TMPDIR was unset - [PR open](https://github.com/Kotlin/kotlinx-io/pull/521) | Fixed |
