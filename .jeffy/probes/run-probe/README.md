@@ -60,7 +60,7 @@ and where it cannot the wrapper must say so, which is the same guard run.sh appl
 to the dimension it cannot exercise. The token is the answer either way, and the
 mismatch text carries the real exit status or the missing notice, so nothing is
 laundered into a pass. Driven on both shapes rather than reasoned about: on a PATH
-carrying no timeout(1), and on one carrying neither timeout(1) nor systemd-run, all
+carrying no timeout(1), and on one carrying neither timeout(1) nor systemd-run,
 every claim matches; and with the wrapper's degradation notices removed, the wall and
 memory verdicts each mismatch naming the notice that went missing.
 
