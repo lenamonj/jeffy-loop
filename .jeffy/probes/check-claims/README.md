@@ -6,8 +6,10 @@ reproduce. Every case asserts the exact stdout verdict line, the exact summary
 counts on stderr and the exit status together - not one of the three, because this
 instrument fails by reporting the wrong count as easily as by reporting the wrong
 verdict. No case total is spelled here: the table-driven cases are counted out of
-run.sh by a claims line beside this file, and the usage case is pinned by
-another, so what carries the population is a measurement rather than a word.
+run.sh by a claims line beside this file, and the direct cases - the ones the
+ck table cannot express, because ck always calls the instrument with the
+project root alone - are counted by the battery itself into the same green
+line, so what carries the population is a measurement rather than a word.
 
 What is pinned, in the order the cases run: a claim that reproduces; a claim
 that no longer reproduces, which must be named with both the expected and the
@@ -25,11 +27,23 @@ that can hold the two identities the output contract states, that checked equals
 matched plus mismatched plus errored and that checked plus skipped is every row
 read; a battery carrying no claims file checking nothing; and an absent
 project root refused at exit 2, which is deliberately distinct from the 1 that
-means a claim failed, so a caller can tell a broken invocation from a finding.
+means a claim failed, so a caller can tell a broken invocation from a finding;
+a battery name resolving to no directory refused the same way, before any
+verdict reaches stdout; and, beside it, a name resolving to a real battery that
+records no claims file reported on stderr and not refused, since a battery with
+no recorded measurement is legal and the caller still has to be told nothing was
+checked there. That last pair is deliberately a pair: an assertion on the
+refusal alone passes against an instrument that refuses both.
 
 What this file records is carried by the claims file beside it rather than
-restated here: check-claims.sh exits 2 on an unusable project root, and the
-table-driven cases are counted out of run.sh. Neither is asserted as a total here:
+restated here: check-claims.sh exits 2 on an unusable project root and on a
+battery name that resolves to no directory, the table-driven cases are
+counted out of run.sh, and every verdict shape the instrument prints on stdout
+is present in its own Output block - that last one extracts the shapes from the
+instrument's own echo statements rather than from a list, so a verdict added
+later is covered without editing anything, and it compares each as a fixed
+string because an anchor inside an alternation is the construct the wrapped
+grep on this host rejects while printing a clean zero. Neither is asserted as a total here:
 the exit status appears above only as the digit its own claims line expects, and
 the case count appears nowhere in this file at all. It used to be said to appear
 inside the `expected 7 got a` fault string quoted from a driven mutation below,
@@ -40,7 +54,12 @@ was written. AA2 added a case and they diverged, so the sentence is corrected
 here rather than carried: that fault string quotes alpha's claim value and says
 nothing about how many cases run. A total written here as a total is a figure no
 command returns, and that is exactly how this README came to assert one that was
-wrong for two runs.
+wrong for two runs. The rule reaches the battery's own output as well, which is
+what AE8 closed: the green line spelled its total as a literal and was edited
+by hand at every release that added a case, so it published a stale figure
+exactly as this file once did, in the line a reader is most likely to quote.
+It interpolates a counter the ck helper increments now, so what it announces
+is what ran.
 
 That rule is no longer prose. A claims line beside this file scans every battery
 README for a cardinal standing in a count position - a number word or digit

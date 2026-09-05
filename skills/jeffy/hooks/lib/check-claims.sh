@@ -15,6 +15,13 @@
 # Output:  one line per claim - MATCH <battery>: <value>
 #                               MISMATCH <battery>: expected <value> got <last stdout line>
 #                               ERROR <battery>: exit <rc> (<command>)
+#                               SKIP <label>: <the unavailable: answer it gave>
+#          the last of which only a Stated counts row produces, and only when
+#          its command answers `unavailable:<why>` because this host cannot
+#          derive that count at all; a claims line has no such shape and never
+#          skips. It was absent from this block while the summary line below
+#          counted it, so the contract documented a tally for an outcome it
+#          never showed. (AE13)
 #          then `claims: <n> checked, <m> mismatched, <e> errored, <s> skipped`
 #          on stderr. Checked counts the rows this run compared or tried to and
 #          errored on, so checked = matched + mismatched + errored; a skipped
@@ -22,7 +29,9 @@
 #          skipped row counted as checked made the one line the declaration and
 #          the gate are told to quote read identically on a host that compared
 #          every row and on one that could derive none of them. (AA2)
-# Exit:    0 when every claim matches, 1 on any MISMATCH or ERROR, 2 on usage.
+# Exit:    0 when every claim matches, 1 on any MISMATCH or ERROR, 2 on usage -
+#          an unusable project root, no run-probe.sh beside this script, or a
+#          named battery that resolves to no directory.
 #
 # Each command runs from the project root under run-probe.sh's ceiling, so a
 # claim that hangs or allocates without bound dies alone. The last non-empty
@@ -44,8 +53,29 @@ probe="$probe_dir/run-probe.sh"
 
 if [ "$#" -gt 0 ]; then
   dirs=""
-  for b in "$@"; do dirs="$dirs$root/.jeffy/probes/$b
-"; done
+  cc_bad=0
+  for b in "$@"; do
+    bd="$root/.jeffy/probes/$b"
+    # AE9: a named battery that contributes nothing was passed over in
+    # silence, in both of the shapes that can happen. A name resolving to no
+    # directory printed the PLAN rows alone and exited on their verdicts, so
+    # a typo answered a question nobody asked and read exactly like a clean
+    # battery; that is a bad invocation and takes the usage exit before any
+    # verdict is printed. A name resolving to a real battery that records no
+    # claims file is not an error - a battery with no recorded measurement is
+    # legal - but the caller asked for it and has to be told nothing was
+    # checked there. No scenario in the harness passes a battery name, which
+    # is how this whole branch drifted.
+    if [ ! -d "$bd" ]; then
+      echo "check-claims.sh: no such battery: $b (expected $bd)" >&2
+      cc_bad=1
+      continue
+    fi
+    [ -f "$bd/claims" ] || echo "check-claims.sh: battery $b records no claims file, so naming it checks nothing" >&2
+    dirs="$dirs$bd
+"
+  done
+  [ "$cc_bad" -eq 0 ] || exit 2
 else
   dirs="$(find "$root/.jeffy/probes" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
 "

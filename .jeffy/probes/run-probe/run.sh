@@ -62,17 +62,40 @@ bash "$P" bash -c 'exit 3' >/dev/null 2>"$e"; ck "exit status passes through" 3 
 cktext "nonzero exit names the ceilings" "probe exited 3 under ceilings" "$e"
 bash "$P" true >/dev/null 2>"$e"; ck "clean probe passes" 0 $?
 
+# AE12: the pair names the ceilings that were enforced, never the ones that
+# were configured, so the degraded arm is driven here rather than assumed. PATH
+# is emptied rather than filtered - everything the wrapper needs of its own is a
+# bash builtin - and the probe is invoked through an absolute interpreter so the
+# empty PATH cannot reach it. Both halves must read none: on this shape the
+# wrapper enforces neither, and it used to answer 4096MB / 0s two lines under
+# its own "no ceiling at all".
+nop="$(mktemp -d)"
+PATH="$nop" "$BASH" "$P" "$BASH" -c 'exit 3' >/dev/null 2>"$e"; ck "degraded host passes the status through" 3 $?
+dg="$(sed -n 's/.*under ceilings \(.*\)\./\1/p' "$e")"
+if [ "$dg" != "none / none" ]; then
+  echo "FAIL degraded host names only the ceilings it enforced: expected 'none / none', got '$dg'"
+  fails=$((fails + 1))
+fi
+rmdir "$nop"
+
 # The defaults the README states, measured from the wrapper rather than read.
-# The wall half of the pair is what the wrapper resolved rather than a constant:
-# with no timeout tool it sets the wall ceiling to 0 and reports 0s, so a fixed
-# expectation here would fail on exactly the hosts the wrapper degrades for.
+# Both halves of the pair are what the wrapper resolved rather than constants,
+# so a fixed expectation here would fail on exactly the hosts the wrapper
+# degrades for - and a fixed memory half was what this block carried until
+# AE12, which is how the battery came to pin a figure nothing had applied.
 bash "$P" bash -c 'exit 3' >/dev/null 2>"$e"
 d="$(sed -n 's/.*under ceilings \(.*\)\./\1/p' "$e")"
-if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
-  want="4096MB / 600s"
+if command -v systemd-run >/dev/null 2>&1 && systemd-run --user --scope --quiet true >/dev/null 2>&1; then
+  wm="4096MB"
 else
-  want="4096MB / 0s"
+  wm="none"
 fi
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  ww="600s"
+else
+  ww="none"
+fi
+want="$wm / $ww"
 if [ "$d" != "$want" ]; then
   echo "FAIL default ceilings: expected '$want', got '$d'"; fails=$((fails + 1))
 fi

@@ -23,8 +23,10 @@ mismatch the gate is instructed to reject on.
 The wrapper's default ceilings are 4096MB and 600s, and the battery measures the
 pair out of the wrapper's own diagnostic rather than reading it from this file -
 which is why the measured pair, and not the defaults, is what varies by host: the
-wrapper reports the wall figure it resolved, and it resolves 0 where it found no
-tool to enforce one.
+wrapper names a ceiling only where it enforced one, so a dimension it could not
+enforce reads none rather than a figure. It printed the configured figure there
+until AE12, which put a memory bound nothing had applied and an off-sentinel of
+0s into the line a reader consults when a probe has just failed.
 Every figure stated above is carried by a line in the claims file beside this one
 and executed by check-claims.sh, and the enumeration is written out here so a
 figure added to the prose without a line beside it is visible rather than covered
@@ -51,8 +53,8 @@ the wrapper exists to degrade for. They are named rather than counted here for t
 same reason no total is: a count of claims is a figure no claims line carries.
 On a host with no timeout(1) or gtimeout(1) the same sleep 5 exits 0 and not 124,
 on a host with no reachable user manager the same allocation exits 0 and not 137,
-and the wrapper then reports its defaults as 4096MB / 0s and not 4096MB / 600s,
-because it sets the wall ceiling to 0 when it cannot enforce one. check-claims.sh
+and the wrapper then reports its defaults as 4096MB / none and not 4096MB / 600s,
+because it names a ceiling only where it enforced one. check-claims.sh
 would report MISMATCH for each of them, and the evaluator gate is instructed to treat
 a MISMATCH as a REJECT reason. Each now asserts the whole contract
 rather than one host's half of it: where the ceiling can be enforced it must bind,
@@ -60,7 +62,7 @@ and where it cannot the wrapper must say so, which is the same guard run.sh appl
 to the dimension it cannot exercise. The token is the answer either way, and the
 mismatch text carries the real exit status or the missing notice, so nothing is
 laundered into a pass. Driven on both shapes rather than reasoned about: on a PATH
-carrying no timeout(1), and on one carrying neither timeout(1) nor systemd-run, all
+carrying no timeout(1), and on one carrying neither timeout(1) nor systemd-run,
 every claim matches; and with the wrapper's degradation notices removed, the wall and
 memory verdicts each mismatch naming the notice that went missing.
 
@@ -79,3 +81,9 @@ default-ceilings case fault with the pair it actually measured, and deleting the
 `rc -eq 124` branch makes the wall-ceiling diagnostic case fault while the exit
 status alone still passes - which is the case that matters, because a ceiling
 that kills without saying why is indistinguishable from a probe that crashed.
+The degraded-host case was driven against the wrapper as it stood before AE12,
+recovered with git show HEAD: and run from a copy taken aside rather than by
+checking out over the fix: on the identical empty-PATH fixture it answers
+4096MB / 0s, and it is the only case that falls, which is the isolating mutation
+this project asks for rather than a broad one that proves only that the battery
+reads the file.

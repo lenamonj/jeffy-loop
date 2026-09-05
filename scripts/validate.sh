@@ -6988,6 +6988,63 @@ else
   skip "stop hook behavior checks (jq not on PATH)"
 fi
 
+# T. The severity ceiling by class, derived from the Stop hook that enforces it
+#    and compared against the iteration prompt that instructs the run. 1.19.0
+#    put the ceiling in the hook and in plan-default.md, and the launcher
+#    copies that template into a project only when PLAN.md is missing, so every
+#    project that adopted Jeffy earlier kept a Method whose Medium arm permits
+#    exactly the line the hook refuses, and nothing shipped told such a run the
+#    rule had moved. The prompt is the one file every run reads at every turn
+#    end whatever its own PLAN.md says, so the prompt is where the rule belongs
+#    and this check is what keeps the two from drifting apart again. (AE1)
+#    The hook is the authority and the prompt is compared against it, which is
+#    check L's direction rather than check R's: the case arms are what actually
+#    refuses a declaration, so a prompt naming a class the hook does not, or
+#    omitting one it does, is the drift. Each arm is classified by its own body
+#    rather than by its position - the arm whose body requires a Consequence
+#    line is the Consequence arm - so swapping the two in the hook is caught
+#    rather than absorbed. Every arm is accounted for: the classified count is
+#    asserted, because an arm written in a shape this pattern misses would
+#    otherwise leave the derived set unnoticed, which is check L's rule. Each
+#    side is compared as a set, because an alternation lists alternatives and
+#    claims no order among them, and each prompt side is asserted to have
+#    matched exactly once, because a second statement concatenates into the
+#    compared value, which is what check P was repaired for.
+t_hook="skills/jeffy/hooks/stop-hook.sh"
+t_prompt="skills/jeffy/references/iteration-prompt.txt"
+if [ ! -f "$t_hook" ] || [ ! -f "$t_prompt" ]; then
+  skip "severity ceiling by class (hook or prompt not readable)"
+else
+  t_arms="$(sed -n '/^jeffy_severity_class_violation/,/^}/p' "$t_hook" | awk '
+      /^[[:space:]]+[a-z][a-z|-]*\)$/ {
+        arm = $0; sub(/^[[:space:]]+/, "", arm); sub(/\)$/, "", arm); has = 0; next
+      }
+      arm != "" && /Consequence:/ && /grep -q/ { has = 1 }
+      arm != "" && /;;[[:space:]]*$/ {
+        printf "%s %s\n", (has ? "consequence" : "refused"), arm; arm = ""; has = 0
+      }')"
+  t_n="$(printf '%s\n' "$t_arms" | grep -c .)"
+  t_ref_hook="$(printf '%s\n' "$t_arms" | sed -n 's/^refused //p' | tr '|' '\n' | sort -u | tr '\n' ' ')"
+  t_con_hook="$(printf '%s\n' "$t_arms" | sed -n 's/^consequence //p' | tr '|' '\n' | sort -u | tr '\n' ' ')"
+  t_ref_doc="$(grep -oE 'whose class is [a-z|-]+ is a Low' "$t_prompt" | sed 's/^whose class is //; s/ is a Low$//')"
+  t_con_doc="$(grep -oE 'whose class is [a-z|-]+ states Consequence' "$t_prompt" | sed 's/^whose class is //; s/ states Consequence$//')"
+  t_ref_n="$(printf '%s\n' "$t_ref_doc" | grep -c .)"
+  t_con_n="$(printf '%s\n' "$t_con_doc" | grep -c .)"
+  t_ref_set="$(printf '%s\n' "$t_ref_doc" | tr '|' '\n' | sort -u | tr '\n' ' ')"
+  t_con_set="$(printf '%s\n' "$t_con_doc" | tr '|' '\n' | sort -u | tr '\n' ' ')"
+  if [ "$t_n" -ne 2 ]; then
+    fault "the severity ceiling in $t_hook classified $t_n case arms, not 2; an arm written in a shape this check cannot read would leave the derived set unnoticed"
+  elif [ -z "$t_ref_hook" ] || [ -z "$t_con_hook" ]; then
+    fault "the severity ceiling's arms did not split into a refused set and a Consequence set (refused [$t_ref_hook], consequence [$t_con_hook]); the case arms moved and this check went blind"
+  elif [ "$t_ref_n" -ne 1 ] || [ "$t_con_n" -ne 1 ]; then
+    fault "$t_prompt states the ceiling's refused classes $t_ref_n times and its Consequence classes $t_con_n times; each is stated exactly once, or a second statement concatenates into the compared value"
+  elif [ "$t_ref_set" != "$t_ref_hook" ] || [ "$t_con_set" != "$t_con_hook" ]; then
+    fault "the severity ceiling disagrees between the engine and the instruction the run obeys: the hook refuses [$t_ref_hook] and requires Consequence of [$t_con_hook], while $t_prompt states [$t_ref_set] and [$t_con_set]"
+  else
+    pass "the severity ceiling by class is derived from the Stop hook and stated the same way in the iteration prompt (refused $t_ref_hook, Consequence $t_con_hook)"
+  fi
+fi
+
 # S. A value handed to awk through -v is escape-processed by awk itself, so a
 #    regular expression must never travel that way: a backslash-escaped dot
 #    arrives as a plain dot and the pattern silently widens, while the same
@@ -7001,8 +7058,18 @@ fi
 #    line for two properties. Each reports its own verdict now, and a tree that
 #    trips the detector is exactly the tree whose stderr is worth reading.
 #    Statically, over every tracked shell script: a name assigned with -v and
-#    then used in a regex position - either side of ~, or the pattern argument
-#    of sub, gsub, match or split - is reported. The -v names are read from the
+#    then used in a regex position - the pattern operand of ~ or !~, which is
+#    the right-hand side of the operator, or the pattern argument of sub, gsub,
+#    match or split - is reported. The left operand is deliberately not read and
+#    that is not a gap: there a name is the subject string rather than a
+#    pattern, so awk's escape processing of a -v value cannot widen a regex
+#    through it. What this arm does leave behind is one shape, and it was
+#    derived by driving the detector over a fixture carrying every regex
+#    position at once rather than reasoned about: a pattern operand wrapped in
+#    parentheses is missed, because the pattern admits only whitespace between
+#    the operator and the name. Caught in that same drive: bare, negated,
+#    unspaced and concatenated pattern operands, and sub, gsub, match and split
+#    with and without leading whitespace. (AE10) The -v names are read from the
 #    file rather than listed here, so a site added later is covered without
 #    editing this check, and the extraction is asserted non-empty because a
 #    detector that found no names at all would pass over everything in silence.
