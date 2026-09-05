@@ -59,7 +59,7 @@ It prints every import across scripts/*.py that is not in the standard library, 
 
 - `PLAN.md`, `BACKLOG.md`, `JOURNAL.md`, and `.claude/jeffy-loop.local.md` are loop state, not product. They are created in the projects Jeffy runs on and are never committed to this repo.
 - Changes that widen the loop's autonomous authority (what it may edit, commit, or decide without the user) carry the highest review bar. Jeffy's value is its discipline; features that trade discipline for convenience will be declined.
-- Keep the engine auditable. The Stop hook should stay one readable shell script, with only the shared verify and sandbox helpers under `hooks/lib/` beside it; if a change cannot be reviewed in one sitting, split it.
+- Keep the engine auditable. The Stop hook is one shell script with the shared helpers under `hooks/lib/` beside it. It has outgrown one sitting; a change is reviewed against the validator's scenario for it, and a change that adds a gate adds the scenario that proves the gate can fail.
 - Use hyphens, not em dashes, in prose. Match the README's voice.
 - Agent-assisted contributions are welcome, and no disclosure is required. This project is itself an autonomous loop, so it would be a strange place to object. The bar is unchanged and it is the whole point: you understand what you are submitting, the validator is green, and any behavior change carries a check that fails without it. A patch nobody can explain under review will be declined however it was written.
 

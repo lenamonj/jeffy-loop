@@ -2,15 +2,15 @@
 
 Empirical evidence of how an autonomous coding agent performs on real software: Jeffy was run against widely-used open-source projects with no connection to this repository, with each project's own test suite as the oracle. The engine ships no language-specific analyzer, ruleset or plugin, so the same method carried across <!-- count:languages -->13<!-- /count --> languages. Every run used a local clone, and nothing went upstream without a filed issue or PR.
 
-| Projects tested | Fixed | Failed to converge | PRs opened | PRs merged | Issues filed |
+| Projects tested | Fixed | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:prs -->56<!-- /count -->** | **<!-- count:merged -->20<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->20<!-- /count -->** | **<!-- count:prs-open -->36<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->100<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
 ## Merged upstream
 
-Eighteen fixes are in other people's code because a maintainer with no stake in this project reviewed them and said yes. Seventeen projects merged patches this loop wrote; the eighteenth is a finding a maintainer found convincing enough to fix himself:
+<!-- count:merged -->20<!-- /count --> patches this loop wrote are merged across <!-- count:merged-projects -->17<!-- /count --> projects, because a maintainer with no stake in this project reviewed each one and said yes, and one more finding was fixed upstream by the maintainer himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
