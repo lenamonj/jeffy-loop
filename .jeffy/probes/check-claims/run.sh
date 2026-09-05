@@ -9,6 +9,10 @@ set -u
 CC="skills/jeffy/hooks/lib/check-claims.sh"
 fails=0
 cases=0
+# Direct cases: invocations the ck table cannot express, because ck always
+# calls the instrument with the project root alone and nothing else. Counted
+# rather than named, for the reason AE8 records about the green line below.
+direct=0
 d="$(mktemp -d)"
 mkdir -p "$d/.jeffy/probes/alpha" "$d/.jeffy/probes/beta"
 o="$(mktemp)"; e="$(mktemp)"
@@ -100,9 +104,30 @@ ck "batteries carrying no claims file check nothing" 0 \
 
 # Usage: an unusable root is refused at 2, distinct from the 1 that means a
 # claim failed, so a caller can tell a broken invocation from a real finding.
+direct=$((direct + 1))
 bash "$CC" /no/such/directory >/dev/null 2>"$e"
 if [ "$?" != 2 ]; then echo "FAIL an absent project root is refused at 2"; fails=$((fails + 1)); fi
 
+# AE9: a battery name that resolves to no directory is the same kind of bad
+# invocation and takes the same exit, before any verdict reaches stdout. It
+# used to print the PLAN rows alone and exit on their verdicts, which reads
+# exactly like a clean battery. The discriminating arm sits beside it rather
+# than after it: a name resolving to a real battery that records no claims
+# file is legal and stays exit 0, saying on stderr that nothing was checked
+# there, so an instrument that refused both would fail here.
+direct=$((direct + 1))
+bash "$CC" "$d" no-such-battery >"$o" 2>"$e"; rc=$?
+if [ "$rc" != 2 ] || ! grep -q 'no such battery: no-such-battery' "$e" || [ -s "$o" ]; then
+  echo "FAIL a named battery resolving to nothing is refused at 2 before any verdict (rc=$rc):"
+  cat "$e"; fails=$((fails + 1))
+fi
+direct=$((direct + 1))
+bash "$CC" "$d" alpha >"$o" 2>"$e"; rc=$?
+if [ "$rc" != 0 ] || ! grep -q 'battery alpha records no claims file' "$e"; then
+  echo "FAIL a named battery carrying no claims file is reported without being refused (rc=$rc):"
+  cat "$e"; fails=$((fails + 1))
+fi
+
 rm -rf "$d" "$o" "$e"
-[ "$fails" -eq 0 ] && echo "check-claims battery ok: $cases table-driven cases plus the usage case" || echo "check-claims battery: $fails failure(s)"
+[ "$fails" -eq 0 ] && echo "check-claims battery ok: $cases table-driven cases plus $direct direct cases" || echo "check-claims battery: $fails failure(s)"
 [ "$fails" -eq 0 ]
