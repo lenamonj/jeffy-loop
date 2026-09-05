@@ -15,6 +15,13 @@
 # Output:  one line per claim - MATCH <battery>: <value>
 #                               MISMATCH <battery>: expected <value> got <last stdout line>
 #                               ERROR <battery>: exit <rc> (<command>)
+#                               SKIP <label>: <the unavailable: answer it gave>
+#          the last of which only a Stated counts row produces, and only when
+#          its command answers `unavailable:<why>` because this host cannot
+#          derive that count at all; a claims line has no such shape and never
+#          skips. It was absent from this block while the summary line below
+#          counted it, so the contract documented a tally for an outcome it
+#          never showed. (AE13)
 #          then `claims: <n> checked, <m> mismatched, <e> errored, <s> skipped`
 #          on stderr. Checked counts the rows this run compared or tried to and
 #          errored on, so checked = matched + mismatched + errored; a skipped

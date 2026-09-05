@@ -37,8 +37,13 @@ refusal alone passes against an instrument that refuses both.
 
 What this file records is carried by the claims file beside it rather than
 restated here: check-claims.sh exits 2 on an unusable project root and on a
-battery name that resolves to no directory, and the table-driven cases are
-counted out of run.sh. Neither is asserted as a total here:
+battery name that resolves to no directory, the table-driven cases are
+counted out of run.sh, and every verdict shape the instrument prints on stdout
+is present in its own Output block - that last one extracts the shapes from the
+instrument's own echo statements rather than from a list, so a verdict added
+later is covered without editing anything, and it compares each as a fixed
+string because an anchor inside an alternation is the construct the wrapped
+grep on this host rejects while printing a clean zero. Neither is asserted as a total here:
 the exit status appears above only as the digit its own claims line expects, and
 the case count appears nowhere in this file at all. It used to be said to appear
 inside the `expected 7 got a` fault string quoted from a driven mutation below,
