@@ -8,12 +8,14 @@
 set -u
 CC="skills/jeffy/hooks/lib/check-claims.sh"
 fails=0
+cases=0
 d="$(mktemp -d)"
 mkdir -p "$d/.jeffy/probes/alpha" "$d/.jeffy/probes/beta"
 o="$(mktemp)"; e="$(mktemp)"
 
 ck() { # ck <label> <expected rc> <expected summary> <expected stdout, ; separated>
   local label="$1" want_rc="$2" want_sum="$3" want_out="$4"
+  cases=$((cases + 1))
   bash "$CC" "$d" >"$o" 2>"$e"; local rc=$?
   local sum out
   sum="$(cat "$e")"; out="$(tr '\n' ';' < "$o")"
@@ -102,5 +104,5 @@ bash "$CC" /no/such/directory >/dev/null 2>"$e"
 if [ "$?" != 2 ]; then echo "FAIL an absent project root is refused at 2"; fails=$((fails + 1)); fi
 
 rm -rf "$d" "$o" "$e"
-[ "$fails" -eq 0 ] && echo "check-claims battery ok: 9 table-driven cases plus the usage case" || echo "check-claims battery: $fails failure(s)"
+[ "$fails" -eq 0 ] && echo "check-claims battery ok: $cases table-driven cases plus the usage case" || echo "check-claims battery: $fails failure(s)"
 [ "$fails" -eq 0 ]

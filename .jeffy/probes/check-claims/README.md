@@ -40,7 +40,12 @@ was written. AA2 added a case and they diverged, so the sentence is corrected
 here rather than carried: that fault string quotes alpha's claim value and says
 nothing about how many cases run. A total written here as a total is a figure no
 command returns, and that is exactly how this README came to assert one that was
-wrong for two runs.
+wrong for two runs. The rule reaches the battery's own output as well, which is
+what AE8 closed: the green line spelled its total as a literal and was edited
+by hand at every release that added a case, so it published a stale figure
+exactly as this file once did, in the line a reader is most likely to quote.
+It interpolates a counter the ck helper increments now, so what it announces
+is what ran.
 
 That rule is no longer prose. A claims line beside this file scans every battery
 README for a cardinal standing in a count position - a number word or digit
