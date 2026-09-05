@@ -10,14 +10,29 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.20.0"
+JEFFY_VERSION="1.21.0"
 
-root="${CLAUDE_PROJECT_DIR:-}"
-if [ -z "$root" ] || [ ! -d "$root" ]; then
-  root="$(pwd)"
+# 1.21.0 (P1-70): `stop-hook.sh --lint [project root]` derives every check
+# the declaration path enforces and prints the first refusal, or clean,
+# without re-feeding, verifying, ending a run or writing a record. The
+# iteration prompt runs it before each gate invocation: commons-cli lost two
+# evaluator PASSes and python-slugify its convergence to state-file forms
+# this hook refuses - refusals the run could have read for itself.
+lint=0
+if [ "${1:-}" = "--lint" ]; then
+  lint=1
+  root="${2:-$(pwd)}"
+  [ -d "$root" ] || { echo "jeffy lint: no such directory: $root" >&2; exit 2; }
+  state="$root/.claude/jeffy-loop.local.md"
+  [ -f "$state" ] || { echo "jeffy lint: no loop state file at $state; --lint runs inside a live run, from the project root" >&2; exit 2; }
+else
+  root="${CLAUDE_PROJECT_DIR:-}"
+  if [ -z "$root" ] || [ ! -d "$root" ]; then
+    root="$(pwd)"
+  fi
+  state="$root/.claude/jeffy-loop.local.md"
+  [ -f "$state" ] || exit 0
 fi
-state="$root/.claude/jeffy-loop.local.md"
-[ -f "$state" ] || exit 0
 
 # The verify bound and the runner are shared with lib/quiet-verify.sh, which
 # the loop invokes per iteration, so the engine holds exactly one timeout
@@ -88,8 +103,14 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-input="$(cat)"
-session_id="$(printf '%s' "$input" | jq -r '.session_id // empty')"
+if [ "$lint" = 1 ]; then
+  # No stdin in lint mode: the session is the state file's own.
+  input='{}'
+  session_id="$(sed -n 's/^session_id: //p' "$state" | head -n 1)"
+else
+  input="$(cat)"
+  session_id="$(printf '%s' "$input" | jq -r '.session_id // empty')"
+fi
 
 # Frontmatter fields are fixed single-line keys written by the /jeffy launch;
 # the state file body never starts a line with any of them.
@@ -154,7 +175,9 @@ fi
 # not depend on which branch ends the turn. Every field defaults, because
 # the early exits fire long before the fingerprint and sweep numbers exist
 # and `set -u` inside a trap would abort the hook rather than the write.
-jeffy_metrics_written=0
+# Lint records nothing: a record written by a read-only pass would be a turn
+# end that never happened.
+jeffy_metrics_written="$lint"
 # P2-41: the verdict on a declaration is written here, on the hook's own
 # metrics line, because a Converged line is appended by the declarer and
 # stands whether or not this hook accepts it (qs, 2026-08-25: gate PASS,
@@ -599,7 +622,7 @@ done
 # bare session prefix every run of the session shares, and a PRIOR run's
 # audit at a high iteration would end THIS run out of budget - the same
 # bound the ceremony exemption and the duplicate-index check carry.
-if [ "$(fm extension_granted)" = "1" ] && [ -n "$run_tok" ] && [ -f "$root/JOURNAL.md" ]; then
+if [ "$lint" = 0 ] && [ "$(fm extension_granted)" = "1" ] && [ -n "$run_tok" ] && [ -f "$root/JOURNAL.md" ]; then
   ext_max="$(fm max_iterations)"
   case "$ext_max" in ''|*[!0-9]*) ext_max="" ;; esac
   if [ -n "$ext_max" ]; then
@@ -633,6 +656,10 @@ if [ -n "$promise" ]; then
     if [ -n "$transcript" ] && [ -f "$transcript" ]; then
       last="$(jq -rRs 'split("\n") | map(fromjson? // empty) | map(select(.type == "assistant")) | (last // empty) | [.message.content[]? | select(.type == "text") | .text] | join("\n")' "$transcript" 2>/dev/null || true)"
     fi
+  fi
+  # Lint asks the question the promise asks, without the promise.
+  if [ "$lint" = 1 ]; then
+    last="<promise>$promise</promise>"
   fi
   case "$last" in
     *"<promise>"*"$promise"*"</promise>"*)
@@ -1271,6 +1298,10 @@ if [ -n "$promise" ]; then
                 # not verify is precisely what it exists to refuse: fail
                 # closed and name the missing file. (P1-50)
                 violation="the verify helper skills/jeffy/hooks/lib/quiet-verify.sh is missing, so the Verify command cannot be re-run; reinstall jeffy (the installer copies the whole hooks folder), then re-declare convergence"
+              elif [ "$lint" = 1 ]; then
+                # Lint never executes the Verify command: the run has the
+                # wrapper for that, and a read-only pass runs nothing.
+                :
               else
                 vt="$(fm verify_timeout_seconds)"
                 vt="$(jeffy_verify_bound "$root/PLAN.md" "$vt")"
@@ -1317,6 +1348,14 @@ if [ -n "$promise" ]; then
         if [ -n "$unnamed" ]; then
           violation="the ledger carries the open Low $unnamed but this run's closing entry never names it; the closing rule lists each carried Low by ID with one line, so name every open Low in the declaring entry, then re-declare convergence"
         fi
+      fi
+      if [ "$lint" = 1 ]; then
+        if [ -n "$violation" ]; then
+          echo "jeffy lint: a declaration on this tree would be refused - $violation"
+          exit 1
+        fi
+        echo "jeffy lint: clean - every check the declaration path derives passes on this tree; the Verify command was not run, so run quiet-verify.sh yourself"
+        exit 0
       fi
       if [ -z "$violation" ]; then
         if [ -n "$open_carried" ]; then

@@ -40,6 +40,11 @@ wall_s="${JEFFY_PROBE_TIMEOUT_S:-600}"
 case "$mem_mb" in *[!0-9]*|'') echo "run-probe.sh: JEFFY_PROBE_MEM_MB must be a whole number of MB, got '$mem_mb'" >&2; exit 2 ;; esac
 case "$wall_s" in *[!0-9]*|'') echo "run-probe.sh: JEFFY_PROBE_TIMEOUT_S must be a whole number of seconds, got '$wall_s'" >&2; exit 2 ;; esac
 
+# A battery that compiles Python leaves __pycache__ in the tree, and the
+# checkpoint's git add -A ships it (fast_float, P2-47). No probe writes
+# bytecode, whatever the target's .gitignore says.
+export PYTHONDONTWRITEBYTECODE=1
+
 # The wall ceiling needs a tool to enforce it. GNU coreutils names it timeout;
 # a BSD userland with coreutils installed names it gtimeout; a stock macOS host
 # has neither. Resolve it once, and where there is none run the probe with no

@@ -11,7 +11,7 @@
 # script's own derivation produces; non-zero with the disagreement otherwise.
 set -eu
 root="${1:-$(cd "$(dirname "$0")/../../.." && pwd)}"
-python3 - "$root" <<'PY'
+"$(command -v python3 || command -v python)" - "$root" <<'PY'
 import re, sys, pathlib
 
 root = pathlib.Path(sys.argv[1])

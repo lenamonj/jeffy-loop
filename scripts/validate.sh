@@ -400,7 +400,8 @@ check_markers skills/jeffy/hooks/lib/check-claims.sh \
 check_markers skills/jeffy/references/plan-default.md \
   "returns <count>"
 check_markers skills/jeffy/references/iteration-prompt.txt \
-  "Stated counts table"
+  "Stated counts table" \
+  "run the installed Stop hook in lint mode"
 # The launch-time lint is the whole malformed-Verify-command class caught at
 # zero iteration cost: the hook's parser runs only on the convergence branch,
 # so without this check a line written at launch waits a whole run to fire.
@@ -413,6 +414,8 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
 # shellcheck disable=SC2016
 check_markers skills/jeffy/SKILL.md \
   "\`--max-time <duration>\` sets \`max_wall_clock_seconds\`" \
+  "runs it in lint mode before every gate invocation" \
+  "Budget echo: print one line" \
   "Verify command lint:" \
   "nor an unfilled \`<...>\` placeholder" \
   "a pager or truncator" \
@@ -599,10 +602,16 @@ elif [ ! -f CHANGELOG.md ]; then
   skip "JEFFY_VERSION/CHANGELOG pairing (no CHANGELOG.md; maintainer-only file)"
 else
   cl_ver="$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' CHANGELOG.md | head -n 1)"
-  if [ "$hook_ver" = "$cl_ver" ]; then
-    pass "JEFFY_VERSION $hook_ver matches the newest CHANGELOG release heading"
-  else
+  # P1-34: 1.8.1 and 1.8.2 both shipped JEFFY_VERSION="1.8.0" because this
+  # pairing could not see the tag. A v* tag on HEAD is the release claim,
+  # and it has to name the version the hook announces at every launch.
+  head_tag="$(git tag --points-at HEAD 2>/dev/null | grep -E '^v[0-9]' | head -n 1)"
+  if [ "$hook_ver" != "$cl_ver" ]; then
     fault "JEFFY_VERSION $hook_ver does not match the newest CHANGELOG release [$cl_ver]; bump them together"
+  elif [ -n "$head_tag" ] && [ "$head_tag" != "v$hook_ver" ]; then
+    fault "HEAD is tagged $head_tag but the hook ships JEFFY_VERSION $hook_ver; the tag names a version the engine does not announce (P1-34)"
+  else
+    pass "JEFFY_VERSION $hook_ver matches the newest CHANGELOG release heading${head_tag:+ and the tag $head_tag on HEAD}"
   fi
 fi
 
@@ -639,6 +648,13 @@ tbl_langs="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t
 tbl_odd="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/, "", r); if (r != "Fixed" && r != "Failed") print $2 }' "$scorecard" | wc -l | tr -d ' ')"
 tbl_merged="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -o '\[PR merged\](' | wc -l | tr -d ' ')"
 tbl_issues="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -o '\[issue filed\](' | wc -l | tr -d ' ')"
+tbl_prs_open="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -o '\[PR open\](' | wc -l | tr -d ' ')"
+# Distinct projects, not PRs: a row carrying two merged links is one project.
+tbl_merged_projects="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -c '\[PR merged\](')"
+# Attempts that did not converge, from the ledger of every attempt, so the
+# front page's failed-project count and this figure are two derivations of
+# two tables rather than one typed number and one bridge sentence.
+tbl_failed_attempts="$(awk -F'|' '/^\| / { o = $5; gsub(/^[ \t]+|[ \t]+$/, "", o); if (o ~ /not converged/) c++ } END { print c + 0 }' evals/ATTEMPTS.md)"
 # Every marker of each kind, not the first: a second one is free to state a
 # different number. Reading them all means the message names the defect
 # rather than blaming the table for a number the pages disagree among
@@ -650,8 +666,9 @@ marker() { grep -oh "<!-- count:$1 -->[0-9][0-9]*<!-- /count -->" "${pub_docs[@]
 claim_conv="$(marker converged)"; claim_langs="$(marker languages)"
 claim_tested="$(marker tested)"; claim_fixed="$(marker fixed)"; claim_failed="$(marker failed)"
 claim_merged="$(marker merged)"; claim_issues="$(marker issues)"
+claim_prs_open="$(marker prs-open)"; claim_mp="$(marker merged-projects)"; claim_fa="$(marker failed-attempts)"
 count_bad=""
-for pair in "converged:$claim_conv:$tbl_conv" "languages:$claim_langs:$tbl_langs"             "tested:$claim_tested:$tbl_rows" "fixed:$claim_fixed:$tbl_fixed"             "failed:$claim_failed:$tbl_failed" "merged:$claim_merged:$tbl_merged"             "issues:$claim_issues:$tbl_issues"; do
+for pair in "converged:$claim_conv:$tbl_conv" "languages:$claim_langs:$tbl_langs"             "tested:$claim_tested:$tbl_rows" "fixed:$claim_fixed:$tbl_fixed"             "failed:$claim_failed:$tbl_failed" "merged:$claim_merged:$tbl_merged"             "issues:$claim_issues:$tbl_issues" "prs-open:$claim_prs_open:$tbl_prs_open" "merged-projects:$claim_mp:$tbl_merged_projects" "failed-attempts:$claim_fa:$tbl_failed_attempts"; do
   k="${pair%%:*}"; rest="${pair#*:}"; c="${rest%%:*}"; t="${rest#*:}"
   if [ -z "$c" ]; then count_bad="${count_bad}no <!-- count:$k --> marker; "
   elif [ "${c#* }" != "$c" ]; then count_bad="${count_bad}count:$k markers disagree [$c]; "
@@ -665,7 +682,42 @@ elif [ "$tbl_odd" != "0" ]; then
 elif [ -n "$count_bad" ]; then
   fault "published counts are not derived from the scorecard: ${count_bad%; }"
 else
-  pass "published counts are derived from the scorecard ($tbl_rows tested, $tbl_fixed fixed, $tbl_conv converged, $tbl_failed failed, $tbl_langs languages, $tbl_merged merged)"
+  pass "published counts are derived from the scorecard ($tbl_rows tested, $tbl_fixed fixed, $tbl_conv converged, $tbl_failed failed, $tbl_langs languages, $tbl_merged merged in $tbl_merged_projects projects, $tbl_prs_open open, $tbl_failed_attempts non-converged attempts)"
+fi
+
+# Jc. Every page that carries the language pie states one alt text, and it
+#     is the derivation render-language-pie.py performs: converged rows by
+#     language, largest first, ties alphabetical, one decimal place. Two
+#     pages, one derivation, or the front page and the receipts page tell
+#     two stories about the same table. C locale, because the renderer
+#     sorts ties by codepoint.
+pie_total="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r = $5; gsub(/[ \t]/, "", r); if (r == "Fixed" && $4 !~ /\[details\]\([^)]*\) - \*audit/) c++ } END { print c + 0 }' "$scorecard")"
+pie_expect="$(awk -F'|' '
+  /^\| [^|]+ \| [^|]+ \| \[details\]\(/ {
+    r = $5; gsub(/[ \t]/, "", r)
+    if (r == "Fixed" && $4 !~ /\[details\]\([^)]*\) - \*audit/) {
+      l = $3; gsub(/^[ \t]+|[ \t]+$/, "", l); n[l]++
+    }
+  }
+  END { for (l in n) printf "%d\t%s\n", n[l], l }' "$scorecard" \
+  | LC_ALL=C sort -t "$(printf '\t')" -k1,1nr -k2,2 \
+  | awk -F'\t' -v t="$pie_total" '
+    { out = out (out == "" ? "" : ", ") $2 " " $1 " at " sprintf("%.1f", 100 * $1 / t) " percent" }
+    END { printf "Pie chart of the %d converged public targets by language: %s.", t, out }')"
+pie_pages=0; pie_bad=""
+for pie_doc in "${pub_docs[@]}"; do
+  pie_alt="$(grep -o 'alt="Pie chart of the [^"]*"' "$pie_doc" 2>/dev/null | head -n 1 | sed 's/^alt="//; s/"$//')"
+  [ -n "$pie_alt" ] || continue
+  pie_pages=$((pie_pages + 1))
+  [ "$pie_alt" = "$pie_expect" ] || pie_bad="${pie_bad}$pie_doc; "
+done
+if [ "$pie_pages" -eq 0 ]; then
+  fault "no published page carries the language pie; the chart is the derived surface the front page is built around"
+elif [ -n "$pie_bad" ]; then
+  echo "expected: $pie_expect"
+  fault "the language pie alt text is not the scorecard's derivation on: ${pie_bad%; }"
+else
+  pass "the language pie alt text is the scorecard's derivation on every page carrying it ($pie_pages pages)"
 fi
 
 # N. Corpus-position claims are queries over the receipts table (P2-39): a
@@ -6614,6 +6666,17 @@ if command -v jq >/dev/null 2>&1; then
     else
       skip "run-probe.sh wall-ceiling control (no timeout(1) or gtimeout(1) on this host)"
     fi
+    # A battery that compiles Python leaves __pycache__ in the tree and the
+    # checkpoint's git add -A ships it: fast_float's converged tree carried
+    # five .pyc files the receipt had to strip (P2-47). The wrapper exports
+    # the guard for every probe, whatever the target's .gitignore says.
+    # shellcheck disable=SC2016  # the probe, not this shell, expands the variable
+    hb_rp_env="$("$BASH" "$hb_rp" bash -c 'printf %s "${PYTHONDONTWRITEBYTECODE:-unset}"' 2>/dev/null)"
+    if [ "$hb_rp_env" = "1" ]; then
+      pass "run-probe.sh runs every probe with PYTHONDONTWRITEBYTECODE=1 (P2-47)"
+    else
+      fault "run-probe.sh lets a Python probe write bytecode into the tree (PYTHONDONTWRITEBYTECODE is '$hb_rp_env')"
+    fi
 
     # ---------------------------------------------------------------------
     # 1.18.2 (P1-67): a count a governance document states is an executable
@@ -6812,6 +6875,61 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     rm -f "$hb_state"
     rm -rf "$hb_proj/.jeffy/probes/mbat"
     hb_git add -A >/dev/null; hb_git commit -qm m4 >/dev/null
+
+    # ---------------------------------------------------------------------
+    # 1.21.0 (P1-70): --lint derives the declaration checks and acts on
+    # nothing. commons-cli lost two evaluator PASSes and python-slugify its
+    # convergence to state-file forms this hook refuses, refusals the run
+    # could have read for itself. Every fixture here is red against the
+    # 1.20.0 hook by construction: that hook ignores its arguments, reads an
+    # empty stdin, finds no session id, and exits 0 in silence.
+    # ---------------------------------------------------------------------
+    hb_lint() { # $1 project root; stdout+stderr captured, rc in hb_lint_rc
+      # No cd: the hook takes the root as its argument, and $hb_hook is
+      # repo-relative.
+      hb_lint_out="$(bash "$hb_hook" --lint "$1" 2>&1 < /dev/null)"
+      hb_lint_rc=$?
+    }
+    hb_metrics_n() { find "$hb_proj/.jeffy/metrics" -name '*.jsonl' -type f 2>/dev/null | wc -l | tr -d ' '; }
+    rm -f "$hb_proj/verify-ran"
+    hb_write_plan 'touch verify-ran'
+    hb_write_evaluator_artifact
+    hb_git add -A >/dev/null; hb_git commit -qm lint1 >/dev/null
+    hb_write_journal 1 3
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+    hb_write_backlog '- [ ] T9 (Medium, runtime, correctness): open. Acceptance: x.' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_state_before="$(cksum < "$hb_state")"
+    hb_metrics_before="$(hb_metrics_n)"
+    hb_lint "$hb_proj"
+    if [ "$hb_lint_rc" -eq 1 ] && printf '%s' "$hb_lint_out" | grep -qF 'would be refused' \
+      && printf '%s' "$hb_lint_out" | grep -qF 'T9' && [ -f "$hb_state" ] \
+      && [ "$(cksum < "$hb_state")" = "$hb_state_before" ]; then
+      pass "stop hook --lint names the open Medium a declaration would be refused on and leaves the state file untouched (P1-70)"
+    else
+      printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+      fault "stop hook --lint did not name the refusal, or rewrote or removed the state file"
+    fi
+    hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_lint "$hb_proj"
+    if [ "$hb_lint_rc" -eq 0 ] && printf '%s' "$hb_lint_out" | grep -qF 'jeffy lint: clean' && [ -f "$hb_state" ]; then
+      pass "stop hook --lint reports clean on a tree every declaration check passes (P1-70 control)"
+    else
+      printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+      fault "stop hook --lint did not report clean on a declarable tree"
+    fi
+    if [ ! -f "$hb_proj/verify-ran" ]; then
+      pass "stop hook --lint never runs the Verify command (P1-70)"
+    else
+      fault "stop hook --lint executed the Verify command; a read-only pass ran the project's suite"
+    fi
+    if [ "$(hb_metrics_n)" = "$hb_metrics_before" ]; then
+      pass "stop hook --lint writes no telemetry record (P1-70)"
+    else
+      fault "stop hook --lint wrote a metrics record for a turn end that never happened"
+    fi
+    rm -f "$hb_state" "$hb_proj/verify-ran"
+    hb_write_plan none
+    hb_git add -A >/dev/null; hb_git commit -qm lint2 >/dev/null
 
     # ---------------------------------------------------------------------
     # 1.19.0: the severity ceiling by class. A High or Medium names what a

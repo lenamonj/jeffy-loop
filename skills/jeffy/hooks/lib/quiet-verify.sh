@@ -99,7 +99,7 @@ jeffy_verify_run() { # $1 project root, $2 command, $3 bound seconds, $4 output 
     vto=gtimeout
   fi
   if [ -n "$vto" ]; then
-    ( cd "$vr_root" && "$vto" "$vr_bound" bash -c "$vr_cmd" ) >"$vr_out" 2>&1
+    ( cd "$vr_root" && PYTHONDONTWRITEBYTECODE=1 "$vto" "$vr_bound" bash -c "$vr_cmd" ) >"$vr_out" 2>&1
     return $?
   fi
   # Watchdog: run in the background and arm a killer that leaves a sentinel
@@ -111,7 +111,7 @@ jeffy_verify_run() { # $1 project root, $2 command, $3 bound seconds, $4 output 
   # steps so the watchdog exits as soon as the gate does.
   vr_sent="${TMPDIR:-/tmp}/jeffy-verify-timeout-$$"
   rm -f "$vr_sent"
-  ( cd "$vr_root" && bash -c "$vr_cmd" ) >"$vr_out" 2>&1 &
+  ( cd "$vr_root" && PYTHONDONTWRITEBYTECODE=1 bash -c "$vr_cmd" ) >"$vr_out" 2>&1 &
   vr_pid=$!
   ( vr_waited=0
     while [ "$vr_waited" -lt "$vr_bound" ]; do
