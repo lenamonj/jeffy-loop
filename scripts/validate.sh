@@ -7058,8 +7058,18 @@ fi
 #    line for two properties. Each reports its own verdict now, and a tree that
 #    trips the detector is exactly the tree whose stderr is worth reading.
 #    Statically, over every tracked shell script: a name assigned with -v and
-#    then used in a regex position - either side of ~, or the pattern argument
-#    of sub, gsub, match or split - is reported. The -v names are read from the
+#    then used in a regex position - the pattern operand of ~ or !~, which is
+#    the right-hand side of the operator, or the pattern argument of sub, gsub,
+#    match or split - is reported. The left operand is deliberately not read and
+#    that is not a gap: there a name is the subject string rather than a
+#    pattern, so awk's escape processing of a -v value cannot widen a regex
+#    through it. What this arm does leave behind is one shape, and it was
+#    derived by driving the detector over a fixture carrying every regex
+#    position at once rather than reasoned about: a pattern operand wrapped in
+#    parentheses is missed, because the pattern admits only whitespace between
+#    the operator and the name. Caught in that same drive: bare, negated,
+#    unspaced and concatenated pattern operands, and sub, gsub, match and split
+#    with and without leading whitespace. (AE10) The -v names are read from the
 #    file rather than listed here, so a site added later is covered without
 #    editing this check, and the extraction is asserted non-empty because a
 #    detector that found no names at all would pass over everything in silence.
