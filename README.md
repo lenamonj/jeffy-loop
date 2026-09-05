@@ -27,9 +27,9 @@ Jeffy Loop is an autonomous engineering system built around a simple principle: 
 
 Jeffy was run against <!-- count:tested -->129<!-- /count --> open-source projects with no connection to this repository, each judged by its own test suite, every run published, failures included.
 
-| Projects tested | Fixed | Failed | PRs merged | PRs open | Issues filed |
+| Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:fixed -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->20<!-- /count -->** | **<!-- count:prs-open -->36<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:converged -->100<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->20<!-- /count -->** | **<!-- count:prs-open -->36<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
