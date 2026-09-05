@@ -89,6 +89,15 @@ if [ "$rc" -eq 124 ] && [ "$wall_s" -ne 0 ]; then
 elif [ "$rc" -eq 137 ] && [ "$have_scope" -eq 1 ]; then
   echo "run-probe.sh: probe was killed under the ${mem_mb}MB memory ceiling (SIGKILL); a probe that exhausts bounded memory is an instrument finding about the probe, and the run continues." >&2
 elif [ "$rc" -ne 0 ]; then
-  echo "run-probe.sh: probe exited $rc under ceilings ${mem_mb}MB / ${wall_s}s." >&2
+  # Each half of the pair names the ceiling that was enforced, never the one
+  # that was configured. On a host with no user manager and no timeout(1) this
+  # line answered "4096MB / 0s" two lines under its own "no ceiling at all",
+  # naming a memory bound nothing applied and printing the wrapper's internal
+  # off-sentinel as though it were a bound of zero seconds. The slot shape is
+  # kept so the readers that parse it keep working; what changes is that an
+  # unenforced dimension reads none rather than a figure. (AE12)
+  [ "$have_scope" -eq 1 ] && rp_mem="${mem_mb}MB" || rp_mem="none"
+  [ "$wall_s" -ne 0 ] && rp_wall="${wall_s}s" || rp_wall="none"
+  echo "run-probe.sh: probe exited $rc under ceilings $rp_mem / $rp_wall." >&2
 fi
 exit "$rc"
