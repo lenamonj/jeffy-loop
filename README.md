@@ -29,7 +29,7 @@ Jeffy was run against <!-- count:tested -->131<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->131<!-- /count -->** | **<!-- count:converged -->102<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->20<!-- /count -->** | **<!-- count:prs-open -->38<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->131<!-- /count -->** | **<!-- count:converged -->102<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->21<!-- /count -->** | **<!-- count:prs-open -->37<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -42,7 +42,7 @@ Jeffy was run against <!-- count:tested -->131<!-- /count --> open-source projec
 
 </div>
 
-A merged pull request is the one outcome the loop cannot award itself. Maintainers with no stake in this project have merged its patches into <!-- count:merged-projects -->17<!-- /count --> projects, among them:
+A merged pull request is the one outcome the loop cannot award itself. Maintainers with no stake in this project have merged its patches into <!-- count:merged-projects -->18<!-- /count --> projects, among them:
 
 - **Apple, [swift-log](https://github.com/apple/swift-log/pull/504)** - a documented no-op setter asserted instead; merged after the maintainer asked for the doc-only form.
 - **Microsoft, [mimalloc](https://github.com/microsoft/mimalloc/pull/1385)** - the zeroing allocator returned uninitialized memory above the small-size threshold; merged by the author the same day.

@@ -4,13 +4,13 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->131<!-- /count -->** | **<!-- count:fixed -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->20<!-- /count -->** | **<!-- count:prs-open -->38<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->131<!-- /count -->** | **<!-- count:fixed -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->21<!-- /count -->** | **<!-- count:prs-open -->37<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->102<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
 ## Merged upstream
 
-<!-- count:merged -->20<!-- /count --> patches this loop wrote are merged across <!-- count:merged-projects -->17<!-- /count --> projects, because a maintainer with no stake in this project reviewed each one and said yes, and one more finding was fixed upstream by the maintainer himself:
+<!-- count:merged -->21<!-- /count --> patches this loop wrote are merged across <!-- count:merged-projects -->18<!-- /count --> projects, because a maintainer with no stake in this project reviewed each one and said yes, and one more finding was fixed upstream by the maintainer himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
@@ -28,6 +28,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 - **Apple, [swift-log](https://github.com/apple/swift-log/pull/504) - merged.** `Logger.MetadataValue.attributes` documented its setter as a no-op on `.dictionary` and `.array` values and called `assertionFailure` there instead, so debug builds trapped where release builds silently dropped the write. The maintainer wanted the assertion kept as a programmer error; the merged change is the documentation saying so and pointing handler authors at leaf values. Merged 2026-09-04.
 - **Apache, [commons-text](https://github.com/apache/commons-text/pull/768) - merged.** `StringMatcher.isMatch(CharSequence, int, int, int)` forwarded `bufferEnd` where `bufferStart` belongs, so a custom matcher searching a `TextStringBuilder` through `StringSubstitutor` was handed a window that began at its own end and never matched. One argument fixed, with tests the reviewer shaped. Merged 2026-09-04 by Gary Gregory, fifty minutes after the requested rework.
 - **[urfave/cli](https://github.com/urfave/cli/pull/2423) - merged.** The parser classified a positional argument from a trimmed copy and then stored the copy, so a quoted argument with leading or trailing whitespace reached the action stripped: a file named `" notes.txt"` opened as `notes.txt`. The action now receives the argument as typed; flag detection is unchanged, measured on all four quoted flag-like inputs the reviewer asked about. Merged 2026-09-04.
+- **[pflag](https://github.com/spf13/pflag/pull/507) - merged.** The deprecated `ParseErrorsWhitelist.UnknownFlagsHandling` field was read from the wrong struct, so setting it did nothing; approved with a one-word thanks six days after filing.
 - **[chalk](https://github.com/chalk/chalk/pull/687) - fixed upstream.** The maintainer reproduced the finding, then wrote and merged his own fix, shipped in v6.0.0.
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](./claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
@@ -68,6 +69,7 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | swift-log | Swift | [details](./swift-log/REPORT.md) - a handler implementing only `log(event:)` overflowed the stack on the 1.0 entry point - [PR merged](https://github.com/apple/swift-log/pull/504), [PR open](https://github.com/apple/swift-log/pull/503) | Fixed |
 | commons-text | Java | [details](./commons-text/REPORT.md) - LevenshteinDetailedDistance over-reported the distance - [PR merged](https://github.com/apache/commons-text/pull/768), [PR open](https://github.com/apache/commons-text/pull/767), [PR open](https://github.com/apache/commons-text/pull/769) | Fixed |
 | urfave/cli | Go | [details](./urfave-cli/REPORT.md) - a lone - ended flag parsing - [PR merged](https://github.com/urfave/cli/pull/2423) | Fixed |
+| pflag | Go | [details](./pflag/REPORT.md) - deprecated flag field ignored - [PR merged](https://github.com/spf13/pflag/pull/507) | Fixed |
 | chalk | JavaScript | [details](./chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](./dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](./yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
@@ -77,7 +79,6 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 | go-yaml | Go | [details](./go-yaml/REPORT.md) - 20 findings, 6 High - [PR open](https://github.com/goccy/go-yaml/pull/915) | Fixed |
 | rust-url | Rust | [details](./rust-url/REPORT.md) - 20 findings, 10 High - [PR open](https://github.com/servo/rust-url/pull/1147) | Fixed |
 | rouge | Ruby | [details](./rouge/REPORT.md) - unknown theme crashed the CLI - [PR open](https://github.com/rouge-ruby/rouge/pull/2332) | Fixed |
-| pflag | Go | [details](./pflag/REPORT.md) - deprecated flag field ignored - [PR open](https://github.com/spf13/pflag/pull/507) | Fixed |
 | classnames | JavaScript | [details](./classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR open](https://github.com/JedWatson/classnames/pull/579) | Fixed |
 | assert | PHP | [details](./assert/REPORT.md) - isInitialized threw the wrong exception - [PR open](https://github.com/webmozarts/assert/pull/365), [PR open](https://github.com/webmozarts/assert/pull/366) | Fixed |
 | natsort | Python | [details](./natsort/REPORT.md) - locale sentinel was three ASCII bytes - [PR open](https://github.com/SethMMorton/natsort/pull/196) | Fixed |

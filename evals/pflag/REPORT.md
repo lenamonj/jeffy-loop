@@ -56,3 +56,7 @@ discard the value turned the suite red, green restored on revert.
 
 Full iteration record: [journal.md](journal.md). Complete shipped diff:
 [fixes.patch](fixes.patch).
+
+## Upstream
+
+[#507](https://github.com/spf13/pflag/pull/507) (the deprecated `ParseErrorsWhitelist.UnknownFlagsHandling` field was read from the wrong struct, so setting it did nothing) was filed 2026-08-31 and **merged 2026-09-06** by tomasaschan, approved with "Thank you!" and no change requested.
