@@ -25,20 +25,20 @@ Jeffy Loop is an autonomous engineering system built around a simple principle: 
 
 ## The proof
 
-Jeffy was run against <!-- count:tested -->129<!-- /count --> open-source projects with no connection to this repository, each judged by its own test suite, every run published, failures included.
+Jeffy was run against <!-- count:tested -->130<!-- /count --> open-source projects with no connection to this repository, each judged by its own test suite, every run published, failures included.
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->129<!-- /count -->** | **<!-- count:converged -->100<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->20<!-- /count -->** | **<!-- count:prs-open -->36<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->130<!-- /count -->** | **<!-- count:converged -->101<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->20<!-- /count -->** | **<!-- count:prs-open -->37<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
-  <img src="media/language-pie-light.png" alt="Pie chart of the 100 converged public targets by language: Python 19 at 19.0 percent, Rust 14 at 14.0 percent, Go 12 at 12.0 percent, JavaScript 10 at 10.0 percent, C++ 7 at 7.0 percent, Ruby 6 at 6.0 percent, C 5 at 5.0 percent, Java 5 at 5.0 percent, PHP 5 at 5.0 percent, Swift 5 at 5.0 percent, TypeScript 5 at 5.0 percent, Kotlin 4 at 4.0 percent, C# 3 at 3.0 percent." width="900">
+  <img src="media/language-pie-light.png" alt="Pie chart of the 101 converged public targets by language: Python 19 at 18.8 percent, Rust 14 at 13.9 percent, Go 12 at 11.9 percent, JavaScript 10 at 9.9 percent, C++ 7 at 6.9 percent, Ruby 6 at 5.9 percent, Swift 6 at 5.9 percent, C 5 at 5.0 percent, Java 5 at 5.0 percent, PHP 5 at 5.0 percent, TypeScript 5 at 5.0 percent, Kotlin 4 at 4.0 percent, C# 3 at 3.0 percent." width="900">
 </picture>
 
-<sub><!-- count:converged -->100<!-- /count --> projects run to convergence across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer or ruleset. Derived from the scorecard at render time.</sub>
+<sub><!-- count:converged -->101<!-- /count --> projects run to convergence across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer or ruleset. Derived from the scorecard at render time.</sub>
 
 </div>
 

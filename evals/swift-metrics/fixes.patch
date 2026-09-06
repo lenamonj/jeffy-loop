@@ -1,0 +1,565 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..11e5c45
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,13 @@
++# Files that belong to this repository's working history but not to a published source
++# archive. `export-ignore` applies to `git archive`, which is what a release tarball is
++# produced by, so a downloaded release carries the package and nothing else.
++#
++# It does not reach a SwiftPM checkout: SwiftPM clones the repository, and a clone carries
++# every tracked file by construction. That channel cannot be filtered from here.
++PLAN.md export-ignore
++BACKLOG.md export-ignore
++JOURNAL.md export-ignore
++JOURNAL-archive.md export-ignore
++.jeffy/ export-ignore
++.jeffy/** export-ignore
++.gitattributes export-ignore
+diff --git a/.gitignore b/.gitignore
+index 32b18dd..14f6d8e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -8,3 +8,4 @@
+ *.orig
+ .swiftpm
+ Package.resolved
++.claude/jeffy-loop.local.md
+diff --git a/Package.swift b/Package.swift
+index b71375a..4ba5ce5 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -10,18 +10,24 @@ let package = Package(
+         .library(name: "MetricsTestKit", targets: ["MetricsTestKit"]),
+     ],
+     targets: [
++        // CMakeLists.txt belongs to the CMake build, which reads these directories directly.
++        // Excluding it keeps SwiftPM from reporting it as an unhandled file in every build of
++        // every package that depends on this one.
+         .target(
+-            name: "CoreMetrics"
++            name: "CoreMetrics",
++            exclude: ["CMakeLists.txt"]
+         ),
+         .target(
+             name: "Metrics",
+-            dependencies: ["CoreMetrics"]
++            dependencies: ["CoreMetrics"],
++            exclude: ["CMakeLists.txt"]
+         ),
+         .target(
+             name: "MetricsTestKit",
+             dependencies: [
+                 "Metrics"
+-            ]
++            ],
++            exclude: ["CMakeLists.txt"]
+         ),
+         .testTarget(
+             name: "MetricsTests",
+diff --git a/README.md b/README.md
+index 9c06ced..c8de2b6 100644
+--- a/README.md
++++ b/README.md
+@@ -78,8 +78,9 @@ struct RequestHandler {
+ 
+ When using a scoped factory override — such as `withMetricsFactory(_:)` for testing — the factory is only active for
+ the duration of the closure. Any metrics created outside that scope will not see the overridden factory and will fall
+-back to the global one. If no global factory has been bootstrapped, such metrics will fail to initialize, providing a
+-safeguard against creating metrics outside of the designated setup scope.
++back to the global one. If no global factory has been bootstrapped, that global is the no-op backend: such metrics are
++created successfully and every value they record is silently discarded, with nothing reported at
++runtime. Create the metrics inside the scope, and bootstrap a real backend before any of them run.
+ 
+ ```swift
+ struct UserService {
+@@ -92,7 +93,7 @@ struct UserService {
+ 
+     func createUser(name: String) async throws -> User {
+         // ❌ Created on demand — task-local factory is no longer in scope,
+-        //    falls back to global; fails if global is not bootstrapped
++        //    falls back to global; its values are silently discarded when that global is the no-op backend
+         let onDemandCounter = Counter(label: "users.created.on_demand")
+         let user = User()
+         self.counter.increment()
+@@ -182,7 +183,9 @@ gauge.record(100)
+ `Meter`: A Meter is similar to `Gauge` - a metric that represents a single numerical value that can arbitrarily go up and down. Meters are typically used for measured values like temperatures or current memory usage, but also "counts" that can go up and down, like the number of active threads. Unlike `Gauge`, `Meter` also supports atomic increments and decrements.
+ 
+ ```swift
+-meter.record(100)
++meter.set(100)
++meter.increment(by: 5)
++meter.decrement(by: 2)
+ ```
+ 
+ `Recorder`: A recorder collects observations within a time window (usually things like response sizes) and *can* provide aggregated information about the data sample, for example count, sum, min, max and various quantiles.
+@@ -297,14 +300,24 @@ public protocol TimerHandler: AnyObject {
+ Implementation of metric objects that deal with integers, like `Counter` and `Timer` should be careful with overflow. The expected behavior is to cap at `.max`, and never crash the program due to overflow . For example:
+ 
+ ```swift
+-class ExampleCounter: CounterHandler {
+-    var value: Int64 = 0
++final class ExampleCounter: CounterHandler, @unchecked Sendable {
++    private let lock = NSLock()
++    private var value: Int64 = 0
++
+     func increment(by amount: Int64) {
+-        let result = self.value.addingReportingOverflow(amount)
+-        if result.overflow {
+-            self.value = Int64.max
+-        } else {
+-            self.value = result.partialValue
++        self.lock.withLock {
++            let result = self.value.addingReportingOverflow(amount)
++            if result.overflow {
++                self.value = Int64.max
++            } else {
++                self.value = result.partialValue
++            }
++        }
++    }
++
++    func reset() {
++        self.lock.withLock {
++            self.value = 0
+         }
+     }
+ }
+@@ -315,7 +328,7 @@ class ExampleCounter: CounterHandler {
+ Here is a full, but contrived, example of an in-memory implementation:
+ 
+ ```swift
+-class SimpleMetricsLibrary: MetricsFactory {
++final class SimpleMetricsLibrary: MetricsFactory {
+     init() {}
+ 
+     func makeCounter(label: String, dimensions: [(String, String)]) -> CounterHandler {
+@@ -336,15 +349,15 @@ class SimpleMetricsLibrary: MetricsFactory {
+ 
+     // implementation is stateless, so nothing to do on destroy calls
+     func destroyCounter(_ handler: CounterHandler) {}
+-    func destroyMeter(_ handler: TimerHandler) {}
++    func destroyMeter(_ handler: MeterHandler) {}
+     func destroyRecorder(_ handler: RecorderHandler) {}    
+     func destroyTimer(_ handler: TimerHandler) {}
+ 
+-    private class ExampleCounter: CounterHandler {
++    private final class ExampleCounter: CounterHandler, @unchecked Sendable {
+         init(_: String, _: [(String, String)]) {}
+ 
+-        let lock = NSLock()
+-        var value: Int64 = 0
++        private let lock = NSLock()
++        private var value: Int64 = 0
+         func increment(by amount: Int64) {
+             self.lock.withLock {
+                 self.value += amount
+@@ -358,11 +371,11 @@ class SimpleMetricsLibrary: MetricsFactory {
+         }
+     }
+ 
+-    private class ExampleMeter: MeterHandler {
++    private final class ExampleMeter: MeterHandler, @unchecked Sendable {
+         init(_: String, _: [(String, String)]) {}
+ 
+-        let lock = NSLock()
+-        var _value: Double = 0
++        private let lock = NSLock()
++        private var _value: Double = 0
+ 
+         func set(_ value: Int64) {
+             self.set(Double(value))
+@@ -381,11 +394,11 @@ class SimpleMetricsLibrary: MetricsFactory {
+         }
+     }
+ 
+-    private class ExampleRecorder: RecorderHandler {
++    private final class ExampleRecorder: RecorderHandler, @unchecked Sendable {
+         init(_: String, _: [(String, String)], _: Bool) {}
+ 
+         private let lock = NSLock()
+-        var values = [(Int64, Double)]()
++        private var values = [(Date, Double)]()
+         func record(_ value: Int64) {
+             self.record(Double(value))
+         }
+@@ -393,15 +406,22 @@ class SimpleMetricsLibrary: MetricsFactory {
+         func record(_ value: Double) {
+             // TODO: sliding window
+             lock.withLock {
+-                values.append((Date().nanoSince1970, value))
++                values.append((Date(), value))
+                 self._count += 1
+                 self._sum += value
+-                self._min = Swift.min(self._min, value)
+-                self._max = Swift.max(self._max, value)
++                // Seed from the first observation: starting min and max at zero would report a
++                // minimum of zero for any series of positive values.
++                if self._count == 1 {
++                    self._min = value
++                    self._max = value
++                } else {
++                    self._min = Swift.min(self._min, value)
++                    self._max = Swift.max(self._max, value)
++                }
+             }
+         }
+ 
+-        var _sum: Double = 0
++        private var _sum: Double = 0
+         var sum: Double {
+             return self.lock.withLock { _sum }
+         }
+@@ -422,11 +442,11 @@ class SimpleMetricsLibrary: MetricsFactory {
+         }
+     }
+ 
+-    private class ExampleTimer: TimerHandler {
++    private final class ExampleTimer: TimerHandler, @unchecked Sendable {
+         init(_: String, _: [(String, String)]) {}
+ 
+-        let lock = NSLock()
+-        var _value: Int64 = 0
++        private let lock = NSLock()
++        private var _value: Int64 = 0
+ 
+         func recordNanoseconds(_ duration: Int64) {
+             self.lock.withLock { _value = duration }
+diff --git a/Sources/CoreMetrics/Docs.docc/index.md b/Sources/CoreMetrics/Docs.docc/index.md
+index 9efebcf..2fb7a05 100644
+--- a/Sources/CoreMetrics/Docs.docc/index.md
++++ b/Sources/CoreMetrics/Docs.docc/index.md
+@@ -85,8 +85,9 @@ struct RequestHandler {
+ 
+ When you use a scoped factory override — such as `withMetricsFactory(_:)` for testing — the factory is only active for
+ the duration of the closure. Any metrics created outside that scope do not see the overridden factory and fall back to
+-the global one. If no global factory has been bootstrapped, such metrics fail to initialize, providing a safeguard
+-against creating metrics outside of the designated setup scope.
++the global one. If no global factory has been bootstrapped, that global is the no-op backend: such metrics are
++created successfully and every value they record is silently discarded, with nothing reported at
++runtime. Create the metrics inside the scope, and bootstrap a real backend before any of them run.
+ 
+ ```swift
+ struct UserService {
+@@ -99,7 +100,7 @@ struct UserService {
+ 
+     func createUser(name: String) async throws -> User {
+         // ❌ Created on demand — task-local factory is no longer in scope,
+-        //    falls back to global; fails if global is not bootstrapped
++        //    falls back to global; its values are silently discarded when that global is the no-op backend
+         let onDemandCounter = Counter(label: "users.created.on_demand")
+         let user = User()
+         self.counter.increment()
+@@ -277,14 +278,24 @@ Implementations of metric objects that deal with integers, like ``Counter`` and
+ overflow. The expected behavior is to cap at `.max`, and never crash the program due to overflow. For example:
+ 
+ ```swift
+-class ExampleCounter: CounterHandler {
+-    var value: Int64 = 0
++final class ExampleCounter: CounterHandler, @unchecked Sendable {
++    private let lock = NSLock()
++    private var value: Int64 = 0
++
+     func increment(by amount: Int64) {
+-        let result = self.value.addingReportingOverflow(amount)
+-        if result.overflow {
+-            self.value = Int64.max
+-        } else {
+-            self.value = result.partialValue
++        self.lock.withLock {
++            let result = self.value.addingReportingOverflow(amount)
++            if result.overflow {
++                self.value = Int64.max
++            } else {
++                self.value = result.partialValue
++            }
++        }
++    }
++
++    func reset() {
++        self.lock.withLock {
++            self.value = 0
+         }
+     }
+ }
+@@ -295,7 +306,7 @@ class ExampleCounter: CounterHandler {
+ Here is a full, but contrived, example of an in-memory implementation:
+ 
+ ```swift
+-class SimpleMetricsLibrary: MetricsFactory {
++final class SimpleMetricsLibrary: MetricsFactory {
+     init() {}
+ 
+     func makeCounter(label: String, dimensions: [(String, String)]) -> CounterHandler {
+@@ -316,15 +327,15 @@ class SimpleMetricsLibrary: MetricsFactory {
+ 
+     // implementation is stateless, so nothing to do on destroy calls
+     func destroyCounter(_ handler: CounterHandler) {}
+-    func destroyMeter(_ handler: TimerHandler) {}
++    func destroyMeter(_ handler: MeterHandler) {}
+     func destroyRecorder(_ handler: RecorderHandler) {}
+     func destroyTimer(_ handler: TimerHandler) {}
+ 
+-    private class ExampleCounter: CounterHandler {
++    private final class ExampleCounter: CounterHandler, @unchecked Sendable {
+         init(_: String, _: [(String, String)]) {}
+ 
+-        let lock = NSLock()
+-        var value: Int64 = 0
++        private let lock = NSLock()
++        private var value: Int64 = 0
+         func increment(by amount: Int64) {
+             self.lock.withLock {
+                 self.value += amount
+@@ -338,11 +349,11 @@ class SimpleMetricsLibrary: MetricsFactory {
+         }
+     }
+ 
+-    private class ExampleMeter: MeterHandler {
++    private final class ExampleMeter: MeterHandler, @unchecked Sendable {
+         init(_: String, _: [(String, String)]) {}
+ 
+-        let lock = NSLock()
+-        var _value: Double = 0
++        private let lock = NSLock()
++        private var _value: Double = 0
+ 
+         func set(_ value: Int64) {
+             self.set(Double(value))
+@@ -361,11 +372,11 @@ class SimpleMetricsLibrary: MetricsFactory {
+         }
+     }
+ 
+-    private class ExampleRecorder: RecorderHandler {
++    private final class ExampleRecorder: RecorderHandler, @unchecked Sendable {
+         init(_: String, _: [(String, String)], _: Bool) {}
+ 
+         private let lock = NSLock()
+-        var values = [(Int64, Double)]()
++        private var values = [(Date, Double)]()
+         func record(_ value: Int64) {
+             self.record(Double(value))
+         }
+@@ -373,15 +384,22 @@ class SimpleMetricsLibrary: MetricsFactory {
+         func record(_ value: Double) {
+             // TODO: sliding window
+             lock.withLock {
+-                values.append((Date().nanoSince1970, value))
++                values.append((Date(), value))
+                 self._count += 1
+                 self._sum += value
+-                self._min = Swift.min(self._min, value)
+-                self._max = Swift.max(self._max, value)
++                // Seed from the first observation: starting min and max at zero would report a
++                // minimum of zero for any series of positive values.
++                if self._count == 1 {
++                    self._min = value
++                    self._max = value
++                } else {
++                    self._min = Swift.min(self._min, value)
++                    self._max = Swift.max(self._max, value)
++                }
+             }
+         }
+ 
+-        var _sum: Double = 0
++        private var _sum: Double = 0
+         var sum: Double {
+             return self.lock.withLock { _sum }
+         }
+@@ -402,11 +420,11 @@ class SimpleMetricsLibrary: MetricsFactory {
+         }
+     }
+ 
+-    private class ExampleTimer: TimerHandler {
++    private final class ExampleTimer: TimerHandler, @unchecked Sendable {
+         init(_: String, _: [(String, String)]) {}
+ 
+-        let lock = NSLock()
+-        var _value: Int64 = 0
++        private let lock = NSLock()
++        private var _value: Int64 = 0
+ 
+         func recordNanoseconds(_ duration: Int64) {
+             self.lock.withLock { _value = duration }
+@@ -453,7 +471,9 @@ go up and down, like the number of active threads. Unlike ``Gauge``, ``Meter`` a
+ decrements.
+ 
+ ```swift
+-meter.record(100)
++meter.set(100)
++meter.increment(by: 5)
++meter.decrement(by: 2)
+ ```
+ 
+ ``Recorder`` collects observations within a time window (usually things like response sizes) and *can* provide
+diff --git a/Sources/Metrics/Metrics.swift b/Sources/Metrics/Metrics.swift
+index c2514f0..03da4e2 100644
+--- a/Sources/Metrics/Metrics.swift
++++ b/Sources/Metrics/Metrics.swift
+@@ -77,10 +77,18 @@ extension Timer {
+     
+     /// Record the time interval (with nanosecond precision) between the passed `since` dispatch time and `end` dispatch time.
+     ///
++    /// An `end` that precedes `since` records a zero duration rather than failing. `DispatchTime`
++    /// carries an unsigned uptime, so such a pair has no duration to express, and the alternatives -
++    /// trapping on the subtraction, or dropping the observation - would either take the process down
++    /// or lose the data point without a trace.
++    ///
+     /// - parameters:
+     ///   - since: Start of the interval as `DispatchTime`.
+     ///   - end: End of the interval, defaulting to `.now()`.
+     public func recordInterval(since: DispatchTime, end: DispatchTime = .now()) {
++        guard end.uptimeNanoseconds >= since.uptimeNanoseconds else {
++            return self.recordNanoseconds(0)
++        }
+         self.recordNanoseconds(end.uptimeNanoseconds - since.uptimeNanoseconds)
+     }
+ 
+diff --git a/Sources/MetricsTestKit/TestMetrics.swift b/Sources/MetricsTestKit/TestMetrics.swift
+index e24f1b2..afff4df 100644
+--- a/Sources/MetricsTestKit/TestMetrics.swift
++++ b/Sources/MetricsTestKit/TestMetrics.swift
+@@ -148,14 +148,30 @@ public final class TestMetrics: MetricsFactory {
+ }
+ 
+ extension TestMetrics.FullKey: Hashable {
++    /// Dimensions are compared as an order-insensitive multiset of `(name, value)` pairs, so the same
++    /// dimensions supplied in a different order resolve to the same instrument.
++    ///
++    /// A repeated dimension name is legal input to the metrics API and is carried through by every
++    /// other factory in this package, so the comparison sorts the pairs rather than folding them into
++    /// a `Dictionary`, which would trap on the repeat.
+     public func hash(into hasher: inout Hasher) {
+         hasher.combine(self.label)
+-        hasher.combine(Dictionary(uniqueKeysWithValues: self.dimensions))
++        for (name, value) in Self.sortedDimensions(self.dimensions) {
++            hasher.combine(name)
++            hasher.combine(value)
++        }
+     }
+ 
+     public static func == (lhs: TestMetrics.FullKey, rhs: TestMetrics.FullKey) -> Bool {
+-        lhs.label == rhs.label
+-            && Dictionary(uniqueKeysWithValues: lhs.dimensions) == Dictionary(uniqueKeysWithValues: rhs.dimensions)
++        guard lhs.label == rhs.label else { return false }
++        return sortedDimensions(lhs.dimensions)
++            .elementsEqual(sortedDimensions(rhs.dimensions)) { $0.0 == $1.0 && $0.1 == $1.1 }
++    }
++
++    private static func sortedDimensions(_ dimensions: [(String, String)]) -> [(String, String)] {
++        dimensions.sorted { lhs, rhs in
++            lhs.0 == rhs.0 ? lhs.1 < rhs.1 : lhs.0 < rhs.0
++        }
+     }
+ }
+ 
+diff --git a/Tests/MetricsTests/MetricsTests.swift b/Tests/MetricsTests/MetricsTests.swift
+index 4c0bf11..aa5f024 100644
+--- a/Tests/MetricsTests/MetricsTests.swift
++++ b/Tests/MetricsTests/MetricsTests.swift
+@@ -53,6 +53,25 @@ struct MetricsExtensionsTests {
+     }
+ 
+     #if canImport(Dispatch)
++    @Test func timerRecordInterval() throws {
++        let metrics = TestMetrics()
++        let timer = Timer(label: "test-timer", factory: metrics)
++        let testTimer = try metrics.expectTimer(timer)
++
++        let start = DispatchTime.now()
++        let later = DispatchTime(uptimeNanoseconds: start.uptimeNanoseconds + 1_500)
++
++        timer.recordInterval(since: start, end: later)
++        #expect(testTimer.values == [1_500], "expected the exact delta")
++
++        timer.recordInterval(since: start, end: start)
++        #expect(testTimer.values == [1_500, 0], "expected a zero-length interval to record zero")
++
++        // An end that precedes the start has no duration to express, and must not trap.
++        timer.recordInterval(since: later, end: start)
++        #expect(testTimer.values == [1_500, 0, 0], "expected a reversed interval to record zero")
++    }
++
+     @Test func timerWithDispatchTime() throws {
+         // create our test metrics, avoid bootstrapping global MetricsSystem
+         let metrics = TestMetrics()
+@@ -257,6 +276,77 @@ struct MetricsExtensionsTests {
+     }
+ }
+ 
++// MARK: - Instrument identity tests
++
++struct TestMetricsIdentityTests {
++    @Test func repeatedDimensionNamesAreCarried() throws {
++        let metrics = TestMetrics()
++        let counter = Counter(label: "requests", dimensions: [("tag", "a"), ("tag", "b")], factory: metrics)
++        counter.increment(by: 3)
++
++        #expect(try metrics.expectCounter("requests", [("tag", "a"), ("tag", "b")]).values == [3])
++        #expect(metrics.counters(label: "requests").count == 1)
++    }
++
++    @Test func repeatedDimensionNamesAreDistinguishedByValue() throws {
++        let metrics = TestMetrics()
++        Counter(label: "requests", dimensions: [("tag", "a"), ("tag", "b")], factory: metrics).increment(by: 1)
++        Counter(label: "requests", dimensions: [("tag", "a"), ("tag", "c")], factory: metrics).increment(by: 2)
++
++        #expect(metrics.counters(label: "requests").count == 2)
++        #expect(try metrics.expectCounter("requests", [("tag", "a"), ("tag", "b")]).values == [1])
++        #expect(try metrics.expectCounter("requests", [("tag", "a"), ("tag", "c")]).values == [2])
++    }
++
++    @Test func repeatedDimensionNamesCountedByMultiplicity() throws {
++        let metrics = TestMetrics()
++        Counter(label: "requests", dimensions: [("tag", "a")], factory: metrics).increment(by: 1)
++        Counter(label: "requests", dimensions: [("tag", "a"), ("tag", "a")], factory: metrics).increment(by: 2)
++
++        #expect(metrics.counters(label: "requests").count == 2)
++    }
++
++    @Test func dimensionOrderDoesNotChangeIdentity() throws {
++        let metrics = TestMetrics()
++        Counter(label: "requests", dimensions: [("method", "GET"), ("status", "200")], factory: metrics)
++            .increment(by: 1)
++        Counter(label: "requests", dimensions: [("status", "200"), ("method", "GET")], factory: metrics)
++            .increment(by: 1)
++
++        #expect(metrics.counters(label: "requests").count == 1)
++        #expect(try metrics.expectCounter("requests", [("status", "200"), ("method", "GET")]).values == [1, 1])
++    }
++
++    @Test func repeatedDimensionNamesOnEveryInstrumentKind() throws {
++        let metrics = TestMetrics()
++        let dimensions = [("tag", "a"), ("tag", "b")]
++
++        Counter(label: "c", dimensions: dimensions, factory: metrics).increment()
++        Meter(label: "m", dimensions: dimensions, factory: metrics).set(4)
++        Recorder(label: "r", dimensions: dimensions, factory: metrics).record(5)
++        Timer(label: "t", dimensions: dimensions, factory: metrics).recordNanoseconds(6)
++
++        #expect(try metrics.expectCounter("c", dimensions).values == [1])
++        #expect(try metrics.expectMeter("m", dimensions).values == [4])
++        #expect(try metrics.expectRecorder("r", dimensions).values == [5])
++        #expect(try metrics.expectTimer("t", dimensions).values == [6])
++    }
++
++    @Test func repeatedDimensionNamesSurviveDestroyAndReset() throws {
++        let metrics = TestMetrics()
++        let counter = Counter(label: "requests", dimensions: [("tag", "a"), ("tag", "b")], factory: metrics)
++        counter.increment()
++        #expect(metrics.counters(label: "requests").count == 1)
++
++        counter.destroy()
++        #expect(metrics.counters(label: "requests").isEmpty)
++
++        Counter(label: "requests", dimensions: [("tag", "a"), ("tag", "b")], factory: metrics).increment()
++        metrics.reset()
++        #expect(metrics.counters.isEmpty)
++    }
++}
++
+ // MARK: - Dimension query API tests
+ 
+ struct MetricsDimensionQueryTests {
