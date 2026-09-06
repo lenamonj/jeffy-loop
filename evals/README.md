@@ -33,6 +33,24 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](./claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.
 
+## Contributor agreements
+
+Jeff Lenamon has entered into the following agreements: (A CLA is signed once; a
+DCO is a `Signed-off-by` line on every commit.)
+
+| Organization | Agreement | Date |
+|---|---|---|
+| Microsoft | CLA | 2026-08-31 |
+| spf13 (Steve Francia) | CLA | 2026-09-03 |
+| Google | CLA | 2026-09-06 |
+| Uber | CLA | 2026-09-06 |
+| IBM | DCO | per commit |
+| NVIDIA | DCO | per commit |
+| Spring | DCO | per commit |
+| Oracle | CLA | 2026-09-06 * |
+
+\* signed, awaiting Oracle's countersignature.
+
 ## Converged targets by language
 
 <div align="center">

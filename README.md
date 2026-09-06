@@ -65,7 +65,7 @@ cd jeffy-loop
 > [!NOTE]
 > If PowerShell refuses with "running scripts is disabled on this system", run `powershell -ExecutionPolicy Bypass -File .\install.ps1` once.
 
-Open Claude Code in the project you want to improve and type `/jeffy 10`. It is a slash command inside the session, not a shell command. When the run ends, start a new session to run it again; [the restart is doing real work](docs/usage.md#use-several-short-runs-not-one-long-one).
+Open Claude Code in the project you want to improve and type `/jeffy 10`. It is a slash command inside the session, not a shell command. If you only want the Highs found and fixed, type `/jeffy 10 --highs`; it stops at the first audit that finds none, so it is usually the faster run ([High hunt](docs/usage.md#high-hunt)). When the run ends, start a new session to run it again; [the restart is doing real work](docs/usage.md#use-several-short-runs-not-one-long-one).
 
 ## Five guarantees
 
