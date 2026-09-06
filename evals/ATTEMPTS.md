@@ -151,6 +151,7 @@ loss rather than hiding it.
 | uuid | 1 | 10 | converged | evaluator countersigned | 0 |
 | swift-log | 2 | 16 | converged | evaluator countersigned | 0 |
 | commons-cli | 2 | 20 | converged | evaluator countersigned | 1 |
+| commons-codec | 2 | 18 | converged | evaluator countersigned | 0 |
 | jansson | 1 | 10 | converged | evaluator countersigned | 0 |
 | shouldly | 1 | 8 | converged | evaluator countersigned | 0 |
 | valinor | 2 | 17 | converged | evaluator countersigned | 0 |

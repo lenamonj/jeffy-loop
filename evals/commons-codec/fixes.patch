@@ -1,0 +1,312 @@
+diff --git a/.gitignore b/.gitignore
+index 98e00a7e..ecba98c4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -15,3 +15,4 @@ target/
+ # NetBeans files
+ nb-configuration.xml
+ nbactions.xml
++.claude/jeffy-loop.local.md
+diff --git a/src/main/java/org/apache/commons/codec/digest/Crypt.java b/src/main/java/org/apache/commons/codec/digest/Crypt.java
+index 30565548..e9649936 100644
+--- a/src/main/java/org/apache/commons/codec/digest/Crypt.java
++++ b/src/main/java/org/apache/commons/codec/digest/Crypt.java
+@@ -42,7 +42,8 @@ public class Crypt {
+      * A salt is generated for you using {@link SecureRandom}.
+      * </p>
+      *
+-     * @param keyBytes The plaintext password.
++     * @param keyBytes The plaintext password. Each array element is set to {@code 0} before returning, since this overload always delegates to
++     *                 {@link Sha2Crypt#sha512Crypt(byte[])}.
+      * @return The hash value.
+      * @throws IllegalArgumentException Thrown if a {@link NoSuchAlgorithmException} is caught.
+      */
+@@ -56,7 +57,10 @@ public class Crypt {
+      * If no salt is provided, a random salt and the default algorithm (currently SHA-512) will be used. See {@link #crypt(String, String)} for details.
+      * </p>
+      *
+-     * @param keyBytes The plaintext password.
++     * @param keyBytes The plaintext password. Each array element is set to {@code 0} before returning whenever the salt selects one of the
++     *                 {@link Sha2Crypt} or {@link Md5Crypt} algorithms, which is the case for a null salt and for the {@code $6$}, {@code $5$} and
++     *                 {@code $1$} prefixes, because those methods document and perform that clearing. The array is left untouched on the remaining
++     *                 branch, the {@link UnixCrypt} DES fallback. Pass a copy if you need the plaintext afterwards.
+      * @param salt     The salt, which is used to select the algorithm, see {@link #crypt(String, String)} The salt may be null, in which case the method
+      *                 delegates to {@link Sha2Crypt#sha512Crypt(byte[])}.
+      * @return hash value.
+diff --git a/src/main/java/org/apache/commons/codec/digest/GitIdentifiers.java b/src/main/java/org/apache/commons/codec/digest/GitIdentifiers.java
+index 0f7a3015..959eb353 100644
+--- a/src/main/java/org/apache/commons/codec/digest/GitIdentifiers.java
++++ b/src/main/java/org/apache/commons/codec/digest/GitIdentifiers.java
+@@ -57,8 +57,9 @@ public class GitIdentifiers {
+      *   <li>the raw object id of the referenced blob or sub-tree.</li>
+      * </ul>
+      *
+-     * <p>Entries are ordered by {@link #compareTo} using Git's tree-sort rule: directory names are compared as if they ended with {@code '/'}, so that {@code foo/}
+-     * sorts after {@code foobar}.</p>
++     * <p>Entries are ordered by {@link #compareTo} using Git's tree-sort rule: names are compared as unsigned UTF-8 bytes, and directory names are compared as if
++     * they ended with {@code '/'}, so that {@code foo/} sorts after {@code foobar}. Comparing the UTF-8 bytes rather than the Java {@link String} is what keeps
++     * the order Git's for names outside the Basic Multilingual Plane, whose UTF-16 code units do not sort in code point order.</p>
+      *
+      * @see <a href="https://git-scm.com/book/en/v2/Git-Internals-Git-Objects">Git Internals – Git Objects</a>
+      * @see <a href="https://www.swhid.org/swhid-specification/v1.2/5.Core_identifiers/#53-directories">SWHID Directory Identifier</a>
+@@ -76,11 +77,11 @@ public class GitIdentifiers {
+         private final byte[] rawObjectId;
+ 
+         /**
+-         * The key used for ordering entries within a tree object.
++         * The key used for ordering entries within a tree object, as the UTF-8 bytes Git itself compares.
+          *
+-         * <p>>Git appends {@code '/'} to directory names before comparing.</p>
++         * <p>Git appends {@code '/'} to directory names before comparing.</p>
+          */
+-        private final String sortKey;
++        private final byte[] sortKey;
+ 
+         /**
+          * The Git object type, which determines the Unix file-mode prefix.
+@@ -100,13 +101,22 @@ public class GitIdentifiers {
+             }
+             this.name = name;
+             this.type = Objects.requireNonNull(type, "type");
+-            this.sortKey = type == FileMode.DIRECTORY ? name + "/" : name;
++            this.sortKey = (type == FileMode.DIRECTORY ? name + "/" : name).getBytes(StandardCharsets.UTF_8);
+             this.rawObjectId = Objects.requireNonNull(rawObjectId, "rawObjectId");
+         }
+ 
+         @Override
+         public int compareTo(final DirectoryEntry o) {
+-            return sortKey.compareTo(o.sortKey);
++            final byte[] a = sortKey;
++            final byte[] b = o.sortKey;
++            final int shared = Math.min(a.length, b.length);
++            for (int i = 0; i < shared; i++) {
++                final int diff = (a[i] & 0xff) - (b[i] & 0xff);
++                if (diff != 0) {
++                    return diff;
++                }
++            }
++            return a.length - b.length;
+         }
+ 
+         @Override
+diff --git a/src/main/java/org/apache/commons/codec/language/ColognePhonetic.java b/src/main/java/org/apache/commons/codec/language/ColognePhonetic.java
+index eddda45d..11b7d633 100644
+--- a/src/main/java/org/apache/commons/codec/language/ColognePhonetic.java
++++ b/src/main/java/org/apache/commons/codec/language/ColognePhonetic.java
+@@ -164,8 +164,10 @@ import org.apache.commons.codec.StringEncoder;
+  *
+  * <li>
+  * <h3>Step 3:</h3>
+- * Removal of all codes "0" except at the beginning. This means that two or more identical consecutive digits can occur
+- * if they occur after removing the "0" digits.
++ * Removal of all codes "0" except at the beginning. A removed "0" does not separate the digits around it: where the same digit stands on either side of
++ * a removed "0", the pair collapses to a single digit, so {@code "hoffmann"} encodes as {@code "036"} and not {@code "0366"}. That collapsing was
++ * introduced by CODEC-317. Applying step 2 and step 3 strictly in that order leaves the pair standing instead, which is what this documentation
++ * described before CODEC-317 and what an implementation following that order returns: {@code "0366"}.
+  *
+  * <h4>Example:</h4>
+  * {@code "6050750206802"} -&gt; {@code "65752682"}</li>
+diff --git a/src/main/java/org/apache/commons/codec/language/DoubleMetaphone.java b/src/main/java/org/apache/commons/codec/language/DoubleMetaphone.java
+index 2915db9d..cf9251bd 100644
+--- a/src/main/java/org/apache/commons/codec/language/DoubleMetaphone.java
++++ b/src/main/java/org/apache/commons/codec/language/DoubleMetaphone.java
+@@ -328,7 +328,8 @@ public class DoubleMetaphone implements StringEncoder {
+      * Encodes a value with Double Metaphone.
+      *
+      * @param value String to encode.
+-     * @return An encoded string.
++     * @return An encoded string, {@code null} for an empty or whitespace-only input, and {@code null} for a {@code null} input. Note that {@link Metaphone} returns the empty
++     *         string in those cases instead.
+      */
+     public String doubleMetaphone(final String value) {
+         return doubleMetaphone(value, false);
+@@ -339,7 +340,8 @@ public class DoubleMetaphone implements StringEncoder {
+      *
+      * @param value String to encode.
+      * @param alternate use alternate encode.
+-     * @return An encoded string.
++     * @return An encoded string, {@code null} for an empty or whitespace-only input, and {@code null} for a {@code null} input. Note that {@link Metaphone} returns the empty
++     *         string in those cases instead.
+      */
+     public String doubleMetaphone(String value, final boolean alternate) {
+         value = cleanInput(value);
+@@ -453,8 +455,10 @@ public class DoubleMetaphone implements StringEncoder {
+      * {@code obj} is a {@code String} (like {@code Metaphone}).
+      *
+      * @param obj Object to encode (should be of type String).
+-     * @return An encoded Object (will be of type String).
+-     * @throws EncoderException encode parameter is not of type String.
++     * @return An encoded Object (will be of type String), or {@code null} when {@code obj} is a String that is empty or whitespace-only, where
++     *         {@link Metaphone} returns the empty string instead. Unlike the other overloads, this one accepts a String and nothing else, so a
++     *         {@code null} argument raises {@link EncoderException} rather than returning {@code null}.
++     * @throws EncoderException if {@code obj} is not a String, which includes {@code obj} being {@code null}.
+      */
+     @Override
+     public Object encode(final Object obj) throws EncoderException {
+@@ -468,7 +472,8 @@ public class DoubleMetaphone implements StringEncoder {
+      * Encodes the value using DoubleMetaphone.
+      *
+      * @param value String to encode.
+-     * @return An encoded String.
++     * @return An encoded String, {@code null} for an empty or whitespace-only input, and {@code null} for a {@code null} input. Note that {@link Metaphone} returns the empty
++     *         string in those cases instead.
+      */
+     @Override
+     public String encode(final String value) {
+diff --git a/src/main/java/org/apache/commons/codec/net/QuotedPrintableCodec.java b/src/main/java/org/apache/commons/codec/net/QuotedPrintableCodec.java
+index 52561e1a..c2b8add2 100644
+--- a/src/main/java/org/apache/commons/codec/net/QuotedPrintableCodec.java
++++ b/src/main/java/org/apache/commons/codec/net/QuotedPrintableCodec.java
+@@ -176,7 +176,8 @@ public class QuotedPrintableCodec implements BinaryEncoder, BinaryDecoder, Strin
+      * @param printable bitset of characters deemed quoted-printable.
+      * @param bytes     array of bytes to be encoded.
+      * @param strict    if {@code true} the full ruleset is used, otherwise only rule #1 and rule #2.
+-     * @return array of bytes containing quoted-printable data.
++     * @return array of bytes containing quoted-printable data, {@code null} if {@code bytes} is {@code null}, or {@code null} if {@code strict} is
++     *         {@code true} and {@code bytes} is shorter than three bytes, since the full ruleset cannot place a soft line break in a body that short.
+      * @since 1.10
+      */
+     public static final byte[] encodeQuotedPrintable(BitSet printable, final byte[] bytes, final boolean strict) {
+@@ -442,7 +443,8 @@ public class QuotedPrintableCodec implements BinaryEncoder, BinaryDecoder, Strin
+      * </p>
+      *
+      * @param bytes array of bytes to be encoded.
+-     * @return array of bytes containing quoted-printable data.
++     * @return array of bytes containing quoted-printable data, {@code null} if {@code bytes} is {@code null}, or {@code null} if this codec is strict and
++     *         {@code bytes} is shorter than three bytes.
+      */
+     @Override
+     public byte[] encode(final byte[] bytes) {
+@@ -453,7 +455,8 @@ public class QuotedPrintableCodec implements BinaryEncoder, BinaryDecoder, Strin
+      * Encodes an object into its quoted-printable safe form. Unsafe characters are escaped.
+      *
+      * @param obj string to convert to a quoted-printable form.
+-     * @return quoted-printable object.
++     * @return quoted-printable object, {@code null} if {@code obj} is {@code null}, or {@code null} if this codec is strict and {@code obj} is a byte
++     *         array, or a String encoding to a byte array, shorter than three bytes.
+      * @throws EncoderException Thrown if quoted-printable encoding is not applicable to objects of this type or if encoding is unsuccessful.
+      */
+     @Override
+@@ -478,7 +481,8 @@ public class QuotedPrintableCodec implements BinaryEncoder, BinaryDecoder, Strin
+      * </p>
+      *
+      * @param sourceStr string to convert to quoted-printable form.
+-     * @return quoted-printable string.
++     * @return quoted-printable string, {@code null} if {@code sourceStr} is {@code null}, or {@code null} if this codec is strict and {@code sourceStr}
++     *         encodes to a byte array shorter than three bytes.
+      * @throws EncoderException Thrown if quoted-printable encoding is unsuccessful.
+      *
+      * @see #getCharset()
+@@ -497,7 +501,8 @@ public class QuotedPrintableCodec implements BinaryEncoder, BinaryDecoder, Strin
+      *
+      * @param sourceStr     string to convert to quoted-printable form.
+      * @param sourceCharset The Charset for sourceStr.
+-     * @return quoted-printable string.
++     * @return quoted-printable string, {@code null} if {@code sourceStr} is {@code null}, or {@code null} if this codec is strict and {@code sourceStr}
++     *         encodes to a byte array shorter than three bytes.
+      * @since 1.7
+      */
+     public String encode(final String sourceStr, final Charset sourceCharset) {
+@@ -516,7 +521,8 @@ public class QuotedPrintableCodec implements BinaryEncoder, BinaryDecoder, Strin
+      *
+      * @param sourceStr     string to convert to quoted-printable form.
+      * @param sourceCharset The Charset for sourceStr.
+-     * @return quoted-printable string.
++     * @return quoted-printable string, {@code null} if {@code sourceStr} is {@code null}, or {@code null} if this codec is strict and {@code sourceStr}
++     *         encodes to a byte array shorter than three bytes.
+      * @throws UnsupportedEncodingException Thrown if the Charset is not supported.
+      */
+     public String encode(final String sourceStr, final String sourceCharset) throws UnsupportedEncodingException {
+diff --git a/src/test/java/org/apache/commons/codec/digest/CryptTest.java b/src/test/java/org/apache/commons/codec/digest/CryptTest.java
+index 47ae6bc7..05f01cc7 100644
+--- a/src/test/java/org/apache/commons/codec/digest/CryptTest.java
++++ b/src/test/java/org/apache/commons/codec/digest/CryptTest.java
+@@ -16,11 +16,14 @@
+  */
+ package org.apache.commons.codec.digest;
+ 
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertNotNull;
+ import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
++import java.nio.charset.StandardCharsets;
++
+ import org.junit.jupiter.api.Test;
+ 
+ class CryptTest {
+@@ -107,6 +110,24 @@ class CryptTest {
+         assertEquals("xxWAum7tHdIUw", Crypt.crypt("secret", "xxWAum7tHdIUw"));
+     }
+ 
++    /**
++     * Pins both halves of what the {@code keyBytes} Javadoc of {@link Crypt#crypt(byte[], String)} says about the caller's array, over every branch of
++     * its dispatch: the four salts that select {@link Sha2Crypt} or {@link Md5Crypt} clear it, and the DES fallback leaves it alone.
++     */
++    @Test
++    void testCryptClearsKeyBytesOnlyOnTheAlgorithmsThatDocumentIt() {
++        final byte[] plaintext = "secret".getBytes(StandardCharsets.UTF_8);
++        final byte[] zeroed = new byte[plaintext.length];
++        for (final String salt : new String[] { null, "$6$saltstring", "$5$saltstring", "$1$saltstri" }) {
++            final byte[] keyBytes = plaintext.clone();
++            assertNotNull(salt == null ? Crypt.crypt(keyBytes) : Crypt.crypt(keyBytes, salt));
++            assertArrayEquals(zeroed, keyBytes, "salt " + salt + " must clear keyBytes");
++        }
++        final byte[] desKeyBytes = plaintext.clone();
++        assertNotNull(Crypt.crypt(desKeyBytes, "ab"));
++        assertArrayEquals(plaintext, desKeyBytes, "the DES fallback must leave keyBytes alone");
++    }
++
+     @Test
+     void testType() {
+         startsWith(Crypt.crypt("secret", "xxxx"), "xx");
+diff --git a/src/test/java/org/apache/commons/codec/digest/GitIdentifiersTest.java b/src/test/java/org/apache/commons/codec/digest/GitIdentifiersTest.java
+index e455173d..257a8873 100644
+--- a/src/test/java/org/apache/commons/codec/digest/GitIdentifiersTest.java
++++ b/src/test/java/org/apache/commons/codec/digest/GitIdentifiersTest.java
+@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
+ 
+ import java.io.ByteArrayInputStream;
++import java.io.IOException;
+ import java.nio.charset.StandardCharsets;
+ import java.nio.file.Files;
+ import java.nio.file.Path;
+@@ -221,6 +222,36 @@ class GitIdentifiersTest {
+         assertFalse(regular.equals("foo"));
+     }
+ 
++    /**
++     * Tree entry names are ordered by their UTF-8 bytes, which is not the order {@link String#compareTo(String)} gives for names outside the Basic Multilingual
++     * Plane: U+FF21 encodes to {@code EF BC A1} and U+1F600 to {@code F0 9F 98 80}, so Git sorts U+FF21 first, while the UTF-16 code units place the surrogate
++     * pair of U+1F600 first.
++     *
++     * <p>The expected identifier is the one {@code git write-tree} produces for a tree holding the same two entries.</p>
++     */
++    @Test
++    void testTreeIdSortsSupplementaryPlaneNamesLikeGit(@TempDir final Path tempDir) throws Exception {
++        final String fullWidthA = "\uFF21";
++        final String grinningFace = "\uD83D\uDE00";
++        final byte[] content = "x".getBytes(StandardCharsets.UTF_8);
++        final String expected = "9f9c1fc3580195f51d3e71b384ef1d57740e2151";
++        final MessageDigest md = DigestUtils.getSha1Digest();
++
++        // Entries are added in the wrong order on purpose, so only the sort decides the result.
++        final GitIdentifiers.TreeIdBuilder builder = GitIdentifiers.treeIdBuilder(md);
++        builder.addFile(GitIdentifiers.FileMode.REGULAR, grinningFace, content);
++        builder.addFile(GitIdentifiers.FileMode.REGULAR, fullWidthA, content);
++        assertEquals(expected, Hex.encodeHexString(builder.get()));
++
++        try {
++            Files.write(tempDir.resolve(fullWidthA), content);
++            Files.write(tempDir.resolve(grinningFace), content);
++        } catch (final IOException e) {
++            Assumptions.abort("Filesystem cannot hold the test entry names: " + e);
++        }
++        assertEquals(expected, Hex.encodeHexString(GitIdentifiers.treeId(md, tempDir)));
++    }
++
+     /**
+      * Entries should be sorted by Git sort rule.
+      *
