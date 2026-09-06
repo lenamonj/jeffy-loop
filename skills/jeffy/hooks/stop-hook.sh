@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.22.0"
+JEFFY_VERSION="1.22.1"
 
 # 1.21.0 (P1-70): `stop-hook.sh --lint [project root]` derives every check
 # the declaration path enforces and prints the first refusal, or clean,
@@ -1590,38 +1590,38 @@ if [ "$hunt" = 0 ] && [ -n "$unswept_rows" ]; then
   fi
 fi
 
-# P0-5 fail-fast: when the observed rate says the map cannot clear inside
-# what remains of the budget, end the run now with the arithmetic instead of
-# spending the rest discovering it at exhaustion - the 100-iteration case.
-# Guards, each deliberate: at least 4 samples so two audit-shaped opening
-# iterations never trip it; an open High (or an unparseable line, same
-# fail-closed parse) suppresses it, because a High legitimately outranks the
-# map and its iterations are not sweep failures; a violation in flight keeps
-# the rejection re-feed, which carries its own message; and at iter >= max
-# the exhaustion path already reports. Three iterations are reserved for the
-# convergence sequence the cleared map still needs.
-if [ -n "$unswept_rows" ] && [ "$unswept_rows" != "0" ] \
-  && [ "$open_high" = "0" ] && [ -z "$violation" ] \
-  && [ "$hist_k" -ge 4 ] && [ "$iter" -lt "$max" ]; then
+# P0-5 projection, P1-72 (1.22.1): when the observed rate says the map
+# cannot clear inside what remains of the budget, the run is told the
+# arithmetic and keeps going. Through 1.22.0 this branch ended the run on
+# the spot ("rather than at exhaustion"), and on zstd, stylex and macaron
+# (2026-09-06) every round closed at iteration 5-7 of 10 with rows still
+# sweepable, five paid-for iterations thrown away per round while the next
+# round paid a restart. The shortfall was never the case the stop was
+# written for: the 100-iteration case is a map that does not move, and the
+# stall gate answers that on checkpoints, not projections. Guards kept as
+# they were: at least 4 samples so two audit-shaped opening iterations
+# never trip it; an open High (or an unparseable line, same fail-closed
+# parse) suppresses it, because a High legitimately outranks the map; a
+# violation in flight keeps the rejection re-feed, which carries its own
+# message; at iter >= max the exhaustion path already reports. The three
+# iterations the convergence sequence needs stay in the arithmetic as what
+# the note reserves, and shorten nothing.
+budget_note=""
+if [ -n "$unswept_rows" ] && [ "$unswept_rows" != "0" ]   && [ "$open_high" = "0" ] && [ -z "$violation" ]   && [ "$hist_k" -ge 4 ] && [ "$iter" -lt "$max" ]; then
   # P0-7: the three-iteration reserve is the convergence sequence, and that
   # is only the next thing when nothing above Low is open. With a Medium
-  # still on the ledger the run cannot declare inside this budget anyway,
-  # and what the stop then protects is the chance to finish the map and
-  # carry the Medium forward - so the reserve is not taken from the room.
+  # still on the ledger the run cannot declare inside this budget anyway.
   if [ "$open_hm" = "0" ]; then
     sweep_room=$((max - iter - 3))
   else
     sweep_room=$((max - iter))
   fi
   if [ "$hist_deltas" -le 0 ]; then
-    echo "jeffy stop hook: the map is not clearing - $unswept_rows rows are unswept and 0 rows were swept over the last $((hist_k - 1)) iterations with nothing above Low on the ledger; ending the run early rather than spending the remaining $((max - iter)) iterations the same way (P0-5). The map and ledger carry to the next run." >&2
-    rm -f "$state"
-    exit 0
+    budget_note="Budget note: the map is not clearing - $unswept_rows rows are unswept and 0 rows were swept over the last $((hist_k - 1)) iterations; the run continues to iteration $max and the stall gate is the only early end (P1-72)."
   elif [ -n "$proj_needed" ] && [ "$proj_needed" -gt "$sweep_room" ]; then
-    echo "jeffy stop hook: the map cannot clear inside this budget - $unswept_rows rows are unswept, the observed rate is $hist_deltas rows over the last $((hist_k - 1)) iterations, so clearing needs about $proj_needed more sweep iterations against $sweep_room available after reserving 3 for the convergence sequence; ending the run early with the arithmetic rather than at exhaustion (P0-5). The map and ledger carry to the next run." >&2
-    rm -f "$state"
-    exit 0
+    budget_note="Budget note: the map cannot clear inside this budget - $unswept_rows rows are unswept, the observed rate is $hist_deltas rows over the last $((hist_k - 1)) iterations, so clearing needs about $proj_needed more sweep iterations against $sweep_room available$([ "$open_hm" = "0" ] && printf ' after reserving 3 for the convergence sequence'); the run continues to iteration $max and carries the map and ledger to the next run (P1-72)."
   fi
+  [ -n "$budget_note" ] && echo "jeffy stop hook: ${budget_note#Budget note: }" >&2
 fi
 
 # Extension honesty: the +2 window buys the convergence sequence - the gate,
@@ -2516,10 +2516,13 @@ if [ -n "$unswept_rows" ] && [ "$unswept_rows" != "0" ]; then
       if [ "$hist_deltas" -gt 0 ] && [ -n "$proj_needed" ]; then
         reason="$reason Observed rate: $hist_deltas rows swept over the last $((hist_k - 1)) iterations, projecting the map clearing around iteration $((next + proj_needed - 1)) of $max."
       else
-        reason="$reason Observed rate: 0 rows swept over the last $((hist_k - 1)) iterations; at this rate the map never clears, and the run will be ended early once the shortfall is established."
+        reason="$reason Observed rate: 0 rows swept over the last $((hist_k - 1)) iterations; at this rate the map never clears inside this budget, and the run continues to its budget regardless (P1-72)."
       fi
     fi
   fi
+fi
+if [ -n "${budget_note:-}" ]; then
+  reason="$reason $budget_note"
 fi
 jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'
 exit 0

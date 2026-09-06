@@ -6120,10 +6120,12 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook did not derive or say the sweep projection (rate and clearing iteration)"
     fi
 
-    # P0-5 fail-fast, the rate shape: 9 rows at 1 row per iteration against
-    # 3 sweep iterations left after the closing reserve - the run is ended
-    # now, with the arithmetic, instead of at exhaustion. The state file is
-    # deleted, which is how the hook ends a run.
+    # P0-5 projection under P1-72 (1.22.1), the rate shape: 9 rows at 1 row
+    # per iteration against 3 sweep iterations left after the closing
+    # reserve. Through 1.22.0 the hook ended the run here by deleting the
+    # state file; every round on zstd, stylex and macaron (2026-09-06) closed
+    # at iteration 5-7 of 10 that way. Now the run keeps its state file,
+    # is re-fed, and is told the shortfall.
     hb_write_state sess-1 4 10
     hb_state_addkey 'rows_history: 12,11,10'
     {
@@ -6136,17 +6138,19 @@ if command -v jq >/dev/null 2>&1; then
       for hb_i in 1 2 3 4 5 6 7 8 9; do printf -- '- [ ] row%s: scope\n' "$hb_i"; done
     } > "$hb_proj/PLAN.md"
     hb_err="$(hb_run sess-1 'worked the task' '' 2>&1 1>/dev/null)"
-    if [ ! -f "$hb_state" ] \
+    if [ -f "$hb_state" ] \
       && printf '%s' "$hb_err" | grep -qF 'the map cannot clear inside this budget' \
-      && printf '%s' "$hb_err" | grep -qF 'needs about 9 more sweep iterations against 3 available'; then
-      pass "stop hook ends a run early when the observed rate says the map cannot clear (fail-fast, with arithmetic)"
+      && printf '%s' "$hb_err" | grep -qF 'needs about 9 more sweep iterations against 3 available' \
+      && printf '%s' "$hb_err" | grep -qF 'the run continues to iteration 10'; then
+      pass "stop hook keeps re-feeding a run whose projection exceeds its budget and names the shortfall (P1-72)"
     else
       printf '%s\n' "$hb_err"
-      fault "stop hook let a provably unclearable map spend its whole budget, which is the 100-iteration case P0-5 exists to end"
+      fault "stop hook ended, or failed to warn, a run whose map cannot clear inside its budget; P1-72 keeps the run to its budget with the arithmetic said"
     fi
 
-    # P0-5 fail-fast, the zero-rate shape: rows unswept, nothing above Low
-    # open, and no row swept across the whole window.
+    # The zero-rate shape: rows unswept, nothing above Low open, and no row
+    # swept across the whole window. The run continues (the stall gate is
+    # the only early end) and is told the rate is zero.
     hb_write_state sess-1 4 10
     hb_state_addkey 'rows_history: 9,9,9'
     {
@@ -6154,13 +6158,14 @@ if command -v jq >/dev/null 2>&1; then
       for hb_i in 1 2 3 4 5 6 7 8 9; do printf -- '- [ ] row%s: scope\n' "$hb_i"; done
     } > "$hb_proj/PLAN.md"
     hb_err="$(hb_run sess-1 'worked the task' '' 2>&1 1>/dev/null)"
-    if [ ! -f "$hb_state" ] \
+    if [ -f "$hb_state" ] \
       && printf '%s' "$hb_err" | grep -qF 'the map is not clearing' \
-      && printf '%s' "$hb_err" | grep -qF '0 rows were swept over the last 3 iterations'; then
-      pass "stop hook ends a run early when no row has been swept across the whole observed window"
+      && printf '%s' "$hb_err" | grep -qF '0 rows were swept over the last 3 iterations' \
+      && printf '%s' "$hb_err" | grep -qF 'the run continues to iteration 10'; then
+      pass "stop hook keeps re-feeding a run that swept nothing across the window and says the rate is zero (P1-72)"
     else
       printf '%s\n' "$hb_err"
-      fault "stop hook kept re-feeding a run that swept nothing for the whole window with nothing above Low open"
+      fault "stop hook ended, or failed to warn, a run that swept nothing across the window; P1-72 leaves the early end to the stall gate"
     fi
 
     # The suppressions, each a control against overreach: an open High keeps
@@ -6296,12 +6301,12 @@ if command -v jq >/dev/null 2>&1; then
       printf '\n## Next\n\n## Later\n\n## Converged\n'
     } > "$hb_proj/BACKLOG.md"
     hb_err="$(hb_run sess-1 'worked the task' '' 2>&1 1>/dev/null)"
-    if [ ! -f "$hb_state" ] \
-      && printf '%s' "$hb_err" | grep -qF 'needs about 5 more sweep iterations against 3 available'; then
-      pass "stop hook still reserves the convergence sequence when only Lows are open (P0-7 control)"
+    if [ -f "$hb_state" ] \
+      && printf '%s' "$hb_err" | grep -qF 'needs about 5 more sweep iterations against 3 available after reserving 3 for the convergence sequence'; then
+      pass "stop hook still reserves the convergence sequence in the arithmetic when only Lows are open, and keeps the run (P0-7 control under P1-72)"
     else
       printf '%s\n' "$hb_err"
-      fault "stop hook stopped reserving the convergence sequence on a Low-only ledger"
+      fault "stop hook stopped reserving the convergence sequence on a Low-only ledger, or ended the run over it"
     fi
 
     # P0-7 replay: Carbon run 74e5d096 turn by turn, the hook keeping its own
