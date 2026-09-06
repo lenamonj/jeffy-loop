@@ -29,7 +29,7 @@ Jeffy was run against <!-- count:tested -->131<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->131<!-- /count -->** | **<!-- count:converged -->102<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->21<!-- /count -->** | **<!-- count:prs-open -->37<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->131<!-- /count -->** | **<!-- count:converged -->102<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->21<!-- /count -->** | **<!-- count:prs-open -->36<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 

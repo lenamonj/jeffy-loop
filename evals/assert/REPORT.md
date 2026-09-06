@@ -169,3 +169,12 @@ helper and 13 provider rows. The NAN rows are deliberately left out:
 the maintainer refused NAN handling in #302, so the PR draws its
 boundary where the project has already said it wants it, and the rows
 that would reopen that argument are not part of the change.
+
+**Update 2026-09-06**: #366 closed by the maintainer: "Narrowing the
+methods would mean a new major release." The objection is right for a
+1.x line. The ordering assertions currently accept every operand pair PHP
+can compare, so refusing some of them changes behaviour for callers who
+rely on that, and a semver-respecting library ships that in a major, not
+a patch. The finding stands as a finding; the fix belongs in the
+project's next major, which is the maintainer's call. #365 is unaffected
+and stays open.
