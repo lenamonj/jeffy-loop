@@ -4,9 +4,9 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->131<!-- /count -->** | **<!-- count:fixed -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->21<!-- /count -->** | **<!-- count:prs-open -->36<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:fixed -->104<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->21<!-- /count -->** | **<!-- count:prs-open -->38<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->102<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
+**Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->103<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
 ## Merged upstream
 
@@ -58,7 +58,7 @@ DCO is a `Signed-off-by` line on every commit.)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../media/language-pie-dark.png">
-  <img src="../media/language-pie-light.png" alt="Pie chart of the 102 converged public targets by language: Python 19 at 18.6 percent, Rust 14 at 13.7 percent, Go 12 at 11.8 percent, JavaScript 10 at 9.8 percent, C++ 7 at 6.9 percent, Java 6 at 5.9 percent, Ruby 6 at 5.9 percent, Swift 6 at 5.9 percent, C 5 at 4.9 percent, PHP 5 at 4.9 percent, TypeScript 5 at 4.9 percent, Kotlin 4 at 3.9 percent, C# 3 at 2.9 percent." width="900">
+  <img src="../media/language-pie-light.png" alt="Pie chart of the 103 converged public targets by language: Python 20 at 19.4 percent, Rust 14 at 13.6 percent, Go 12 at 11.7 percent, JavaScript 10 at 9.7 percent, C++ 7 at 6.8 percent, Java 6 at 5.8 percent, Ruby 6 at 5.8 percent, Swift 6 at 5.8 percent, C 5 at 4.9 percent, PHP 5 at 4.9 percent, TypeScript 5 at 4.9 percent, Kotlin 4 at 3.9 percent, C# 3 at 2.9 percent." width="900">
 </picture>
 
 <sub>Every converged public target, by the language it was written in. Counts are derived from the receipts table below at render time by <a href="../scripts/render-language-pie.py"><code>scripts/render-language-pie.py</code></a>, largest slice first, ties alphabetical. Chart source: <a href="../media/language-pie.html"><code>media/language-pie.html</code></a>.</sub>
@@ -114,6 +114,7 @@ DCO is a `Signed-off-by` line on every commit.)
 | commons-csv | Java | [details](./commons-csv/REPORT.md) - six documented promises the code did not keep, and a serialization skew the loop introduced and caught - [PR open](https://github.com/apache/commons-csv/pull/633) | Fixed |
 | swift-metrics | Swift | [details](./swift-metrics/REPORT.md) - the package's own test kit crashed on a repeated dimension name, and the published recorder example reported a minimum of zero - [PR open](https://github.com/apple/swift-metrics/pull/244) | Fixed |
 | commons-codec | Java | [details](./commons-codec/REPORT.md) - the new Git tree-id builder sorted entries by UTF-16 code units where Git sorts UTF-8 bytes, and five Javadoc promises the code did not keep - [PR open](https://github.com/apache/commons-codec/pull/443) | Fixed |
+| macaron | Python | [details](./macaron/REPORT.md) - a two-segment Maven group id crashed the repository verifier, and the build-spec generator threw away the JDK version it had just read from the JAR - [PR open](https://github.com/oracle/macaron/pull/1465), [PR open](https://github.com/oracle/macaron/pull/1466) | Fixed |
 | mustache.js | JavaScript | [details](./mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](./spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](./quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |

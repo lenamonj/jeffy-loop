@@ -1,0 +1,1762 @@
+diff --git a/.gitignore b/.gitignore
+index b535b7b..31e95a3 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -183,3 +183,4 @@ bin/
+ requirements.txt
+ .macaron_env_file
+ **/.DS_Store
++.claude/jeffy-loop.local.md
+diff --git a/pyproject.toml b/pyproject.toml
+index d4c5e15..ad613c1 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -157,13 +157,18 @@ omit = [
+ include = []
+ exclude = [
+     ".github/",
++    ".jeffy/",
+     "docs/",
+     "tests/",
+     ".flake8",
+     ".gitignore",
+     ".pre-commit-config.yaml",
++    "BACKLOG.md",
+     "CHANGELOG.md",
++    "JOURNAL-archive.md",
++    "JOURNAL.md",
+     "Makefile",
++    "PLAN.md",
+     "SECURITY.md",
+ ]
+ 
+diff --git a/src/macaron/build_spec_generator/common_spec/jdk_version_normalizer.py b/src/macaron/build_spec_generator/common_spec/jdk_version_normalizer.py
+index 00fb0f2..7c37a45 100644
+--- a/src/macaron/build_spec_generator/common_spec/jdk_version_normalizer.py
++++ b/src/macaron/build_spec_generator/common_spec/jdk_version_normalizer.py
+@@ -1,30 +1,16 @@
+-# Copyright (c) 2025 - 2025, Oracle and/or its affiliates. All rights reserved.
++# Copyright (c) 2025 - 2026, Oracle and/or its affiliates. All rights reserved.
+ # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
+ 
+ """This module contains the logic to normalize a JDK version string as a major version number."""
+ 
+-SUPPORTED_JAVA_VERSION = [
+-    "5",
+-    "6",
+-    "7",
+-    "8",
+-    "9",
+-    "10",
+-    "11",
+-    "12",
+-    "13",
+-    "14",
+-    "15",
+-    "16",
+-    "17",
+-    "18",
+-    "19",
+-    "20",
+-    "21",
+-    "22",
+-    "23",
+-    "24",
+-]
++import re
++
++#: The oldest major JDK version this module recognizes. There is deliberately no upper bound:
++#: an enumerated list of known versions goes stale with every JDK release, and a version past
++#: the end of it produced None, which the build spec generator treats as fatal.
++MIN_SUPPORTED_JAVA_VERSION = 5
++
++_LEADING_DIGITS = re.compile(r"\d+")
+ 
+ 
+ def normalize_jdk_version(jdk_version_str: str) -> str | None:
+@@ -35,6 +21,10 @@ def normalize_jdk_version(jdk_version_str: str) -> str | None:
+ 
+     For 1.x versions, we return the major version as ``x``.
+ 
++    A vendor may append text to the version, as in ``19-ea`` or
++    ``8 (Azul Systems Inc. 25.282-b08)``, so the leading digits of the major
++    component are what is read.
++
+     Parameters
+     ----------
+     jdk_version_str: str
+@@ -56,9 +46,11 @@ def normalize_jdk_version(jdk_version_str: str) -> str | None:
+     >>> normalize_jdk_version("1.8")
+     '8'
+     >>> normalize_jdk_version("25.0.1")
++    '25'
++    >>> normalize_jdk_version("4")
++    >>> normalize_jdk_version("not-a-version")
+     """
+     first, _, after = jdk_version_str.partition(".")
+-    jdk_major_ver = None
+     if first == "1":
+         # Cases like 1.8.0_523
+         # Or 1.8
+@@ -67,18 +59,12 @@ def normalize_jdk_version(jdk_version_str: str) -> str | None:
+         # Cases like 11 or 11.0 or 11.0.1
+         jdk_major_ver = first
+ 
+-    if jdk_major_ver in SUPPORTED_JAVA_VERSION:
+-        return jdk_major_ver
++    match = _LEADING_DIGITS.match(jdk_major_ver)
++    if match is None:
++        return None
+ 
+-    # Handle edge cases:
+-    #   pkg:maven/org.apache.druid.integration-tests/druid-it-cases@25.0.0
+-    #         - "8 (Azul Systems Inc. 25.282-b08)"
+-    #   pkg:maven/io.helidon.reactive.media/helidon-reactive-media-jsonp@4.0.0-ALPHA1
+-    #         - "19-ea"
+-    for support in SUPPORTED_JAVA_VERSION:
+-        # Wouldn't work for cases like 19000 but that's not a big problem
+-        # as long as the result is a valid major version.
+-        if jdk_major_ver.startswith(support):
+-            return support
++    major = match.group()
++    if int(major) < MIN_SUPPORTED_JAVA_VERSION:
++        return None
+ 
+-    return None
++    return major
+diff --git a/src/macaron/build_spec_generator/common_spec/maven_spec.py b/src/macaron/build_spec_generator/common_spec/maven_spec.py
+index 7f20ce7..cb5bd6c 100644
+--- a/src/macaron/build_spec_generator/common_spec/maven_spec.py
++++ b/src/macaron/build_spec_generator/common_spec/maven_spec.py
+@@ -84,7 +84,7 @@ class MavenBuildSpec(BaseBuildSpec):
+         existing = self.data["language_version"][0] if self.data["language_version"] else None
+ 
+         # Select JDK from jar or another source, with a default of version 8.
+-        selected_jdk_version = jdk_from_jar or existing if existing else "8"
++        selected_jdk_version = jdk_from_jar or existing or "8"
+ 
+         major_jdk_version = normalize_jdk_version(selected_jdk_version)
+         if not major_jdk_version:
+diff --git a/src/macaron/build_spec_generator/dockerfile/pypi_dockerfile_output.py b/src/macaron/build_spec_generator/dockerfile/pypi_dockerfile_output.py
+index 2b6efb6..dd68d32 100644
+--- a/src/macaron/build_spec_generator/dockerfile/pypi_dockerfile_output.py
++++ b/src/macaron/build_spec_generator/dockerfile/pypi_dockerfile_output.py
+@@ -286,14 +286,11 @@ def pick_specific_version(inferred_constraints: list[str]) -> str | None:
+ 
+     Examples
+     --------
+-    >>> pick_specific_version([">=3.0"])
+-    '3.8.20'
+-    >>> pick_specific_version([">=3.8"])
+-    '3.8.20'
+-    >>> pick_specific_version([">=3.0", "!=3.4", "!=3.3", "!=3.5"])
+-    '3.8.20'
+-    >>> pick_specific_version(["<=3.12"])
+-    '3.8.20'
++    The patch component is whatever python.org lists as newest for the chosen minor version
++    when this is called, so it has no fixed value to show here. Only the unsatisfiable case
++    answers without consulting the network; which minor version gets chosen is covered by
++    the unit tests, which supply the patch lookup themselves.
++
+     >>> pick_specific_version(["<=3.12", "==3.6"]) is None
+     True
+     """
+diff --git a/src/macaron/code_analyzer/gha_security_analysis/detect_injection.py b/src/macaron/code_analyzer/gha_security_analysis/detect_injection.py
+index 99ed534..65fe8c6 100644
+--- a/src/macaron/code_analyzer/gha_security_analysis/detect_injection.py
++++ b/src/macaron/code_analyzer/gha_security_analysis/detect_injection.py
+@@ -42,6 +42,33 @@ PRIORITY_MEDIUM = 60
+ PRIORITY_LOW = 40
+ PRIORITY_MIN = 20
+ 
++#: GitHub context references an outside contributor can set, and which therefore must
++#: not be interpolated into a shell command. Each entry is a free-text or ref field on
++#: an event object that a non-collaborator populates: the head ref of a pull request,
++#: and the title and body of the pull request, issue and comment that opened it.
++#:
++#: This is the single definition. ``_has_attacker_controlled_expanded_ref`` matches the
++#: full paths and ``_arg_has_attacker_controlled_github_ref`` matches the suffix the
++#: bash parser leaves after splitting off the ``github`` expansion, so the suffix set is
++#: derived from this one rather than written out a second time.
++ATTACKER_CONTROLLED_GITHUB_REFS = frozenset(
++    {
++        "github.head_ref",
++        "github.event.pull_request.head.ref",
++        "github.event.pull_request.title",
++        "github.event.pull_request.body",
++        "github.event.issue.title",
++        "github.event.issue.body",
++        "github.event.comment.body",
++    }
++)
++
++#: The same references as the suffix the bash parser leaves behind, so the two matchers
++#: cannot drift apart: ``github.head_ref`` becomes ``.head_ref``, and so on.
++ATTACKER_CONTROLLED_GITHUB_REF_SUFFIXES = frozenset(
++    ref.removeprefix("github") for ref in ATTACKER_CONTROLLED_GITHUB_REFS
++)
++
+ 
+ class PrioritizedIssue(TypedDict):
+     """A workflow security finding with priority metadata."""
+@@ -405,12 +432,7 @@ def _arg_has_attacker_controlled_github_ref(parts: object) -> bool:
+     for part in parts:
+         if is_param_exp(part) and part.get("Param", {}).get("Value") == "github":
+             expansion = True
+-        if is_lit(part) and part.get("Value") in {
+-            ".event.pull_request.head.ref",
+-            ".head_ref",
+-            ".event.issue.body",
+-            ".event.comment.body",
+-        }:
++        if is_lit(part) and part.get("Value") in ATTACKER_CONTROLLED_GITHUB_REF_SUFFIXES:
+             pr_head_ref = True
+     return bool(expansion and pr_head_ref)
+ 
+@@ -428,13 +450,7 @@ def _has_attacker_controlled_expanded_ref(refs: list[str]) -> bool:
+     bool
+         ``True`` if a known attacker-controlled ref is present.
+     """
+-    attacker_controlled = {
+-        "github.event.pull_request.head.ref",
+-        "github.head_ref",
+-        "github.event.issue.body",
+-        "github.event.comment.body",
+-    }
+-    return any(ref in attacker_controlled for ref in refs)
++    return any(ref in ATTACKER_CONTROLLED_GITHUB_REFS for ref in refs)
+ 
+ 
+ def _extract_expanded_github_refs(
+diff --git a/src/macaron/dependency_analyzer/cyclonedx.py b/src/macaron/dependency_analyzer/cyclonedx.py
+index dca401f..ba928ca 100644
+--- a/src/macaron/dependency_analyzer/cyclonedx.py
++++ b/src/macaron/dependency_analyzer/cyclonedx.py
+@@ -531,10 +531,6 @@ class DependencyAnalyzer:
+             logger.debug(error)
+             return
+ 
+-        if root_bom.components is None:
+-            logger.debug("The BOM file at %s misses components.", str(root_bom_path))
+-            return
+-
+         dependencies: list[CDXDependency] = []
+ 
+         # Find dependencies in the root BOM file.
+@@ -631,8 +627,9 @@ class DependencyAnalyzer:
+                 note="",
+                 available=SCMStatus.AVAILABLE,
+             )
+-            # Some of the components might miss external references.
+-            if component.external_references is None:
++            # Some of the components might miss external references. The CycloneDX library normalizes
++            # this attribute to a SortedSet, so it is empty rather than None when references are absent.
++            if not component.external_references:
+                 # In Java, development artifacts contain "SNAPSHOT" in the version.
+                 # If the SBOM generation completes with no build errors for submodules
+                 # the submodule would not be added as a dependency and we shouldn't reach here.
+diff --git a/src/macaron/parsers/actionparser.py b/src/macaron/parsers/actionparser.py
+index f26f589..11166de 100644
+--- a/src/macaron/parsers/actionparser.py
++++ b/src/macaron/parsers/actionparser.py
+@@ -96,7 +96,11 @@ def get_step_input(step: Step, key: str) -> str | None:
+         The input value or None if it doesn't exist or the parsed object validation fails.
+     """
+     with_section = step.get("with")
+-    if isinstance(with_section, dict):
+-        return str(with_section.get(key))
++    if not isinstance(with_section, dict):
++        return None
+ 
+-    return None
++    value = with_section.get(key)
++    if value is None:
++        return None
++
++    return str(value)
+diff --git a/src/macaron/parsers/pomparser.py b/src/macaron/parsers/pomparser.py
+index 6b14eab..3af45bf 100644
+--- a/src/macaron/parsers/pomparser.py
++++ b/src/macaron/parsers/pomparser.py
+@@ -158,7 +158,9 @@ def detect_parent_pom(pom_path: Path, repo_root: str | Path) -> str | None:
+     file path using Maven semantics:
+ 
+     * If `<project>/<parent>/<relativePath>` is present and non-empty, that path
+-      (relative to the directory containing `pom.xml`) is used.
++      (relative to the directory containing `pom.xml`) is used. It may name the
++      parent POM file itself, as in ``../pom.xml``, or the directory holding it,
++      as in ``../``; a directory has ``pom.xml`` appended to it.
+     * Otherwise Maven defaults to ``../pom.xml``.
+ 
+     See https://maven.apache.org/ref/3.0/maven-model/maven.html#class_parent.
+@@ -200,7 +202,11 @@ def detect_parent_pom(pom_path: Path, repo_root: str | Path) -> str | None:
+         else os.path.join("../")
+     )
+ 
+-    parent_candidate = Path(pom_path.parent, relative_path, "pom.xml").resolve()
++    # relativePath may name the parent POM file itself or the directory holding it.
++    parent_candidate = Path(pom_path.parent, relative_path)
++    if parent_candidate.is_dir():
++        parent_candidate = Path(parent_candidate, "pom.xml")
++    parent_candidate = parent_candidate.resolve()
+     if not parent_candidate.is_file():
+         return None
+ 
+diff --git a/src/macaron/provenance/provenance_extractor.py b/src/macaron/provenance/provenance_extractor.py
+index 0ebb918..5fc15af 100644
+--- a/src/macaron/provenance/provenance_extractor.py
++++ b/src/macaron/provenance/provenance_extractor.py
+@@ -289,8 +289,12 @@ def _clean_spdx(uri: str) -> str:
+     """Clean the passed SPDX URI and return the normalised URL it represents.
+ 
+     A SPDX URI has the form: git+https://example.com@refs/heads/main
++
++    The prefix is removed with ``removeprefix`` rather than ``lstrip``, which takes a
++    set of characters rather than a prefix: ``"git://...".lstrip("git+")`` strips the
++    scheme's own leading letters and returns ``"://..."``.
+     """
+-    url, _, _ = uri.lstrip("git+").rpartition("@")
++    url, _, _ = uri.removeprefix("git+").rpartition("@")
+     return url
+ 
+ 
+diff --git a/src/macaron/provenance/provenance_verifier.py b/src/macaron/provenance/provenance_verifier.py
+index 396d929..ec2f193 100644
+--- a/src/macaron/provenance/provenance_verifier.py
++++ b/src/macaron/provenance/provenance_verifier.py
+@@ -270,18 +270,11 @@ def _extract_archive(file_path: str, temp_path: str) -> bool:
+     """
+ 
+     def _validate_path_traversal(path: str) -> bool:
+-        """Check for path traversal attacks."""
++        """Reject a member name that is absolute or reaches outside the destination."""
+         if path.startswith("/") or ".." in path:
+             logger.debug("Found suspicious path in the archive file: %s.", path)
+             return False
+-        try:
+-            # Check if there are any symbolic links.
+-            if os.path.realpath(path):
+-                return True
+-        except OSError as error:
+-            logger.debug("Failed to extract artifact from archive file: %s", error)
+-            return False
+-        return False
++        return True
+ 
+     try:
+         if zipfile.is_zipfile(file_path):
+@@ -294,7 +287,12 @@ def _extract_archive(file_path: str, temp_path: str) -> bool:
+                 members_tarinfo = (
+                     tarinfo for tarinfo in tar_file.getmembers() if _validate_path_traversal(tarinfo.name)
+                 )
+-                tar_file.extractall(temp_path, members=members_tarinfo)  # noqa: S202
++                # The name check above cannot see a symlink member that points outside the
++                # destination and a later member written through it. The "data" filter is what
++                # rejects that, and it is passed explicitly because the tarfile default is
++                # "fully_trusted" on every interpreter below Python 3.14, which requires-python
++                # >=3.11.14 admits.
++                tar_file.extractall(temp_path, members=members_tarinfo, filter="data")
+                 return True
+     except (tarfile.TarError, zipfile.BadZipFile, zipfile.LargeZipFile, OSError, ValueError) as error:
+         logger.info(error)
+diff --git a/src/macaron/repo_verifier/repo_verifier_maven.py b/src/macaron/repo_verifier/repo_verifier_maven.py
+index b457887..1878299 100644
+--- a/src/macaron/repo_verifier/repo_verifier_maven.py
++++ b/src/macaron/repo_verifier/repo_verifier_maven.py
+@@ -114,6 +114,19 @@ class RepoVerifierMaven(RepoVerifierToolSpecific):
+         reported_account = parsed_url.path.strip("/").split("/")[0]
+ 
+         group_parts = self.namespace.split(".")
++        # The comparison below reads three segments: the top level domain, the platform,
++        # and the account. A shorter namespace names no account, so there is nothing to
++        # compare and the answer is the same mismatch a wrong account gives. Without this
++        # the indexing raises IndexError, and the analyzer calls this with the target's
++        # own PURL namespace and no exception handler around it. The sibling comparison
++        # in maven_central_registry.same_organization guards the same indices this way.
++        if len(group_parts) < 3:
++            return RepositoryVerificationResult(
++                status=RepositoryVerificationStatus.UNKNOWN,
++                reason="git_ns_mismatch",
++                build_tool=self.build_tool,
++            )
++
+         for platform in RECOGNIZED_CODE_HOSTING_SERVICES:
+             # For artifacts from recognized code hosting services, check if the
+             # organization name is the same in maven and the source repository.
+diff --git a/src/macaron/slsa_analyzer/build_tool/base_build_tool.py b/src/macaron/slsa_analyzer/build_tool/base_build_tool.py
+index 3122915..f189b12 100644
+--- a/src/macaron/slsa_analyzer/build_tool/base_build_tool.py
++++ b/src/macaron/slsa_analyzer/build_tool/base_build_tool.py
+@@ -504,7 +504,7 @@ class BaseBuildTool(ABC):
+                 is_test = (test_kw for test_kw in test_keywords if test_kw in os.path.basename(ci_path.lower()))
+                 if any(is_test):
+                     continue
+-                evidence_weight_map.update_result(name="ci_workflow_release", found=True)
++                evidence_weight_map.update_result(name="ci_workflow_deploy", found=True)
+                 break
+ 
+         return Confidence.normalize(evidence_weight_map=evidence_weight_map)
+diff --git a/src/macaron/slsa_analyzer/git_url.py b/src/macaron/slsa_analyzer/git_url.py
+index f5397fc..0386239 100644
+--- a/src/macaron/slsa_analyzer/git_url.py
++++ b/src/macaron/slsa_analyzer/git_url.py
+@@ -968,7 +968,9 @@ def find_highest_git_tag(tags: set[str]) -> str:
+     Returns
+     -------
+     str
+-        The tag string corresponding to the highest version.
++        The tag string corresponding to the highest version. When several tags parse to the
++        same version, such as the aliases "1.0" and "1.0.0", the lexicographically smallest
++        of them is returned, so the answer does not depend on set iteration order.
+ 
+     Raises
+     ------
+@@ -980,6 +982,9 @@ def find_highest_git_tag(tags: set[str]) -> str:
+     >>> find_highest_git_tag({"v2.0.0"})
+     'v2.0.0'
+ 
++    >>> find_highest_git_tag({"1.0", "1.0.0"})
++    '1.0'
++
+     >>> find_highest_git_tag({"v4", "v4.2.1"})
+     'v4.2.1'
+ 
+@@ -992,6 +997,9 @@ def find_highest_git_tag(tags: set[str]) -> str:
+     >>> find_highest_git_tag({"invalid", "1.0.0"})
+     '1.0.0'
+ 
++    >>> find_highest_git_tag({"0.0.0"})
++    '0.0.0'
++
+     >>> find_highest_git_tag(set())
+     Traceback (most recent call last):
+         ...
+@@ -1006,16 +1014,22 @@ def find_highest_git_tag(tags: set[str]) -> str:
+         raise GitTagError("No tags provided.")
+ 
+     highest_tag = None
+-    highest_parsed_tag = version.Version("0")
+-
+-    for tag in tags:
++    # Seeded with None rather than version zero, so a tag set whose only valid version is
++    # itself zero - "0", "0.0.0", "v0" - is found rather than reported as having no tag.
++    highest_parsed_tag: version.Version | None = None
++
++    # Sorted rather than iterated in set order, because the search advances only on a strict
++    # greater-than: two tags that parse to the same version - "1.0" and "1.0.0", or "v1.0.0"
++    # and "1.0.0" - leave whichever came first as the answer, and set iteration order over
++    # strings varies with the interpreter's hash seed.
++    for tag in sorted(tags):
+         try:
+             parsed_tag = version.Version(tag)
+         except version.InvalidVersion:
+             logger.debug("Invalid version tag encountered while finding the highest tag: %s", tag)
+             continue
+ 
+-        if parsed_tag > highest_parsed_tag:
++        if highest_parsed_tag is None or parsed_tag > highest_parsed_tag:
+             highest_parsed_tag = parsed_tag
+             highest_tag = tag
+ 
+@@ -1046,7 +1060,9 @@ def parse_git_tags(tag_data: str) -> dict[str, str]:
+         split = re.split("[\t ]", tag_line, maxsplit=1)
+         if len(split) != 2:
+             continue
+-        possible_tag = split[1]
++        # The prefix is stripped before the duplicate check below, which compares against keys
++        # that are already stripped.
++        possible_tag = split[1].replace("refs/tags/", "")
+         if possible_tag.endswith("^{}"):
+             possible_tag = possible_tag[:-3]
+         elif possible_tag in tags:
+@@ -1054,7 +1070,6 @@ def parse_git_tags(tag_data: str) -> dict[str, str]:
+             # In that case we skip the tag as it does not point to the proper source commit.
+             # Note that this should only happen if the tags are received out of standard order.
+             continue
+-        possible_tag = possible_tag.replace("refs/tags/", "")
+         if not possible_tag:
+             continue
+         tags[possible_tag] = split[0]
+diff --git a/src/macaron/slsa_analyzer/package_registry/jfrog_maven_registry.py b/src/macaron/slsa_analyzer/package_registry/jfrog_maven_registry.py
+index 56e0f45..9bdbe91 100644
+--- a/src/macaron/slsa_analyzer/package_registry/jfrog_maven_registry.py
++++ b/src/macaron/slsa_analyzer/package_registry/jfrog_maven_registry.py
+@@ -122,8 +122,7 @@ class JFrogMavenRegistry(PackageRegistry):
+         self.repo = repo or ""
+         self.request_timeout = request_timeout or 10
+         self.download_timeout = download_timeout or 120
+-        self.enabled = enabled or False
+-        super().__init__("JFrog Maven Registry", "maven")
++        super().__init__("JFrog Maven Registry", "maven", enabled=bool(enabled))
+ 
+     def load_defaults(self) -> None:
+         """Load the .ini configuration for the current package registry.
+diff --git a/src/macaron/slsa_analyzer/package_registry/npm_registry.py b/src/macaron/slsa_analyzer/package_registry/npm_registry.py
+index 5ff8f97..1b09d7c 100644
+--- a/src/macaron/slsa_analyzer/package_registry/npm_registry.py
++++ b/src/macaron/slsa_analyzer/package_registry/npm_registry.py
+@@ -56,8 +56,7 @@ class NPMRegistry(PackageRegistry):
+         self.hostname = hostname or ""
+         self.attestation_endpoint = attestation_endpoint or ""
+         self.request_timeout = request_timeout or 10
+-        self.enabled = enabled
+-        super().__init__("npm Registry", "npm")
++        super().__init__("npm Registry", "npm", enabled=enabled)
+ 
+     def load_defaults(self) -> None:
+         """Load the .ini configuration for the current package registry.
+diff --git a/src/macaron/slsa_analyzer/package_registry/package_registry.py b/src/macaron/slsa_analyzer/package_registry/package_registry.py
+index 87a130a..e7b912d 100644
+--- a/src/macaron/slsa_analyzer/package_registry/package_registry.py
++++ b/src/macaron/slsa_analyzer/package_registry/package_registry.py
+@@ -17,10 +17,24 @@ logger: logging.Logger = logging.getLogger(__name__)
+ class PackageRegistry(ABC):
+     """Base package registry class."""
+ 
+-    def __init__(self, name: str, ecosystem: str) -> None:
++    def __init__(self, name: str, ecosystem: str, enabled: bool = True) -> None:
++        """
++        Initialize the package registry instance.
++
++        Parameters
++        ----------
++        name: str
++            The name of the package registry.
++        ecosystem: str
++            The name of the artifact ecosystem this registry serves.
++        enabled: bool
++            Whether the package registry should be active in the analysis or not.
++            "Not active" means no target repo/software component can be matched
++            against this package registry.
++        """
+         self.name = name
+         self.ecosystem = ecosystem
+-        self.enabled: bool = True
++        self.enabled = enabled
+ 
+     @abstractmethod
+     def load_defaults(self) -> None:
+diff --git a/src/macaron/slsa_analyzer/package_registry/pypi_registry.py b/src/macaron/slsa_analyzer/package_registry/pypi_registry.py
+index f0ebf21..dd9b792 100644
+--- a/src/macaron/slsa_analyzer/package_registry/pypi_registry.py
++++ b/src/macaron/slsa_analyzer/package_registry/pypi_registry.py
+@@ -17,7 +17,7 @@ import tarfile
+ import tempfile
+ import urllib.parse
+ import zipfile
+-from collections.abc import Callable, Generator, Iterator
++from collections.abc import Generator, Iterator
+ from contextlib import contextmanager
+ from dataclasses import dataclass, field
+ from datetime import datetime
+@@ -49,10 +49,6 @@ if TYPE_CHECKING:
+ logger: logging.Logger = logging.getLogger(__name__)
+ 
+ 
+-def _handle_temp_dir_clean(function: Callable, path: str, onerror: tuple) -> None:
+-    raise SourceCodeError(f"Error removing with shutil. function={function}, path={path}, excinfo={onerror}")
+-
+-
+ class PyPIRegistry(PackageRegistry):
+     """This class implements the pypi package registry."""
+ 
+@@ -97,9 +93,8 @@ class PyPIRegistry(PackageRegistry):
+         self.inspector_url_netloc = inspector_url_netloc or ""
+         self.inspector_url_scheme = inspector_url_scheme or ""
+         self.request_timeout = request_timeout or 10
+-        self.enabled = enabled
+         self.registry_url = ""
+-        super().__init__("PyPI Registry", "pypi")
++        super().__init__("PyPI Registry", "pypi", enabled=enabled)
+ 
+     def load_defaults(self) -> None:
+         """Load the .ini configuration for the current package registry.
+@@ -209,9 +204,9 @@ class PyPIRegistry(PackageRegistry):
+         if error_message:
+             logger.debug(error_message)
+         try:
+-            shutil.rmtree(directory, onerror=_handle_temp_dir_clean)
++            shutil.rmtree(directory)
+             logger.debug("Successfully cleaned up temporary directory %s.", directory)
+-        except SourceCodeError as tempdir_exception:
++        except OSError as tempdir_exception:
+             tempdir_exception_msg = (
+                 f"Unable to cleanup temporary directory {directory} for source code: {tempdir_exception}"
+             )
+diff --git a/src/macaron/vsa/vsa.py b/src/macaron/vsa/vsa.py
+index 5115b61..ab7b0c3 100644
+--- a/src/macaron/vsa/vsa.py
++++ b/src/macaron/vsa/vsa.py
+@@ -197,8 +197,9 @@ def create_vsa_statement(
+ 
+     Returns
+     -------
+-    VsaStatement
+-        A Statement layer of the VSA.
++    VsaStatement | None
++        A Statement layer of the VSA, or ``None`` if the hash digests of the passed
++        components could not be read from the database.
+     """
+     subjects = []
+ 
+@@ -354,6 +355,12 @@ def generate_vsa(policy_content: str, policy_result: dict) -> Vsa | None:
+         policy_content=policy_content,
+     )
+ 
++    if unencoded_payload is None:
++        # Without this, json.dumps(None) produces the string "null" and the caller writes an
++        # attestation whose payload decodes to null while reporting that it succeeded.
++        logger.error("Cannot generate a VSA: the VSA statement could not be constructed.")
++        return None
++
+     try:
+         payload = json.dumps(unencoded_payload)
+     except (TypeError, RecursionError, ValueError) as err:
+diff --git a/tests/build_spec_generator/common_spec/test_maven_spec.py b/tests/build_spec_generator/common_spec/test_maven_spec.py
+new file mode 100644
+index 0000000..6704197
+--- /dev/null
++++ b/tests/build_spec_generator/common_spec/test_maven_spec.py
+@@ -0,0 +1,66 @@
++# Copyright (c) 2026 - 2026, Oracle and/or its affiliates. All rights reserved.
++# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
++
++"""This module tests the Maven build specification field resolution."""
++
++from unittest.mock import patch
++
++import pytest
++from packageurl import PackageURL
++
++from macaron.build_spec_generator.common_spec.base_spec import BaseBuildSpecDict
++from macaron.build_spec_generator.common_spec.maven_spec import MavenBuildSpec
++
++PURL_STRING = "pkg:maven/com.example/demo@1.0.0"
++
++
++def _build_spec_dict(language_version: list[str]) -> BaseBuildSpecDict:
++    """Return a minimal Maven build spec dict carrying the passed language version list."""
++    return BaseBuildSpecDict(
++        ecosystem="maven",
++        purl=PURL_STRING,
++        language="java",
++        build_tools=["maven"],
++        macaron_version="0.0.0",
++        group_id="com.example",
++        artifact_id="demo",
++        version="1.0.0",
++        language_version=list(language_version),
++        build_commands=[
++            {
++                "build_tool": "maven",
++                "build_config_path": "pom.xml",
++                "command": ["mvn", "clean", "package"],
++                "confidence_score": 1.0,
++            }
++        ],
++    )
++
++
++def _resolve(language_version: list[str], jdk_from_jar: str | None) -> list[str]:
++    """Resolve a Maven build spec with the JAR lookup pinned, and return the resulting language version."""
++    data = _build_spec_dict(language_version)
++    with patch(
++        "macaron.build_spec_generator.common_spec.maven_spec.find_jdk_version_from_central_maven_repo",
++        return_value=jdk_from_jar,
++    ):
++        MavenBuildSpec(data).resolve_fields(PackageURL.from_string(PURL_STRING))
++    return data["language_version"]
++
++
++@pytest.mark.parametrize(
++    ("existing", "jdk_from_jar", "expected"),
++    [
++        # The JAR manifest is the strongest evidence and wins whether or not the database
++        # recorded a language version. The empty-list case is the ordinary one: core.py sets
++        # "language_version" to [] whenever the database holds no recorded version.
++        ([], "17", ["17"]),
++        (["11"], "17", ["17"]),
++        # No JAR evidence: fall back to what the database recorded, then to the default of 8.
++        (["11"], None, ["11"]),
++        ([], None, ["8"]),
++    ],
++)
++def test_resolve_fields_selects_jdk_version(existing: list[str], jdk_from_jar: str | None, expected: list[str]) -> None:
++    """The JDK read from the Maven Central JAR must not be discarded when the database recorded none."""
++    assert _resolve(existing, jdk_from_jar) == expected
+diff --git a/tests/build_spec_generator/dockerfile/test_pypi_dockerfile_output.py b/tests/build_spec_generator/dockerfile/test_pypi_dockerfile_output.py
+index 8ceea4b..04abd95 100644
+--- a/tests/build_spec_generator/dockerfile/test_pypi_dockerfile_output.py
++++ b/tests/build_spec_generator/dockerfile/test_pypi_dockerfile_output.py
+@@ -7,7 +7,7 @@ import pytest
+ 
+ from macaron.build_spec_generator.common_spec.base_spec import BaseBuildSpecDict, SpecBuildCommandDict
+ from macaron.build_spec_generator.dockerfile import pypi_dockerfile_output
+-from macaron.build_spec_generator.dockerfile.pypi_dockerfile_output import gen_dockerfile
++from macaron.build_spec_generator.dockerfile.pypi_dockerfile_output import gen_dockerfile, pick_specific_version
+ 
+ 
+ @pytest.fixture(name="pypi_build_spec")
+@@ -63,8 +63,11 @@ def test_successful_generation(
+     assert gen_dockerfile(pypi_build_spec) == snapshot
+ 
+ 
+-def test_maturin_binary_package_generation(snapshot: str, pypi_build_spec: BaseBuildSpecDict) -> None:
++def test_maturin_binary_package_generation(
++    monkeypatch: pytest.MonkeyPatch, snapshot: str, pypi_build_spec: BaseBuildSpecDict
++) -> None:
+     """Ensure a Dockerfile is generated for a Maturin-backed binary package."""
++    monkeypatch.setattr(pypi_dockerfile_output, "get_latest_cpython_patch", lambda _major, _minor: "3.9.25")
+     pypi_build_spec["has_binaries"] = True
+     pypi_build_spec["build_backends"] = ["maturin"]
+     pypi_build_spec["build_requires"] = [
+@@ -75,3 +78,50 @@ def test_maturin_binary_package_generation(snapshot: str, pypi_build_spec: BaseB
+     ]
+ 
+     assert gen_dockerfile(pypi_build_spec) == snapshot
++
++
++@pytest.mark.parametrize(
++    ("inferred_constraints", "expected_minor"),
++    [
++        ([">=3.0"], 8),
++        ([">=3.8"], 8),
++        ([">=3.0", "!=3.4", "!=3.3", "!=3.5"], 8),
++        (["<=3.12"], 8),
++        ([">=3.9"], 9),
++        (["==3.10"], 10),
++        ([">=3.11", "<3.13"], 11),
++    ],
++)
++def test_pick_specific_version_selects_the_earliest_acceptable_minor(
++    monkeypatch: pytest.MonkeyPatch, inferred_constraints: list[str], expected_minor: int
++) -> None:
++    """Test which interpreter version the constraints resolve to.
++
++    The patch component comes from python.org, so it is supplied here instead: what is
++    being graded is which minor version the function asks for, not what the lookup returns.
++    The floor is 3.8, so constraints admitting anything older still resolve to 3.8.
++    """
++    asked: list[tuple[int, int]] = []
++
++    def fake_latest_patch(major: int, minor: int) -> str:
++        asked.append((major, minor))
++        return f"{major}.{minor}.99"
++
++    monkeypatch.setattr(pypi_dockerfile_output, "get_latest_cpython_patch", fake_latest_patch)
++
++    assert pick_specific_version(inferred_constraints) == f"3.{expected_minor}.99"
++    assert asked == [(3, expected_minor)]
++
++
++def test_pick_specific_version_without_a_satisfiable_version(monkeypatch: pytest.MonkeyPatch) -> None:
++    """Test that unsatisfiable constraints answer None without consulting python.org."""
++    asked: list[tuple[int, int]] = []
++
++    def fake_latest_patch(major: int, minor: int) -> str:
++        asked.append((major, minor))
++        return f"{major}.{minor}.99"
++
++    monkeypatch.setattr(pypi_dockerfile_output, "get_latest_cpython_patch", fake_latest_patch)
++
++    assert pick_specific_version(["<=3.12", "==3.6"]) is None
++    assert not asked
+diff --git a/tests/build_spec_generator/test_jdk_version_normalizer.py b/tests/build_spec_generator/test_jdk_version_normalizer.py
+index 4932914..60c66ca 100644
+--- a/tests/build_spec_generator/test_jdk_version_normalizer.py
++++ b/tests/build_spec_generator/test_jdk_version_normalizer.py
+@@ -52,8 +52,58 @@ from macaron.build_spec_generator.common_spec.jdk_version_normalizer import norm
+             "22",
+             id="pkg_maven_org.jboss.logging_jboss-logging_3.6.1.Final",
+         ),
++        pytest.param(
++            "5",
++            "5",
++            id="oldest_recognized_major",
++        ),
++        pytest.param(
++            "24",
++            "24",
++            id="previously_the_highest_enumerated_major",
++        ),
++        pytest.param(
++            "25",
++            "25",
++            id="current_major",
++        ),
++        pytest.param(
++            "25.0.1",
++            "25",
++            id="current_major_with_patch_version",
++        ),
++        pytest.param(
++            "25-ea",
++            "25",
++            id="current_major_early_access",
++        ),
++        pytest.param(
++            "26",
++            "26",
++            id="next_major",
++        ),
++        pytest.param(
++            "42",
++            "42",
++            id="major_far_beyond_any_released_jdk",
++        ),
+     ],
+ )
+ def test_jdk_version_normalizer(version_string: str, expected: str) -> None:
+     """Test the jdk_version_normalizer function."""
+     assert normalize_jdk_version(version_string) == expected
++
++
++@pytest.mark.parametrize(
++    "version_string",
++    [
++        pytest.param("4", id="below_the_oldest_recognized_major"),
++        pytest.param("0", id="zero"),
++        pytest.param("", id="empty"),
++        pytest.param("banana", id="not_a_version"),
++        pytest.param("-ea", id="suffix_only"),
++    ],
++)
++def test_jdk_version_normalizer_refusals(version_string: str) -> None:
++    """Test the inputs the normalizer cannot turn into a major version."""
++    assert normalize_jdk_version(version_string) is None
+diff --git a/tests/code_analyzer/gha_security_analysis/test_gha_security_analysis.py b/tests/code_analyzer/gha_security_analysis/test_gha_security_analysis.py
+index cf4990a..2030f0e 100644
+--- a/tests/code_analyzer/gha_security_analysis/test_gha_security_analysis.py
++++ b/tests/code_analyzer/gha_security_analysis/test_gha_security_analysis.py
+@@ -9,9 +9,13 @@ from pathlib import Path
+ import pytest
+ 
+ from macaron.code_analyzer.gha_security_analysis.detect_injection import (
++    ATTACKER_CONTROLLED_GITHUB_REF_SUFFIXES,
++    ATTACKER_CONTROLLED_GITHUB_REFS,
+     PrioritizedIssue,
+     WorkflowFinding,
+     _add_finding,
++    _arg_has_attacker_controlled_github_ref,
++    _has_attacker_controlled_expanded_ref,
+     build_workflow_issue_recommendation,
+     detect_github_actions_security_issues,
+     extract_workflow_issue_line,
+@@ -154,3 +158,42 @@ def test_add_finding_deduplicates_and_preserves_highest_priority() -> None:
+     _add_finding(findings, "remote-script-exec: {}", 100)
+ 
+     assert findings == [{"issue": "remote-script-exec: {}", "priority": 100}]
++
++
++@pytest.mark.parametrize(
++    "ref",
++    [
++        "github.head_ref",
++        "github.event.pull_request.head.ref",
++        "github.event.pull_request.title",
++        "github.event.pull_request.body",
++        "github.event.issue.title",
++        "github.event.issue.body",
++        "github.event.comment.body",
++    ],
++)
++def test_attacker_controlled_refs_are_recognised(ref: str) -> None:
++    """Every reference an outside contributor can set is recognised as attacker controlled."""
++    assert _has_attacker_controlled_expanded_ref([ref])
++
++
++@pytest.mark.parametrize(
++    "ref",
++    ["github.actor", "github.repository_owner", "github.event.repository.default_branch"],
++)
++def test_maintainer_controlled_refs_are_not_recognised(ref: str) -> None:
++    """A reference an outside contributor cannot set is not treated as attacker controlled."""
++    assert not _has_attacker_controlled_expanded_ref([ref])
++
++
++def test_both_matchers_recognise_the_same_reference_set() -> None:
++    """The suffix matcher and the path matcher cannot disagree about which refs are risky."""
++    assert ATTACKER_CONTROLLED_GITHUB_REF_SUFFIXES == frozenset(
++        ref.removeprefix("github") for ref in ATTACKER_CONTROLLED_GITHUB_REFS
++    )
++    for ref in ATTACKER_CONTROLLED_GITHUB_REFS:
++        parts = [
++            {"Type": "ParamExp", "Param": {"Value": "github"}},
++            {"Type": "Lit", "Value": ref.removeprefix("github")},
++        ]
++        assert _arg_has_attacker_controlled_github_ref(parts)
+diff --git a/tests/dependency_analyzer/cyclonedx/resources/bom_no_components.json b/tests/dependency_analyzer/cyclonedx/resources/bom_no_components.json
+new file mode 100644
+index 0000000..a83320d
+--- /dev/null
++++ b/tests/dependency_analyzer/cyclonedx/resources/bom_no_components.json
+@@ -0,0 +1,23 @@
++{
++  "bomFormat": "CycloneDX",
++  "specVersion": "1.6",
++  "version": 1,
++  "metadata": {
++    "component": {
++      "type": "library",
++      "bom-ref": "pkg:pypi/requests@2.31.0",
++      "name": "requests",
++      "version": "2.31.0",
++      "purl": "pkg:pypi/requests@2.31.0"
++    }
++  },
++  "dependencies": [
++    {
++      "ref": "pkg:pypi/requests@2.31.0",
++      "dependsOn": [
++        "pkg:pypi/urllib3@2.0.7",
++        "pkg:pypi/certifi@2023.7.22"
++      ]
++    }
++  ]
++}
+diff --git a/tests/dependency_analyzer/cyclonedx/test_cyclonedx.py b/tests/dependency_analyzer/cyclonedx/test_cyclonedx.py
+index 7452552..2873bed 100644
+--- a/tests/dependency_analyzer/cyclonedx/test_cyclonedx.py
++++ b/tests/dependency_analyzer/cyclonedx/test_cyclonedx.py
+@@ -3,6 +3,7 @@
+ 
+ """This module tests the CycloneDX helper functions."""
+ 
++import logging
+ from pathlib import Path
+ 
+ import pytest
+@@ -170,3 +171,67 @@ def test_get_purl_from_cdx_component(
+     assert (
+         str(DependencyAnalyzer.get_purl_from_cdx_component(component=component, purl_type=purl_type)) == expected_purl
+     )
++
++
++@pytest.mark.parametrize(
++    ("group", "version", "with_root", "expected_keys"),
++    [
++        # The submodule SNAPSHOT of the analyzed project is skipped.
++        ("g", "1.0-SNAPSHOT", True, []),
++        ("g", "1.0-snapshot", True, []),
++        # A SNAPSHOT from a different group is a real dependency.
++        ("other", "1.0-SNAPSHOT", True, ["other:n"]),
++        # A released artifact of the same group is a real dependency.
++        ("g", "1.0", True, ["g:n"]),
++        # Without a root component there is nothing to compare the group against.
++        ("g", "1.0-SNAPSHOT", False, ["g:n"]),
++    ],
++)
++def test_skip_submodule_snapshot_without_external_references(
++    group: str, version: str, with_root: bool, expected_keys: list[str]
++) -> None:
++    """Test that a component carrying no external reference reaches the SNAPSHOT submodule heuristic.
++
++    The CycloneDX library normalizes ``external_references`` to an empty ``SortedSet`` rather than
++    leaving it None, so the heuristic has to test the collection for emptiness.
++    """
++    root_component = CDXComponent(name="root", group="g", version="1.0") if with_root else None
++    component = CDXComponent(name="n", group=group, version=version)
++    assert not component.external_references
++
++    result = DependencyAnalyzer.convert_components_to_artifacts(
++        [component], purl_type="maven", root_component=root_component
++    )
++    assert sorted(result) == expected_keys
++
++
++def test_get_dep_components_bom_without_components(
++    caplog: pytest.LogCaptureFixture, build_tools: dict[str, BaseBuildTool]
++) -> None:
++    """Test a BOM that carries dependencies and a metadata component but no components array.
++
++    The CycloneDX library normalizes a missing ``components`` array to an empty ``SortedSet``, so
++    the result is empty whether the function returns early or falls through, and the returned value
++    alone cannot tell those apart. What does tell them apart is whether the metadata lookup runs at
++    all, so this pins that the target component is still found there.
++    """
++    caplog.set_level(logging.DEBUG, logger="macaron.dependency_analyzer.cyclonedx")
++    root_bom_path = Path(RESOURCES_DIR, "bom_no_components.json")
++    bom = deserialize_bom_json(root_bom_path)
++    assert bom.components is not None
++    assert len(bom.components) == 0
++    assert len(bom.dependencies) == 1
++
++    component = Component(
++        purl="pkg:pypi/requests@2.31.0",
++        analysis=Analysis(),
++        repository=Repository(complete_name="github.com/psf/requests", fs_path=""),
++        repo_finder_metadata=RepoFinderMetadata(),
++    )
++    dep_analyzer = build_tools["pip"].get_dep_analyzer()
++
++    yielded = list(
++        dep_analyzer.get_dep_components(target_component=component, root_bom_path=root_bom_path, recursive=False)
++    )
++    assert not yielded
++    assert "Found the target CycloneDX component" in caplog.text
+diff --git a/tests/parsers/actionparser/test_actionparser.py b/tests/parsers/actionparser/test_actionparser.py
+index 3ee6a15..112fa55 100644
+--- a/tests/parsers/actionparser/test_actionparser.py
++++ b/tests/parsers/actionparser/test_actionparser.py
+@@ -5,11 +5,13 @@
+ 
+ import os
+ from pathlib import Path
++from typing import cast
+ 
+ import pytest
+ 
+ from macaron.errors import ParseError
+-from macaron.parsers.actionparser import parse
++from macaron.parsers.actionparser import get_step_input, parse
++from macaron.parsers.github_workflow_model import ActionStep
+ 
+ RESOURCES_DIR = Path(__file__).parent.joinpath("resources")
+ 
+@@ -38,3 +40,60 @@ def test_actionparser_parse_invalid(workflow_path: str) -> None:
+     """Test parsing GH Actions workflows."""
+     with pytest.raises(ParseError):
+         parse(os.path.join(RESOURCES_DIR, "workflow_files", workflow_path))
++
++
++@pytest.mark.parametrize(
++    ("step", "key", "expected"),
++    [
++        pytest.param(
++            ActionStep({"uses": "actions/checkout@v4", "with": {"ref": "main"}}),
++            "ref",
++            "main",
++            id="a key the with section carries",
++        ),
++        pytest.param(
++            ActionStep({"uses": "actions/checkout@v4", "with": {"ref": "main"}}),
++            "path",
++            None,
++            id="a key the with section does not carry",
++        ),
++        pytest.param(
++            ActionStep({"uses": "actions/checkout@v4"}),
++            "ref",
++            None,
++            id="a step with no with section",
++        ),
++        pytest.param(
++            ActionStep({"uses": "actions/checkout@v4", "with": "${{ fromJSON(inputs.args) }}"}),
++            "ref",
++            None,
++            id="a with section that is an expression rather than a mapping",
++        ),
++        pytest.param(
++            ActionStep({"uses": "actions/checkout@v4", "with": {"fetch-depth": 0}}),
++            "fetch-depth",
++            "0",
++            id="a falsy number is still an input value",
++        ),
++        pytest.param(
++            ActionStep({"uses": "actions/checkout@v4", "with": {"submodules": False}}),
++            "submodules",
++            "False",
++            id="a falsy boolean is still an input value",
++        ),
++        pytest.param(
++            cast(ActionStep, {"uses": "actions/checkout@v4", "with": {"ref": None}}),
++            "ref",
++            None,
++            id="a key whose value the workflow left empty",
++        ),
++    ],
++)
++def test_get_step_input(step: ActionStep, key: str, expected: str | None) -> None:
++    """Test looking an input up in a GitHub Action step.
++
++    The docstring of ``get_step_input`` promises None for an input that does not exist, so a
++    missing key must not come back as the string "None". The two falsy cases are what separates
++    that from a truthiness check, which would drop inputs a workflow really set.
++    """
++    assert get_step_input(step, key) == expected
+diff --git a/tests/parsers/pomparser/test_pomparser.py b/tests/parsers/pomparser/test_pomparser.py
+index 30a19d5..fc9c07e 100644
+--- a/tests/parsers/pomparser/test_pomparser.py
++++ b/tests/parsers/pomparser/test_pomparser.py
+@@ -9,8 +9,10 @@ from pathlib import Path
+ import pytest
+ 
+ from macaron.parsers.pomparser import (
++    detect_parent_pom,
+     extract_included_pom_modules,
+     find_matching_maven_module_build_configs,
++    find_nearest_modules_pom,
+ )
+ from macaron.parsers.pomparser import parse_pom_string as parse
+ 
+@@ -82,3 +84,93 @@ def test_find_matching_maven_module_build_configs(tmp_path: Path) -> None:
+     )
+ 
+     assert find_matching_maven_module_build_configs(repo_path, "micronaut-test-junit5") == [target_pom]
++
++
++def _write_reactor(repo_root: Path, relative_path: str | None) -> Path:
++    """Write a reactor root POM and one module POM, and return the module POM path."""
++    repo_root.mkdir(parents=True, exist_ok=True)
++    repo_root.joinpath("pom.xml").write_text(
++        "\n".join(
++            [
++                "<project>",
++                "  <groupId>g</groupId>",
++                "  <artifactId>root</artifactId>",
++                "  <version>1.0</version>",
++                "  <packaging>pom</packaging>",
++                "  <modules><module>mod</module></modules>",
++                "</project>",
++            ]
++        )
++        + "\n",
++        encoding="utf-8",
++    )
++    module_dir = repo_root.joinpath("mod")
++    module_dir.mkdir(parents=True, exist_ok=True)
++    relative_elem = "" if relative_path is None else f"<relativePath>{relative_path}</relativePath>"
++    module_pom = module_dir.joinpath("pom.xml")
++    module_pom.write_text(
++        "\n".join(
++            [
++                "<project>",
++                "  <parent>",
++                "    <groupId>g</groupId>",
++                "    <artifactId>root</artifactId>",
++                "    <version>1.0</version>",
++                f"    {relative_elem}",
++                "  </parent>",
++                "  <artifactId>mod</artifactId>",
++                "</project>",
++            ]
++        )
++        + "\n",
++        encoding="utf-8",
++    )
++    return module_pom
++
++
++@pytest.mark.parametrize(
++    ("relative_path", "expected"),
++    [
++        # relativePath naming the parent POM file itself, which is Maven's own default spelling.
++        ("../pom.xml", "pom.xml"),
++        # relativePath naming the directory that holds it.
++        ("../", "pom.xml"),
++        ("..", "pom.xml"),
++        # relativePath absent, so Maven's default applies.
++        (None, "pom.xml"),
++        # Neither form resolves to a file that exists.
++        ("../nope.xml", None),
++        ("../nope/", None),
++    ],
++)
++def test_detect_parent_pom_relative_path_forms(
++    tmp_path: Path, relative_path: str | None, expected: str | None
++) -> None:
++    """Test that relativePath resolves whether it names the parent POM file or its directory."""
++    repo_root = tmp_path.joinpath("repo")
++    module_pom = _write_reactor(repo_root, relative_path)
++
++    assert detect_parent_pom(module_pom, repo_root) == expected
++    assert find_nearest_modules_pom(module_pom, repo_root) == expected
++
++
++def test_detect_parent_pom_named_parent_file(tmp_path: Path) -> None:
++    """Test a relativePath naming a parent POM that is not called pom.xml."""
++    repo_root = tmp_path.joinpath("repo")
++    module_pom = _write_reactor(repo_root, "../parent/custom-parent.xml")
++    parent_dir = repo_root.joinpath("parent")
++    parent_dir.mkdir(parents=True)
++    parent_dir.joinpath("custom-parent.xml").write_text(
++        "<project>\n  <modules><module>mod</module></modules>\n</project>\n", encoding="utf-8"
++    )
++
++    assert detect_parent_pom(module_pom, repo_root) == os.path.join("parent", "custom-parent.xml")
++
++
++def test_detect_parent_pom_outside_repo_root(tmp_path: Path) -> None:
++    """Test that a parent POM outside repo_root is refused."""
++    repo_root = tmp_path.joinpath("repo")
++    module_pom = _write_reactor(repo_root, "../pom.xml")
++
++    # The module directory is the repo root here, so the parent resolves outside it.
++    assert detect_parent_pom(module_pom, module_pom.parent) is None
+diff --git a/tests/provenance/test_provenance_extractor.py b/tests/provenance/test_provenance_extractor.py
+index aa207d9..539f937 100644
+--- a/tests/provenance/test_provenance_extractor.py
++++ b/tests/provenance/test_provenance_extractor.py
+@@ -11,6 +11,7 @@ from packageurl import PackageURL
+ from macaron.errors import ProvenanceError
+ from macaron.json_tools import JsonType, json_extract
+ from macaron.provenance.provenance_extractor import (
++    _clean_spdx,
+     check_if_repository_purl_and_url_match,
+     extract_repo_and_commit_from_provenance,
+ )
+@@ -582,6 +583,23 @@ def _json_modify(entry: dict | list, keys: list[str], new_value: JsonType) -> No
+         target[keys[-1]] = new_value
+ 
+ 
++@pytest.mark.parametrize(
++    ("uri", "expected"),
++    [
++        # The forms that survive a character-set strip of "git+".
++        ("git+https://github.com/oracle/macaron@refs/heads/main", "https://github.com/oracle/macaron"),
++        ("git+ssh://git@github.com/oracle/macaron@v1", "ssh://git@github.com/oracle/macaron"),
++        ("https://github.com/oracle/macaron@refs/heads/main", "https://github.com/oracle/macaron"),
++        # The forms that do not: the scheme's own letters are in the strip set.
++        ("git://github.com/oracle/macaron@refs/heads/main", "git://github.com/oracle/macaron"),
++        ("git+git://github.com/oracle/macaron@refs/heads/main", "git://github.com/oracle/macaron"),
++    ],
++)
++def test_clean_spdx_removes_the_prefix_and_not_its_characters(uri: str, expected: str) -> None:
++    """Test that the SPDX prefix is removed as a prefix rather than as a set of characters."""
++    assert _clean_spdx(uri) == expected
++
++
+ def _load_and_validate_json(payload: str) -> dict[str, JsonType]:
+     """Load payload as JSON and validate it is of type dict."""
+     json_payload = json.loads(payload)
+diff --git a/tests/provenance/test_provenance_verifier.py b/tests/provenance/test_provenance_verifier.py
+new file mode 100644
+index 0000000..2417db8
+--- /dev/null
++++ b/tests/provenance/test_provenance_verifier.py
+@@ -0,0 +1,79 @@
++# Copyright (c) 2026 - 2026, Oracle and/or its affiliates. All rights reserved.
++# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
++
++"""This module tests the archive extraction used by the provenance verifier."""
++
++import io
++import tarfile
++import zipfile
++from pathlib import Path
++
++import pytest
++
++from macaron.provenance.provenance_verifier import _extract_archive
++
++
++def _write_symlink_escape_archive(archive_path: Path, link_target: Path) -> None:
++    """Write a tar whose member names hold no leading slash and no parent reference.
++
++    The archive plants a symlink to ``link_target`` and then writes a file through it, which
++    is how an archive escapes its destination without a name a prefix check can reject.
++    """
++    with tarfile.open(archive_path, "w:gz") as tar:
++        link = tarfile.TarInfo("pkg/escape")
++        link.type = tarfile.SYMTYPE
++        link.linkname = str(link_target)
++        tar.addfile(link)
++        payload = b"pwned\n"
++        member = tarfile.TarInfo("pkg/escape/payload.txt")
++        member.size = len(payload)
++        tar.addfile(member, io.BytesIO(payload))
++
++
++def test_extract_archive_blocks_symlink_escape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    """A symlink member must not let an archive write outside the destination directory.
++
++    The extraction filter is pinned to ``fully_trusted``, which is the tarfile default on every
++    interpreter below Python 3.14 and therefore on interpreters ``requires-python >=3.11.14``
++    admits. Extraction must be safe because of what this module asks for, not because of what
++    the running interpreter happens to default to.
++    """
++    outside = tmp_path / "outside"
++    outside.mkdir()
++    destination = tmp_path / "destination"
++    destination.mkdir()
++    archive = tmp_path / "escape.tar.gz"
++    _write_symlink_escape_archive(archive, outside)
++
++    monkeypatch.setattr(tarfile.TarFile, "extraction_filter", staticmethod(tarfile.fully_trusted_filter))
++
++    _extract_archive(file_path=str(archive), temp_path=str(destination))
++
++    assert not (outside / "payload.txt").exists()
++
++
++def test_extract_archive_extracts_ordinary_tar(tmp_path: Path) -> None:
++    """An archive with ordinary members is still extracted, so the guard above is not a blanket refusal."""
++    destination = tmp_path / "destination"
++    destination.mkdir()
++    archive = tmp_path / "plain.tar.gz"
++    with tarfile.open(archive, "w:gz") as tar:
++        payload = b"contents\n"
++        member = tarfile.TarInfo("pkg/file.txt")
++        member.size = len(payload)
++        tar.addfile(member, io.BytesIO(payload))
++
++    assert _extract_archive(file_path=str(archive), temp_path=str(destination))
++    assert (destination / "pkg" / "file.txt").read_bytes() == b"contents\n"
++
++
++def test_extract_archive_extracts_ordinary_zip(tmp_path: Path) -> None:
++    """The zip branch still extracts ordinary members."""
++    destination = tmp_path / "destination"
++    destination.mkdir()
++    archive = tmp_path / "plain.zip"
++    with zipfile.ZipFile(archive, "w") as zip_file:
++        zip_file.writestr("pkg/file.txt", "contents\n")
++
++    assert _extract_archive(file_path=str(archive), temp_path=str(destination))
++    assert (destination / "pkg" / "file.txt").read_text(encoding="utf-8") == "contents\n"
+diff --git a/tests/repo_verifier/test_repo_verifier.py b/tests/repo_verifier/test_repo_verifier.py
+index 74f3cfe..1eee644 100644
+--- a/tests/repo_verifier/test_repo_verifier.py
++++ b/tests/repo_verifier/test_repo_verifier.py
+@@ -8,6 +8,7 @@ from pathlib import Path
+ import pytest
+ 
+ from macaron.repo_verifier.repo_verifier_gradle import RepoVerifierGradle
++from macaron.repo_verifier.repo_verifier_base import RepositoryVerificationStatus
+ from macaron.repo_verifier.repo_verifier_maven import RepoVerifierMaven
+ from macaron.slsa_analyzer.build_tool.base_build_tool import BaseBuildTool
+ 
+@@ -140,3 +141,46 @@ def test_extract_group_id_from_pom(
+     """
+     verifier = maven_repo_verifier(build_tools["maven"], str(mock_repo))
+     assert (verifier.extract_group_id_from_pom() is not None) == expected_result
++
++
++@pytest.mark.parametrize(
++    ("namespace", "expected_status", "expected_reason"),
++    [
++        # A three-segment namespace under a recognized code hosting service still
++        # matches, which is the behaviour the short-namespace guard must not change.
++        ("com.github.example", RepositoryVerificationStatus.PASSED, "git_ns_match"),
++        ("io.github.example", RepositoryVerificationStatus.PASSED, "git_ns_match"),
++        # Fewer than three segments cannot name an account, so the comparison has
++        # no answer to give and must report a mismatch rather than raise IndexError.
++        ("com.github", RepositoryVerificationStatus.UNKNOWN, "git_ns_mismatch"),
++        ("io.github", RepositoryVerificationStatus.UNKNOWN, "git_ns_mismatch"),
++        ("com", RepositoryVerificationStatus.UNKNOWN, "git_ns_mismatch"),
++        ("io", RepositoryVerificationStatus.UNKNOWN, "git_ns_mismatch"),
++        # A short namespace outside the io/com prefixes was already safe and stays so.
++        ("org.example", RepositoryVerificationStatus.UNKNOWN, "git_ns_mismatch"),
++    ],
++)
++def test_verify_domains_handles_short_namespaces(
++    build_tools: dict[str, BaseBuildTool],
++    namespace: str,
++    expected_status: RepositoryVerificationStatus,
++    expected_reason: str,
++) -> None:
++    """A Maven namespace with fewer than three segments must not crash the repository check.
++
++    The namespace reaches this code as ``parsed_purl.namespace`` straight from the analysis
++    target, and the analyzer wraps the call in no exception handler, so an IndexError here
++    aborts the whole analysis.
++    """
++    verifier = RepoVerifierMaven(
++        namespace=namespace,
++        name="artifact",
++        version="1.0.0",
++        reported_repo_url="https://github.com/example/example",
++        reported_repo_fs="/nonexistent",
++        build_tool=build_tools["maven"],
++        provenance_repo_url=None,
++    )
++    result = verifier.verify_domains_from_recognized_code_hosting_services()
++    assert result.status == expected_status
++    assert result.reason == expected_reason
+diff --git a/tests/slsa_analyzer/build_tool/test_base_build_tool.py b/tests/slsa_analyzer/build_tool/test_base_build_tool.py
+new file mode 100644
+index 0000000..4df7005
+--- /dev/null
++++ b/tests/slsa_analyzer/build_tool/test_base_build_tool.py
+@@ -0,0 +1,54 @@
++# Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
++# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
++
++"""This module tests the build tool base class functions."""
++
++import pytest
++
++from macaron.slsa_analyzer.build_tool.maven import Maven
++from macaron.slsa_analyzer.checks.check_result import Confidence
++
++
++@pytest.mark.parametrize(
++    ("ci_path", "expected"),
++    [
++        (".github/workflows/release.yaml", Confidence.HIGH),
++        (".github/workflows/deploy.yml", Confidence.HIGH),
++        (".github/workflows/publish.yml", Confidence.HIGH),
++        (".github/workflows/Release.yaml", Confidence.HIGH),
++        (".github/workflows/test.yaml", Confidence.LOW),
++        (".github/workflows/snapshot.yml", Confidence.LOW),
++        (".github/workflows/ci.yml", Confidence.LOW),
++        # A deploy keyword and a test keyword in the same name is not a deploy workflow.
++        (".github/workflows/release-test.yaml", Confidence.LOW),
++        (".github/workflows/publish-snapshot.yml", Confidence.LOW),
++    ],
++)
++def test_infer_confidence_deploy_workflow_name(maven_tool: Maven, ci_path: str, expected: Confidence) -> None:
++    """Test that the workflow-name heuristic moves the confidence without provenance."""
++    assert maven_tool.infer_confidence_deploy_workflow(ci_path) == expected
++
++
++@pytest.mark.parametrize(
++    ("ci_path", "provenance_workflow", "expected"),
++    [
++        # Provenance alone carries a workflow whose name says nothing to MEDIUM.
++        (".github/workflows/test.yaml", "test.yaml", Confidence.MEDIUM),
++        # Provenance and the name heuristic together reach HIGH.
++        (".github/workflows/release.yaml", "release.yaml", Confidence.HIGH),
++        # Provenance naming a different workflow contributes nothing.
++        (".github/workflows/test.yaml", "other.yaml", Confidence.LOW),
++    ],
++)
++def test_infer_confidence_deploy_workflow_provenance(
++    maven_tool: Maven, ci_path: str, provenance_workflow: str, expected: Confidence
++) -> None:
++    """Test the provenance evidence alongside the workflow-name heuristic."""
++    assert maven_tool.infer_confidence_deploy_workflow(ci_path, provenance_workflow) == expected
++
++
++def test_infer_confidence_deploy_workflow_name_discriminates(maven_tool: Maven) -> None:
++    """Test that a deploy workflow name outranks a test one, which is what BT-001 broke."""
++    release = maven_tool.infer_confidence_deploy_workflow(".github/workflows/release.yaml")
++    test = maven_tool.infer_confidence_deploy_workflow(".github/workflows/test.yaml")
++    assert release > test
+diff --git a/tests/slsa_analyzer/package_registry/test_package_registry.py b/tests/slsa_analyzer/package_registry/test_package_registry.py
+new file mode 100644
+index 0000000..d55bdd9
+--- /dev/null
++++ b/tests/slsa_analyzer/package_registry/test_package_registry.py
+@@ -0,0 +1,70 @@
++# Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
++# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/.
++
++"""Tests for the ``PackageRegistry`` base class contract shared by every package registry."""
++
++import os
++from pathlib import Path
++
++import pytest
++
++from macaron.config.defaults import load_defaults
++from macaron.slsa_analyzer.package_registry.jfrog_maven_registry import JFrogMavenRegistry
++from macaron.slsa_analyzer.package_registry.maven_central_registry import MavenCentralRegistry
++from macaron.slsa_analyzer.package_registry.npm_registry import NPMRegistry
++from macaron.slsa_analyzer.package_registry.pypi_registry import PyPIRegistry
++
++
++@pytest.mark.parametrize("enabled", [True, False])
++def test_jfrog_maven_honours_enabled_argument(enabled: bool) -> None:
++    """Test that ``JFrogMavenRegistry`` keeps the ``enabled`` value it was constructed with."""
++    assert JFrogMavenRegistry(enabled=enabled).enabled is enabled
++
++
++@pytest.mark.parametrize("enabled", [True, False])
++def test_npm_honours_enabled_argument(enabled: bool) -> None:
++    """Test that ``NPMRegistry`` keeps the ``enabled`` value it was constructed with."""
++    assert NPMRegistry(enabled=enabled).enabled is enabled
++
++
++@pytest.mark.parametrize("enabled", [True, False])
++def test_pypi_honours_enabled_argument(enabled: bool) -> None:
++    """Test that ``PyPIRegistry`` keeps the ``enabled`` value it was constructed with."""
++    assert PyPIRegistry(enabled=enabled).enabled is enabled
++
++
++def test_maven_central_defaults_to_enabled() -> None:
++    """Test that a registry taking no ``enabled`` argument keeps the base class default."""
++    assert MavenCentralRegistry().enabled is True
++
++
++def test_jfrog_maven_stays_disabled_without_config() -> None:
++    """Test that the JFrog registry stays disabled when its .ini section is absent.
++
++    The shipped ``defaults.ini`` comments out ``[package_registry.jfrog.maven]``, so
++    ``load_defaults`` returns before enabling the registry. A registry left enabled here
++    has an empty hostname and makes the provenance finder attempt a request against an
++    invalid URL instead of taking its "not enabled" path.
++    """
++    jfrog_maven = JFrogMavenRegistry()
++    jfrog_maven.load_defaults()
++    assert jfrog_maven.hostname == ""
++    assert jfrog_maven.enabled is False
++
++
++def test_jfrog_maven_enabled_by_config(tmp_path: Path) -> None:
++    """Test that the JFrog registry is enabled once its .ini section configures it."""
++    user_config_path = os.path.join(tmp_path, "config.ini")
++    user_config_input = """
++        [package_registry.jfrog.maven]
++        hostname = jfrog.registry.xyz
++        repo = prod-repo
++    """
++    with open(user_config_path, "w", encoding="utf-8") as user_config_file:
++        user_config_file.write(user_config_input)
++    load_defaults(user_config_path)
++
++    jfrog_maven = JFrogMavenRegistry()
++    jfrog_maven.load_defaults()
++    assert jfrog_maven.hostname == "jfrog.registry.xyz"
++    assert jfrog_maven.enabled is True
+diff --git a/tests/slsa_analyzer/package_registry/test_pypi_registry.py b/tests/slsa_analyzer/package_registry/test_pypi_registry.py
+index a41f7ae..c6039a5 100644
+--- a/tests/slsa_analyzer/package_registry/test_pypi_registry.py
++++ b/tests/slsa_analyzer/package_registry/test_pypi_registry.py
+@@ -121,3 +121,33 @@ def test_download_package_wheel_cleans_up_when_download_raises(tmp_path: Path, m
+         PyPIRegistry().download_package_wheel(f"https://example.test/{wheel_name}.whl")
+ 
+     assert not os.path.exists(wheel_path)
++
++
++@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses the directory permission this test relies on")
++def test_cleanup_sourcecode_directory_reports_a_removal_failure(tmp_path: Path) -> None:
++    """Test that a directory which cannot be removed is reported rather than passing silently.
++
++    The removal failure is provoked for real, by taking write permission off the directory
++    holding the file, so the unlink inside ``shutil.rmtree`` raises.
++    """
++    target = tmp_path / "sourcecode"
++    target.mkdir()
++    (target / "module.py").write_text("x = 1\n", encoding="utf-8")
++    target.chmod(0o500)
++    try:
++        with pytest.raises(InvalidHTTPResponseError):
++            PyPIRegistry.cleanup_sourcecode_directory(str(target))
++        assert target.exists()
++    finally:
++        target.chmod(0o700)
++
++
++def test_cleanup_sourcecode_directory_removes_a_removable_directory(tmp_path: Path) -> None:
++    """Test that the ordinary path still removes the directory and raises nothing."""
++    target = tmp_path / "sourcecode"
++    target.mkdir()
++    (target / "module.py").write_text("x = 1\n", encoding="utf-8")
++
++    PyPIRegistry.cleanup_sourcecode_directory(str(target))
++
++    assert not target.exists()
+diff --git a/tests/slsa_analyzer/test_git_url.py b/tests/slsa_analyzer/test_git_url.py
+index 2c79c61..3b9b60b 100644
+--- a/tests/slsa_analyzer/test_git_url.py
++++ b/tests/slsa_analyzer/test_git_url.py
+@@ -13,7 +13,8 @@ from hypothesis import strategies as st
+ 
+ from macaron.config.defaults import defaults, load_defaults
+ from macaron.slsa_analyzer import git_url
+-from macaron.slsa_analyzer.git_url import resolve_local_path
++from macaron.errors import GitTagError
++from macaron.slsa_analyzer.git_url import find_highest_git_tag, resolve_local_path
+ 
+ 
+ @pytest.mark.parametrize(
+@@ -349,3 +350,108 @@ def test_resolve_invalid_parent_path() -> None:
+ def test_resolve_valid_local_path(parent_dir: str, target: str) -> None:
+     """Test the resolve local path method with valid local paths."""
+     assert resolve_local_path(parent_dir, target) == parent_dir
++
++
++@pytest.mark.parametrize(
++    ("tags", "expected"),
++    [
++        # A tag set whose only valid version normalizes to zero must still be found.
++        ({"0.0.0"}, "0.0.0"),
++        ({"0.0"}, "0.0"),
++        ({"0"}, "0"),
++        ({"v0"}, "v0"),
++        ({"v0.0.0"}, "v0.0.0"),
++        # A zero tag beside an unparseable one is still the answer.
++        ({"0.0.0", "invalid"}, "0.0.0"),
++        # A zero tag never outranks a real one.
++        ({"0.0.0", "0.0.1"}, "0.0.1"),
++        ({"0.0.0", "1.0.0"}, "1.0.0"),
++        # The ordering the docstring documents.
++        ({"v4", "v4.2.1"}, "v4.2.1"),
++        ({"1.2.3", "2.0.0", "1.10.1"}, "2.0.0"),
++        ({"0.1", "0.1.1", "0.0.9"}, "0.1.1"),
++        ({"invalid", "1.0.0"}, "1.0.0"),
++    ],
++)
++def test_find_highest_git_tag(tags: set[str], expected: str) -> None:
++    """Test finding the highest tag, including tag sets whose only version is zero."""
++    assert find_highest_git_tag(tags) == expected
++
++
++@pytest.mark.parametrize(
++    ("tags", "message"),
++    [
++        (set(), "No tags provided."),
++        ({"invalid"}, "No valid version tag found."),
++        ({"invalid", "also-invalid"}, "No valid version tag found."),
++    ],
++)
++def test_find_highest_git_tag_refusals(tags: set[str], message: str) -> None:
++    """Test the tag sets that carry no version at all."""
++    with pytest.raises(GitTagError, match=message):
++        find_highest_git_tag(tags)
++
++
++@pytest.mark.parametrize(
++    ("tag_data", "expected"),
++    [
++        pytest.param(
++            "aaaa1111\trefs/tags/v1.0\nbbbb2222\trefs/tags/v1.0^{}\n",
++            {"v1.0": "bbbb2222"},
++            id="the order both producers emit, peeled reference last",
++        ),
++        pytest.param(
++            "bbbb2222\trefs/tags/v1.0^{}\naaaa1111\trefs/tags/v1.0\n",
++            {"v1.0": "bbbb2222"},
++            id="out of standard order, peeled reference first",
++        ),
++        pytest.param(
++            "cccc3333\trefs/tags/lw1.0\n",
++            {"lw1.0": "cccc3333"},
++            id="a lightweight tag has no peeled reference",
++        ),
++        pytest.param(
++            "dddd4444 refs/tags/v2.0\n",
++            {"v2.0": "dddd4444"},
++            id="a space separates the columns",
++        ),
++        pytest.param(
++            "eeee5555\trefs/heads/main\n",
++            {"refs/heads/main": "eeee5555"},
++            id="a reference outside refs/tags keeps its full name",
++        ),
++        pytest.param("ffff6666\trefs/tags/\n", {}, id="a reference with no tag name"),
++        pytest.param(
++            "\nnosplit\n1111aaaa\trefs/tags/v3.0\n",
++            {"v3.0": "1111aaaa"},
++            id="blank and single-column lines are skipped",
++        ),
++    ],
++)
++def test_parse_git_tags(tag_data: str, expected: dict[str, str]) -> None:
++    """Test parsing tag data into a tag to commit mapping.
++
++    An annotated tag appears twice, as the tag object and as the peeled ``^{}`` reference, and
++    only the peeled one names the source commit. Both producers emit the base reference first,
++    but the duplicate guard has to hold in either order or the tag maps to the tag object.
++    """
++    assert git_url.parse_git_tags(tag_data) == expected
++
++
++@pytest.mark.parametrize(
++    ("tags", "expected"),
++    [
++        ({"1.0", "1.0.0"}, "1.0"),
++        ({"1.0.0", "v1.0.0"}, "1.0.0"),
++        ({"0", "0.0.0"}, "0"),
++        ({"1.0", "1.0.0", "0.9"}, "1.0"),
++    ],
++)
++def test_find_highest_git_tag_aliases_are_stable(tags: set[str], expected: str) -> None:
++    """Test that tags parsing to one version resolve to the same tag every time.
++
++    The search advances only on a strict greater-than, so before the tags were sorted the
++    answer was whichever alias the set happened to yield first, and set iteration order over
++    strings varies with the interpreter's hash seed.
++    """
++    assert find_highest_git_tag(tags) == expected
+diff --git a/tests/vsa/test_vsa.py b/tests/vsa/test_vsa.py
+index 04d0732..a02f6ab 100644
+--- a/tests/vsa/test_vsa.py
++++ b/tests/vsa/test_vsa.py
+@@ -3,9 +3,16 @@
+ 
+ """Tests for VSA generation."""
+ 
++import base64
++import json
++from collections.abc import Iterator
++from pathlib import Path
++
+ import pytest
+ 
+-from macaron.vsa.vsa import get_common_purl_from_artifact_purls, get_components_passing_policy
++from macaron.config.global_config import global_config
++from macaron.database.database_manager import get_db_manager
++from macaron.vsa.vsa import generate_vsa, get_common_purl_from_artifact_purls, get_components_passing_policy
+ 
+ 
+ @pytest.mark.parametrize(
+@@ -227,3 +234,77 @@ def test_get_common_purl_from_artifact_purl(
+ ) -> None:
+     """Test the ``get_common_purl_from_artifact_purls`` function."""
+     assert get_common_purl_from_artifact_purls(purl_strs) == expected_purl
++
++
++PASSING_POLICY_RESULT = {
++    "component_satisfies_policy": [["1", "pkg:pypi/widget@1.0.0", "widget_policy"]],
++    "component_violates_policy": [],
++}
++
++
++@pytest.fixture(name="fresh_db_manager")
++def fresh_db_manager_() -> Iterator[None]:
++    """Clear the memoized database manager around a test, disposing its engine first.
++
++    ``get_db_manager`` is decorated with ``cache_return``, so without this a test that
++    points ``global_config.output_path`` somewhere new still receives the manager an
++    earlier test built.
++
++    Clearing the memo alone drops the manager while its sqlite connection is still open,
++    leaving the garbage collector to finalize it at an arbitrary later point; under the
++    project's ``filterwarnings = error`` the resulting ``ResourceWarning`` surfaces as a
++    ``PytestUnraisableExceptionWarning`` against whichever test is running then, so the
++    module exits 1 while reporting every test as passed. ``tests/database`` disposes its
++    own manager the same way.
++    """
++    get_db_manager.clear()
++    yield
++    # Only dispose what was actually built: reading the memo directly avoids constructing
++    # a manager here, which would create a database file for a test that never wanted one.
++    manager = getattr(get_db_manager, "return_value", None)
++    if manager is not None:
++        manager.engine.dispose()
++    get_db_manager.clear()
++
++
++@pytest.mark.usefixtures("fresh_db_manager")
++def test_generate_vsa_with_reachable_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    """Test that a passing policy result over a readable database produces a real attestation."""
++    monkeypatch.setattr(global_config, "output_path", str(tmp_path))
++    get_db_manager().create_tables()
++
++    vsa = generate_vsa(policy_content="policy content", policy_result=PASSING_POLICY_RESULT)
++
++    assert vsa is not None
++    payload = json.loads(base64.b64decode(vsa["payload"]))
++    assert payload["subject"] == [{"uri": "pkg:pypi/widget@1.0.0"}]
++    assert payload["predicateType"] == "https://slsa.dev/verification_summary/v1"
++
++
++@pytest.mark.usefixtures("fresh_db_manager")
++def test_generate_vsa_with_unreachable_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    """Test that an unreadable database yields no attestation rather than one whose payload is null."""
++    monkeypatch.setattr(global_config, "output_path", str(tmp_path / "absent" / "deeper"))
++
++    assert generate_vsa(policy_content="policy content", policy_result=PASSING_POLICY_RESULT) is None
++
++
++@pytest.mark.parametrize(
++    "policy_result",
++    [
++        pytest.param(
++            {
++                "component_satisfies_policy": [],
++                "component_violates_policy": [["1", "pkg:pypi/widget@1.0.0", "widget_policy"]],
++            },
++            id="a_component_violates_the_policy",
++        ),
++        pytest.param(
++            {"component_satisfies_policy": [], "component_violates_policy": []},
++            id="no_component_either_way",
++        ),
++    ],
++)
++def test_generate_vsa_without_a_passing_component(policy_result: dict) -> None:
++    """Test the results that produce no attestation before the database is consulted."""
++    assert generate_vsa(policy_content="policy content", policy_result=policy_result) is None

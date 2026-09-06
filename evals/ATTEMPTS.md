@@ -491,6 +491,7 @@ stopped it was the map:
 | money | 1 | 10 | converged | evaluator countersigned | 0 |
 | ohash | 1 | 10 | converged | evaluator countersigned | 0 |
 | kotlinx-collections-immutable | 1 | 9 | converged | evaluator countersigned | 0 |
+| macaron | 4 | 36 | converged | evaluator countersigned | 0 |
 | swift-metrics | 1 | 12 | converged | evaluator countersigned | 0 |
 
 **Thirty iterations, and the adversarial gate was never invoked once**, because
