@@ -75,7 +75,7 @@ Each one is enforced by the iteration prompt, the state files, or the Stop hook.
 2. **It cannot wreck your repo.** Every iteration is a local commit, a broken verify is reverted, and nothing is ever pushed.
 3. **"Done" is not the agent's opinion.** An adversarial evaluator and a shell gate re-check every declaration.
 4. **It cannot claim what it never looked at.** The whole public surface goes on a checklist before any finding is filed.
-5. **Lessons become machinery.** A rule learned once binds every later iteration, and the engine itself passes <!-- count:checks -->**319 behavioural checks**<!-- /count --> on Linux, Windows and macOS.
+5. **Lessons become machinery.** A rule learned once binds every later iteration, and the engine itself passes <!-- count:checks -->**346 behavioural checks**<!-- /count --> on Linux, Windows and macOS.
 
 ## Documentation
 

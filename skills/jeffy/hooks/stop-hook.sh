@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.21.1"
+JEFFY_VERSION="1.22.0"
 
 # 1.21.0 (P1-70): `stop-hook.sh --lint [project root]` derives every check
 # the declaration path enforces and prints the first refusal, or clean,
@@ -121,6 +121,21 @@ max="$(fm max_iterations)"
 prompt_path="$(fm prompt_path)"
 focus="$(fm focus)"
 promise="$(fm completion_promise)"
+# 1.22.0 (P0-11): the run mode. `highs` is High-hunt mode, launched by
+# /jeffy N --highs: the loop audits, fixes only Highs, audits again once no
+# High is open, and closes the first time an audit finds none. Every branch
+# below that keys on hunt=1 is a hunt-only shape - the ledger test, the
+# certified hash's section, the fresh-audit test that replaces the gate, and
+# the skips - and a state file without the key takes the standard path byte
+# for byte. The certified line's section and prefix are named once here,
+# because two awk programs and four messages read them.
+mode="$(fm mode)"
+hunt=0
+cert_sec="Converged"
+if [ "$mode" = highs ]; then
+  hunt=1
+  cert_sec="Hunted"
+fi
 
 # Foreign or orphaned state file: another session owns it. Leave it alone;
 # /jeffy pre-flight is the place that adjudicates orphans with the user.
@@ -203,8 +218,9 @@ jeffy_write_metrics() {
     --argjson overrun "${new_overrun:-0}" \
     --arg wall "${wall_elapsed:-}" --arg ctx "${ctx_growth:-}" \
     --arg decl_hash "${conv_hash:-}" --arg decl_reason "${violation:-}" \
+    --arg mode "${mode:-standard}" \
     --arg decl_verdict "$( [ "${decl_seen:-0}" = 1 ] && { [ -z "${violation:-}" ] && echo accepted || echo refused; } )" \
-    '{run_token: $run, iteration: $iter, budget: $budget, task: $task,
+    '{run_token: $run, iteration: $iter, budget: $budget, mode: $mode, task: $task,
       content_tree_hash: $tree, changed_paths: $changed,
       rows_unswept: (if $rows_unswept == "" then null else ($rows_unswept | tonumber) end),
       open_above_low: (if $open_hm == "" then null else ($open_hm | tonumber) end),
@@ -548,6 +564,112 @@ $(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { t
 EOF
 }
 
+# The certified-hash check, one function because two paths call it at two
+# points: the standard declaration at the head of its chain, where the
+# evaluator checks that date their evidence against the hash follow it, and
+# the hunt close after every other derivable check, so the lint the closing
+# iteration runs before writing the line reports a real refusal first.
+# Reads $root, $cert_sec, $hunt, $lint; sets violation, conv_hash, conv_old
+# and, under lint in a hunt, hunt_pending.
+jeffy_cert_hash_check() {
+  # Converged-hash check: the latest Converged line must name a commit
+  # in this repository, and nothing but loop state may have changed
+  # between it and HEAD - the ratchet's definition of an unchanged
+  # tree. HEAD-exact equality would be unsatisfiable wherever the state
+  # files are tracked, because the closing checkpoint commits the
+  # Converged line itself. Skipped in non-git projects. The line is
+  # markdown a model writes, so a leading list marker and backticks
+  # around the hash are tolerated; the section anchoring is not.
+  # The repoint suffix is read off the same line, so one pass yields
+  # both hashes: "<new> <old>" when the line carries the marker, the
+  # new hash alone when it does not.
+  conv_pair="$(awk -v sec="$cert_sec" '{ sub(/\r$/, "") } $0 == "## " sec { take = 1; next } /^## / { take = 0 } take && match($0, /^[-*] +/) && substr($0, RLENGTH + 1, length(sec) + 2) == sec ": " { sub(/^[-*] +/, "") } take && index($0, sec ": ") == 1 { h = $2; gsub(/^`|`$/, "", h); o = ""; if (match($0, /\(repoints [^,)]+/)) { o = substr($0, RSTART + 10, RLENGTH - 10); gsub(/^`|`$|^[ \t]+|[ \t]+$/, "", o) } } END { if (h) print h " " o }' "$root/BACKLOG.md")"
+  conv_hash="${conv_pair%% *}"
+  conv_old="${conv_pair#* }"
+  [ "$conv_old" = "$conv_pair" ] && conv_old=""
+  cert_example="$cert_sec: <new hash> - <date> (repoints $conv_hash, tree unchanged)"
+  if [ "$hunt" = 1 ]; then
+    cert_example="Hunted: <new hash> - <date> - <k> Highs closed (repoints $conv_hash, tree unchanged)"
+  fi
+  if [ -z "$conv_hash" ] && [ "$hunt" = 1 ] && [ "$lint" = 1 ]; then
+    # The Hunted line is written by the closing iteration after the
+    # lint the prompt runs before its checkpoint, so its absence is
+    # the one shape lint reports as pending rather than refuses.
+    hunt_pending="$hunt_pending${hunt_pending:+; and }the ## Hunted section of BACKLOG.md does not name a commit yet"
+  elif [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
+    violation="the ## $cert_sec section of BACKLOG.md does not name a commit in this repository; append the $cert_sec line for the certified checkpoint"
+  else
+    # Reachability first, because an orphaned hash makes the
+    # nothing-but-state comparison below meaningless: git will happily
+    # diff two commits with no ancestry between them and report a
+    # difference that means nothing about this run's work.
+    # Reachability. Through 1.7.0 the hash only had to rev-parse to a
+    # commit object, and any commit object satisfies that: an orphan
+    # left by a rebase, an abandoned branch tip, a commit fetched from
+    # somewhere else. A published receipt whose Converged hash does not
+    # resolve on a clone is one nobody can verify, which is the single
+    # claim this corpus is least able to defend.
+    # The first production tree to meet this went the honest way and
+    # still had to break a rule to do it. 63 checkpoints were squashed
+    # before publication, the certified commit went unreachable, and
+    # because the artifact and ratchet checks both date their evidence
+    # with merge-base against that hash, the only way to keep the tree
+    # legal was to edit a line the template declares un-editable. The
+    # engine offered no legal path, so the operator took an
+    # illegal-looking one and disclosed it. That is fixed here: the
+    # append below is the legal path, and the disclosure travels with
+    # the receipt instead of resting on the operator's goodwill.
+    # What stays unenforceable, stated rather than papered over: a
+    # tree-preserving edit that repoints at a reachable commit without
+    # the marker is indistinguishable from an original line at the
+    # content layer. This does not detect that. What it changes is that
+    # the honest operator now has a legal move, so an edit no longer
+    # has an excuse.
+    if [ -z "$violation" ] && [ -n "$conv_old" ]; then
+      if ! git -C "$root" rev-parse --verify --quiet "$conv_old^{commit}" >/dev/null 2>&1; then
+        violation="the $cert_sec line repoints $conv_old, which no longer resolves to a commit in this repository, so the tree it certified cannot be compared against $conv_hash and the repoint cannot be checked; a repoint is only ever legal against a commit whose tree can still be read, so converge this tree again through a fresh audit and the gate rather than asserting the old one"
+      elif ! printf '%s\n' "$(awk -v sec="$cert_sec" '{ sub(/\r$/, "") } $0 == "## " sec { take = 1; next } /^## / { take = 0 } take && match($0, /^[-*] +/) && substr($0, RLENGTH + 1, length(sec) + 2) == sec ": " { sub(/^[-*] +/, "") } take && index($0, sec ": ") == 1 { h = $2; gsub(/^`|`$/, "", h); a[++n] = h } END { for (i = 1; i < n; i++) print a[i] }' "$root/BACKLOG.md")" \
+        | grep -qix -- "$conv_old"; then
+        violation="the $cert_sec line repoints $conv_old but no earlier $cert_sec line in BACKLOG.md names it; a repoint is appended beneath the line it supersedes and never written over it, because the superseded line is the only evidence that the rewrite happened at all"
+      elif [ "$(git -C "$root" rev-parse --verify --quiet "$conv_old^{tree}" 2>/dev/null)" \
+        != "$(git -C "$root" rev-parse --verify --quiet "$conv_hash^{tree}" 2>/dev/null)" ]; then
+        violation="the $cert_sec line repoints $conv_old to $conv_hash, but those two commits do not carry the same tree; a repoint answers a history rewrite that preserved the tree, and one that changes it is a different convergence claim wearing an old certificate, so converge the current tree through a fresh audit and the gate"
+      fi
+    fi
+    if [ -z "$violation" ] \
+      && ! git -C "$root" merge-base --is-ancestor "$conv_hash" HEAD 2>/dev/null; then
+      violation="the $cert_sec hash $conv_hash resolves but is not reachable from HEAD, so a history rewrite has orphaned the commit this declaration rests on and no clone of this repository can check it; never edit the $cert_sec line - append one beneath it reading $cert_example, naming a reachable commit whose tree equals the orphaned one, and record the rewrite in a dated Note in JOURNAL.md"
+    fi
+    # .jeffy/ is loop memory too, so it joins the state files in the
+    # exclusion: a row's known-answer battery lives under
+    # .jeffy/probes/ and the checkpoints commit it, which makes a
+    # battery written or refreshed on the way to the declaration
+    # loop-state churn rather than a product change. Without this the
+    # run that kept its instruments fails the nothing-but-state test
+    # that the run which threw them away and rebuilt them passes, and
+    # the persistence the probes exist for costs a declaration.
+    # Two files under .claude/ are named for the same reason and no
+    # more of that directory than those two, because a Claude Code
+    # plugin project has real product there. jeffy-loop.local.md is
+    # this hook's own transient state, gitignored at bootstrap but
+    # tracked wherever that step did not run, and it changes at every
+    # turn; settings.local.json is written by the harness whenever the
+    # run's work draws a permission grant. Neither is the project.
+    # --relative is what makes any of this hold in a project that is a
+    # subdirectory of a larger repository - a shape the launch
+    # pre-flight explicitly permits - because git reports paths from
+    # the repository root and every filename here is anchored at the
+    # project root, so without it the exclusion matched nothing and the
+    # gate rejected every declaration it saw.
+    if [ -z "$violation" ]; then
+      nonstate="$(git -C "$root" diff --name-only --relative "$conv_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
+      if [ -n "$nonstate" ]; then
+        violation="product path $nonstate changed after the $cert_sec hash $conv_hash; certify the current tree before declaring"
+      fi
+    fi
+  fi
+}
+
 # Invocations this run has already spent, derived once because two places
 # need it: the declaration's absolute-bound refusal and the closing
 # extension, which has nothing left to buy for a run that can no longer
@@ -622,7 +744,7 @@ done
 # bare session prefix every run of the session shares, and a PRIOR run's
 # audit at a high iteration would end THIS run out of budget - the same
 # bound the ceremony exemption and the duplicate-index check carry.
-if [ "$lint" = 0 ] && [ "$(fm extension_granted)" = "1" ] && [ -n "$run_tok" ] && [ -f "$root/JOURNAL.md" ]; then
+if [ "$lint" = 0 ] && [ "$hunt" = 0 ] && [ "$(fm extension_granted)" = "1" ] && [ -n "$run_tok" ] && [ -f "$root/JOURNAL.md" ]; then
   ext_max="$(fm max_iterations)"
   case "$ext_max" in ''|*[!0-9]*) ext_max="" ;; esac
   if [ -n "$ext_max" ]; then
@@ -688,103 +810,32 @@ if [ -n "$promise" ]; then
       # open tasks and are untouched, exactly as before.
       open_blocking=""
       open_carried=""
+      hunt_nonhigh=""
+      hunt_pending=""
       if [ -f "$root/BACKLOG.md" ]; then
         open_scan="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { if ($0 ~ /^- \[ \] [^ ]+ \(Low[,)]/) print "L\t" $0; else print "B\t" $0 }' "$root/BACKLOG.md")"
         open_blocking="$(printf '%s\n' "$open_scan" | awk -F'\t' '$1 == "B" { print $2 }')"
         open_carried="$(printf '%s\n' "$open_scan" | awk -F'\t' '$1 == "L" { print $2 }')"
+        if [ "$hunt" = 1 ]; then
+          # 1.22.0: a hunt ledger carries Highs only. Any open line that is
+          # not a High - a Medium, a Low, a line with no parseable severity -
+          # is a violation naming the line, because a Medium or Low an audit
+          # notices belongs on that AUDIT entry's Noted, not filed: line and
+          # a hunt never works one; an open High blocks as it always has, and
+          # nothing is carried.
+          hunt_nonhigh="$(printf '%s\n' "$open_scan" | awk -F'\t' '{ print $2 }' | grep -v '^- \[ \] [^ ]* (High[,)]' | grep . | head -n 1)"
+          open_blocking="$(printf '%s\n' "$open_scan" | awk -F'\t' '{ print $2 }' | grep '^- \[ \] [^ ]* (High[,)]' | head -n 1)"
+          open_carried=""
+        fi
       fi
       if [ ! -f "$root/BACKLOG.md" ]; then
-        violation="BACKLOG.md is missing at $root, and every convergence gate reads it - the open-task test, the Converged hash that certifies the tree, and the ratchet all live in that file; restore the ledger with its Now, Next, Later, and Converged sections, then re-declare"
+        violation="BACKLOG.md is missing at $root, and every closing gate reads it - the open-task test and the $cert_sec hash that certifies the tree live in that file; restore the ledger with its Now and $cert_sec sections, then re-declare"
+      elif [ "$hunt" = 1 ] && [ -n "$hunt_nonhigh" ]; then
+        violation="BACKLOG.md lists an open task that is not a High, and a hunt ledger carries Highs only - a Medium or Low an audit notices goes on that AUDIT entry's Noted, not filed: line, never on the ledger, and a line with no parseable severity is refused the same way, first: $hunt_nonhigh"
       elif [ -n "$open_blocking" ]; then
         violation="BACKLOG.md still lists open High or Medium tasks in Now, Next, or Later (a task line with no parseable severity counts as blocking - the closing rule reads severity from the task line itself), first: $(printf '%s' "$open_blocking" | head -n 1)"
-      elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
-        # Converged-hash check: the latest Converged line must name a commit
-        # in this repository, and nothing but loop state may have changed
-        # between it and HEAD - the ratchet's definition of an unchanged
-        # tree. HEAD-exact equality would be unsatisfiable wherever the state
-        # files are tracked, because the closing checkpoint commits the
-        # Converged line itself. Skipped in non-git projects. The line is
-        # markdown a model writes, so a leading list marker and backticks
-        # around the hash are tolerated; the section anchoring is not.
-        # The repoint suffix is read off the same line, so one pass yields
-        # both hashes: "<new> <old>" when the line carries the marker, the
-        # new hash alone when it does not.
-        conv_pair="$(awk '{ sub(/\r$/, "") } /^## Converged$/ { take = 1; next } /^## / { take = 0 } take && /^[-*] +Converged: / { sub(/^[-*] +/, "") } take && /^Converged: / { h = $2; gsub(/^`|`$/, "", h); o = ""; if (match($0, /\(repoints [^,)]+/)) { o = substr($0, RSTART + 10, RLENGTH - 10); gsub(/^`|`$|^[ \t]+|[ \t]+$/, "", o) } } END { if (h) print h " " o }' "$root/BACKLOG.md")"
-        conv_hash="${conv_pair%% *}"
-        conv_old="${conv_pair#* }"
-        [ "$conv_old" = "$conv_pair" ] && conv_old=""
-        if [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
-          violation="the ## Converged section of BACKLOG.md does not name a commit in this repository; append the Converged line for the certified checkpoint"
-        else
-          # Reachability first, because an orphaned hash makes the
-          # nothing-but-state comparison below meaningless: git will happily
-          # diff two commits with no ancestry between them and report a
-          # difference that means nothing about this run's work.
-          # Reachability. Through 1.7.0 the hash only had to rev-parse to a
-          # commit object, and any commit object satisfies that: an orphan
-          # left by a rebase, an abandoned branch tip, a commit fetched from
-          # somewhere else. A published receipt whose Converged hash does not
-          # resolve on a clone is one nobody can verify, which is the single
-          # claim this corpus is least able to defend.
-          # The first production tree to meet this went the honest way and
-          # still had to break a rule to do it. 63 checkpoints were squashed
-          # before publication, the certified commit went unreachable, and
-          # because the artifact and ratchet checks both date their evidence
-          # with merge-base against that hash, the only way to keep the tree
-          # legal was to edit a line the template declares un-editable. The
-          # engine offered no legal path, so the operator took an
-          # illegal-looking one and disclosed it. That is fixed here: the
-          # append below is the legal path, and the disclosure travels with
-          # the receipt instead of resting on the operator's goodwill.
-          # What stays unenforceable, stated rather than papered over: a
-          # tree-preserving edit that repoints at a reachable commit without
-          # the marker is indistinguishable from an original line at the
-          # content layer. This does not detect that. What it changes is that
-          # the honest operator now has a legal move, so an edit no longer
-          # has an excuse.
-          if [ -z "$violation" ] && [ -n "$conv_old" ]; then
-            if ! git -C "$root" rev-parse --verify --quiet "$conv_old^{commit}" >/dev/null 2>&1; then
-              violation="the Converged line repoints $conv_old, which no longer resolves to a commit in this repository, so the tree it certified cannot be compared against $conv_hash and the repoint cannot be checked; a repoint is only ever legal against a commit whose tree can still be read, so converge this tree again through a fresh audit and the gate rather than asserting the old one"
-            elif ! printf '%s\n' "$(awk '{ sub(/\r$/, "") } /^## Converged$/ { take = 1; next } /^## / { take = 0 } take && /^[-*] +Converged: / { sub(/^[-*] +/, "") } take && /^Converged: / { h = $2; gsub(/^`|`$/, "", h); a[++n] = h } END { for (i = 1; i < n; i++) print a[i] }' "$root/BACKLOG.md")" \
-              | grep -qix -- "$conv_old"; then
-              violation="the Converged line repoints $conv_old but no earlier Converged line in BACKLOG.md names it; a repoint is appended beneath the line it supersedes and never written over it, because the superseded line is the only evidence that the rewrite happened at all"
-            elif [ "$(git -C "$root" rev-parse --verify --quiet "$conv_old^{tree}" 2>/dev/null)" \
-              != "$(git -C "$root" rev-parse --verify --quiet "$conv_hash^{tree}" 2>/dev/null)" ]; then
-              violation="the Converged line repoints $conv_old to $conv_hash, but those two commits do not carry the same tree; a repoint answers a history rewrite that preserved the tree, and one that changes it is a different convergence claim wearing an old certificate, so converge the current tree through a fresh audit and the gate"
-            fi
-          fi
-          if [ -z "$violation" ] \
-            && ! git -C "$root" merge-base --is-ancestor "$conv_hash" HEAD 2>/dev/null; then
-            violation="the Converged hash $conv_hash resolves but is not reachable from HEAD, so a history rewrite has orphaned the commit this convergence rests on and no clone of this repository can check it; never edit the Converged line - append one beneath it reading Converged: <new hash> - <date> (repoints $conv_hash, tree unchanged), naming a reachable commit whose tree equals the orphaned one, and record the rewrite in a dated Note in JOURNAL.md"
-          fi
-          # .jeffy/ is loop memory too, so it joins the state files in the
-          # exclusion: a row's known-answer battery lives under
-          # .jeffy/probes/ and the checkpoints commit it, which makes a
-          # battery written or refreshed on the way to the declaration
-          # loop-state churn rather than a product change. Without this the
-          # run that kept its instruments fails the nothing-but-state test
-          # that the run which threw them away and rebuilt them passes, and
-          # the persistence the probes exist for costs a declaration.
-          # Two files under .claude/ are named for the same reason and no
-          # more of that directory than those two, because a Claude Code
-          # plugin project has real product there. jeffy-loop.local.md is
-          # this hook's own transient state, gitignored at bootstrap but
-          # tracked wherever that step did not run, and it changes at every
-          # turn; settings.local.json is written by the harness whenever the
-          # run's work draws a permission grant. Neither is the project.
-          # --relative is what makes any of this hold in a project that is a
-          # subdirectory of a larger repository - a shape the launch
-          # pre-flight explicitly permits - because git reports paths from
-          # the repository root and every filename here is anchored at the
-          # project root, so without it the exclusion matched nothing and the
-          # gate rejected every declaration it saw.
-          if [ -z "$violation" ]; then
-            nonstate="$(git -C "$root" diff --name-only --relative "$conv_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
-            if [ -n "$nonstate" ]; then
-              violation="product path $nonstate changed after the Converged hash $conv_hash; certify the current tree before declaring"
-            fi
-          fi
-        fi
+      elif [ "$hunt" = 0 ] && command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+        jeffy_cert_hash_check
       fi
       # Surface-inventory check: a convergence claim covers the whole mapped
       # surface. Dimension scores claim only what an audit examined, so an
@@ -792,7 +843,7 @@ if [ -n "$promise" ]; then
       # None on a dimension whose surface was never opened is silence, not
       # cleanliness. A PLAN.md without the section predates this check and
       # fails open with a stderr note.
-      if [ -z "$violation" ] && [ -f "$root/PLAN.md" ]; then
+      if [ "$hunt" = 0 ] && [ -z "$violation" ] && [ -f "$root/PLAN.md" ]; then
         if grep -q '^## Surface inventory' "$root/PLAN.md"; then
           unswept="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { print; exit }' "$root/PLAN.md")"
           if [ -n "$unswept" ]; then
@@ -823,7 +874,9 @@ if [ -n "$promise" ]; then
       # of this file (P1-61), because the ordinary re-feed now runs it too:
       # the gate consumes the same claim before any declaration exists, so
       # staleness is said at every checkpoint and refused here.
-      if [ -z "$violation" ] && [ -f "$root/PLAN.md" ] \
+      # 1.22.0: a hunt never sweeps a row, so the inventory check and the
+      # stale-row refusal are convergence machinery it does not run.
+      if [ "$hunt" = 0 ] && [ -z "$violation" ] && [ -f "$root/PLAN.md" ] \
         && command -v git >/dev/null 2>&1 \
         && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
         jeffy_derive_stale_rows "$root"
@@ -902,7 +955,13 @@ if [ -n "$promise" ]; then
       # manifest) is reported rather than silently passed - the P0-8 posture
       # - and a tree with neither manifest is not this check's business.
       jeffy_pkg_grep='^(\.jeffy/|PLAN\.md$|BACKLOG\.md$|JOURNAL\.md$|JOURNAL-archive\.md$)'
-      if [ -z "$violation" ] && [ -f "$root/Cargo.toml" ]; then
+      # 1.22.0: a published artifact carrying loop state is a Medium by the
+      # rubric, and a hunt notes Mediums and never works them, so the
+      # package-contents refusals are standard-mode only; the hunt says so.
+      if [ "$hunt" = 1 ] && { [ -f "$root/Cargo.toml" ] || [ -f "$root/package.json" ]; }; then
+        echo "jeffy stop hook: hunt mode skips the package-contents check; a published artifact carrying loop state is a Medium a hunt notes and never works." >&2
+      fi
+      if [ "$hunt" = 0 ] && [ -z "$violation" ] && [ -f "$root/Cargo.toml" ]; then
         # cargo lives in ~/.cargo/bin, which login shells add and the
         # non-interactive shell this hook runs in does not - both study
         # hosts prove it - so the standard install location is the
@@ -924,7 +983,7 @@ if [ -n "$promise" ]; then
           echo "jeffy stop hook: Cargo.toml is present but cargo is not on PATH, so the crate-contents check could not run." >&2
         fi
       fi
-      if [ -z "$violation" ] && [ -f "$root/package.json" ]; then
+      if [ "$hunt" = 0 ] && [ -z "$violation" ] && [ -f "$root/package.json" ]; then
         if command -v npm >/dev/null 2>&1; then
           if pkg_list="$(cd "$root" && npm pack --dry-run --json --ignore-scripts 2>/dev/null)"; then
             pkg_leak="$(printf '%s\n' "$pkg_list" | jq -r '.[0].files[].path' 2>/dev/null | grep -E "$jeffy_pkg_grep" | head -n 3 | tr '\n' ' ')"
@@ -1021,9 +1080,61 @@ if [ -n "$promise" ]; then
         sc_v="$(jeffy_stated_counts_violation "$root")"
         [ -n "$sc_v" ] && violation="$sc_v"
       fi
+      # 1.22.0 (P0-11): the fresh-audit test, the check that replaces the
+      # evaluator gate in a hunt. The close rests on the last AUDIT entry of
+      # this run having examined the tree it certifies: that entry must exist,
+      # must carry a Checkpoint that resolves, and nothing but loop memory may
+      # have changed between that checkpoint and HEAD - a fix landed after the
+      # audit is a tree the audit never saw. Under lint, the closing
+      # iteration's own AUDIT entry has no Checkpoint yet (the prompt runs lint
+      # before the checkpoint), so that one shape is reported as pending rather
+      # than refused; a resolvable checkpoint with product changes after it is
+      # refused under lint exactly as at the close. A project without git
+      # cannot derive the diff and says so.
+      if [ "$hunt" = 1 ] && [ -z "$violation" ]; then
+        if [ ! -f "$root/JOURNAL.md" ]; then
+          violation="JOURNAL.md is missing at $root, and a hunt closes on the last AUDIT entry recorded there; restore the journal, record the closing audit, then close again"
+        elif ! command -v git >/dev/null 2>&1 || ! git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+          echo "jeffy stop hook: no git HEAD, so the fresh-audit test cannot compare the tree against the last audit's checkpoint; skipping it." >&2
+        else
+          fa_line="$(awk -v tok="| $runid8 |" '
+            { sub(/\r$/, "") }
+            /^## iter / {
+              split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+              if (index($0, tok) && t == "AUDIT") { n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n); it = n + 0; cp = ""; take = 1 } else { take = 0 }
+              next
+            }
+            take && index($0, "Checkpoint:") == 1 { cp = $0; sub(/^Checkpoint:[ \t]*/, "", cp) }
+            END { if (it) print it "\t" cp }
+          ' "$root/JOURNAL.md")"
+          fa_iter="${fa_line%%	*}"
+          fa_cp="${fa_line#*	}"
+          [ "$fa_cp" = "$fa_line" ] && fa_cp=""
+          fa_hash="$(printf '%s' "$fa_cp" | grep -oE '[0-9a-f]{7,40}' | head -n 1)"
+          if [ -z "$fa_line" ]; then
+            violation="JOURNAL.md holds no AUDIT entry headed with this run's id $runid8, and a hunt closes only on a fresh full audit of this run that found no High; run that audit, record its entry with its Checkpoint, then close"
+          elif [ -z "$fa_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$fa_hash^{commit}" >/dev/null 2>&1; then
+            fa_msg="the last AUDIT entry of this run (iteration $fa_iter) carries no resolvable Checkpoint (${fa_cp:-none}); the closing audit's entry names its checkpoint commit, because the close certifies the tree that audit examined"
+            if [ "$lint" = 1 ] && [ "$fa_iter" = "$iter" ]; then
+              hunt_pending="$fa_msg"
+            else
+              violation="$fa_msg"
+            fi
+          else
+            fa_moved="$(git -C "$root" diff --name-only --relative "$fa_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
+            if [ -n "$fa_moved" ]; then
+              violation="product path $fa_moved changed after the last AUDIT entry's checkpoint $fa_hash (iteration $fa_iter); a hunt closes on a fresh audit of the tree it certifies, so audit again and close in that same iteration"
+            fi
+          fi
+        fi
+      fi
+      if [ "$hunt" = 1 ] && [ -z "$violation" ] && command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+        jeffy_cert_hash_check
+      fi
       # Evaluator check: the adversarial gate is where the audits' misses were
       # found, and six of thirteen corpus convergences recorded no verdict at
-      # all. The closing entry of this run is what must carry it - an earlier
+      # all. A hunt has no gate (1.22.0): its close rests on the fresh-audit
+      # test above, and every check in this block is standard-mode only. The closing entry of this run is what must carry it - an earlier
       # entry's PASS answered an earlier tree - so the scan anchors on the last
       # primary heading stamped with this run id and reads that entry's body.
       # ROTATION and SALVAGE are additional entries rather than closing ones:
@@ -1083,7 +1194,7 @@ if [ -n "$promise" ]; then
       # 1.5.0 writes started_at, so this reaches only state files older than
       # that, and the requirement is kept rather than waived there - waiving
       # it would turn a missing key into the bypass this check just closed.
-      if [ -z "$violation" ]; then
+      if [ "$hunt" = 0 ] && [ -z "$violation" ]; then
         if [ ! -f "$root/JOURNAL.md" ]; then
           violation="JOURNAL.md is missing at $root, and the closing entry is where the evaluator verdict lives; restore the journal, record the verdict, then re-declare"
         else
@@ -1354,6 +1465,10 @@ if [ -n "$promise" ]; then
           echo "jeffy lint: a declaration on this tree would be refused - $violation"
           exit 1
         fi
+        if [ -n "$hunt_pending" ]; then
+          echo "jeffy lint: clean apart from the close itself - $hunt_pending; the checkpoint and the Hunted line are what supply it, and every other check the close derives passes on this tree; the Verify command was not run, so run quiet-verify.sh yourself"
+          exit 0
+        fi
         echo "jeffy lint: clean - every check the declaration path derives passes on this tree; the Verify command was not run, so run quiet-verify.sh yourself"
         exit 0
       fi
@@ -1394,6 +1509,13 @@ fi
 unswept_rows=""
 if [ -f "$root/PLAN.md" ] && grep -q '^## Surface inventory' "$root/PLAN.md"; then
   unswept_rows="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { n++ } END { printf "%d", n }' "$root/PLAN.md")"
+fi
+# 1.22.0: a hunt never sweeps, so the unswept count is not a quantity any
+# reader below may act on - the sweep history and its fail-fast, the closing
+# extension, the final-iteration audit note and the sweep arithmetic all key
+# on it, and each is also guarded by name.
+if [ "$hunt" = 1 ]; then
+  unswept_rows=""
 fi
 # P0-4 (1.11.0): the severity-aware blocking count, computed once beside the
 # raw counts and read by the closing-extension grant, the refill guard, and
@@ -1443,7 +1565,7 @@ cur_iter_type=""
 if [ -n "$run_tok" ]; then
   cur_iter_type="$(jeffy_iter_type "$root/JOURNAL.md" "| $runid8 |" "$iter")"
 fi
-if [ -n "$unswept_rows" ]; then
+if [ "$hunt" = 0 ] && [ -n "$unswept_rows" ]; then
   case "$rows_hist" in
     '' | *[!0-9,]*) new_rows_hist="" ;;
     *) new_rows_hist="$rows_hist" ;;
@@ -1529,7 +1651,7 @@ if [ -n "$ext_lows_rec" ] && [ -n "$open_now" ] && [ -n "$open_hm" ]; then
     [ "$cur_lows" -gt "$ext_lows_rec" ] && new_low_refill=1
   ;; esac
 fi
-if [ "$(fm extension_granted)" = "1" ] && [ "$iter" -ge $((max - 1)) ] \
+if [ "$hunt" = 0 ] && [ "$(fm extension_granted)" = "1" ] && [ "$iter" -ge $((max - 1)) ] \
   && { { [ -n "$open_hm" ] && [ "$open_hm" != "0" ]; } || [ -n "$new_low_refill" ]; }; then
   last_type=""
   if [ -f "$root/JOURNAL.md" ]; then
@@ -1589,7 +1711,9 @@ if [ "$iter" -ge "$max" ]; then
   # blocked ending two turns later. Bounded at the absolute cap for the same
   # reason the declaration check is - below it, a legal endgame still exists
   # and the extension is exactly what pays for it.
-  if [ "$iter" -eq "$max" ] && [ "$fm_close" -ge 2 ] \
+  # 1.22.0: a hunt has no convergence sequence to buy, so it never extends;
+  # the corrective grant below still applies to a refused close at budget.
+  if [ "$hunt" = 0 ] && [ "$iter" -eq "$max" ] && [ "$fm_close" -ge 2 ] \
     && [ "$(fm extension_granted)" != "1" ] \
     && [ "$ev_rejects" -lt 3 ] && { [ -z "$ev_art_ord" ] || [ "$ev_art_ord" -lt 4 ]; } \
     && [ "$open_hm" = "0" ] \
@@ -2191,7 +2315,7 @@ if [ -n "$runid8" ] && [ -f "$root/JOURNAL.md" ]; then
   fi
 fi
 final_note=""
-if [ "$next" -eq "$max" ] && [ -z "$extension" ] && [ -z "$violation" ] \
+if [ "$hunt" = 0 ] && [ "$next" -eq "$max" ] && [ -z "$extension" ] && [ -z "$violation" ] \
   && [ "$open_hm" = "0" ] && [ "$unswept_rows" = "0" ] \
   && [ "$run_has_audit" -eq 0 ]; then
   final_note="the ledger is at the severity floor and the map is swept, but no full audit is on this run's record, and the closing rule needs a clean one from before any extension window because the window never admits an audit; spend this final iteration on the closing full audit rather than a WRAPUP, so the extension can then buy the gate and the declaration"
@@ -2248,13 +2372,21 @@ if [ -n "$focus" ]; then
 fi
 reason="$reason This is jeffy iteration $next of $max for this run."
 if [ -n "$violation" ] && [ -z "$corrective" ]; then
-  reason="$reason CONVERGENCE REJECTED by the stop hook: $violation. Fix this, then re-declare convergence with the promise phrase."
+  if [ "$hunt" = 1 ]; then
+    reason="$reason HUNT CLOSE REJECTED by the stop hook: $violation. Fix this, then close the hunt again with the promise phrase."
+  else
+    reason="$reason CONVERGENCE REJECTED by the stop hook: $violation. Fix this, then re-declare convergence with the promise phrase."
+  fi
 fi
 # The corrective note replaces that one rather than joining it: telling a run
 # with no budget left to fix and re-declare is an instruction it cannot
 # carry out, and the point here is an honest close, not another attempt.
 if [ -n "$corrective" ]; then
-  reason="$reason CORRECTIVE: the convergence you declared this turn was refused ($violation), and the budget is spent, so this run does not converge. Do no further work and do not re-declare: append a journal entry recording the refusal and its reason, then close with a run report that states the run ended out of budget without converging, naming what remains for the next run."
+  if [ "$hunt" = 1 ]; then
+    reason="$reason CORRECTIVE: the hunt close you declared this turn was refused ($violation), and the budget is spent, so this hunt does not close. Do no further work and do not re-declare: append a journal entry recording the refusal and its reason, then close with a run report that states the run ended out of budget without closing the hunt, naming what remains for the next run."
+  else
+    reason="$reason CORRECTIVE: the convergence you declared this turn was refused ($violation), and the budget is spent, so this run does not converge. Do no further work and do not re-declare: append a journal entry recording the refusal and its reason, then close with a run report that states the run ended out of budget without converging, naming what remains for the next run."
+  fi
 fi
 if [ -n "$hygiene" ]; then
   reason="$reason ITERATION HYGIENE: $hygiene."
@@ -2327,8 +2459,35 @@ if [ -n "$wall_elapsed" ]; then
     run_state="$run_state; wall $((wall_elapsed / 60))m (no ceiling set)"
   fi
 fi
+# 1.22.0: a hunt plans against its open Highs and its last audit, not a map.
+hunt_note=""
+if [ "$hunt" = 1 ]; then
+  run_state="$run_state; mode High-hunt; open Highs ${open_high:-unknown}"
+  hunt_last_audit=""
+  if [ -n "$run_tok" ] && [ -f "$root/JOURNAL.md" ]; then
+    hunt_last_audit="$(awk -v tok="| $runid8 |" '
+      { sub(/\r$/, "") }
+      /^## iter / && index($0, tok) {
+        split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+        if (t == "AUDIT") { n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n); if (n + 0 > last) last = n + 0 }
+      }
+      END { if (last) print last }
+    ' "$root/JOURNAL.md")"
+  fi
+  if [ -n "$hunt_last_audit" ]; then
+    run_state="$run_state; last audit iteration $hunt_last_audit"
+  else
+    run_state="$run_state; no audit on this run's record yet"
+  fi
+  if [ "$open_high" = "0" ]; then
+    hunt_note="No High is open: run the fresh full audit now, and if it files none, close the hunt in that same iteration - the Hunted line, the closing AUDIT entry with its Checkpoint, and the promise phrase; if it files a High, work it next."
+  fi
+fi
 run_state="$run_state; jeffy v$JEFFY_VERSION"
 reason="$reason $run_state."
+if [ -n "$hunt_note" ]; then
+  reason="$reason $hunt_note"
+fi
 # Zero blocking findings over a swept surface is not a finished run: the
 # closing audit, the evaluator gate and the declaration are still to come,
 # and runs that did not know that spent their last iterations discovering

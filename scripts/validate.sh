@@ -83,6 +83,9 @@ for required in skills/jeffy/SKILL.md skills/cancel-jeffy/SKILL.md \
   skills/jeffy/references/backlog-default.md \
   skills/jeffy/references/journal-default.md \
   skills/jeffy/references/iteration-prompt.txt \
+  skills/jeffy/references/plan-highs.md \
+  skills/jeffy/references/backlog-highs.md \
+  skills/jeffy/references/iteration-prompt-highs.txt \
   skills/jeffy/hooks/stop-hook.sh \
   skills/jeffy/hooks/lib/run-probe.sh; do
   if [ -f "$required" ]; then
@@ -428,6 +431,121 @@ check_markers skills/jeffy/SKILL.md \
   'base_head: $(git -C ' \
   "the Stop hook uses it to tell a genuine convergence ratchet" \
   "compare that file with the installed one byte for byte"
+# 1.22.0 (P0-11): High-hunt mode. The launcher documents the flag, the state
+# key and the mode guard in both directions; the two hunt templates carry the
+# sections the hook reads; the hunt prompt is the standard prompt with the
+# convergence machinery deleted (derived by deletion so every shared sentence
+# stays byte-identical), so what it must still carry and what it must no
+# longer carry are both asserted by name.
+check_markers skills/jeffy/SKILL.md \
+  "\`--highs\`" \
+  "mode: highs" \
+  "JEFFY HUNT COMPLETE" \
+  "plan-highs.md" \
+  "backlog-highs.md" \
+  "iteration-prompt-highs.txt" \
+  "High-hunt" \
+  "a launch without \`--highs\` over a PLAN.md whose first Mode word is High-hunt refuses"
+check_markers skills/jeffy/references/plan-highs.md \
+  "## Mode" \
+  "High-hunt." \
+  "## Operating envelope" \
+  "## Surface inventory" \
+  "a hunt does not sweep rows and never flips one" \
+  "- [~] <surface>: unreachable on this host" \
+  "a correctness check, not a liveness check" \
+  "observed failing on" \
+  "every documented parameter" \
+  "## Verify command" \
+  "Command: " \
+  "Oracle class: " \
+  "Environment fingerprint: " \
+  "Verify count:" \
+  "returns <count>" \
+  "## Method" \
+  "judge by the consequence a user of the shipped product meets" \
+  "Severity ceiling by class:" \
+  "a documented promise the code does not keep" \
+  "everything a user of the shipped product never meets" \
+  "Noted, not filed:" \
+  "Highs only" \
+  "strong enough to fail" \
+  "a reduction is new code" \
+  "Three-strike rule:" \
+  "no sub-agent review at all" \
+  "## Lessons" \
+  "## Definition of done" \
+  "takes status hunted" \
+  "Hunted: <full commit hash> - <date> - <k> Highs closed" \
+  "(repoints <old hash>, tree unchanged)" \
+  "must be reachable from HEAD" \
+  "A hunt is not a convergence"
+check_markers skills/jeffy/references/backlog-highs.md \
+  "## Now" \
+  "## Proposed" \
+  "## Declined" \
+  "## Hunted" \
+  "Highs only" \
+  "(High, <class>, <dimension>)" \
+  "Noted, not filed:" \
+  "Derivation: <command>" \
+  "Hunted: <full commit hash> - <date> - <k> Highs closed" \
+  "(repoints <old hash>, tree unchanged)" \
+  "reachable from HEAD" \
+  "A hunt is not a convergence"
+check_markers skills/jeffy/references/iteration-prompt-highs.txt \
+  "JEFFY HUNT COMPLETE" \
+  "Hunted: <full commit hash> - <date> - <k> Highs closed" \
+  "(repoints <old hash>, tree unchanged)" \
+  "Noted, not filed:" \
+  "status is one of done, blocked, audit, hunted, salvage, rotation" \
+  "task-id or AUDIT or WRAPUP or SALVAGE or ROTATION" \
+  "file only Highs, worst first" \
+  "the top open High, never batch" \
+  "a hunt never sweeps a row and never flips one" \
+  "Closing rule: the hunt is complete only when" \
+  "takes status hunted" \
+  "refuses a close whose last AUDIT entry carries no resolvable Checkpoint" \
+  "Salvage first:" \
+  "ignoring any path under .jeffy/metrics/, which the Stop hook writes after every checkpoint" \
+  "Verify gate:" \
+  "QUIET-VERIFY-ONLY" \
+  "newly exposed rather than introduced" \
+  "Severity discipline:" \
+  "a rationale contradicted by a written line in the state files is void" \
+  "Backlog discipline:" \
+  "Derivation: <command>" \
+  "Checkpoint:" \
+  "Stall check:" \
+  "the harness-written .claude/jeffy-loop.local.md and .claude/settings.local.json, and no BACKLOG.md item changed state" \
+  "added, removed, edited, or moved between sections" \
+  "for at most three consecutive iterations" \
+  "Change discipline:" \
+  "Lessons:" \
+  "Run report:" \
+  "Battery ownership:" \
+  "each through the installed run-probe.sh" \
+  "run skills/jeffy/hooks/lib/check-claims.sh and resolve every MISMATCH" \
+  "run the installed Stop hook in lint mode" \
+  "never only run-without-crash probes" \
+  "observed failing on" \
+  "whose value changes nothing" \
+  "Oracle class names what the command actually grades" \
+  "bare assertion that nothing is excluded" \
+  "the promise is the declaration and never the way a turn or a run ends" \
+  "wrapped in promise XML tags"
+hunt_prompt=skills/jeffy/references/iteration-prompt-highs.txt
+if [ -f "$hunt_prompt" ]; then
+  hunt_left=""
+  for hunt_bad in "JEFFY CONVERGED" "Converged" "converge" "evaluator" "Evaluator" "EVALUATOR" "RATCHET" "ratchet" "SWEEP" "unswept" "extension" "Closeout" "closeout" "one-transaction" "one transaction" "gate salvage" "Settled" "carried Low" "Scoped mode" "Improvement mode"; do
+    if grep -qF -- "$hunt_bad" "$hunt_prompt"; then hunt_left="$hunt_left [$hunt_bad]"; fi
+  done
+  if [ -z "$hunt_left" ]; then
+    pass "$hunt_prompt carries none of the convergence machinery (ratchet, sweep, evaluator gate, closeout, extension, Converged line)"
+  else
+    fault "$hunt_prompt still carries convergence machinery:$hunt_left"
+  fi
+fi
 if [ "$gm_missing" -eq 0 ]; then
   pass "jeffy skill files carry all governance markers"
 fi
@@ -668,7 +786,22 @@ claim_tested="$(marker tested)"; claim_fixed="$(marker fixed)"; claim_failed="$(
 claim_merged="$(marker merged)"; claim_issues="$(marker issues)"
 claim_prs_open="$(marker prs-open)"; claim_mp="$(marker merged-projects)"; claim_fa="$(marker failed-attempts)"
 count_bad=""
-for pair in "converged:$claim_conv:$tbl_conv" "languages:$claim_langs:$tbl_langs"             "tested:$claim_tested:$tbl_rows" "fixed:$claim_fixed:$tbl_fixed"             "failed:$claim_failed:$tbl_failed" "merged:$claim_merged:$tbl_merged"             "issues:$claim_issues:$tbl_issues" "prs-open:$claim_prs_open:$tbl_prs_open" "merged-projects:$claim_mp:$tbl_merged_projects" "failed-attempts:$claim_fa:$tbl_failed_attempts"; do
+# 1.22.0 (P0-11): High hunts live in their own table, `## High hunts` in the
+# scorecard file, one row per hunt `| target | language | Highs closed | run |
+# upstream |`, because a hunt is not a convergence and never joins those
+# counts. Its two markers are derived only while the table exists and must be
+# absent while it does not, so no page states a hunt count before the first
+# hunt lands; the pair rides the same loop as every other derived count.
+hunt_pairs=""
+claim_hunts="$(marker hunts)"; claim_hh="$(marker hunt-highs)"
+if grep -q '^## High hunts$' "$scorecard"; then
+  tbl_hunts="$(awk '/^## High hunts$/ { t = 1; next } /^## / { t = 0 } t && /^\| [^|]+ \| [^|]+ \| *[0-9]+ *\|/ { c++ } END { print c + 0 }' "$scorecard")"
+  tbl_hunt_highs="$(awk -F'|' '/^## High hunts$/ { t = 1; next } /^## / { t = 0 } t && /^\| [^|]+ \| [^|]+ \| *[0-9]+ *\|/ { gsub(/[ 	]/, "", $4); s += $4 } END { print s + 0 }' "$scorecard")"
+  hunt_pairs="hunts:$claim_hunts:$tbl_hunts hunt-highs:$claim_hh:$tbl_hunt_highs"
+elif [ -n "$claim_hunts$claim_hh" ]; then
+  count_bad="${count_bad}count:hunts or count:hunt-highs markers stated [$claim_hunts|$claim_hh] with no ## High hunts table to derive them from; "
+fi
+for pair in "converged:$claim_conv:$tbl_conv" "languages:$claim_langs:$tbl_langs"             "tested:$claim_tested:$tbl_rows" "fixed:$claim_fixed:$tbl_fixed"             "failed:$claim_failed:$tbl_failed" "merged:$claim_merged:$tbl_merged"             "issues:$claim_issues:$tbl_issues" "prs-open:$claim_prs_open:$tbl_prs_open" "merged-projects:$claim_mp:$tbl_merged_projects" "failed-attempts:$claim_fa:$tbl_failed_attempts" $hunt_pairs; do
   k="${pair%%:*}"; rest="${pair#*:}"; c="${rest%%:*}"; t="${rest#*:}"
   if [ -z "$c" ]; then count_bad="${count_bad}no <!-- count:$k --> marker; "
   elif [ "${c#* }" != "$c" ]; then count_bad="${count_bad}count:$k markers disagree [$c]; "
@@ -1068,7 +1201,8 @@ cat skills/jeffy/hooks/stop-hook.sh skills/jeffy/hooks/lib/quiet-verify.sh > "$p
 # the comparison in silence while the check reported green. (L1)
 p_files="$chain_doc
 skills/jeffy/SKILL.md
-skills/jeffy/references/plan-default.md"
+skills/jeffy/references/plan-default.md
+skills/jeffy/references/plan-highs.md"
 if [ ! -f "$p_hook" ]; then
   skip "verify-bound derivation chain (no $p_hook)"
 else
@@ -1302,6 +1436,7 @@ fi
 #    one column and claims no order among them, which is check L's reason
 #    rather than check M's. (M1)
 r_prompt="skills/jeffy/references/iteration-prompt.txt"
+r_prompt2="skills/jeffy/references/iteration-prompt-highs.txt"
 r_floor="skills/jeffy/references/journal-default.md"
 r_cer_pat='task-id or [A-Z][A-Za-z]*( or [A-Z][A-Za-z]*)*'
 # Two tr calls rather than one carrying a duplicated replacement set: a set2
@@ -1319,6 +1454,22 @@ else
   r_cer_n="$(printf '%s\n' "$r_cer_raw" | grep -c .)"
   r_st="$(r_set "$r_st_raw")"
   r_cer="$(r_set "$(printf '%s\n' "$r_cer_raw" | sed 's/ or /,/g')")"
+  # 1.22.0 (P0-11): the High-hunt prompt writes the same headings from its own
+  # single statement of the grammar, so the shipped vocabulary is the union of
+  # the two prompts' status words, and the hunt's ceremony keywords are a
+  # subset of the standard's - a hunt writes fewer ceremonies, never new ones.
+  # Each prompt states its enumerations exactly once, for the reason above.
+  r_st2_n=1; r_cer2_n=1; r_cer2_extra=""
+  if [ -f "$r_prompt2" ]; then
+    r_st2_raw="$(grep -oE 'status is one of [a-z, ]+' "$r_prompt2" | sed 's/^status is one of //')"
+    r_cer2_raw="$(grep -oE "$r_cer_pat" "$r_prompt2" | sed 's/^task-id or //')"
+    r_st2_n="$(printf '%s\n' "$r_st2_raw" | grep -c .)"
+    r_cer2_n="$(printf '%s\n' "$r_cer2_raw" | grep -c .)"
+    r_st="$(printf '%s %s' "$r_st" "$(r_set "$r_st2_raw")" | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ')"
+    for r_w in $(r_set "$(printf '%s\n' "$r_cer2_raw" | sed 's/ or /,/g')"); do
+      printf '%s\n' "$r_cer" | tr ' ' '\n' | grep -qx -- "$r_w" || r_cer2_extra="$r_cer2_extra $r_w"
+    done
+  fi
   r_files="$r_floor"
   if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
     while IFS= read -r -d '' r_extra; do
@@ -1352,10 +1503,14 @@ $r_extra"
     fault "the iteration prompt's journal heading grammar could not be enumerated (status [$r_st], ceremony [$r_cer]); the sentence moved and this check went blind"
   elif [ "$r_st_n" -ne 1 ] || [ "$r_cer_n" -ne 1 ]; then
     fault "the iteration prompt states its status vocabulary $r_st_n times and its ceremony keywords $r_cer_n times, not once each; a second statement concatenates into the derived set and this check would compare two enumerations against one"
+  elif [ "$r_st2_n" -ne 1 ] || [ "$r_cer2_n" -ne 1 ]; then
+    fault "the High-hunt prompt states its status vocabulary $r_st2_n times and its ceremony keywords $r_cer2_n times, not once each"
+  elif [ -n "$r_cer2_extra" ]; then
+    fault "the High-hunt prompt writes ceremony keywords the standard prompt does not [$r_cer2_extra]; a hunt writes fewer ceremonies, never new ones"
   elif [ -n "$r_bad" ]; then
     fault "the iteration prompt writes journal headings with ceremony keywords [$r_cer] and statuses [$r_st] but the shipped grammar disagrees:$r_bad"
   else
-    pass "the journal heading grammar's ceremony keywords and status vocabulary are derived from the iteration prompt in every document that restates it ($r_cer/ $r_st)"
+    pass "the journal heading grammar's ceremony keywords and status vocabulary are derived from both iteration prompts in every document that restates it ($r_cer/ $r_st)"
   fi
 fi
 
@@ -1366,23 +1521,25 @@ fi
 #     string (no stray line breaks splitting the discipline mid-sentence) and
 #     so the file stays greppable as a single unit by the governance checks.
 prompt_file=skills/jeffy/references/iteration-prompt.txt
-if [ -f "$prompt_file" ]; then
-  cr_count="$(tr -dc '\r' < "$prompt_file" | wc -c)"
-  nl_count="$(tr -dc '\n' < "$prompt_file" | wc -c)"
+# 1.22.0: the hunt prompt is re-fed by the same hook and holds the same shape.
+for pf_file in "$prompt_file" skills/jeffy/references/iteration-prompt-highs.txt; do
+  [ -f "$pf_file" ] || continue
+  cr_count="$(tr -dc '\r' < "$pf_file" | wc -c)"
+  nl_count="$(tr -dc '\n' < "$pf_file" | wc -c)"
   # One trailing LF is conventional and harmless; CR bytes and embedded
   # newlines are what the invariant forbids.
   ends_nl=0
-  [ -s "$prompt_file" ] && [ "$(tail -c 1 "$prompt_file")" = "" ] && ends_nl=1
-  if LC_ALL=C grep -q '"' "$prompt_file"; then
-    fault "$prompt_file contains a double quote (breaks shell injection)"
+  [ -s "$pf_file" ] && [ "$(tail -c 1 "$pf_file")" = "" ] && ends_nl=1
+  if LC_ALL=C grep -q '"' "$pf_file"; then
+    fault "$pf_file contains a double quote (breaks shell injection)"
   elif [ "$cr_count" -ne 0 ]; then
-    fault "$prompt_file contains a CR byte (breaks shell injection)"
+    fault "$pf_file contains a CR byte (breaks shell injection)"
   elif [ "$nl_count" -gt "$ends_nl" ]; then
-    fault "$prompt_file has an embedded newline: must be one line (a single trailing LF is fine)"
+    fault "$pf_file has an embedded newline: must be one line (a single trailing LF is fine)"
   else
-    pass "$prompt_file is a single line, no double quotes, no CR"
+    pass "$pf_file is a single line, no double quotes, no CR"
   fi
-fi
+done
 
 # 6b2. P0-2 (1.9.0): the prompt's closing rule is the severity floor, and the
 #      three clauses that make it safe each appear exactly once - the floor
@@ -1454,7 +1611,7 @@ fi
 #    output, and a prompt that spells the tagged form gets echoed by the model
 #    and ends runs early. The skill and the iteration prompt must describe the
 #    promise without writing the tag, so the literal string must never appear.
-for de_echo in skills/jeffy/SKILL.md skills/jeffy/references/iteration-prompt.txt; do
+for de_echo in skills/jeffy/SKILL.md skills/jeffy/references/iteration-prompt.txt skills/jeffy/references/iteration-prompt-highs.txt; do
   if grep -qF -- "<promise>" "$de_echo"; then
     fault "$de_echo contains a literal promise tag (de-echo guard)"
   else
@@ -6982,6 +7139,285 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     hb_write_backlog '' ''
     hb_git add -A >/dev/null; hb_git commit -qm s5 >/dev/null
 
+    # 1.22.0 (P0-11): High-hunt mode. A state file carrying `mode: highs`
+    # takes the hunt paths: a ledger of Highs only, a close certified by the
+    # last AUDIT entry's checkpoint and a Hunted line rather than by an
+    # evaluator PASS and a Converged line, no sweep arithmetic and no closing
+    # extension; the standard fixtures above are the proof that a state file
+    # without the key is untouched. Each fixture builds on one git sandbox of
+    # its own, and each fail-closed refusal carries a sabotage proof: the one
+    # line of the hook that makes the check is dropped in a copy, and the
+    # fixture has to go red against that copy.
+    hh_proj="$hb_tmp/hunt"
+    mkdir -p "$hh_proj/.claude"
+    hh_git() { git -C "$hh_proj" -c user.email=jeffy@test -c user.name=jeffy -c core.autocrlf=false "$@"; }
+    hh_git init -q >/dev/null 2>&1; hh_git commit -q --allow-empty -m init >/dev/null 2>&1
+    hh_state="$hh_proj/.claude/jeffy-loop.local.md"
+    hh_write_state() { # $1 iteration, $2 max, $3 "highs" for a hunt state file, empty for standard
+      {
+        printf -- '---\nsession_id: sess-1\niteration: %s\nmax_iterations: %s\nprompt_path: %s\nfocus:\n' "$1" "$2" "$hb_tmp/prompt.txt"
+        if [ "${3:-}" = highs ]; then printf 'completion_promise: JEFFY HUNT COMPLETE\nmode: highs\n'; else printf 'completion_promise: JEFFY CONVERGED\n'; fi
+        printf 'started_at: 2026-01-01T00:00:00Z\n---\nJeffy loop state.\n'
+      } > "$hh_state"
+    }
+    hh_plan() { printf '# Plan\n\n## Verify command\nCommand: %s\n\n## Surface inventory\n- [ ] core: everything\n' "$1" > "$hh_proj/PLAN.md"; }
+    hh_backlog() { # $1 Now line or empty, $2 Hunted line or empty
+      { printf '# Backlog\n\n## Now\n\n'; [ -n "${1:-}" ] && printf '%s\n' "$1"; printf '\n## Proposed\n\n## Declined\n\n## Hunted\n\n'; [ -n "${2:-}" ] && printf '%s\n' "$2"; } > "$hh_proj/BACKLOG.md"
+    }
+    hh_journal() { # $1... heading:::body
+      { printf '# Journal\n'; for hh_e in "$@"; do printf '\n%s\n\n%s\n' "${hh_e%%:::*}" "${hh_e#*:::}"; done; } > "$hh_proj/JOURNAL.md"
+    }
+    hh_run() { # $1 hook path, $2 last assistant message
+      jq -n --arg lam "$2" '{session_id: "sess-1", last_assistant_message: $lam, transcript_path: "", hook_event_name: "Stop"}' > "$hb_tmp/hh_stdin.json"
+      CLAUDE_PROJECT_DIR="$hh_proj" bash "$1" < "$hb_tmp/hh_stdin.json" 2>"$hb_tmp/hh_err.txt"
+    }
+    hh_reason() { printf '%s' "$hh_out" | jq -r '.reason' 2>/dev/null; }
+    hh_decl='done <promise>JEFFY HUNT COMPLETE</promise>'
+    # A sabotaged copy of the hook: the exact fragment $1, which must occur on
+    # exactly one line, replaced by $2. Literal match through awk index(),
+    # never a regex, and the fragments carry no backslash (check S).
+    hh_sabotage() {
+      hh_n="$(grep -cF -- "$1" "$hb_hook")"
+      if [ "$hh_n" != "1" ]; then echo "  sabotage fragment occurs $hh_n times, not once: $1"; return 1; fi
+      awk -v a="$1" -v b="$2" '{ i = index($0, a); if (i) $0 = substr($0, 1, i - 1) b substr($0, i + length(a)) } { print }' "$hb_hook" > "$hb_tmp/hh_sab.sh"
+    }
+
+    # 1. the hunt re-feed: mode and open Highs stated, the last audit named,
+    #    the no-High note, and none of the map arithmetic; at max the run ends
+    #    with no extension granted.
+    hh_plan true; hh_backlog '' ''
+    hh_journal '## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Checkpoint: none'
+    hh_git add -A >/dev/null 2>&1; hh_git commit -q -m c1 >/dev/null 2>&1
+    hh_write_state 2 5 highs
+    hh_out="$(hh_run "$hb_hook" 'still working')"
+    if [ "$(printf '%s' "$hh_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && hh_reason | grep -qF 'mode High-hunt' && hh_reason | grep -qF 'open Highs 0' \
+      && hh_reason | grep -qF 'last audit iteration 2' && hh_reason | grep -qF 'No High is open: run the fresh full audit' \
+      && ! hh_reason | grep -qF 'Sweep arithmetic' && ! hh_reason | grep -qF 'unswept rows' \
+      && ! grep -q '^rows_history:' "$hh_state" && grep -q '^iteration: 3$' "$hh_state"; then
+      pass "hunt re-feed states the mode, open Highs and last audit, carries the no-High note, and no sweep arithmetic or rows_history (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"
+      fault "hunt re-feed carries the wrong run state"
+    fi
+    hh_write_state 5 5 highs
+    hh_out="$(hh_run "$hb_hook" 'still working')"
+    if [ -z "$hh_out" ] && [ ! -f "$hh_state" ] && ! grep -qi 'extension' "$hb_tmp/hh_err.txt"; then
+      pass "hunt at budget ends the run and grants no closing extension (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"
+      fault "hunt at budget re-fed or granted a closing extension"
+    fi
+
+    # 2. the accepted close: Now empty, the last AUDIT entry's Checkpoint
+    #    resolves to the commit the Hunted line names, loop state only since.
+    hh_h1="$(hh_git rev-parse HEAD)"
+    hh_journal "## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: $hh_h1"
+    hh_backlog '' "Hunted: $hh_h1 - 2026-01-01 - 0 Highs closed"
+    hh_git add -A >/dev/null 2>&1; hh_git commit -q -m bookkeeping >/dev/null 2>&1
+    hh_write_state 2 5 highs
+    hh_out="$(hh_run "$hb_hook" "$hh_decl")"
+    if [ -z "$hh_out" ] && [ ! -f "$hh_state" ] && ! grep -q 'ending the run' "$hb_tmp/hh_err.txt" \
+      && grep -q '"mode":"highs"' "$hh_proj/.jeffy/metrics/sess-1-000000.jsonl" \
+      && tail -n 1 "$hh_proj/.jeffy/metrics/sess-1-000000.jsonl" | grep -q '"verdict":"accepted"'; then
+      pass "stop hook accepts a hunt close: Hunted names the audited commit, loop state only since, metrics record mode highs and the accepted verdict (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"; tail -n 1 "$hb_tmp/hh_err.txt"
+      fault "stop hook refused a legitimate hunt close"
+    fi
+    hh_close_case() { # $1 hook path; runs the declaration over the current sandbox at iteration 2 of 5
+      hh_write_state 2 5 highs
+      hh_out="$(hh_run "$1" "$hh_decl")"
+    }
+    hh_refused_with() { # $1 text the reason must carry
+      [ "$(printf '%s' "$hh_out" | jq -r '.decision' 2>/dev/null)" = "block" ] && hh_reason | grep -qF 'HUNT CLOSE REJECTED' && hh_reason | grep -qF -- "$1"
+    }
+
+    # 3. an open High blocks, with a sabotage proof.
+    hh_backlog '- [ ] H1 (High, runtime, correctness): wrong. Acceptance: x.' "Hunted: $hh_h1 - 2026-01-01 - 0 Highs closed"
+    hh_close_case "$hb_hook"
+    if hh_refused_with 'open High or Medium tasks'; then
+      pass "stop hook refuses a hunt close over an open High (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook accepted a hunt close over an open High"
+    fi
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    if hh_sabotage 'elif [ -n "$open_blocking" ]; then' 'elif false; then'; then
+      hh_close_case "$hb_tmp/hh_sab.sh"
+      if hh_refused_with 'open High or Medium tasks'; then
+        fault "sabotage proof: dropping the open-task branch left the open-High refusal standing, so the fixture is not testing that branch"
+      else
+        pass "sabotage proof: the open-High refusal rests on the open-task branch (1.22.0)"
+      fi
+    else
+      fault "sabotage proof for the open-High refusal could not be built"
+    fi
+    rm -f "$hh_state"
+
+    # 4. a Medium or Low line is refused by name: a hunt ledger carries
+    #    Highs only, and nothing is carried.
+    hh_backlog '- [ ] M1 (Medium, docs, documentation): meh. Acceptance: x.' "Hunted: $hh_h1 - 2026-01-01 - 0 Highs closed"
+    hh_close_case "$hb_hook"
+    if hh_refused_with 'a hunt ledger carries Highs only' && hh_reason | grep -qF 'M1 (Medium'; then
+      pass "stop hook refuses a hunt close over a Medium line, naming it (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook did not refuse a Medium line on a hunt ledger"
+    fi
+    hh_backlog '- [ ] L1 (Low, docs, documentation): meh. Acceptance: x.' "Hunted: $hh_h1 - 2026-01-01 - 0 Highs closed"
+    hh_close_case "$hb_hook"
+    if hh_refused_with 'a hunt ledger carries Highs only' && hh_reason | grep -qF 'L1 (Low'; then
+      pass "stop hook refuses a hunt close over a Low line too: a hunt carries nothing (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook carried a Low on a hunt ledger"
+    fi
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    if hh_sabotage 'elif [ "$hunt" = 1 ] && [ -n "$hunt_nonhigh" ]; then' 'elif false; then'; then
+      hh_close_case "$hb_tmp/hh_sab.sh"
+      if hh_refused_with 'a hunt ledger carries Highs only'; then
+        fault "sabotage proof: dropping the Highs-only branch left its refusal standing"
+      else
+        pass "sabotage proof: the Highs-only refusal rests on its own branch (1.22.0)"
+      fi
+    else
+      fault "sabotage proof for the Highs-only refusal could not be built"
+    fi
+    rm -f "$hh_state"
+
+    # 5. a product path changed after the last AUDIT entry's checkpoint.
+    hh_backlog '' "Hunted: $hh_h1 - 2026-01-01 - 0 Highs closed"
+    printf 'x\n' > "$hh_proj/src.txt"; hh_git add -A >/dev/null 2>&1; hh_git commit -q -m fix >/dev/null 2>&1
+    hh_close_case "$hb_hook"
+    if hh_refused_with 'product path src.txt changed after the last AUDIT entry'; then
+      pass "stop hook refuses a hunt close when a product path changed after the last audit's checkpoint (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook accepted a hunt close over a tree the last audit never saw"
+    fi
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    if hh_sabotage 'if [ -n "$fa_moved" ]; then' 'if false; then'; then
+      hh_close_case "$hb_tmp/hh_sab.sh"
+      if hh_refused_with 'changed after the last AUDIT entry'; then
+        fault "sabotage proof: dropping the post-audit diff test left its refusal standing"
+      else
+        pass "sabotage proof: the post-audit refusal rests on the diff test (1.22.0)"
+      fi
+    else
+      fault "sabotage proof for the post-audit refusal could not be built"
+    fi
+    rm -f "$hh_state"
+    hh_git rm -q src.txt >/dev/null 2>&1; hh_git commit -q -m revert-src >/dev/null 2>&1
+
+    # 6. no AUDIT entry on this run's record.
+    hh_journal "## iter 2/5 | sess-1-000000 | 2026-01-01 | T1 | done:::Checkpoint: $hh_h1"
+    hh_h2="$(hh_git rev-parse HEAD)"
+    hh_backlog '' "Hunted: $hh_h2 - 2026-01-01 - 0 Highs closed"
+    hh_git add -A >/dev/null 2>&1; hh_git commit -q -m bk2 >/dev/null 2>&1
+    hh_close_case "$hb_hook"
+    if hh_refused_with 'holds no AUDIT entry headed with this run'; then
+      pass "stop hook refuses a hunt close with no AUDIT entry on this run's record (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook accepted a hunt close that no audit of this run supports"
+    fi
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    if hh_sabotage 'if [ -z "$fa_line" ]; then' 'if false; then'; then
+      hh_close_case "$hb_tmp/hh_sab.sh"
+      if hh_refused_with 'holds no AUDIT entry'; then
+        fault "sabotage proof: dropping the no-audit test left its refusal standing"
+      else
+        pass "sabotage proof: the no-audit refusal rests on its own test (1.22.0)"
+      fi
+    else
+      fault "sabotage proof for the no-audit refusal could not be built"
+    fi
+    rm -f "$hh_state"
+
+    # 7. the Hunted section names no commit; and an AUDIT entry whose
+    #    Checkpoint does not resolve.
+    hh_h3="$(hh_git rev-parse HEAD)"
+    hh_journal "## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: $hh_h3"
+    hh_backlog '' ''
+    hh_git add -A >/dev/null 2>&1; hh_git commit -q -m bk3 >/dev/null 2>&1
+    hh_close_case "$hb_hook"
+    if hh_refused_with 'the ## Hunted section of BACKLOG.md does not name a commit'; then
+      pass "stop hook refuses a hunt close whose Hunted section names no commit (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook accepted a hunt close with no Hunted line"
+    fi
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    if hh_sabotage 'elif [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then' 'elif false; then'; then
+      hh_close_case "$hb_tmp/hh_sab.sh"
+      if hh_refused_with 'does not name a commit'; then
+        fault "sabotage proof: dropping the certified-hash resolution left its refusal standing"
+      else
+        pass "sabotage proof: the no-commit refusal rests on the hash resolution (1.22.0)"
+      fi
+    else
+      fault "sabotage proof for the no-commit refusal could not be built"
+    fi
+    rm -f "$hh_state"
+    hh_h4="$(hh_git rev-parse HEAD)"
+    hh_journal "## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: none (commit failed)"
+    hh_backlog '' "Hunted: $hh_h4 - 2026-01-01 - 0 Highs closed"
+    hh_git add -A >/dev/null 2>&1; hh_git commit -q -m bk4 >/dev/null 2>&1
+    hh_write_state 3 5 highs
+    hh_out="$(hh_run "$hb_hook" "$hh_decl")"
+    if hh_refused_with 'carries no resolvable Checkpoint'; then
+      pass "stop hook refuses a hunt close whose last AUDIT entry has no resolvable Checkpoint (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook accepted a hunt close on an audit with no checkpoint"
+    fi
+    rm -f "$hh_state"
+
+    # 8. lint: the refusals above print as refusals (exit 1); the closing
+    #    iteration's own unfilled Checkpoint and missing Hunted line print as
+    #    pending (exit 0), because the prompt runs lint before both are
+    #    written; a Medium line still refuses ahead of the pending shapes; and
+    #    the accepted shape is clean.
+    hh_lint() { CLAUDE_PROJECT_DIR="$hh_proj" bash "$hb_hook" --lint "$hh_proj" 2>/dev/null; }
+    hh_write_state 3 5 highs
+    hh_lo="$(hh_lint)"; hh_lrc=$?
+    if [ "$hh_lrc" = 1 ] && printf '%s' "$hh_lo" | grep -qF 'no resolvable Checkpoint'; then
+      pass "lint refuses a hunt close on an earlier audit's unresolvable Checkpoint (1.22.0)"
+    else
+      printf '%s\n' "$hh_lo"; fault "lint did not refuse the unresolvable checkpoint (rc $hh_lrc)"
+    fi
+    hh_journal "## iter 3/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: pending"
+    hh_backlog '' ''
+    hh_lo="$(hh_lint)"; hh_lrc=$?
+    if [ "$hh_lrc" = 0 ] && printf '%s' "$hh_lo" | grep -qF 'clean apart from the close itself' && printf '%s' "$hh_lo" | grep -qF 'does not name a commit yet'; then
+      pass "lint reports the closing iteration's own checkpoint and Hunted line as pending, exit 0 (1.22.0)"
+    else
+      printf '%s\n' "$hh_lo"; fault "lint did not report the closing iteration's pending shapes as pending (rc $hh_lrc)"
+    fi
+    hh_backlog '- [ ] M1 (Medium, docs, documentation): meh. Acceptance: x.' ''
+    hh_lo="$(hh_lint)"; hh_lrc=$?
+    if [ "$hh_lrc" = 1 ] && printf '%s' "$hh_lo" | grep -qF 'Highs only'; then
+      pass "lint refuses a Medium line ahead of the pending shapes (1.22.0)"
+    else
+      printf '%s\n' "$hh_lo"; fault "lint let a Medium line through as pending (rc $hh_lrc)"
+    fi
+    hh_h5="$(hh_git rev-parse HEAD)"
+    hh_journal "## iter 3/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: $hh_h5"
+    hh_backlog '' "Hunted: $hh_h5 - 2026-01-01 - 0 Highs closed"
+    hh_git add -A >/dev/null 2>&1; hh_git commit -q -m bk5 >/dev/null 2>&1
+    hh_lo="$(hh_lint)"; hh_lrc=$?
+    if [ "$hh_lrc" = 0 ] && printf '%s' "$hh_lo" | grep -qF 'jeffy lint: clean -'; then
+      pass "lint is clean on the accepted hunt shape (1.22.0)"
+    else
+      printf '%s\n' "$hh_lo"; fault "lint refused the accepted hunt shape (rc $hh_lrc)"
+    fi
+    # 9. a standard state file over the same tree reads ## Converged, never
+    #    ## Hunted: the hunt reading is keyed on the mode key alone.
+    hh_write_state 3 5 ''
+    hh_out="$(hh_run "$hb_hook" 'done <promise>JEFFY CONVERGED</promise>')"
+    if [ "$(printf '%s' "$hh_out" | jq -r '.decision' 2>/dev/null)" = "block" ] && hh_reason | grep -qF 'CONVERGENCE REJECTED' \
+      && hh_reason | grep -qF 'the ## Converged section of BACKLOG.md does not name a commit' \
+      && tail -n 1 "$hh_proj/.jeffy/metrics/sess-1-000000.jsonl" | grep -q '"mode":"standard"'; then
+      pass "a standard state file over a hunted tree reads ## Converged, and its metrics record mode standard (1.22.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "the standard path read the hunt's Hunted section"
+    fi
+    rm -f "$hh_state"
+
     rm -rf "$hb_tmp"
   fi
 else
@@ -7026,22 +7462,29 @@ else
   t_n="$(printf '%s\n' "$t_arms" | grep -c .)"
   t_ref_hook="$(printf '%s\n' "$t_arms" | sed -n 's/^refused //p' | tr '|' '\n' | sort -u | tr '\n' ' ')"
   t_con_hook="$(printf '%s\n' "$t_arms" | sed -n 's/^consequence //p' | tr '|' '\n' | sort -u | tr '\n' ' ')"
-  t_ref_doc="$(grep -oE 'whose class is [a-z|-]+ is a Low' "$t_prompt" | sed 's/^whose class is //; s/ is a Low$//')"
-  t_con_doc="$(grep -oE 'whose class is [a-z|-]+ states Consequence' "$t_prompt" | sed 's/^whose class is //; s/ states Consequence$//')"
-  t_ref_n="$(printf '%s\n' "$t_ref_doc" | grep -c .)"
-  t_con_n="$(printf '%s\n' "$t_con_doc" | grep -c .)"
-  t_ref_set="$(printf '%s\n' "$t_ref_doc" | tr '|' '\n' | sort -u | tr '\n' ' ')"
-  t_con_set="$(printf '%s\n' "$t_con_doc" | tr '|' '\n' | sort -u | tr '\n' ' ')"
   if [ "$t_n" -ne 2 ]; then
     fault "the severity ceiling in $t_hook classified $t_n case arms, not 2; an arm written in a shape this check cannot read would leave the derived set unnoticed"
   elif [ -z "$t_ref_hook" ] || [ -z "$t_con_hook" ]; then
     fault "the severity ceiling's arms did not split into a refused set and a Consequence set (refused [$t_ref_hook], consequence [$t_con_hook]); the case arms moved and this check went blind"
-  elif [ "$t_ref_n" -ne 1 ] || [ "$t_con_n" -ne 1 ]; then
-    fault "$t_prompt states the ceiling's refused classes $t_ref_n times and its Consequence classes $t_con_n times; each is stated exactly once, or a second statement concatenates into the compared value"
-  elif [ "$t_ref_set" != "$t_ref_hook" ] || [ "$t_con_set" != "$t_con_hook" ]; then
-    fault "the severity ceiling disagrees between the engine and the instruction the run obeys: the hook refuses [$t_ref_hook] and requires Consequence of [$t_con_hook], while $t_prompt states [$t_ref_set] and [$t_con_set]"
   else
-    pass "the severity ceiling by class is derived from the Stop hook and stated the same way in the iteration prompt (refused $t_ref_hook, Consequence $t_con_hook)"
+    # 1.22.0: the hunt prompt keeps the Severity discipline sentence byte for
+    # byte, so it is compared against the same hook derivation.
+    for t_pf in "$t_prompt" skills/jeffy/references/iteration-prompt-highs.txt; do
+      [ -f "$t_pf" ] || continue
+      t_ref_doc="$(grep -oE 'whose class is [a-z|-]+ is a Low' "$t_pf" | sed 's/^whose class is //; s/ is a Low$//')"
+      t_con_doc="$(grep -oE 'whose class is [a-z|-]+ states Consequence' "$t_pf" | sed 's/^whose class is //; s/ states Consequence$//')"
+      t_ref_n="$(printf '%s\n' "$t_ref_doc" | grep -c .)"
+      t_con_n="$(printf '%s\n' "$t_con_doc" | grep -c .)"
+      t_ref_set="$(printf '%s\n' "$t_ref_doc" | tr '|' '\n' | sort -u | tr '\n' ' ')"
+      t_con_set="$(printf '%s\n' "$t_con_doc" | tr '|' '\n' | sort -u | tr '\n' ' ')"
+      if [ "$t_ref_n" -ne 1 ] || [ "$t_con_n" -ne 1 ]; then
+        fault "$t_pf states the ceiling's refused classes $t_ref_n times and its Consequence classes $t_con_n times; each is stated exactly once, or a second statement concatenates into the compared value"
+      elif [ "$t_ref_set" != "$t_ref_hook" ] || [ "$t_con_set" != "$t_con_hook" ]; then
+        fault "the severity ceiling disagrees between the engine and the instruction the run obeys: the hook refuses [$t_ref_hook] and requires Consequence of [$t_con_hook], while $t_pf states [$t_ref_set] and [$t_con_set]"
+      else
+        pass "the severity ceiling by class is derived from the Stop hook and stated the same way in $t_pf (refused $t_ref_hook, Consequence $t_con_hook)"
+      fi
+    done
   fi
 fi
 

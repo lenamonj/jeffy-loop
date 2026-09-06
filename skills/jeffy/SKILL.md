@@ -2,7 +2,7 @@
 name: jeffy
 description: Use when the user runs /jeffy to start an autonomous Jeffy improvement loop on the current project
 disable-model-invocation: true
-argument-hint: "[N] [focus...]"
+argument-hint: "[N] [--highs] [focus...]"
 ---
 
 # Jeffy
@@ -13,7 +13,7 @@ Project root means the directory Claude Code was started in - the session's prim
 
 ## Arguments
 
-Parse $ARGUMENTS: if the first token is an integer, it is the iteration budget N, default 10. Next parse the ceiling flags wherever they appear in the remainder, each taking one value: `--max-time <duration>` sets `max_wall_clock_seconds`, `--max-iter-time <duration>` sets `max_iteration_seconds`, and `--max-context <N>` sets `max_context_growth`; a duration is a bare number of seconds or a number suffixed `s`, `m`, or `h` (`45m`, `2h`, `900s`, `900`), and `0` means off, the default for all three. A flag missing its value, an unparseable duration, or an unrecognized `--` token is a refusal naming the token, never silently folded into the focus - a documented ceiling that becomes free text is a ceiling that is silently off. Whatever text remains after the budget and the flags is the focus directive for this run. If the token after the optional budget is exactly `enhance`, refuse the launch and stop: Enhance mode was removed in v1.11.0 - the defect loop is the product - and the last release that carries it is v1.10.0. On a fresh project, iteration 1 is always consumed by the audit that generates the backlog, so N=2 executes exactly one task; if the user picks N below 5, proceed but note that larger budgets make materially more progress.
+Parse $ARGUMENTS: if the first token is an integer, it is the iteration budget N, default 10, or 5 on a `--highs` launch. Next parse the mode flag and the ceiling flags wherever they appear in the remainder. `--highs` takes no value and selects High-hunt mode for this run: the loop audits the whole surface, fixes only Highs, audits again once no High is open, and closes the first time an audit finds none - no sweep obligation, no Medium or Low queue, no evaluator gate, no closing extension and no convergence claim; a hunt is not a convergence and its receipt is the pull request its Highs produce. The ceiling flags each take one value: `--max-time <duration>` sets `max_wall_clock_seconds`, `--max-iter-time <duration>` sets `max_iteration_seconds`, and `--max-context <N>` sets `max_context_growth`; a duration is a bare number of seconds or a number suffixed `s`, `m`, or `h` (`45m`, `2h`, `900s`, `900`), and `0` means off, the default for all three. A flag missing its value, an unparseable duration, or an unrecognized `--` token is a refusal naming the token, never silently folded into the focus - a documented ceiling that becomes free text is a ceiling that is silently off. Whatever text remains after the budget and the flags is the focus directive for this run. If the token after the optional budget is exactly `enhance`, refuse the launch and stop: Enhance mode was removed in v1.11.0 - the defect loop is the product - and the last release that carries it is v1.10.0. On a fresh project, iteration 1 is always consumed by the audit that generates the backlog, so N=2 executes exactly one task; if the user picks N below 5, proceed but note that larger budgets make materially more progress.
 
 ## Step 1: Pre-flight
 
@@ -39,17 +39,22 @@ Create each file at the project root only if it is missing. The default contents
 
 First resolve REF, the absolute path of this skill's references directory. Glob for `<home>/.claude/skills/jeffy/references/iteration-prompt.txt`, substituting the absolute home directory with forward slashes as in pre-flight check 2. REF is the directory of the match. If nothing matches, stop and report a broken install: the references directory is missing, so re-run the installer. Substitute the resolved REF below and wherever later steps say REF.
 
-Mode guard: when PLAN.md already exists at the project root, read the first word of its `## Mode` section body. If it reads Enhance, refuse the launch: Enhance mode was removed in v1.11.0, and its ledger ranks work by impact rather than severity, so its state files must not continue under the standard rules. Tell the user to archive those state files first - commit them and delete them, or keep them on a separate branch or checkout - and relaunch standard, or to run v1.10.0, the last release that carries the mode; then stop. Any other mode proceeds and reuses the existing state files exactly as any relaunch does; a PLAN.md with no `## Mode` section is a user-authored plan and is treated as standard.
+Mode guard: when PLAN.md already exists at the project root, read the first word of its `## Mode` section body. If it reads Enhance, refuse the launch: Enhance mode was removed in v1.11.0, and its ledger ranks work by impact rather than severity, so its state files must not continue under the standard rules. Tell the user to archive those state files first - commit them and delete them, or keep them on a separate branch or checkout - and relaunch standard, or to run v1.10.0, the last release that carries the mode; then stop. The same guard keys on the launch mode both ways: a `--highs` launch over a PLAN.md whose first Mode word is not High-hunt refuses, because a standard ledger carries Mediums a hunt must not work and a standard Converged history a hunt does not extend, and a launch without `--highs` over a PLAN.md whose first Mode word is High-hunt refuses, because a hunt ledger and its Hunted history mean nothing to the standard closing rule; both refusals name the same archive step and stop. Any other mode proceeds and reuses the existing state files exactly as any relaunch does; a PLAN.md with no `## Mode` section is a user-authored plan and is treated as standard.
 
 ```bash
 REF="<resolved references dir>"
 PR="<PROJECT_ROOT>"
-[ -f "$PR/PLAN.md" ]    || cp "$REF/plan-default.md"    "$PR/PLAN.md"
-[ -f "$PR/BACKLOG.md" ] || cp "$REF/backlog-default.md" "$PR/BACKLOG.md"
+PLAN_TPL=plan-default.md
+BACKLOG_TPL=backlog-default.md
+# On a --highs launch the two templates are the hunt ones instead:
+# PLAN_TPL=plan-highs.md
+# BACKLOG_TPL=backlog-highs.md
+[ -f "$PR/PLAN.md" ]    || cp "$REF/$PLAN_TPL"    "$PR/PLAN.md"
+[ -f "$PR/BACKLOG.md" ] || cp "$REF/$BACKLOG_TPL" "$PR/BACKLOG.md"
 [ -f "$PR/JOURNAL.md" ] || cp "$REF/journal-default.md" "$PR/JOURNAL.md"
 ```
 
-The templates define Improvement mode (PLAN.md with the Goal, Operating envelope, Method, severity rubric, and Definition of done), the BACKLOG.md ledger sections (Now, Next, Later, Proposed, Settled classes, Declined, Converged), and the append-only JOURNAL.md heading grammar. Edit the copies in the project to customize one run; edit the templates in references/ only to change every future run.
+On a `--highs` launch set PLAN_TPL to plan-highs.md and BACKLOG_TPL to backlog-highs.md as the commented lines show, before the copies run. The standard templates define Improvement mode (PLAN.md with the Goal, Operating envelope, Method, severity rubric, and Definition of done), the BACKLOG.md ledger sections (Now, Next, Later, Proposed, Settled classes, Declined, Converged), and the append-only JOURNAL.md heading grammar. The hunt templates define High-hunt mode (the same envelope, inventory, Verify command and rubric, a Definition of done that is one fresh audit finding no High) and a ledger of Highs only (Now, Proposed, Declined, Hunted); JOURNAL.md is shared, and its grammar carries the `hunted` status a hunt's closing entry takes. Edit the copies in the project to customize one run; edit the templates in references/ only to change every future run.
 
 All work happens directly in the current project folder on the current branch. When the project is a git repository, every iteration ends in a local checkpoint commit made with git add -A and a message prefixed jeffy:. The checkpoint is the loop's revert and recovery unit; nothing is ever pushed and no branches are created - the user reviews with git log and squashes if they want one commit. Because the checkpoint uses git add -A, also do this during bootstrap: if the project is a git repository and `git check-ignore -q .claude/jeffy-loop.local.md` fails, append `.claude/jeffy-loop.local.md` to the project's .gitignore (creating the file if needed) so the transient session-scoped loop state can never be committed.
 
@@ -68,9 +73,10 @@ cat > "$PR/.claude/jeffy-loop.local.md" <<EOF
 session_id: $CLAUDE_CODE_SESSION_ID
 iteration: 1
 max_iterations: <N>
-prompt_path: $REF/iteration-prompt.txt
+prompt_path: $REF/<iteration-prompt-highs.txt on a --highs launch, else iteration-prompt.txt>
 focus: <sanitized focus, or empty>
-completion_promise: JEFFY CONVERGED
+completion_promise: <JEFFY HUNT COMPLETE on a --highs launch, else JEFFY CONVERGED>
+<mode: highs on a --highs launch, else omit this line entirely>
 started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 run_started_at: $(date +%s)
 iteration_started_at: $(date +%s)
@@ -127,13 +133,13 @@ extension or a converged declaration. Whether a ceiling is set or not, the
 run state line reports elapsed wall time every iteration, so a run can see
 its own clock.
 
-Verify the write: the grep output must show the current session id and `iteration: 1`. If the session id line is empty or wrong, delete the file, report the failure, and stop. The iteration prompt itself is a single line stored at `$REF/iteration-prompt.txt`; the hook reads it from disk at every turn end and JSON-encodes it with jq, so its content never needs to be injected through the shell. Never edit iteration-prompt.txt casually: the loop's journal grammar, checkpoint discipline, run report, and closing rule all live in it, and it must stay a single line.
+Verify the write: the grep output must show the current session id and `iteration: 1`. If the session id line is empty or wrong, delete the file, report the failure, and stop. The state file carries the mode as three keys the Stop hook reads: `mode: highs` (absent on a standard launch, where every hook path is the one it always was), the promise phrase, and the prompt path. The iteration prompt itself is a single line stored at `$REF/iteration-prompt.txt`, or `$REF/iteration-prompt-highs.txt` for a hunt, which is the standard prompt with the convergence machinery deleted so every shared sentence stays byte-identical; the hook reads it from disk at every turn end and JSON-encodes it with jq, so its content never needs to be injected through the shell. Never edit iteration-prompt.txt casually: the loop's journal grammar, checkpoint discipline, run report, and closing rule all live in it, and it must stay a single line.
 
-Then announce the launch in one line - Jeffy v<version>, N iterations, the focus if one was given, and the absolute path of the verify wrapper, `<REF>/../hooks/lib/quiet-verify.sh`, because the iteration prompt names it by its repository-relative path and a target project has no such path, and the absolute path of the Stop hook, `<REF>/../hooks/stop-hook.sh`, because the iteration prompt runs it in lint mode before every gate invocation - reading the version from the installed hook with `sed -n 's/^JEFFY_VERSION="\(.*\)"/\1/p' <home>/.claude/skills/jeffy/hooks/stop-hook.sh`, so every run's transcript opens by naming the engine version a bug report needs.
+Then announce the launch in one line - Jeffy v<version>, N iterations, the mode and its promise phrase (Improvement with JEFFY CONVERGED, or High-hunt with JEFFY HUNT COMPLETE), the focus if one was given, and the absolute path of the verify wrapper, `<REF>/../hooks/lib/quiet-verify.sh`, because the iteration prompt names it by its repository-relative path and a target project has no such path, and the absolute path of the Stop hook, `<REF>/../hooks/stop-hook.sh`, because the iteration prompt runs it in lint mode before every gate invocation - reading the version from the installed hook with `sed -n 's/^JEFFY_VERSION="\(.*\)"/\1/p' <home>/.claude/skills/jeffy/hooks/stop-hook.sh`, so every run's transcript opens by naming the engine version a bug report needs.
 
 ## Step 4: Begin iteration 1
 
-Read "<REF>/iteration-prompt.txt" now (REF as resolved in Step 2), its only in-context load, and immediately start following it yourself. Do not wait for input. Every later turn end triggers the Stop hook, which re-feeds the same prompt until N iterations complete, the promise fires, or the state file is deleted.
+Read "<REF>/iteration-prompt.txt" now, or "<REF>/iteration-prompt-highs.txt" on a `--highs` launch (REF as resolved in Step 2), its only in-context load, and immediately start following it yourself. Do not wait for input. Every later turn end triggers the Stop hook, which re-feeds the same prompt until N iterations complete, the promise fires, or the state file is deleted.
 
 ## Operational notes
 

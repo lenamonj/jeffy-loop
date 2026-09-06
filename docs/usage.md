@@ -1,13 +1,14 @@
 # Usage
 
 ```
-/jeffy [N] [focus...] [--max-time <45m|2h|900s>] [--max-iter-time <20m>] [--max-context <4>]
+/jeffy [N] [focus...] [--highs] [--max-time <45m|2h|900s>] [--max-iter-time <20m>] [--max-context <4>]
 ```
 
 - `--max-context` - optional context-pressure advisory, **off by default**. The engine re-feeds one session, so context accumulates within a run; past N times the transcript's size at the run's first iteration, the loop is advised to finish its current task and close so the next run reads the state files with a clean window. It advises and never stops: the closing rule governs and a declared budget is never cut short. Measured from the transcript rather than counted in iterations, and reported every iteration whether a threshold is set or not.
 - `--max-time` / `--max-iter-time` - optional time ceilings, **off by default**. A turn budget counts turns and a turn is unbounded in time, so these bound the run in hours instead: `--max-time` ends the run out of time the way exhaustion ends it out of turns, and `--max-iter-time` draws a note on a long iteration, ending the run after two consecutive ones. Neither can cut a turn short (the hook fires at turn end) and neither preempts a closing extension or a converged declaration. They default to off rather than to a number nobody measured; for reference, rounds of ten iterations in [the receipts](../evals/README.md) run roughly 60 to 130 minutes. Elapsed wall time is reported every iteration either way.
 - `N` - iteration budget, default 10. Sizing is low-stakes in both directions: the loop ends itself at convergence, so unused budget costs nothing, and a budget that runs dry loses no work - the next `/jeffy` picks up where the run stopped. The floor for converging in one run is the opening audit, one iteration per expected finding, and a closing audit; when that arithmetic outgrows the default, prefer a second run over a bigger number (see [Good to know](#good-to-know)).
 - `focus` - optional directive for the run, e.g. `/jeffy 8 test coverage and error handling`.
+- `--highs` - High-hunt mode, see [High hunt](#high-hunt) below. Default budget 5.
 
 ```
 /jeffy                                     # 10 iterations, full-spectrum improvement
@@ -22,6 +23,14 @@ A **round** is one `/jeffy` invocation; a **budget** is rounds times iterations.
 **Scoped mode.** By default `/jeffy` runs in Improvement mode: an open-ended audit-and-fix loop. To run it against a concrete target instead, edit `PLAN.md` - replace the Goal and Definition of done with the target, seed `BACKLOG.md` with the finite tasks, then run `/jeffy`. Everything else (envelope, verify gate, checkpoints, journal, report) behaves the same.
 
 **Cancel.** Run `/cancel-jeffy`. It reports which loop it found, deletes the loop state file, and leaves `PLAN.md`, `BACKLOG.md`, and `JOURNAL.md` untouched, so the next `/jeffy` picks up exactly where it left off. (Equivalent manual action: delete `.claude/jeffy-loop.local.md` at the project root.)
+
+## High hunt
+
+```
+/jeffy 5 --highs
+```
+
+A hunt is the loop with the convergence machinery switched off. It audits the whole surface, fixes only Highs, audits again once no High is open, and closes the first time an audit finds none. There is no sweep obligation, no Medium or Low queue, no evaluator gate, no closing extension and no convergence claim; a Medium or Low the audit notices is written into that audit's journal entry as `Noted, not filed:` and left alone. The close is a `Hunted:` line in `BACKLOG.md` naming the commit a fresh audit found clean of Highs, and the Stop hook refuses it over any open line that is not a High, a closing audit with no resolvable checkpoint, or a product change after that audit. A hunt is not a convergence and is never listed as one in [the receipts](../evals/README.md); its receipt is the pull request its Highs produce. A hunt's state files and a standard run's do not mix: the launcher refuses `--highs` over a standard `PLAN.md` and a standard launch over a hunt's, so archive one set before switching modes on a project.
 
 ## Use several short runs, not one long one
 
