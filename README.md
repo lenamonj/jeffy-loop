@@ -72,7 +72,7 @@ cd jeffy-loop
 Or, with [uv](https://docs.astral.sh/uv/), no clone needed:
 
 ```bash
-uv tool install jeffy-loop
+uv tool install jeffy-loop      # or: pipx install jeffy-loop, or: pip install jeffy-loop
 jeffy install
 ```
 
