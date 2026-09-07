@@ -4,7 +4,7 @@
 
 **Setup, once.**
 
-1. Install Jeffy as in the [Quickstart](../README.md#quickstart) and sign in to Claude Code once interactively (`claude` then `/login`); the headless form reuses that session.
+1. Install Jeffy as in the [Quick Install](../README.md#quick-install) and sign in to Claude Code once interactively (`claude` then `/login`); the headless form reuses that session.
 2. Clone the target and make sure the tree is clean and on a branch you are willing to see commits on. The loop checkpoints every iteration as a commit, and its pre-flight asks what to do about uncommitted work - a question a headless session never answers, so the round ends with nothing done.
 3. Decide the budget before the first round and write it down: rounds and iterations per round. Below 10 iterations a round rarely reaches its own gate; narrow single-purpose libraries in the receipts converged in 10 to 20 iterations, wide surfaces (30+ inventory rows) took 40 or more.
 4. Pass `--permission-mode bypassPermissions`. A headless session has nobody to answer a permission prompt, so without it the round stalls silently at the first tool call.

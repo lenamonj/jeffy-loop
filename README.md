@@ -10,7 +10,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Mac%20%7C%20Linux-0EA5E9?style=for-the-badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
 
-**[Quickstart](#quickstart)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
+**[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
 
 ## Autonomous Engineering With Proof
 
@@ -63,7 +63,7 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
 
 **[Every project, every patch, and every failure](evals/README.md)**
 
-## Quickstart
+## Quick Install
 
 You need [Claude Code](https://claude.com/claude-code), signed in once, and [git](https://git-scm.com/downloads). The installer handles everything else, including `jq`.
 
@@ -73,6 +73,12 @@ cd jeffy-loop
 ./install.sh        # Windows PowerShell: .\install.ps1
 ```
 
+If PowerShell refuses with "running scripts is disabled on this system", run in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
 Or from PyPI, no clone needed; `pipx install jeffy-loop` and `uv tool install jeffy-loop` work the same way:
 
 ```bash
@@ -80,10 +86,19 @@ pip install jeffy-loop
 jeffy install
 ```
 
-> [!NOTE]
-> If PowerShell refuses with "running scripts is disabled on this system", run `powershell -ExecutionPolicy Bypass -File .\install.ps1` once.
+## Running Jeffy
 
-Open Claude Code in the project you want to improve and type `/jeffy 10`. It is a slash command inside the session, not a shell command. If you only want the Highs found and fixed, type `/jeffy 10 --highs`; it stops at the first audit that finds none, so it is usually the faster run ([High hunt](docs/usage.md#high-hunt)). When the run ends, start a new session to run it again; [the restart is doing real work](docs/usage.md#use-several-short-runs-not-one-long-one).
+Open Claude Code in the project you want to improve and type `/jeffy 10`. It is a slash command inside the session, not a shell command.
+
+```
+/jeffy                                     # 10 iterations, full-spectrum improvement
+/jeffy 5                                   # 5 iterations
+/jeffy 12 accessibility and performance    # 12 iterations with a focus directive
+/jeffy 5 --highs                           # High hunt: find and fix only the Highs
+/jeffy 10 --max-time 2h                    # 10 iterations, but stop after two hours either way
+```
+
+`--highs` stops at the first audit that finds no High, so it is usually the faster run ([High hunt](docs/usage.md#high-hunt)). When the run ends, start a new session to run it again; [the restart is doing real work](docs/usage.md#use-several-short-runs-not-one-long-one). Every flag, rounds and budgets, scoped mode and cancelling are in [Usage](docs/usage.md).
 
 ## What the engine enforces
 
