@@ -4,13 +4,13 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:fixed -->104<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->21<!-- /count -->** | **<!-- count:prs-open -->38<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:fixed -->104<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->22<!-- /count -->** | **<!-- count:prs-open -->38<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->103<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
 ## Merged upstream
 
-<!-- count:merged -->21<!-- /count --> patches this loop wrote are merged across <!-- count:merged-projects -->18<!-- /count --> projects, because a maintainer with no stake in this project reviewed each one and said yes, and one more finding was fixed upstream by the maintainer himself:
+<!-- count:merged -->22<!-- /count --> patches this loop wrote are merged across <!-- count:merged-projects -->19<!-- /count --> projects, because a maintainer with no stake in this project reviewed each one and said yes, and one more finding was fixed upstream by the maintainer himself:
 
 - **[bat](https://github.com/sharkdp/bat/pull/3862) - merged.** A just-merged security flag did nothing when piped; caught before it ever shipped.
 - **[fasthttp](https://github.com/valyala/fasthttp/pull/2343) - merged.** A `Content-Length` no parser should accept became a wrong number.
@@ -29,6 +29,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 - **Apache, [commons-text](https://github.com/apache/commons-text/pull/768) - merged.** `StringMatcher.isMatch(CharSequence, int, int, int)` forwarded `bufferEnd` where `bufferStart` belongs, so a custom matcher searching a `TextStringBuilder` through `StringSubstitutor` was handed a window that began at its own end and never matched. One argument fixed, with tests the reviewer shaped. Merged 2026-09-04 by Gary Gregory, fifty minutes after the requested rework.
 - **[urfave/cli](https://github.com/urfave/cli/pull/2423) - merged.** The parser classified a positional argument from a trimmed copy and then stored the copy, so a quoted argument with leading or trailing whitespace reached the action stripped: a file named `" notes.txt"` opened as `notes.txt`. The action now receives the argument as typed; flag detection is unchanged, measured on all four quoted flag-like inputs the reviewer asked about. Merged 2026-09-04.
 - **[pflag](https://github.com/spf13/pflag/pull/507) - merged.** The deprecated `ParseErrorsWhitelist.UnknownFlagsHandling` field was read from the wrong struct, so setting it did nothing; approved with a one-word thanks six days after filing.
+- **Apple, [swift-protobuf](https://github.com/apple/swift-protobuf/pull/2164) - merged.** The repository's own CMake build of `protoc-gen-swift` had not compiled since June: two generated option sources were missing from the target's file list. Found by a High hunt on 1.22.0, filed at 5:24 AM, merged by the maintainer the same evening.
 - **[chalk](https://github.com/chalk/chalk/pull/687) - fixed upstream.** The maintainer reproduced the finding, then wrote and merged his own fix, shipped in v6.0.0.
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](./claude-code-action/REPORT.md) is open with Anthropic's own security program**, scored Low (2.3) on 2026-08-20. Their review is ongoing, so nothing here calls it accepted, and the details stay unpublished at their request until the report resolves.

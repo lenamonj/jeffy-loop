@@ -29,7 +29,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->21<!-- /count -->** | **<!-- count:prs-open -->38<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->22<!-- /count -->** | **<!-- count:prs-open -->38<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -42,9 +42,10 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 </div>
 
-A merged pull request is the one outcome the loop cannot award itself. Maintainers with no stake in this project have merged its patches into <!-- count:merged-projects -->18<!-- /count --> projects, among them:
+A merged pull request is the one outcome the loop cannot award itself. Maintainers with no stake in this project have merged its patches into <!-- count:merged-projects -->19<!-- /count --> projects, among them:
 
 - **Apple, [swift-log](https://github.com/apple/swift-log/pull/504)** - a documented no-op setter asserted instead; merged after the maintainer asked for the doc-only form.
+- **Apple, [swift-protobuf](https://github.com/apple/swift-protobuf/pull/2164)** - the project's own CMake build of `protoc-gen-swift` had not compiled since June; approved and merged the day it was filed.
 - **Microsoft, [mimalloc](https://github.com/microsoft/mimalloc/pull/1385)** - the zeroing allocator returned uninitialized memory above the small-size threshold; merged by the author the same day.
 - **Node.js, [ada](https://github.com/ada-url/ada/pull/1244)** - the URL parser reported `host_end` one byte short; merged twelve minutes after filing.
 - **JetBrains, [kotlinx-datetime](https://github.com/Kotlin/kotlinx-datetime/pull/650)** - deprecation quick-fixes pointed developers at the wrong replacement; merged within two hours.

@@ -769,6 +769,15 @@ tbl_issues="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep 
 tbl_prs_open="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -o '\[PR open\](' | wc -l | tr -d ' ')"
 # Distinct projects, not PRs: a row carrying two merged links is one project.
 tbl_merged_projects="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -c '\[PR merged\](')"
+# A High hunt is not a corpus entry and has no scorecard row, but its merge
+# is a merged patch (Jeff, 2026-09-06: only a merge enters the merged list).
+# Such a merge is a bullet in the Merged upstream list whose PR URL appears in
+# no scorecard row; each adds one patch, and each distinct repository one project.
+hunt_urls="$(awk '/^## Merged upstream/{p=1; next} /^## /{p=0} p' "$scorecard" | grep -oE '^- \*\*[^]]*\[[^]]+\]\(https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+\) - merged\.\*\*' | grep -oE 'https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+' | while IFS= read -r u; do grep -qF "$u" <(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard") || printf '%s\n' "$u"; done)"
+hunt_merged="$(printf '%s\n' "$hunt_urls" | grep -c '/pull/')"
+hunt_merged_projects="$(printf '%s\n' "$hunt_urls" | grep -oE 'github\.com/[^/]+/[^/]+' | sort -u | grep -c .)"
+tbl_merged=$((tbl_merged + hunt_merged))
+tbl_merged_projects=$((tbl_merged_projects + hunt_merged_projects))
 # Attempts that did not converge, from the ledger of every attempt, so the
 # front page's failed-project count and this figure are two derivations of
 # two tables rather than one typed number and one bridge sentence.
