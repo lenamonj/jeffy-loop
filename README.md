@@ -73,10 +73,10 @@ cd jeffy-loop
 ./install.sh        # Windows PowerShell: .\install.ps1
 ```
 
-Or, with [uv](https://docs.astral.sh/uv/), no clone needed:
+Or from PyPI, no clone needed; `pipx install jeffy-loop` and `uv tool install jeffy-loop` work the same way:
 
 ```bash
-uv tool install jeffy-loop      # or: pipx install jeffy-loop, or: pip install jeffy-loop
+pip install jeffy-loop
 jeffy install
 ```
 
