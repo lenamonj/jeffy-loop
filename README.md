@@ -42,6 +42,8 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 </div>
 
+## Independent Validation
+
 A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->20<!-- /count --> open source projects have done exactly that, including:
 
 - **Google, [snappy](https://github.com/google/snappy/pull/257)** - every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes; merged the morning after filing.
