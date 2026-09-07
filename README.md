@@ -98,15 +98,7 @@ Open Claude Code in the project you want to improve and type `/jeffy 10`. It is 
 /jeffy 10 --max-time 2h                    # 10 iterations, but stop after two hours either way
 ```
 
-When the run ends, start a new session to run it again; [the restart is doing real work](docs/usage.md#use-several-short-runs-not-one-long-one). Every flag, rounds and budgets, scoped mode and cancelling are in [Usage](docs/usage.md).
-
-## High Hunt
-
-A hunt fixes only the Highs and stops at the first audit that finds none, so it is usually the faster run.
-
-```
-/jeffy 5 --highs
-```
+When the run ends, start a new session to run it again; [the restart is doing real work](docs/usage.md#use-several-short-runs-not-one-long-one). A High hunt fixes only the Highs and stops at the first audit that finds none, so it is usually the faster run. Every flag, rounds and budgets, scoped mode and cancelling are in [Usage](docs/usage.md).
 
 ## What the engine enforces
 
