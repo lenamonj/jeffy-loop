@@ -50,6 +50,7 @@ DCO is a `Signed-off-by` line on every commit.)
 | Spring | DCO | per commit |
 | Meta | CLA | 2026-09-06 |
 | Oracle | CLA | 2026-09-06 * |
+| Dropbox | CLA | 2026-09-07 |
 
 \* signed, awaiting Oracle's countersignature.
 
