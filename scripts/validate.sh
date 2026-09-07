@@ -733,6 +733,24 @@ else
   fi
 fi
 
+# I2. The uv package states the same version. pyproject.toml is the PyPI
+#     release record (1.23.0, `uv tool install jeffy-loop`): its version must
+#     equal JEFFY_VERSION, or PyPI lists one engine and the installed hook
+#     announces another at every launch, the P1-34 drift in a new coat. It
+#     ships in every clone, so the pairing runs everywhere, unlike CHANGELOG.
+if [ -f pyproject.toml ]; then
+  py_ver="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' pyproject.toml | head -n 1)"
+  if [ -z "$py_ver" ]; then
+    fault "pyproject.toml carries no version = \"x.y.z\" line; the PyPI release has no version to pair"
+  elif [ "$py_ver" != "$hook_ver" ]; then
+    fault "pyproject.toml version [$py_ver] does not match JEFFY_VERSION $hook_ver; the PyPI release would announce a different engine than it installs"
+  else
+    pass "pyproject.toml version $py_ver matches JEFFY_VERSION (the PyPI release and the engine agree)"
+  fi
+else
+  skip "pyproject.toml/JEFFY_VERSION pairing (no pyproject.toml in this tree)"
+fi
+
 # J. Counts the published pages state are derived, never transcribed - the
 #    class that produced three drift incidents in one day across two codebases.
 #    Source of truth is the scorecard table: one row per project,

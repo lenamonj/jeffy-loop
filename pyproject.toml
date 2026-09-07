@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jeffy-loop"
+version = "1.23.0"
+description = "The Jeffy Loop: an autonomous audit-and-fix loop for Claude Code, with proof."
+dynamic = ["readme"]
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+
+[project.scripts]
+jeffy = "jeffy_loop.cli:main"
+
+[project.urls]
+Repository = "https://github.com/lenamonj/jeffy-loop"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jeffy_loop"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"skills/jeffy" = "jeffy_loop/skills/jeffy"
+"skills/cancel-jeffy" = "jeffy_loop/skills/cancel-jeffy"
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+  "src/jeffy_loop",
+  "hatch_build.py",
+  "skills/jeffy",
+  "skills/cancel-jeffy",
+  "README.md",
+  "LICENSE",
+]
+
+[tool.hatch.metadata.hooks.custom]
+path = "hatch_build.py"
+repo = "lenamonj/jeffy-loop"

@@ -46,3 +46,8 @@ __pycache__/
 /plan[0-9]*.MD
 /Plan[0-9]*.md
 /PLAN[0-9]*.md
+
+# Python package build output (uv build) - never product
+/dist/
+/build/
+*.egg-info/
