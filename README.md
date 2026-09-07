@@ -50,75 +50,62 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   <tr>
     <th align="left">Merged by</th>
     <th align="left">Pull request</th>
-    <th align="left">What was wrong</th>
     <th align="left">Merged in</th>
   </tr>
   <tr>
-    <td nowrap><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
-    <td nowrap><a href="https://github.com/google/snappy/pull/257">snappy #257</a></td>
-    <td>Every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes</td>
-    <td nowrap>1 day</td>
+    <td><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
+    <td><a href="https://github.com/google/snappy/pull/257">snappy #257</a><br>Every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes</td>
+    <td>1 day</td>
   </tr>
   <tr>
-    <td nowrap rowspan="3"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
-    <td nowrap><a href="https://github.com/apple/swift-log/pull/504">swift-log #504</a></td>
-    <td>A documented no-op setter asserted instead</td>
-    <td nowrap>2 days</td>
+    <td rowspan="3"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
+    <td><a href="https://github.com/apple/swift-log/pull/504">swift-log #504</a><br>A documented no-op setter asserted instead</td>
+    <td>2 days</td>
   </tr>
   <tr>
-    <td nowrap><a href="https://github.com/apple/swift-log/pull/503">swift-log #503</a></td>
-    <td>A handler implementing only <code>log(event:)</code> overflowed the stack on the SwiftLog 1.0 entry point</td>
-    <td nowrap>5 days</td>
+    <td><a href="https://github.com/apple/swift-log/pull/503">swift-log #503</a><br>A handler implementing only <code>log(event:)</code> overflowed the stack on the SwiftLog 1.0 entry point</td>
+    <td>5 days</td>
   </tr>
   <tr>
-    <td nowrap><a href="https://github.com/apple/swift-protobuf/pull/2164">swift-protobuf #2164</a></td>
-    <td>The project's own CMake build of <code>protoc-gen-swift</code> had not compiled since June</td>
-    <td nowrap>15 hours</td>
+    <td><a href="https://github.com/apple/swift-protobuf/pull/2164">swift-protobuf #2164</a><br>The project's own CMake build of <code>protoc-gen-swift</code> had not compiled since June</td>
+    <td>15 hours</td>
   </tr>
   <tr>
-    <td nowrap><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
-    <td nowrap><a href="https://github.com/microsoft/mimalloc/pull/1385">mimalloc #1385</a></td>
-    <td>The zeroing allocator returned uninitialized memory above the small-size threshold</td>
-    <td nowrap>8 hours</td>
+    <td><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
+    <td><a href="https://github.com/microsoft/mimalloc/pull/1385">mimalloc #1385</a><br>The zeroing allocator returned uninitialized memory above the small-size threshold</td>
+    <td>8 hours</td>
   </tr>
   <tr>
-    <td nowrap rowspan="2"><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
-    <td nowrap><a href="https://github.com/apache/commons-text/pull/768">commons-text #768</a></td>
-    <td>A <code>StringMatcher</code> overload forwarded the buffer end as its start</td>
-    <td nowrap>2 days</td>
+    <td rowspan="2"><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
+    <td><a href="https://github.com/apache/commons-text/pull/768">commons-text #768</a><br>A <code>StringMatcher</code> overload forwarded the buffer end as its start</td>
+    <td>2 days</td>
   </tr>
   <tr>
-    <td nowrap><a href="https://github.com/apache/commons-csv/pull/633">commons-csv #633</a></td>
-    <td>The record counter's Javadoc said headers were not counted while the constructor's header was</td>
-    <td nowrap>3 days</td>
+    <td><a href="https://github.com/apache/commons-csv/pull/633">commons-csv #633</a><br>The record counter's Javadoc said headers were not counted while the constructor's header was</td>
+    <td>3 days</td>
   </tr>
   <tr>
-    <td nowrap rowspan="2"><img src="https://github.com/JetBrains.png" width="20" height="20" alt="" align="absmiddle"> JetBrains</td>
-    <td nowrap><a href="https://github.com/Kotlin/kotlinx-datetime/pull/650">kotlinx-datetime #650</a></td>
-    <td>Deprecation quick-fixes pointed developers at the wrong replacement</td>
-    <td nowrap>90 minutes</td>
+    <td rowspan="2"><img src="https://github.com/JetBrains.png" width="20" height="20" alt="" align="absmiddle"> JetBrains</td>
+    <td><a href="https://github.com/Kotlin/kotlinx-datetime/pull/650">kotlinx-datetime #650</a><br>Deprecation quick-fixes pointed developers at the wrong replacement</td>
+    <td>90 minutes</td>
   </tr>
   <tr>
-    <td nowrap><a href="https://github.com/Kotlin/kotlinx-datetime/pull/649">kotlinx-datetime #649</a></td>
-    <td>The Unicode pattern parser dropped the escaped quote inside a literal</td>
-    <td nowrap>4 days</td>
+    <td><a href="https://github.com/Kotlin/kotlinx-datetime/pull/649">kotlinx-datetime #649</a><br>The Unicode pattern parser dropped the escaped quote inside a literal</td>
+    <td>4 days</td>
   </tr>
   <tr>
-    <td nowrap><img src="https://github.com/nodejs.png" width="20" height="20" alt="" align="absmiddle"> Node.js</td>
-    <td nowrap><a href="https://github.com/ada-url/ada/pull/1244">ada #1244</a></td>
-    <td>The URL parser Node.js ships reported <code>host_end</code> one byte short</td>
-    <td nowrap>12 minutes</td>
+    <td><img src="https://github.com/nodejs.png" width="20" height="20" alt="" align="absmiddle"> Node.js</td>
+    <td><a href="https://github.com/ada-url/ada/pull/1244">ada #1244</a><br>The URL parser Node.js ships reported <code>host_end</code> one byte short</td>
+    <td>12 minutes</td>
   </tr>
   <tr>
-    <td nowrap rowspan="2"><img src="https://github.com/cloudflare.png" width="20" height="20" alt="" align="absmiddle"> Cloudflare</td>
-    <td nowrap><a href="https://github.com/cloudflare/circl/pull/700">circl #700</a></td>
-    <td>The PKI marshal functions panicked on the library's own post-quantum keys instead of returning an error</td>
-    <td nowrap>1 day</td>
+    <td rowspan="2"><img src="https://github.com/cloudflare.png" width="20" height="20" alt="" align="absmiddle"> Cloudflare</td>
+    <td><a href="https://github.com/cloudflare/circl/pull/700">circl #700</a><br>The PKI marshal functions panicked on the library's own post-quantum keys instead of returning an error</td>
+    <td>1 day</td>
   </tr>
   <tr>
-    <td nowrap><a href="https://github.com/cloudflare/circl/pull/699">circl #699</a></td>
-    <td>The hybrid KEM derived a different key pair from the same seed on a random subset of calls</td>
-    <td nowrap>1 day</td>
+    <td><a href="https://github.com/cloudflare/circl/pull/699">circl #699</a><br>The hybrid KEM derived a different key pair from the same seed on a random subset of calls</td>
+    <td>1 day</td>
   </tr>
 </table>
 
