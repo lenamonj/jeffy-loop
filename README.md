@@ -98,7 +98,15 @@ Open Claude Code in the project you want to improve and type `/jeffy 10`. It is 
 /jeffy 10 --max-time 2h                    # 10 iterations, but stop after two hours either way
 ```
 
-`--highs` stops at the first audit that finds no High, so it is usually the faster run ([High hunt](docs/usage.md#high-hunt)). When the run ends, start a new session to run it again; [the restart is doing real work](docs/usage.md#use-several-short-runs-not-one-long-one). Every flag, rounds and budgets, scoped mode and cancelling are in [Usage](docs/usage.md).
+When the run ends, start a new session to run it again; [the restart is doing real work](docs/usage.md#use-several-short-runs-not-one-long-one). Every flag, rounds and budgets, scoped mode and cancelling are in [Usage](docs/usage.md).
+
+## High Hunt
+
+A hunt fixes only the Highs and stops at the first audit that finds none, so it is usually the faster run.
+
+```
+/jeffy 5 --highs
+```
 
 ## What the engine enforces
 
@@ -114,7 +122,7 @@ Each one is enforced by the iteration prompt, the state files, or the Stop hook.
 
 | Page | What it covers |
 |:---|:---|
-| [Usage](docs/usage.md) | Flags, rounds and budgets, scoped mode, cancelling, [upgrading](docs/usage.md#already-installed-upgrade), uninstalling, and what to know before a first run |
+| [Usage](docs/usage.md) | Flags, rounds and budgets, [High hunt](docs/usage.md#high-hunt), scoped mode, cancelling, [upgrading](docs/usage.md#already-installed-upgrade), uninstalling, and what to know before a first run |
 | [How it works](docs/how-it-works.md) | The run lifecycle, what the engine enforces, the full rule set, what a converged stop looks like, and how the loop improves itself |
 | [Headless runs](docs/headless.md) | Running budgeted rounds unattended from bash or PowerShell |
 | [The receipts](evals/README.md) | Every open-source target with its outcome, the merged patches, the greenfield builds |
