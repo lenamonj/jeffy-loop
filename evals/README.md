@@ -51,6 +51,7 @@ DCO is a `Signed-off-by` line on every commit.)
 | Meta | CLA | 2026-09-06 |
 | Oracle | CLA | 2026-09-06 * |
 | Dropbox | CLA | 2026-09-07 |
+| Shopify | CLA | 2026-09-07 |
 
 \* signed, awaiting Oracle's countersignature.
 
