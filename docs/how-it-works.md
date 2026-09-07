@@ -17,7 +17,7 @@ Running `/jeffy` in a Claude Code session:
 2. **Runs the budgeted loop.** The first audit fills the surface inventory and the backlog. Each iteration after that either audits or executes exactly one task, verifies it, and checkpoints it; a task that newly breaks the verify command is reverted. Once one full audit comes back clean of High and Medium, the run stops auditing and finishes the ledger.
 3. **Stops for a reason and reports.** Convergence - a clean audit, zero open High or Medium with every carried Low named, a fully swept inventory, the adversarial evaluator's PASS, all re-checked in shell by the Stop hook - or the budget, a stall, a hard blocker, or your cancel. The run report lists tasks closed with severities, the diffstat, rows swept of rows total, and anything waiting on your decision.
 
-## Five guarantees
+## What the engine enforces
 
 Each one is enforced by the iteration prompt, the state files, or the Stop hook, and each is checkable in this repository.
 

@@ -85,9 +85,9 @@ jeffy install
 
 Open Claude Code in the project you want to improve and type `/jeffy 10`. It is a slash command inside the session, not a shell command. If you only want the Highs found and fixed, type `/jeffy 10 --highs`; it stops at the first audit that finds none, so it is usually the faster run ([High hunt](docs/usage.md#high-hunt)). When the run ends, start a new session to run it again; [the restart is doing real work](docs/usage.md#use-several-short-runs-not-one-long-one).
 
-## Five guarantees
+## What the engine enforces
 
-Each one is enforced by the iteration prompt, the state files, or the Stop hook. [How.](docs/how-it-works.md#five-guarantees)
+Each one is enforced by the iteration prompt, the state files, or the Stop hook. [How.](docs/how-it-works.md#what-the-engine-enforces)
 
 1. **It audits like an engineer, not a linter.** A finding exists only when the loop can point at it and prove it with a runnable check.
 2. **It cannot wreck your repo.** Every iteration is a local commit, a broken verify is reverted, and nothing is ever pushed.
@@ -100,7 +100,7 @@ Each one is enforced by the iteration prompt, the state files, or the Stop hook.
 | Page | What it covers |
 |:---|:---|
 | [Usage](docs/usage.md) | Flags, rounds and budgets, scoped mode, cancelling, [upgrading](docs/usage.md#already-installed-upgrade), uninstalling, and what to know before a first run |
-| [How it works](docs/how-it-works.md) | The run lifecycle, the five guarantees, the full rule set, what a converged stop looks like, and how the loop improves itself |
+| [How it works](docs/how-it-works.md) | The run lifecycle, what the engine enforces, the full rule set, what a converged stop looks like, and how the loop improves itself |
 | [Headless runs](docs/headless.md) | Running budgeted rounds unattended from bash or PowerShell |
 | [The receipts](evals/README.md) | Every open-source target with its outcome, the merged patches, the greenfield builds |
 | [Contributing](CONTRIBUTING.md) | The validator and the review bar |
