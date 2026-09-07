@@ -17,7 +17,7 @@ of 5 rounds of 10**.
 | Ledger at convergence | empty, nothing carried; one Proposed item left for the maintainers (see below) |
 | Evaluator | **1 invocation: PASS** |
 | Suite at convergence | `swift test`: `Test run with 168 tests passed` (164 at base) |
-| Upstream | [#504](https://github.com/apple/swift-log/pull/504) (SL-002) MERGED 2026-09-04 by kukushechkin after being reworked to the doc-only change he asked for (the assertion stays, the comment now calls it a programmer error); [#503](https://github.com/apple/swift-log/pull/503) (SL-001) open |
+| Upstream | [#504](https://github.com/apple/swift-log/pull/504) (SL-002) MERGED 2026-09-04 by kukushechkin after being reworked to the doc-only change he asked for (the assertion stays, the comment now calls it a programmer error); [#503](https://github.com/apple/swift-log/pull/503) (SL-001) MERGED 2026-09-07 by kukushechkin after one review round (the package `Lock` in the compatibility test; approved 2026-09-04) |
 
 ## What the loop found
 
