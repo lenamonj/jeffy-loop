@@ -46,22 +46,81 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->22<!-- /count --> open source projects have done exactly that, including:
 
-- **Google, [snappy](https://github.com/google/snappy/pull/257)** - every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes; merged the morning after filing.
-- **Apple (3)**
-  - [swift-log](https://github.com/apple/swift-log/pull/504) - a documented no-op setter asserted instead; merged after the maintainer asked for the doc-only form.
-  - [swift-log](https://github.com/apple/swift-log/pull/503) - a handler implementing only `log(event:)` overflowed the stack on the SwiftLog 1.0 entry point; approved after one review round, merged three days later.
-  - [swift-protobuf](https://github.com/apple/swift-protobuf/pull/2164) - the project's own CMake build of `protoc-gen-swift` had not compiled since June; approved and merged the day it was filed.
-- **Microsoft, [mimalloc](https://github.com/microsoft/mimalloc/pull/1385)** - the zeroing allocator returned uninitialized memory above the small-size threshold; merged by the author the same day.
-- **Apache (2)**
-  - [commons-text](https://github.com/apache/commons-text/pull/768) - a `StringMatcher` overload forwarded the buffer end as its start; merged the morning after review.
-  - [commons-csv](https://github.com/apache/commons-csv/pull/633) - the record counter's Javadoc said headers were not counted while the constructor's header was; corrected, merged three days after filing.
-- **JetBrains (2)**
-  - [kotlinx-datetime](https://github.com/Kotlin/kotlinx-datetime/pull/650) - deprecation quick-fixes pointed developers at the wrong replacement; merged within two hours.
-  - [kotlinx-datetime](https://github.com/Kotlin/kotlinx-datetime/pull/649) - the Unicode pattern parser dropped the escaped quote inside a literal; the test moved where the maintainer asked, merged an hour later.
-- **Node.js, [ada](https://github.com/ada-url/ada/pull/1244)** - the URL parser reported `host_end` one byte short; merged twelve minutes after filing.
-- **Cloudflare (2)**
-  - [circl](https://github.com/cloudflare/circl/pull/700) - the PKI marshal functions panicked on the library's own post-quantum keys instead of returning an error; approved and merged with one word.
-  - [circl](https://github.com/cloudflare/circl/pull/699) - the hybrid KEM derived a different key pair from the same seed on a random subset of calls; the comment restated the maintainer's intent, merged the day after filing.
+<table>
+  <tr>
+    <th align="left">Merged by</th>
+    <th align="left">Pull request</th>
+    <th align="left">What was wrong</th>
+    <th align="left">Merged in</th>
+  </tr>
+  <tr>
+    <td nowrap><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
+    <td nowrap><a href="https://github.com/google/snappy/pull/257">snappy #257</a></td>
+    <td>Every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes</td>
+    <td nowrap>1 day</td>
+  </tr>
+  <tr>
+    <td nowrap rowspan="3"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
+    <td nowrap><a href="https://github.com/apple/swift-log/pull/504">swift-log #504</a></td>
+    <td>A documented no-op setter asserted instead</td>
+    <td nowrap>2 days</td>
+  </tr>
+  <tr>
+    <td nowrap><a href="https://github.com/apple/swift-log/pull/503">swift-log #503</a></td>
+    <td>A handler implementing only <code>log(event:)</code> overflowed the stack on the SwiftLog 1.0 entry point</td>
+    <td nowrap>5 days</td>
+  </tr>
+  <tr>
+    <td nowrap><a href="https://github.com/apple/swift-protobuf/pull/2164">swift-protobuf #2164</a></td>
+    <td>The project's own CMake build of <code>protoc-gen-swift</code> had not compiled since June</td>
+    <td nowrap>15 hours</td>
+  </tr>
+  <tr>
+    <td nowrap><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
+    <td nowrap><a href="https://github.com/microsoft/mimalloc/pull/1385">mimalloc #1385</a></td>
+    <td>The zeroing allocator returned uninitialized memory above the small-size threshold</td>
+    <td nowrap>8 hours</td>
+  </tr>
+  <tr>
+    <td nowrap rowspan="2"><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
+    <td nowrap><a href="https://github.com/apache/commons-text/pull/768">commons-text #768</a></td>
+    <td>A <code>StringMatcher</code> overload forwarded the buffer end as its start</td>
+    <td nowrap>2 days</td>
+  </tr>
+  <tr>
+    <td nowrap><a href="https://github.com/apache/commons-csv/pull/633">commons-csv #633</a></td>
+    <td>The record counter's Javadoc said headers were not counted while the constructor's header was</td>
+    <td nowrap>3 days</td>
+  </tr>
+  <tr>
+    <td nowrap rowspan="2"><img src="https://github.com/JetBrains.png" width="20" height="20" alt="" align="absmiddle"> JetBrains</td>
+    <td nowrap><a href="https://github.com/Kotlin/kotlinx-datetime/pull/650">kotlinx-datetime #650</a></td>
+    <td>Deprecation quick-fixes pointed developers at the wrong replacement</td>
+    <td nowrap>90 minutes</td>
+  </tr>
+  <tr>
+    <td nowrap><a href="https://github.com/Kotlin/kotlinx-datetime/pull/649">kotlinx-datetime #649</a></td>
+    <td>The Unicode pattern parser dropped the escaped quote inside a literal</td>
+    <td nowrap>4 days</td>
+  </tr>
+  <tr>
+    <td nowrap><img src="https://github.com/nodejs.png" width="20" height="20" alt="" align="absmiddle"> Node.js</td>
+    <td nowrap><a href="https://github.com/ada-url/ada/pull/1244">ada #1244</a></td>
+    <td>The URL parser Node.js ships reported <code>host_end</code> one byte short</td>
+    <td nowrap>12 minutes</td>
+  </tr>
+  <tr>
+    <td nowrap rowspan="2"><img src="https://github.com/cloudflare.png" width="20" height="20" alt="" align="absmiddle"> Cloudflare</td>
+    <td nowrap><a href="https://github.com/cloudflare/circl/pull/700">circl #700</a></td>
+    <td>The PKI marshal functions panicked on the library's own post-quantum keys instead of returning an error</td>
+    <td nowrap>1 day</td>
+  </tr>
+  <tr>
+    <td nowrap><a href="https://github.com/cloudflare/circl/pull/699">circl #699</a></td>
+    <td>The hybrid KEM derived a different key pair from the same seed on a random subset of calls</td>
+    <td nowrap>1 day</td>
+  </tr>
+</table>
 
 **[Every project, every patch, and every failure](evals/README.md)**
 
