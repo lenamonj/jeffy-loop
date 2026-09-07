@@ -27,7 +27,7 @@ Each one is enforced by the iteration prompt, the state files, or the Stop hook,
 
 **"Done" is not the agent's opinion.** A declaration needs a fresh audit finding zero High and zero Medium, a fully swept surface inventory, and an adversarial evaluator's countersignature. Then a plain shell script re-checks all of it, re-runs your test suite, and refuses the stop if anything fails.
 
-**It cannot claim what it never looked at.** The whole public surface goes on a checklist before any finding is filed, each swept row records the commit it certified, and a row reopens when its code changes. "No findings" can never mean "nowhere looked".
+**It cannot declare convergence over code it never looked at.** The loop maps the public surface into a checklist, each swept row records the commit it certified, a row reopens when its code changes, and the Stop hook refuses the declaration while any row is unswept. A convergence can never mean "nowhere looked".
 
 **A hunt is not a convergence.** `/jeffy N --highs` runs High-hunt mode: the loop audits, fixes only Highs, audits again once none is open, and closes the first time an audit finds none, recording a `Hunted:` line instead of a `Converged:` one. The verify gate, the checkpoints, the fail-closed severity parse and the lint still hold; what a hunt never claims is coverage or an evaluator's countersignature, because it sweeps no rows and runs no gate. Its receipt is the pull request its Highs produce, listed apart from the converged rows.
 
