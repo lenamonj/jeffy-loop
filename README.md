@@ -144,7 +144,7 @@ Or from PyPI, no clone needed; `pipx install jeffy-loop` and `uv tool install je
 
 ```bash
 pip install jeffy-loop
-jeffy install
+jeffy install       # installs Jeffy as a Claude Code skill
 ```
 
 ## Running Jeffy
