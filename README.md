@@ -29,7 +29,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->26<!-- /count -->** | **<!-- count:prs-open -->35<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->27<!-- /count -->** | **<!-- count:prs-open -->35<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -44,7 +44,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->21<!-- /count --> open source projects have done exactly that, including:
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->22<!-- /count --> open source projects have done exactly that, including:
 
 - **Google, [snappy](https://github.com/google/snappy/pull/257)** - every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes; merged the morning after filing.
 - **Apple (3)**
@@ -59,6 +59,7 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   - [kotlinx-datetime](https://github.com/Kotlin/kotlinx-datetime/pull/650) - deprecation quick-fixes pointed developers at the wrong replacement; merged within two hours.
   - [kotlinx-datetime](https://github.com/Kotlin/kotlinx-datetime/pull/649) - the Unicode pattern parser dropped the escaped quote inside a literal; the test moved where the maintainer asked, merged an hour later.
 - **Node.js, [ada](https://github.com/ada-url/ada/pull/1244)** - the URL parser reported `host_end` one byte short; merged twelve minutes after filing.
+- **Cloudflare, [circl](https://github.com/cloudflare/circl/pull/700)** - the PKI marshal functions panicked on the library's own post-quantum keys instead of returning an error; approved and merged with one word.
 
 **[Every project, every patch, and every failure](evals/README.md)**
 
