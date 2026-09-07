@@ -122,7 +122,7 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   </tr>
 </table>
 
-**[Every project, every patch, and every failure](evals/README.md)**
+**[See every project, every patch, and every failure](evals/README.md)**
 
 ## Quick Install
 
