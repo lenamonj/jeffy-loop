@@ -14,8 +14,8 @@
 
 ## Autonomous Engineering With Proof
 
-> **Agents that don’t just act.**  
-> They audit · verify · attack · and prove.
+**_Agents that don’t just act._**  
+_They audit · verify · attack · and prove._
 
 </div>
 
