@@ -29,7 +29,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->23<!-- /count -->** | **<!-- count:prs-open -->38<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->24<!-- /count -->** | **<!-- count:prs-open -->37<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -44,14 +44,16 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->20<!-- /count --> open source projects have done exactly that, including:
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->21<!-- /count --> open source projects have done exactly that, including:
 
 - **Google, [snappy](https://github.com/google/snappy/pull/257)** - every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes; merged the morning after filing.
 - **Apple (2)**
   - [swift-log](https://github.com/apple/swift-log/pull/504) - a documented no-op setter asserted instead; merged after the maintainer asked for the doc-only form.
   - [swift-protobuf](https://github.com/apple/swift-protobuf/pull/2164) - the project's own CMake build of `protoc-gen-swift` had not compiled since June; approved and merged the day it was filed.
 - **Microsoft, [mimalloc](https://github.com/microsoft/mimalloc/pull/1385)** - the zeroing allocator returned uninitialized memory above the small-size threshold; merged by the author the same day.
-- **Apache, [commons-text](https://github.com/apache/commons-text/pull/768)** - a `StringMatcher` overload forwarded the buffer end as its start; merged the morning after review.
+- **Apache (2)**
+  - [commons-text](https://github.com/apache/commons-text/pull/768) - a `StringMatcher` overload forwarded the buffer end as its start; merged the morning after review.
+  - [commons-csv](https://github.com/apache/commons-csv/pull/633) - the record counter's Javadoc said headers were not counted while the constructor's header was; corrected, merged three days after filing.
 - **JetBrains, [kotlinx-datetime](https://github.com/Kotlin/kotlinx-datetime/pull/650)** - deprecation quick-fixes pointed developers at the wrong replacement; merged within two hours.
 - **Node.js, [ada](https://github.com/ada-url/ada/pull/1244)** - the URL parser reported `host_end` one byte short; merged twelve minutes after filing.
 
