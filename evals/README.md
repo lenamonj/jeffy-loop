@@ -60,11 +60,10 @@ DCO is a `Signed-off-by` line on every commit.)
 | NVIDIA | DCO | per commit |
 | Spring | DCO | per commit |
 | Meta | CLA | 2026-09-06 |
-| Oracle | CLA | 2026-09-06 * |
+| Oracle | CLA | 2026-09-06 |
 | Dropbox | CLA | 2026-09-07 |
 | Shopify | CLA | 2026-09-07 |
 
-\* signed, awaiting Oracle's countersignature.
 
 ## Converged targets by language
 
