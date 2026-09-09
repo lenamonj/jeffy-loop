@@ -29,7 +29,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->34<!-- /count -->** | **<!-- count:prs-open -->33<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->35<!-- /count -->** | **<!-- count:prs-open -->33<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -44,7 +44,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->26<!-- /count --> open source projects have done exactly that, including the pull requests below. One row, libsrtp #822, is a finding rather than a patch: it was reported here as an issue, and a contributor read the diagnosis and wrote the fix the maintainer merged.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->27<!-- /count --> open source projects have done exactly that, including the pull requests below. One row, libsrtp #822, is a finding rather than a patch: it was reported here as an issue, and a contributor read the diagnosis and wrote the fix the maintainer merged.
 
 <table>
   <tr>
@@ -58,7 +58,7 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>1 day</td>
   </tr>
   <tr>
-    <td rowspan="3"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
+    <td rowspan="4"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
     <td><a href="https://github.com/apple/swift-log/pull/504">swift-log #504</a><br>A documented no-op setter asserted instead</td>
     <td>2 days</td>
   </tr>
@@ -69,6 +69,10 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   <tr>
     <td><a href="https://github.com/apple/swift-protobuf/pull/2164">swift-protobuf #2164</a><br>The project's own CMake build of <code>protoc-gen-swift</code> had not compiled since June</td>
     <td>15 hours</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/swiftlang/swift-format/pull/1286">swift-format #1286</a><br>Formatting in place replaced the file, so a 0600 source came back 0644 and a read-only one lost its bit</td>
+    <td>4 days</td>
   </tr>
   <tr>
     <td rowspan="2"><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
