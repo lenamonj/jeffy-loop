@@ -29,7 +29,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->31<!-- /count -->** | **<!-- count:prs-open -->34<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->33<!-- /count -->** | **<!-- count:prs-open -->34<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -80,7 +80,7 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>2 hours</td>
   </tr>
   <tr>
-    <td rowspan="3"><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
+    <td rowspan="5"><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
     <td><a href="https://github.com/apache/commons-text/pull/768">commons-text #768</a><br>A <code>StringMatcher</code> overload forwarded the buffer end as its start</td>
     <td>2 days</td>
   </tr>
@@ -91,6 +91,14 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   <tr>
     <td><a href="https://github.com/apache/commons-lang/pull/1784">commons-lang #1784</a><br><code>Fraction.add</code> and <code>subtract</code> overflowed on operands not in lowest terms, or returned them unreduced</td>
     <td>1 day</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/apache/commons-lang/pull/1783">commons-lang #1783</a><br><code>MethodUtils.invokeMethod</code> threw on an instance of any non-public class, every JDK collection factory result included</td>
+    <td>1 day</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/apache/commons-lang/pull/1787">commons-lang #1787</a><br><code>Fraction</code>'s zero shortcuts returned the other operand unreduced, and threw where the reduced result fits</td>
+    <td>6 hours</td>
   </tr>
   <tr>
     <td rowspan="2"><img src="https://github.com/JetBrains.png" width="20" height="20" alt="" align="absmiddle"> JetBrains</td>
