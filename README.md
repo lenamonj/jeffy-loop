@@ -44,12 +44,12 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->25<!-- /count --> open source projects have done exactly that, including:
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->25<!-- /count --> open source projects have done exactly that, including the pull requests below. The last row is a finding rather than a patch: it was reported here as an issue, and a contributor read the diagnosis and wrote the fix the maintainer merged.
 
 <table>
   <tr>
     <th align="left">Merged by</th>
-    <th align="left">Pull request</th>
+    <th align="left">Finding</th>
     <th align="left">Merged in</th>
   </tr>
   <tr>
@@ -127,6 +127,11 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td><img src="https://github.com/uuid-rs.png" width="20" height="20" alt="" align="absmiddle"> uuid-rs</td>
     <td><a href="https://github.com/uuid-rs/uuid/pull/907">uuid #907</a><br>The UUIDv7 counter lost its top four bits to the version nibble (178 million crates.io downloads in the last 90 days)</td>
     <td>6 days</td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/cisco.png" width="20" height="20" alt="" align="absmiddle"> Cisco</td>
+    <td><a href="https://github.com/cisco/libsrtp/issues/822">libsrtp #822</a><br>The autotools <code>configure</code> aborted on stock Ubuntu because pkg-config was forced static, so no OpenSSL build was possible; reported here with the diagnosis and fixed by another contributor's <a href="https://github.com/cisco/libsrtp/pull/823">#823</a></td>
+    <td>3 days</td>
   </tr>
 </table>
 
