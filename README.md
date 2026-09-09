@@ -29,7 +29,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->33<!-- /count -->** | **<!-- count:prs-open -->34<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->34<!-- /count -->** | **<!-- count:prs-open -->33<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -44,7 +44,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->25<!-- /count --> open source projects have done exactly that, including the pull requests below. The last row is a finding rather than a patch: it was reported here as an issue, and a contributor read the diagnosis and wrote the fix the maintainer merged.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->26<!-- /count --> open source projects have done exactly that, including the pull requests below. The last row is a finding rather than a patch: it was reported here as an issue, and a contributor read the diagnosis and wrote the fix the maintainer merged.
 
 <table>
   <tr>
@@ -122,6 +122,11 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   <tr>
     <td><a href="https://github.com/cloudflare/circl/pull/699">circl #699</a><br>The hybrid KEM derived a different key pair from the same seed on a random subset of calls</td>
     <td>1 day</td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/oracle.png" width="20" height="20" alt="" align="absmiddle"> Oracle</td>
+    <td><a href="https://github.com/oracle/macaron/pull/1466">macaron #1466</a><br>The build spec dropped the JDK version read from the JAR whenever the artifact recorded no language version</td>
+    <td>3 days</td>
   </tr>
   <tr>
     <td><img src="https://github.com/uuid-rs.png" width="20" height="20" alt="" align="absmiddle"> uuid-rs</td>
