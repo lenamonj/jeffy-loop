@@ -31,7 +31,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->38<!-- /count -->** | **<!-- count:prs-open -->31<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->39<!-- /count -->** | **<!-- count:prs-open -->31<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -46,7 +46,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->30<!-- /count --> open source projects have done exactly that, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->31<!-- /count --> open source projects have done exactly that, including those below.
 
 <table>
   <tr>
@@ -81,13 +81,17 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>4 days</td>
   </tr>
   <tr>
-    <td rowspan="2"><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
+    <td rowspan="3"><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
     <td><a href="https://github.com/microsoft/mimalloc/pull/1385">mimalloc #1385</a><br>The zeroing allocator returned uninitialized memory above the small-size threshold</td>
     <td>8 hours</td>
   </tr>
   <tr>
     <td><a href="https://github.com/microsoft/snmalloc/pull/878">snmalloc #878</a><br>The header-only build recipe named a CMake target removed in 2021 and include paths that resolved nowhere</td>
     <td>2 hours</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/microsoft/GSL/pull/1271">GSL #1271</a><br>The documented conversion from an iterator to its <code>const_iterator</code> was an access error at every use</td>
+    <td>4 days</td>
   </tr>
   <tr>
     <td rowspan="5"><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
