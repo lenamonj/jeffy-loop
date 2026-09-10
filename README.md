@@ -29,7 +29,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->35<!-- /count -->** | **<!-- count:prs-open -->33<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->36<!-- /count -->** | **<!-- count:prs-open -->32<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -44,7 +44,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->27<!-- /count --> open source projects have done exactly that, including the pull requests below. One row, libsrtp #822, is a finding rather than a patch: it was reported here as an issue, and a contributor read the diagnosis and wrote the fix the maintainer merged.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->28<!-- /count --> open source projects have done exactly that, including the pull requests below. One row, libsrtp #822, is a finding rather than a patch: it was reported here as an issue, and a contributor read the diagnosis and wrote the fix the maintainer merged.
 
 <table>
   <tr>
@@ -138,9 +138,29 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>1 day</td>
   </tr>
   <tr>
+    <td><img src="https://github.com/SethMMorton.png" width="20" height="20" alt="" align="absmiddle"> natsort</td>
+    <td><a href="https://github.com/SethMMorton/natsort/pull/196">natsort #196</a><br>The locale sentinel meant to sort last was three ASCII bytes, so PyICU keys sorted after it (19 million PyPI downloads a month)</td>
+    <td>8 days</td>
+  </tr>
+  <tr>
     <td><img src="https://github.com/uuid-rs.png" width="20" height="20" alt="" align="absmiddle"> uuid-rs</td>
-    <td><a href="https://github.com/uuid-rs/uuid/pull/907">uuid #907</a><br>The UUIDv7 counter lost its top four bits to the version nibble (178 million crates.io downloads in the last 90 days)</td>
+    <td><a href="https://github.com/uuid-rs/uuid/pull/907">uuid #907</a><br>The UUIDv7 counter lost its top four bits to the version nibble (179 million crates.io downloads in the last 90 days)</td>
     <td>6 days</td>
+  </tr>
+</table>
+
+## Private security
+
+<table>
+  <tr>
+    <th align="left">Reported to</th>
+    <th align="left">Outcome</th>
+    <th align="left">Answered in</th>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/anthropics.png" width="20" height="20" alt="" align="absmiddle"> Anthropic</td>
+    <td>A security issue in <a href="https://github.com/anthropics/claude-code-action">claude-code-action</a>, reported through their program and reproduced and triaged by their own security team. The details stay unpublished at their request until the report resolves.</td>
+    <td>14 days</td>
   </tr>
 </table>
 
