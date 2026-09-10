@@ -19,9 +19,11 @@ _They audit · verify · attack · and prove._
 
 </div>
 
-Jeffy Loop is an autonomous engineering system built around a simple principle: **AI agents shouldn’t just produce work. They should produce evidence that the work is correct.** Instead of asking an agent to complete a task and trusting its conclusion, Jeffy creates a continuous **Audit → Attack → Verify → Prove** loop in which specialized agents inspect the work, challenge it, validate the result, and generate an auditable record of what happened. The goal isn’t simply autonomous code generation; it is **autonomous engineering with proof** - where every claimed result is accompanied by reproducible evidence that can be independently examined.
+Jeffy Loop is an autonomous engineering system built on one principle: **AI agents shouldn’t just produce work. They should produce evidence that the work is correct.**
 
-**Jeffy treats “done” as something that must be demonstrated, not declared.** The system is designed to turn autonomous engineering from a conversational interaction into an evidence-producing process: actions leave traces, decisions have provenance, failures are exposed rather than hidden, and successful outcomes produce a durable receipt of what was changed, why it was changed, and how the result was verified.
+Every run is an **Audit → Attack → Verify → Prove** loop that ends in a receipt: what changed, why it changed, and how the result was checked.
+
+**Jeffy treats “done” as something that must be demonstrated, not declared.**
 
 ## The proof
 
