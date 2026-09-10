@@ -31,7 +31,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->36<!-- /count -->** | **<!-- count:prs-open -->32<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->38<!-- /count -->** | **<!-- count:prs-open -->31<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -46,7 +46,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->28<!-- /count --> open source projects have done exactly that, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->30<!-- /count --> open source projects have done exactly that, including those below.
 
 <table>
   <tr>
@@ -60,7 +60,7 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>1 day</td>
   </tr>
   <tr>
-    <td rowspan="4"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
+    <td rowspan="5"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
     <td><a href="https://github.com/apple/swift-log/pull/504">swift-log #504</a><br>A documented no-op setter asserted instead</td>
     <td>2 days</td>
   </tr>
@@ -74,6 +74,10 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   </tr>
   <tr>
     <td><a href="https://github.com/swiftlang/swift-format/pull/1286">swift-format #1286</a><br>Formatting in place replaced the file, so a 0600 source came back 0644 and a read-only one lost its bit</td>
+    <td>4 days</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/apple/swift-metrics/pull/244">swift-metrics #244</a><br>The package's own test kit crashed on a repeated dimension name</td>
     <td>4 days</td>
   </tr>
   <tr>
@@ -112,8 +116,12 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>3 days</td>
   </tr>
   <tr>
-    <td><img src="https://github.com/cisco.png" width="20" height="20" alt="" align="absmiddle"> Cisco<br><sub>issue, not a patch</sub></td>
-    <td><a href="https://github.com/cisco/libsrtp/issues/822">libsrtp #822</a><br>The autotools <code>configure</code> aborted on stock Ubuntu because pkg-config was forced static, so no OpenSSL build was possible; reported here with the diagnosis and fixed by another contributor's <a href="https://github.com/cisco/libsrtp/pull/823">#823</a></td>
+    <td rowspan="2"><img src="https://github.com/cisco.png" width="20" height="20" alt="" align="absmiddle"> Cisco</td>
+    <td><a href="https://github.com/cisco/libsrtp/pull/821">libsrtp #821</a><br>Encrypted packets carrying no authentication tag failed to unprotect, because the key lookup stepped a full tag length back from the packet end to find the key identifier</td>
+    <td>4 days</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/cisco/libsrtp/issues/822">libsrtp #822</a> <sub>issue, not a patch</sub><br>The autotools <code>configure</code> aborted on stock Ubuntu because pkg-config was forced static, so no OpenSSL build was possible; reported here with the diagnosis and fixed by another contributor's <a href="https://github.com/cisco/libsrtp/pull/823">#823</a></td>
     <td>3 days</td>
   </tr>
   <tr>
