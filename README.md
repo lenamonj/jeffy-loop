@@ -31,7 +31,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->39<!-- /count -->** | **<!-- count:prs-open -->31<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->41<!-- /count -->** | **<!-- count:prs-open -->31<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -46,7 +46,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->31<!-- /count --> open source projects have done exactly that, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->32<!-- /count --> open source projects have done exactly that, including those below.
 
 <table>
   <tr>
@@ -127,6 +127,15 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   <tr>
     <td><a href="https://github.com/cisco/libsrtp/issues/822">libsrtp #822</a> <sub>issue, not a patch</sub><br>The autotools <code>configure</code> aborted on stock Ubuntu because pkg-config was forced static, so no OpenSSL build was possible; reported here with the diagnosis and fixed by another contributor's <a href="https://github.com/cisco/libsrtp/pull/823">#823</a></td>
     <td>3 days</td>
+  </tr>
+  <tr>
+    <td rowspan="2"><img src="https://github.com/square.png" width="20" height="20" alt="" align="absmiddle"> Square</td>
+    <td><a href="https://github.com/square/kotlinpoet/pull/2380">kotlinpoet #2380</a><br>String literals it emitted turned CRLF into LF, and raw strings in a constant context let newlines pick up indentation</td>
+    <td>4 days</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/square/kotlinpoet/pull/2382">kotlinpoet #2382</a><br>A class in the default package got a <code>ClassName</code> whose <code>toString()</code> threw</td>
+    <td>4 days</td>
   </tr>
   <tr>
     <td rowspan="2"><img src="https://github.com/JetBrains.png" width="20" height="20" alt="" align="absmiddle"> JetBrains</td>
