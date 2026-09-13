@@ -23,6 +23,8 @@ Jeffy Loop is an autonomous engineering system built on one principle: **AI agen
 
 Every run is an **Audit → Attack → Verify → Prove** loop that ends in a receipt: what changed, why it changed, and how the result was checked.
 
+Jeffy applies recursive self-improvement to its own engine: a mistake any run makes, on Jeffy’s source or on a project it was pointed at, becomes a lesson, then a backlog item, then a release that enforces the lesson on every later run, including the next one on Jeffy itself. [How.](docs/how-it-works.md#the-loop-improves-the-loop)
+
 **Jeffy treats “done” as something that must be demonstrated, not declared.**
 
 ## The proof
