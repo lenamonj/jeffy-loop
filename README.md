@@ -33,7 +33,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->41<!-- /count -->** | **<!-- count:prs-open -->31<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->42<!-- /count -->** | **<!-- count:prs-open -->31<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -48,7 +48,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->32<!-- /count --> open source projects have done exactly that, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers across <!-- count:merged-projects -->33<!-- /count --> open source projects have done exactly that, including those below.
 
 <table>
   <tr>
@@ -57,9 +57,13 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <th align="left">Merged in</th>
   </tr>
   <tr>
-    <td><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
+    <td rowspan="2"><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
     <td><a href="https://github.com/google/snappy/pull/257">snappy #257</a><br>Every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes</td>
     <td>1 day</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/google/benchmark/pull/2294">benchmark #2294</a><br>The complexity report gave its BigO coefficient in nanoseconds whatever time unit the benchmark declared</td>
+    <td>7 days</td>
   </tr>
   <tr>
     <td rowspan="5"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
