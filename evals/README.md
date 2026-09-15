@@ -58,23 +58,7 @@ One more is not a fix and is not counted as one: a **security finding this loop 
 
 ## Contributor agreements
 
-Jeff Lenamon has entered into the following agreements: (A CLA is signed once; a
-DCO is a `Signed-off-by` line on every commit.)
-
-| Organization | Agreement | Date |
-|---|---|---|
-| Microsoft | CLA | 2026-08-31 |
-| spf13 (Steve Francia) | CLA | 2026-09-03 |
-| Google | CLA | 2026-09-06 |
-| Uber | CLA | 2026-09-06 |
-| IBM | DCO | per commit |
-| NVIDIA | DCO | per commit |
-| Spring | DCO | per commit |
-| Meta | CLA | 2026-09-06 |
-| Oracle | CLA | 2026-09-06 |
-| Dropbox | CLA | 2026-09-07 |
-| Shopify | CLA | 2026-09-07 |
-| Square | CLA | 2026-09-07 |
+The table is in [CONTRIBUTING.md](../CONTRIBUTING.md#agreements-signed-for-upstream-work).
 
 
 ## Converged targets by language

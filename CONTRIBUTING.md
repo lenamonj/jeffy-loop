@@ -2,6 +2,25 @@
 
 Thanks for wanting to improve Jeffy Loop. The bar for every change is the same one the loop holds itself to: evidence over assertion.
 
+## Agreements signed for upstream work
+
+A CLA is signed once; a DCO is a `Signed-off-by` line on every commit.
+
+| Organization | Agreement | Date |
+|---|---|---|
+| Microsoft | CLA | 2026-08-31 |
+| spf13 (Steve Francia) | CLA | 2026-09-03 |
+| Google | CLA | 2026-09-06 |
+| Uber | CLA | 2026-09-06 |
+| IBM | DCO | per commit |
+| NVIDIA | DCO | per commit |
+| Spring | DCO | per commit |
+| Meta | CLA | 2026-09-06 |
+| Oracle | CLA | 2026-09-06 |
+| Dropbox | CLA | 2026-09-07 |
+| Shopify | CLA | 2026-09-07 |
+| Square | CLA | 2026-09-07 |
+
 ## Before you open a PR
 
 Run the repo validator and make sure it is green:

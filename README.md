@@ -203,6 +203,8 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
 
 **[See every project, every patch, and every failure](evals/README.md)**
 
+**[Contributor agreements signed](CONTRIBUTING.md#agreements-signed-for-upstream-work)**
+
 ## Quick Install
 
 You need [Claude Code](https://claude.com/claude-code), signed in once, and [git](https://git-scm.com/downloads). The installer handles everything else, including `jq`.
