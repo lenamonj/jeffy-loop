@@ -33,7 +33,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->43<!-- /count -->** | **<!-- count:prs-open -->30<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->44<!-- /count -->** | **<!-- count:prs-open -->30<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -48,7 +48,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->43<!-- /count --> times, across <!-- count:merged-projects -->34<!-- /count --> open source projects, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->44<!-- /count --> times, across <!-- count:merged-projects -->34<!-- /count --> open source projects, including those below.
 
 <table>
   <tr>
@@ -87,7 +87,7 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>4 days</td>
   </tr>
   <tr>
-    <td rowspan="3"><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
+    <td rowspan="4"><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
     <td><a href="https://github.com/microsoft/mimalloc/pull/1385">mimalloc #1385</a><br>The zeroing allocator returned uninitialized memory above the small-size threshold</td>
     <td>8 hours</td>
   </tr>
@@ -98,6 +98,10 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   <tr>
     <td><a href="https://github.com/microsoft/GSL/pull/1271">GSL #1271</a><br>The documented conversion from an iterator to its <code>const_iterator</code> was an access error at every use</td>
     <td>4 days</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/microsoft/GSL/pull/1272">GSL #1272</a><br><code>dyn_array_iterator</code> declared random access but had no relational operators, no <code>-&gt;</code> and no <code>n + it</code>, so <code>std::sort</code> over a <code>dyn_array</code> did not compile</td>
+    <td>9 days</td>
   </tr>
   <tr>
     <td rowspan="6"><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
