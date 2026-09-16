@@ -33,7 +33,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->45<!-- /count -->** | **<!-- count:prs-open -->29<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->46<!-- /count -->** | **<!-- count:prs-open -->28<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -48,7 +48,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->45<!-- /count --> times, across <!-- count:merged-projects -->35<!-- /count --> open source projects, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->46<!-- /count --> times, across <!-- count:merged-projects -->35<!-- /count --> open source projects, including those below.
 
 <table>
   <tr>
