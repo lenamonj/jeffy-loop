@@ -1,9 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="media/banner-dark.png">
-  <img src="media/banner-light.png" alt="Jeffy Loop - point it at a project, give it a budget, come back to a better codebase and a report" width="900">
-</picture>
+<img src="media/hero-inspector.jpg" alt="Jeffy Loop. A white robot crouched over a glass slab of circuitry, holding a loupe to the crack it found. Done is demonstrated, not declared." width="900">
 
 [![Validate](https://img.shields.io/github/actions/workflow/status/lenamonj/jeffy-loop/validate.yml?style=for-the-badge&label=validate&logo=githubactions&logoColor=white)](https://github.com/lenamonj/jeffy-loop/actions/workflows/validate.yml)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Skill-D97757?style=for-the-badge&logo=claude&logoColor=white)](https://claude.com/claude-code)
@@ -265,6 +262,15 @@ Each one is enforced by the iteration prompt, the state files, or the Stop hook.
 
 > [!IMPORTANT]
 > **Trust model.** The engine is one shell script, `skills/jeffy/hooks/stop-hook.sh`, plus the small library beside it in `skills/jeffy/hooks/lib/`, registered as a Claude Code Stop hook. In a session with no live Jeffy state file it exits at once and does nothing. The installer writes two skill folders under `~/.claude/skills`, one hook entry in `~/.claude/settings.json`, and, only if you say yes when `jq` is missing, a `jq` install through your package manager.
+
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/logo-dark.png">
+  <img src="media/logo-light.png" alt="Jeffy Loop" width="320">
+</picture>
+
+</div>
 
 ## License
 
