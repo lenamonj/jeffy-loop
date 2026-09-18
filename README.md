@@ -54,6 +54,11 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <th align="left">Merged in</th>
   </tr>
   <tr>
+    <td><img src="https://github.com/NVIDIA.png" width="20" height="20" alt="" align="absmiddle"> NVIDIA</td>
+    <td><a href="https://github.com/NVIDIA/go-nvml/pull/207">go-nvml #207</a><br>The buffer handed to <code>dlinfo</code> for a library's directory was allocated with zero bytes, so the first <code>Path()</code> on a library opened by soname wrote past it and the next <code>dlclose</code> crashed</td>
+    <td>12 days</td>
+  </tr>
+  <tr>
     <td rowspan="2"><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
     <td><a href="https://github.com/google/snappy/pull/257">snappy #257</a><br>Every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes</td>
     <td>1 day</td>
@@ -124,11 +129,6 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   <tr>
     <td><a href="https://github.com/apache/commons-codec/pull/443">commons-codec #443</a><br>The Git tree-id builder sorted entries by UTF-16 code units where Git sorts UTF-8 bytes, so a name outside the Basic Multilingual Plane gave a different id from <code>git write-tree</code></td>
     <td>9 days</td>
-  </tr>
-  <tr>
-    <td><img src="https://github.com/NVIDIA.png" width="20" height="20" alt="" align="absmiddle"> NVIDIA</td>
-    <td><a href="https://github.com/NVIDIA/go-nvml/pull/207">go-nvml #207</a><br>The buffer handed to <code>dlinfo</code> for a library's directory was allocated with zero bytes, so the first <code>Path()</code> on a library opened by soname wrote past it and the next <code>dlclose</code> crashed</td>
-    <td>12 days</td>
   </tr>
   <tr>
     <td><img src="https://github.com/oracle.png" width="20" height="20" alt="" align="absmiddle"> Oracle</td>
