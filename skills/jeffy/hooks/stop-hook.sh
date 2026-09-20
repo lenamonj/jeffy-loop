@@ -793,20 +793,37 @@ fi
 # of it, and through 1.23 nothing opened the file, so a typed PASS stood over
 # an artifact recording REJECT. No grammar was ever stated to the gate, so
 # this reads what gates actually wrote: a line whose first word is PASS or
-# REJECT, bare or after a Verdict label, under whatever markdown decoration,
-# where the word ends the line or is followed by a full stop or a spaced
-# hyphen. Every verdict line in the 123 distinct artifacts on this machine
-# has one of those three tails, and the lines that begin with the word and
-# are not verdicts have none of them: "REJECT reasons", "REJECT reason 1
-# (Medium, ...)", a quoted "PASS: ..." line of a check's output. The gate
+# REJECT, bare or after a Verdict label, under whatever markdown decoration.
+# The word, with any closing * _ or backtick, is a verdict when the line ends
+# there, when the next character is not a letter, a digit or a blank, or when
+# blanks follow and the character after them is not a letter or a digit: a
+# full stop, a colon, a comma, a bracket, a hyphen, an em or en dash, a tick.
+# What is not a verdict is the word running on into prose: "REJECT reasons:
+# none.", "### REJECT reason 1 (Medium, ...)", "PASS rate 98%". A narrower
+# tail - end of line, a full stop, a spaced hyphen - refused honest PASS
+# artifacts over an em dash or a colon, and a gate that writes the same shape
+# each time spent the cap. The test is index() against a spelled-out
+# alphabet, never a bracket range: a range is locale-dependent in some awks,
+# and a multi-byte character is one character to gawk under UTF-8 and its
+# first byte to mawk, BSD awk and LC_ALL=C, neither of which is in the
+# alphabet. A quoted "PASS: ..." line of a check's output is a verdict by
+# this rule, so a REJECT artifact quoting one reads "both"; that was a
+# refusal already and the cap reads "both" as it reads "reject". The gate
 # writes one verdict, so an artifact carrying both kinds reads "both" and is
 # refused: taking the last one let a single PASS line appended to the
 # committed REJECT artifact converge the run.
 ev_art_verdict="$(awk '
+  function verdict(s, w,   t, c) {
+    if (index(s, w) != 1) return 0
+    t = substr(s, length(w) + 1); sub(/^[*_`]+/, "", t)
+    c = substr(t, 1, 1)
+    if (c == " " || c == "\t") { sub(/^[ \t]+/, "", t); c = substr(t, 1, 1) }
+    return c == "" || index("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", c) == 0
+  }
   { sub(/\r$/, ""); s = $0; sub(/^[ \t#>*_`-]*/, "", s) }
   match(s, /^[Vv][Ee][Rr][Dd][Ii][Cc][Tt][ \t:*_`-]*/) { s = substr(s, RLENGTH + 1) }
-  s ~ /^PASS[*_`]*([ \t]*$|\.|[ \t]+-)/ { p = 1 }
-  s ~ /^REJECT[*_`]*([ \t]*$|\.|[ \t]+-)/ { r = 1 }
+  verdict(s, "PASS") { p = 1 }
+  verdict(s, "REJECT") { r = 1 }
   END { print (p && r ? "both" : p ? "pass" : r ? "reject" : "none") }
 ' "$root/.jeffy/evaluator/$runid8${ev_art_ord:+-$ev_art_ord}.md" 2>/dev/null)"
 # Past every cap the contract can grant: three journal REJECTs, a fourth

@@ -6612,10 +6612,59 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         fault "stop hook picked one of two verdict lines by its position in the artifact"
       fi
 
-      # A verdict line is the word and then nothing, a full stop, or a spaced
-      # hyphen. Prose that merely begins with the word is not a verdict: the
+      # A verdict line is the word and then the end of the line, or anything
+      # that is not a letter, a digit or a blank, or blanks and then anything
+      # that is not a letter or a digit. The narrower tail - end of line, a
+      # full stop, a spaced hyphen - refused honest PASS artifacts closing on
+      # an em dash, a colon, a comma, a bracket or a tick, and a gate that
+      # writes the same shape each time spent the cap on them. Driven bytewise
+      # and under a UTF-8 locale where the host has one, because the dashes
+      # and the tick are multi-byte; written in octal so this file stays ASCII.
+      hb_vd_utf8="$(locale -a 2>/dev/null | grep -iE '^(C|en_US)\.utf-?8$' | head -n 1)"
+      hb_vd_bad=""
+      for hb_vd_lc in C $hb_vd_utf8; do
+        for hb_vd_t in 'PASS \342\200\224 every check holds' 'PASS\342\200\224every check holds' 'PASS \342\200\223 every check holds' \
+          'PASS: every check holds' 'PASS, with notes' 'PASS (3/3)' 'PASS \342\234\205' '**PASS**: every check holds' \
+          'Verdict: PASS \342\200\224 every check holds' 'PASS  ' 'PASS\t- every check holds'; do
+          # shellcheck disable=SC2059  # the octal escapes in the tail are the point
+          hb_write_evaluator_artifact sess-e1-000000 1 "$(printf "$hb_vd_t\n\nREJECT reasons: none.\n\nPASS rate 98%% over 3 runs.")"
+          hb_ev_commit 'jeffy: a PASS artifact with an honest tail'
+          LC_ALL="$hb_vd_lc" hb_ev_run sess-e1 ''
+          hb_ev_accepted || hb_vd_bad="$hb_vd_bad [$hb_vd_lc: $hb_vd_t]"
+        done
+      done
+      if [ -z "$hb_vd_bad" ]; then
+        pass "stop hook reads PASS followed by a dash of any kind, a colon, a comma, a bracket or a tick as the PASS it is, bytewise and under a UTF-8 locale"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused an honest PASS artifact over the punctuation after the word:$hb_vd_bad"
+      fi
+      # Blanks and then a letter or a digit is prose, and so is the word
+      # running on into a letter or a digit: none of these is a verdict.
+      hb_write_evaluator_artifact sess-e1-000000 1 "$(printf 'PASS rate 98%% over 3 runs.\n\nPASSED all of them.\n\nPASS 3 of 3\n\nPASS1\n\n### REJECT reason 1 was withdrawn\n\nREJECT reasons: none.')"
+      hb_ev_commit 'jeffy: an artifact of prose that begins with the verdict words'
+      hb_ev_run sess-e1 ''
+      if hb_ev_refused 'carries no verdict line'; then
+        pass "stop hook reads no verdict into prose that begins with PASS or REJECT and goes on with a letter or a digit"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read 'PASS rate 98%', 'PASS 3 of 3' or 'REJECT reasons: none.' as the gate's verdict"
+      fi
+      hb_write_evaluator_artifact sess-e1-000000 1 "$(printf 'REJECT \342\200\224 product.txt:1 the fix does not hold\n\nPASS rate 98%% over 3 runs.')"
+      hb_ev_commit 'jeffy: a REJECT artifact with a PASS-rate sentence'
+      hb_ev_run sess-e1 ''
+      if hb_ev_refused 'own artifact .jeffy/evaluator/sess-e1-000000-1.md records REJECT'; then
+        pass "stop hook reads a REJECT followed by an em dash, beside a PASS-rate sentence, as the REJECT it is"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook misread a REJECT artifact whose verdict is followed by an em dash"
+      fi
+
+      # Prose that merely begins with the word is not a verdict: the
       # REJECT-reasons headings real gates wrote, a summary reading "REJECT
-      # reasons: none", a quoted "PASS: ..." line of some check's output.
+      # reasons: none". A quoted "PASS: ..." line of some check's output is
+      # one, by the colon rule, so a REJECT artifact quoting it is refused as
+      # carrying two verdicts: still a refusal, under the other message.
       hb_write_evaluator_artifact sess-e1-000000 1 "$(printf '**PASS** - every check holds.\n\nREJECT reasons: none.\n\n- REJECT reasons: none')"
       hb_ev_commit 'jeffy: a PASS artifact whose summary begins with the word REJECT'
       hb_ev_run sess-e1 ''
@@ -6628,11 +6677,11 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       hb_write_evaluator_artifact sess-e1-000000 1 "$(printf 'REJECT.\n\n## REJECT reasons\n\n### REJECT reason 1 (High, runtime, correctness) - product.txt:1\n\n    PASS: the claims check holds (no unknown yes)')"
       hb_ev_commit 'jeffy: a REJECT artifact quoting a check that printed PASS:'
       hb_ev_run sess-e1 ''
-      if hb_ev_refused 'own artifact .jeffy/evaluator/sess-e1-000000-1.md records REJECT'; then
-        pass "stop hook reads a REJECT artifact that quotes a 'PASS: ...' output line as the REJECT it is"
+      if hb_ev_refused 'carries two verdicts'; then
+        pass "stop hook refuses a REJECT artifact that quotes a 'PASS: ...' output line, as carrying two verdicts"
       else
         printf '%s\n' "$hb_out"
-        fault "stop hook read a quoted 'PASS: ...' output line as the gate's verdict"
+        fault "stop hook accepted a REJECT artifact over a quoted 'PASS: ...' output line, or lost its refusal"
       fi
 
       # The legacy name alone is never the offence: a run with a base_head and
