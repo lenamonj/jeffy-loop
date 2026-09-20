@@ -38,8 +38,10 @@ fi
 # the loop invokes per iteration, so the engine holds exactly one timeout
 # ladder rather than two that can drift apart. Resolved from this script's
 # own location: the installer copies hooks/ whole, and $0 is where it landed.
-# Absence is recorded, not fatal here - the converged stop turns it into a
-# refusal, which is where failing closed belongs. (P1-50)
+# (P1-50) The lib also holds the one heading test and the one reader of
+# PLAN.md's Verify command section, which the wrapper needs when it runs
+# alone, so without it this hook can read no section: like a missing jq, the
+# stop is allowed and the reason said.
 # Loop memory, enumerated once. Three things ask "did anything outside the
 # loop's own bookkeeping move": the converged-tree check, the stall gate, and
 # (from 1.13.0) the oscillation hash. They were two copies of one regex and
@@ -110,7 +112,9 @@ if [ -f "$qv_lib" ]; then
   # shellcheck source=lib/quiet-verify.sh
   . "$qv_lib"
 else
-  qv_lib=""
+  echo "jeffy stop hook: the helper $qv_lib is missing, and it holds the heading test, the PLAN.md Verify-section reader and the verify runner; not re-feeding. Reinstall jeffy (the installer copies the whole hooks folder) and re-run /jeffy." >&2
+  [ "$lint" = 1 ] && exit 2
+  exit 0
 fi
 
 # jq is a declared prerequisite; without it the hook cannot parse its stdin,
@@ -351,18 +355,10 @@ jeffy_declaration_certified() { # $1 project root, $2 converged hash, $3 this ru
 # Sets vc_note to the disagreement, empty when none or when either side is
 # absent (an absent cell is the pre-1.18.0 shape and is said, not refused).
 vc_note=""
-jeffy_plan_field() { # $1 project root, $2 label - Verify-section scoped
-  awk -v lbl="$2" '
-    { sub(/\r$/, "") }
-    $0 == "## Verify command" { take = 1; next }
-    /^## / { take = 0 }
-    take && index($0, lbl ":") == 1 { v = substr($0, length(lbl) + 2); sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v); print v; exit }
-  ' "$1/PLAN.md" 2>/dev/null
-}
 jeffy_verify_count_note() { # $1 project root
   vc_note=""
   [ -f "$1/PLAN.md" ] || return 0
-  vc_cell="$(jeffy_plan_field "$1" 'Verify count')"
+  vc_cell="$(jeffy_plan_line "$1/PLAN.md" 'Verify count')"
   case "$vc_cell" in '' | '<'*'>') return 0 ;; esac
   vc_cellnum="$(printf '%s' "$vc_cell" | grep -oE '[0-9]+' | head -n 1)"
   [ -n "$vc_cellnum" ] || { vc_note="PLAN.md's Verify count line reads '$vc_cell', which carries no number; it holds the total the wrapper's green summary reports"; return 0; }
@@ -487,18 +483,8 @@ EOF
 # presence and content come from one pass and cannot disagree. A checkbox
 # line is read whatever its bullet or indent ("  - [ ]", "* [ ]", "+ [ ]")
 # and handed on as "- [ ]", so every matcher downstream keeps one anchor.
-# shellcheck disable=SC2016  # an awk program, not a shell expansion
-jeffy_awk_heading='function jeffy_heading(h, names,    n, want, i, p, c) {
-  sub(/\r$/, "", h); sub(/[ \t]+$/, "", h)
-  n = split(names, want, "|")
-  for (i = 1; i <= n; i++) {
-    p = "## " want[i]
-    if (index(h, p) != 1) continue
-    c = substr(h, length(p) + 1, 1)
-    if (c == "" || c == " " || c == "\t" || c == "(" || c == "-" || c == ":") return want[i]
-  }
-  return ""
-}'
+# jeffy_heading itself is defined in lib/quiet-verify.sh, whose reader of the
+# Verify command section applies the same test when the wrapper runs alone.
 jeffy_section() { # $1 file, $2 section names joined by |, $3 non-empty prefixes each line with "<Name>|"
   awk -v names="$2" -v tag="${3:-}" "$jeffy_awk_heading"'
     { sub(/\r$/, "") }
@@ -1161,12 +1147,7 @@ if [ -n "$promise" ]; then
         # Prints "=<payload>" when the line exists and nothing when it does
         # not, so an absent line and an empty one stay distinguishable.
         oracle_field() { # $1 label
-          awk -v lbl="$1" '
-            { sub(/\r$/, "") }
-            $0 == "## Verify command" { take = 1; next }
-            /^## / { take = 0 }
-            take && index($0, lbl ":") == 1 { print "=" substr($0, length(lbl) + 2); exit }
-          ' "$root/PLAN.md"
+          of_val="$(jeffy_plan_line "$root/PLAN.md" "$1")" && printf '=%s' "$of_val"
         }
         oracle_unfilled() { # $1 payload; empty or a <...> placeholder is unanswered
           case "$1" in '' | '<'*'>') return 0 ;; *) return 1 ;; esac
@@ -1174,11 +1155,7 @@ if [ -n "$promise" ]; then
         oc_raw="$(oracle_field 'Oracle class')"
         ef_raw="$(oracle_field 'Environment fingerprint')"
         oc_val="${oc_raw#=}"
-        oc_val="${oc_val#"${oc_val%%[![:space:]]*}"}"
-        oc_val="${oc_val%"${oc_val##*[![:space:]]}"}"
         ef_val="${ef_raw#=}"
-        ef_val="${ef_val#"${ef_val%%[![:space:]]*}"}"
-        ef_val="${ef_val%"${ef_val##*[![:space:]]}"}"
         if [ -z "$oc_raw" ] && [ -z "$ef_raw" ]; then
           echo "jeffy stop hook: PLAN.md's Verify command section carries no Oracle class or Environment fingerprint line; skipping the oracle declaration check." >&2
         elif [ -z "$oc_raw" ]; then
@@ -1517,45 +1494,26 @@ if [ -n "$promise" ]; then
           # The template writes prose under the heading and the command on a
           # "Command: <cmd>" line, and only that labeled line is ever run.
           # Section prose fed to bash -c is not a gate, it is an accidental
-          # command whose exit status means nothing, so a section without
-          # the label skips the check with a note instead.
-          verify_cmd="$(awk '{ sub(/\r$/, "") } /^## Verify command$/ { take = 1; next } /^## / { take = 0 } take && /^Command: / { sub(/^Command: /, ""); print; exit }' "$root/PLAN.md")"
-          # A markdown hard break is two trailing spaces, so the payload
-          # arrives padded often enough to matter: the padding defeats the
-          # backtick pattern below, which anchors on both ends, and pads the
-          # command quoted back in a violation. Trim before anything reads it.
-          verify_cmd="${verify_cmd#"${verify_cmd%%[![:space:]]*}"}"
-          verify_cmd="${verify_cmd%"${verify_cmd##*[![:space:]]}"}"
-          # Both empty payloads skip the check, and the note has to say which
-          # one it is: a section with no Command line at all is a different
-          # edit to PLAN.md than a Command line holding nothing.
-          vc_skip=""
-          if [ -z "$verify_cmd" ]; then
-            vc_skip="carries no Command line"
-          fi
-          # Markdown reflex wraps the command in backticks, and bash -c reads
-          # the pair as command substitution: it runs the output of the
-          # command instead of the command itself and exits 127. Strip one
-          # wrapping pair, only when both ends carry it and nothing between
-          # them does - a payload whose first and last backticks belong to two
-          # different substitutions is re-paired by a blind strip and then
-          # executes a command nobody wrote, and it parses, so bash -n below
-          # cannot catch it.
-          case "$verify_cmd" in
-            '`'*'`')
-              vc_inner="${verify_cmd#'`'}"; vc_inner="${vc_inner%'`'}"
-              case "$vc_inner" in
-                *'`'*) ;;
-                *) verify_cmd="$vc_inner" ;;
-              esac
-              ;;
-          esac
-          if [ -z "$verify_cmd" ] && [ -z "$vc_skip" ]; then
-            vc_skip="carries an empty Command line"
-          fi
-          if [ -n "$vc_skip" ]; then
-            echo "jeffy stop hook: the Verify command section of PLAN.md $vc_skip; skipping the verify check." >&2
-          elif [ "$verify_cmd" != "none" ]; then
+          # command whose exit status means nothing. The payload is the one
+          # the wrapper runs - jeffy_plan_command trims it and strips a
+          # wrapping backtick pair for both - so the gate the run has been
+          # watching is the gate adjudicated here.
+          # A PLAN.md with no Verify command section predates it and skips
+          # with a note. A section that yields no command is refused, and
+          # the refusal says which edit it is: a section with no Command
+          # line at all is a different one than a Command line holding
+          # nothing. Skipping both let the converged stop run no gate with
+          # a stderr note nobody reads; the ungated form is `Command: none`.
+          verify_cmd="$(jeffy_plan_command "$root/PLAN.md")"
+          vc_rc=$?
+          if [ "$vc_rc" -eq 2 ]; then
+            echo "jeffy stop hook: PLAN.md carries no Verify command section; skipping the verify check." >&2
+          elif [ "$vc_rc" -ne 0 ]; then
+            violation="the Verify command section of PLAN.md carries no Command line, so no gate was run; write the project's real gate as a labeled line reading Command: <cmd>, or Command: none with a one-line reason if the project genuinely has no runnable gate, then re-declare convergence"
+          elif [ -z "$verify_cmd" ]; then
+            violation="the Verify command section of PLAN.md carries an empty Command line, so no gate was run; write the project's real gate after the label, or none with a one-line reason if the project genuinely has no runnable gate, then re-declare convergence"
+          elif [ "$verify_cmd" != none ] && [ "$verify_cmd" != None ] && [ "$verify_cmd" != NONE ]; then
+            # none in the three spellings the wrapper reads as not configured.
             # An annotated line (cargo test (419 tests)) is not runnable
             # shell, and running it reports the parse failure as a mystery
             # exit status. Parse it first and name the defect; never guess
@@ -1583,13 +1541,6 @@ if [ -n "$promise" ]; then
               esac
               if [ -n "$vc_lint" ]; then
                 violation="the Verify command ($verify_cmd) ends in $vc_lint, so its exit status is the truncator's, not the suite's; drop the trailing stage, then re-declare convergence"
-              elif [ -z "$qv_lib" ]; then
-                # The bound and the runner live in lib/quiet-verify.sh so the
-                # engine holds exactly one timeout ladder. Without it there is
-                # no way to re-run the gate, and a convergence this hook could
-                # not verify is precisely what it exists to refuse: fail
-                # closed and name the missing file. (P1-50)
-                violation="the verify helper skills/jeffy/hooks/lib/quiet-verify.sh is missing, so the Verify command cannot be re-run; reinstall jeffy (the installer copies the whole hooks folder), then re-declare convergence"
               elif [ "$lint" = 1 ]; then
                 # Lint never executes the Verify command: the run has the
                 # wrapper for that, and a read-only pass runs nothing.

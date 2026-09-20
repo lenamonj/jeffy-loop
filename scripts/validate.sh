@@ -658,6 +658,49 @@ else
   else
     fault "quiet-verify does not meet its contract (see the lines above)"
   fi
+
+  # The wrapper runs the Command the converged stop runs. It ran the raw
+  # payload while the hook trimmed it and stripped a wrapping backtick pair,
+  # so a backticked gate was exit 127 on a healthy suite every iteration (ada,
+  # classnames, dayjs) and a `none` behind a markdown hard break was executed
+  # as a command named none. Both consumers now take the payload from one
+  # reader, which also reads the section under a heading that goes on past
+  # its name, and a Command line holding nothing is named rather than
+  # reported as not configured - the hook refuses it at the declaration.
+  qv_tmp="$(mktemp -d)"
+  qv_plan="$qv_tmp/PLAN.md"
+  qv_bad=0
+  # shellcheck disable=SC2016  # literal backticks are the fixture
+  qv_case 'Command: `echo 5 passed`  ' 'Oracle class: deterministic'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  a backticked Command was not run as the hook runs it: [$(cat "$qv_tmp/err")]"
+  fi
+  qv_case 'Command: none  ' 'Oracle class: deterministic'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err" ||
+    ! grep -q 'not configured' "$qv_tmp/err"; then
+    qv_bad=1; echo "  a padded none was not read as none: [$(cat "$qv_tmp/err")]"
+  fi
+  printf '## Verify command (the gate) \nCommand: bash -c "exit 3"\nOracle class: deterministic\n' > "$qv_plan"
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  if [ "$?" -ne 3 ]; then
+    qv_bad=1; echo "  the Command under a suffixed Verify command heading was not run: [$(cat "$qv_tmp/err")]"
+  fi
+  qv_case 'Command:' 'Oracle class: deterministic'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  if [ "$?" -ne 2 ] || ! grep -q 'Command line is empty' "$qv_tmp/err"; then
+    qv_bad=1; echo "  an empty Command line was not named: [$(cat "$qv_tmp/err")]"
+  fi
+  # The nearest legal lines: no space after the colon has always run here.
+  qv_case 'Command:true' 'Oracle class: deterministic'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  Command:true no longer runs: [$(cat "$qv_tmp/err")]"
+  fi
+  rm -rf "$qv_tmp"
+  if [ "$qv_bad" -eq 0 ]; then
+    pass "quiet-verify runs the Command payload the converged stop runs (trimmed, one backtick pair stripped, any spelling of the heading) and names an empty one"
+  else
+    fault "quiet-verify and the stop hook read different Commands from one PLAN.md (see the lines above)"
+  fi
 fi
 
 # One ladder, two callers. The hook must resolve its converged-stop bound
@@ -4527,41 +4570,44 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         fault "stop hook executed a Command line that is not runnable shell"
       fi
 
-      # E1: with the bare-first-line fallback deleted, a Verify section
-      # that names no Command line skips the check with a stderr note the
-      # way every other infrastructure defect does. Prose is never shell.
+      # E1: with the bare-first-line fallback deleted, prose is never shell.
+      # A Verify section that names no Command line used to skip the check
+      # with a stderr note, so the converged stop ran no gate and said so
+      # nowhere the run reads; the ungated form is `Command: none`, and a
+      # section that does not say it is refused.
       hb_write_state sess-1 1 3
       printf '# Plan\n\n## Verify command\nRun the full suite before declaring; see CONTRIBUTING.md.\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
       hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
-        && grep -q 'carries no Command line' "$hb_tmp/hb_err.txt" \
-        && grep -q 'skipping the verify check' "$hb_tmp/hb_err.txt"; then
-        pass "stop hook skips the verify check when the Verify section has no Command line (stderr note)"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'carries no Command line' \
+        && grep -q '^iteration: 2$' "$hb_state"; then
+        pass "stop hook refuses a declaration whose Verify section has no Command line"
       else
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt"
-        fault "stop hook ran the prose of a Verify section that names no Command line"
+        fault "stop hook accepted a declaration whose Verify section names no Command line, with no gate run"
       fi
+      rm -f "$hb_state"
 
       # The other empty payload: a Command line holding a bare pair of
       # backticks is empty only after the strip, and it is a different edit
-      # to PLAN.md than a section with no Command line at all, so the note
+      # to PLAN.md than a section with no Command line at all, so the refusal
       # has to name the line rather than deny it exists.
       hb_write_state sess-1 1 3
       # shellcheck disable=SC2016
       hb_write_plan_full '``' "$hb_p1_row"
       hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
-        && grep -q 'carries an empty Command line' "$hb_tmp/hb_err.txt" \
-        && grep -q 'skipping the verify check' "$hb_tmp/hb_err.txt"; then
-        pass "stop hook reports a Command line emptied by the backtick strip as an empty Command line"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'carries an empty Command line'; then
+        pass "stop hook refuses a Command line emptied by the backtick strip as an empty Command line"
       else
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt"
         fault "stop hook misdiagnosed a Command line emptied by the backtick strip"
       fi
+      rm -f "$hb_state"
 
       # The fallback's own target shape - a bare command as the section's
       # first non-empty line - proves the deletion: the marker must not
@@ -4571,13 +4617,79 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       printf '# Plan\n\n## Verify command\ntouch p1-prose-ran.txt\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
       hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && [ ! -f "$hb_proj/p1-prose-ran.txt" ]; then
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] && [ ! -f "$hb_proj/p1-prose-ran.txt" ]; then
         pass "stop hook no longer executes a bare first line as the Verify command (fallback deleted)"
       else
         printf '%s\n' "$hb_out"
         fault "stop hook executed an unlabeled first line as the Verify command"
       fi
-      rm -f "$hb_proj/p1-prose-ran.txt"
+      rm -f "$hb_proj/p1-prose-ran.txt" "$hb_state"
+
+      # The hook and the wrapper read one Command. The hook wanted the space
+      # after the colon, so `Command:false` was no Command at all here - the
+      # converged stop ran nothing - while the wrapper had been running it
+      # red every iteration.
+      hb_write_state sess-1 1 3
+      printf '# Plan\n\n## Verify command\nCommand:false\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'the Verify command (false) exited 1'; then
+        pass "stop hook runs a Command line written with no space after the colon, as the wrapper does"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read Command:false as no Command line and ran no gate at the converged stop"
+      fi
+      rm -f "$hb_state"
+
+      # A heading that goes on past its name is still the section: byte-exact,
+      # "## Verify command (the gate)" or one trailing space hid the Command
+      # line and both oracle lines, and the declaration passed unverified.
+      hb_write_state sess-1 1 3
+      printf '# Plan\n\n## Verify command (the gate) \nCommand: exit 3\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'the Verify command (exit 3) exited 3'; then
+        pass "stop hook runs the Command under a suffixed Verify command heading"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook lost the Command line under a Verify command heading that goes on past its name"
+      fi
+      rm -f "$hb_state"
+
+      hb_write_state sess-1 1 3
+      printf '# Plan\n\n## Verify command \nCommand: none\nEnvironment fingerprint: linux, bash 5\n\n## Surface inventory\n%s\n' "$hb_p1_row" > "$hb_proj/PLAN.md"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'but no Oracle class line'; then
+        pass "stop hook reads the oracle lines under a Verify command heading with a trailing space"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook skipped the oracle declaration check under a Verify command heading with a trailing space"
+      fi
+      rm -f "$hb_state"
+
+      # The legal neighbours: a green Command with no space after the colon,
+      # the ungated form in the capitalisation the wrapper has always taken,
+      # and a PLAN.md that predates the section all still close.
+      hb_p1_legal=""
+      for hb_p1_sec in '## Verify command\nCommand:true\n\n' '## Verify command\nCommand: None  \n\n' ''; do
+        hb_write_state sess-1 1 3
+        # shellcheck disable=SC2059  # the section is a format fragment on purpose
+        printf "# Plan\n\n$hb_p1_sec## Surface inventory\n%s\n" "$hb_p1_row" > "$hb_proj/PLAN.md"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then hb_p1_legal="${hb_p1_legal}y"; else hb_p1_legal="${hb_p1_legal}n"; printf '%s\n' "$hb_out"; fi
+        rm -f "$hb_state"
+      done
+      if [ "$hb_p1_legal" = "yyy" ] && grep -q 'carries no Verify command section; skipping the verify check' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook still closes on Command:true, on Command: None, and on a PLAN.md with no Verify command section (stderr note)"
+      else
+        cat "$hb_tmp/hb_err.txt"
+        fault "stop hook refused a legal Verify section (Command:true, Command: None, no section: $hb_p1_legal)"
+      fi
 
       # Regression guard for the bash -n check: parentheses inside quotes
       # are legitimate shell and must still run. The check rejects

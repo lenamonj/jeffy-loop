@@ -29,33 +29,83 @@
 #   exit rc  : stderr `verify: FAILED (exit rc, Ns) - last N lines:` + last N
 #   timeout  : stderr `verify: TIMEOUT after Ns - last 20 lines:` + tail, exit 124
 #   none     : stderr `verify: not configured`, exit 0 (preserves fail-open)
+#   empty    : stderr `verify: the Command line is empty`, exit 2
 #   no oracle: stderr `verify: oracle class not declared`, exit 2
 set -u
 
-# PLAN.md labelled-line reader. Prints the payload; prints nothing when the
-# label is absent. An absent label and a label with an empty payload are
-# different states and the callers below treat them differently, so this
-# reports presence separately through its exit status: 0 when the label
-# exists, 1 when it does not.
+# The one heading test, shared with the hook's jeffy_section (the hook sources
+# this file, and the wrapper runs it alone, so it lives here): CR and trailing
+# whitespace are dropped, and the heading is the section when it reads
+# "## <Name>" alone or goes on with a space, a tab, "(", "-" or ":" - a
+# suffixed heading is read as the section, because refusing to read it is a
+# silent skip. "## Nowhere" is not Now.
+# shellcheck disable=SC2016  # an awk program, not a shell expansion
+jeffy_awk_heading='function jeffy_heading(h, names,    n, want, i, p, c) {
+  sub(/\r$/, "", h); sub(/[ \t]+$/, "", h)
+  n = split(names, want, "|")
+  for (i = 1; i <= n; i++) {
+    p = "## " want[i]
+    if (index(h, p) != 1) continue
+    c = substr(h, length(p) + 1, 1)
+    if (c == "" || c == " " || c == "\t" || c == "(" || c == "-" || c == ":") return want[i]
+  }
+  return ""
+}'
+
+# PLAN.md labelled-line reader, the only one: the wrapper and every hook check
+# that reads a `## Verify command` field come through here, because two
+# readers of one line disagreed in both directions - the hook wanted
+# "Command: " with its space and read `Command:false` as no Command at all,
+# so the converged stop ran no gate the wrapper had been running all along,
+# and the hook trimmed the payload the wrapper ran raw. Prints the payload
+# with the whitespace around it dropped (a markdown hard break is two trailing
+# spaces); prints nothing when the label is absent. An absent label and a
+# label with an empty payload are different states and the callers treat them
+# differently, so presence is the exit status: 0 when the label exists, 1
+# when the section exists without it, 2 when the file has no such section.
 jeffy_plan_line() { # $1 plan path, $2 label
-  # Scoped to the `## Verify command` section exactly as the hook's own reader
-  # is (P1-59): through 1.14.0 this took the first matching label anywhere in
-  # the file, so a `Command:` line quoted under Lessons made the per-iteration
-  # wrapper run one command and the converged stop another.
-  [ -f "$1" ] || return 1
-  awk -v lbl="$2" '
+  # Scoped to the `## Verify command` section (P1-59): through 1.14.0 this
+  # took the first matching label anywhere in the file, so a `Command:` line
+  # quoted under Lessons made the per-iteration wrapper run one command and
+  # the converged stop another.
+  [ -f "$1" ] || return 2
+  awk -v lbl="$2" "$jeffy_awk_heading"'
     { sub(/\r$/, "") }
-    $0 == "## Verify command" { take = 1; next }
-    /^## / { take = 0 }
+    /^## / { take = (jeffy_heading($0, "Verify command") != ""); if (take) sec = 1; next }
     take && index($0, lbl "\x3a") == 1 {
       v = substr($0, length(lbl) + 2)
-      sub(/^[ \t]+/, "", v)
+      sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
       print v
       found = 1
       exit
     }
-    END { exit(found ? 0 : 1) }
+    END { exit(found ? 0 : (sec ? 1 : 2)) }
   ' "$1"
+}
+
+# The Command payload as both consumers run it. Markdown reflex wraps the
+# command in backticks, and bash -c reads the pair as command substitution: it
+# runs the output of the command instead of the command itself and exits 127.
+# Strip one wrapping pair, only when both ends carry it and nothing between
+# them does - a payload whose first and last backticks belong to two
+# different substitutions is re-paired by a blind strip and then executes a
+# command nobody wrote, and it parses, so bash -n cannot catch it. Exit status
+# as jeffy_plan_line.
+jeffy_plan_command() { # $1 plan path
+  jpc_plan="$1"
+  jpc_cmd="$(jeffy_plan_line "$jpc_plan" 'Command')"
+  jpc_rc=$?
+  case "$jpc_cmd" in
+    '`'*'`')
+      jpc_inner="${jpc_cmd#'`'}"; jpc_inner="${jpc_inner%'`'}"
+      case "$jpc_inner" in
+        *'`'*) ;;
+        *) jpc_cmd="$jpc_inner" ;;
+      esac
+      ;;
+  esac
+  printf '%s' "$jpc_cmd"
+  return "$jpc_rc"
 }
 
 # The verify bound, resolved exactly once for the whole engine: an explicit
@@ -143,10 +193,15 @@ qv_main() {
   qv_root="${2:-$(dirname "$qv_plan")}"
   [ -f "$qv_plan" ] || { echo "verify: no PLAN.md at $qv_plan" >&2; exit 2; }
 
-  qv_cmd="$(jeffy_plan_line "$qv_plan" 'Command')" || {
+  qv_cmd="$(jeffy_plan_command "$qv_plan")" || {
     echo "verify: PLAN.md carries no Command: line" >&2; exit 2; }
   case "$qv_cmd" in
-    '' | none | None | NONE)
+    '')
+      # The converged stop refuses this line, so the run hears it here first.
+      echo "verify: the Command line is empty; write the project's real gate, or none and a one-line reason" >&2
+      exit 2
+      ;;
+    none | None | NONE)
       echo "verify: not configured" >&2
       exit 0
       ;;
