@@ -36,9 +36,10 @@ set -u
 # The one heading test, shared with the hook's jeffy_section (the hook sources
 # this file, and the wrapper runs it alone, so it lives here): CR and trailing
 # whitespace are dropped, and the heading is the section when it reads
-# "## <Name>" alone or goes on with a space, a tab, "(", "-" or ":" - a
-# suffixed heading is read as the section, because refusing to read it is a
-# silent skip. "## Nowhere" is not Now.
+# "## <Name>" alone or goes on with a space, a tab, "(" or ":" - a suffixed
+# heading is read as the section. "## Nowhere" is not Now, and neither is
+# "## Next-gen ideas" Next: a hyphen straight after the name is another word,
+# and a dash after a space ("## Next - queued") is already the space rule.
 # shellcheck disable=SC2016  # an awk program, not a shell expansion
 jeffy_awk_heading='function jeffy_heading(h, names,    n, want, i, p, c) {
   sub(/\r$/, "", h); sub(/[ \t]+$/, "", h)
@@ -47,10 +48,25 @@ jeffy_awk_heading='function jeffy_heading(h, names,    n, want, i, p, c) {
     p = "## " want[i]
     if (index(h, p) != 1) continue
     c = substr(h, length(p) + 1, 1)
-    if (c == "" || c == " " || c == "\t" || c == "(" || c == "-" || c == ":") return want[i]
+    if (c == "" || c == " " || c == "\t" || c == "(" || c == ":") return want[i]
   }
   return ""
 }'
+
+# The heading a writer meant when jeffy_heading found no section: the first
+# heading line of any depth whose text begins with the section's words in any
+# case ("## Verify commands", "## Surface Inventory", "### Verify command").
+# The declaration refuses an absent section, and quoting the near miss is what
+# makes that refusal a one-line repair.
+jeffy_near_heading() { # $1 file, $2 section name
+  awk -v name="$2" "$jeffy_awk_heading"'
+    { sub(/\r$/, "") }
+    /^#+/ {
+      h = $0; sub(/^#+[ \t]*/, "", h)
+      if (index(tolower(h), tolower(name)) == 1 && jeffy_heading($0, name) == "") { print; exit }
+    }
+  ' "$1" 2>/dev/null
+}
 
 # PLAN.md labelled-line reader, the only one: the wrapper and every hook check
 # that reads a `## Verify command` field come through here, because two

@@ -479,13 +479,18 @@ EOF
 # underived premise with no note; the ledger scans were exact on both sides
 # and blind the same way. jeffy_heading is the one heading test: trailing CR
 # and whitespace are dropped, and the heading is the section when it reads
-# "## <Name>" alone or goes on with a space, a tab, "(", "-" or ":" - a
-# suffixed heading is read as the section, because refusing to read it is the
-# silent skip again. "## Nowhere" is not Now. jeffy_section prints the lines
+# "## <Name>" alone or goes on with a space, a tab, "(" or ":" - a suffixed
+# heading is read as the section, and "## Nowhere" and "## Next-gen ideas"
+# are not Now or Next. jeffy_section prints the lines
 # under the named sections and its exit status says whether any was found, so
 # presence and content come from one pass and cannot disagree. A checkbox
 # line is read whatever its bullet or indent ("  - [ ]", "* [ ]", "+ [ ]")
 # and handed on as "- [ ]", so every matcher downstream keeps one anchor.
+# One exception, in the ledger: under Now, Next and Later a line that is not a
+# top-level "- [ ]" is a task only when it carries a severity in the task
+# line's own form. An indented checkbox with none is a sub-step of the task
+# above it, and handing it on made it an open task with no parseable
+# severity, which blocks. A top-level "- [ ]" keeps the fail-closed rule.
 # jeffy_heading itself is defined in lib/quiet-verify.sh, whose reader of the
 # Verify command section applies the same test when the wrapper runs alone.
 jeffy_section() { # $1 file, $2 section names joined by |, $3 non-empty prefixes each line with "<Name>|"
@@ -493,7 +498,9 @@ jeffy_section() { # $1 file, $2 section names joined by |, $3 non-empty prefixes
     { sub(/\r$/, "") }
     /^## / { sec = jeffy_heading($0, names); if (sec != "") found = 1; next }
     sec == "" { next }
-    /^[ \t]*[-*+] \[.\]/ { sub(/^[ \t]*[-*+] /, "- ") }
+    /^[ \t]*[-*+] \[.\]/ {
+      if ((sec != "Now" && sec != "Next" && sec != "Later") || /^- / || /^[ \t]*[-*+] \[.\] [^ ]+ \((High|Medium|Low)[,)]/) sub(/^[ \t]*[-*+] /, "- ")
+    }
     { if (tag != "") print sec "|" $0; else print }
     END { exit !found }
   ' "$1" 2>/dev/null
@@ -972,8 +979,9 @@ if [ -n "$promise" ]; then
       # surface. Dimension scores claim only what an audit examined, so an
       # unswept row is unexamined code behind a clean-looking score - a
       # None on a dimension whose surface was never opened is silence, not
-      # cleanliness. A PLAN.md without the section predates this check and
-      # fails open with a stderr note.
+      # cleanliness. A PLAN.md without the section is refused: skipping with
+      # a stderr note made one letter on the heading, or deleting it, the
+      # price of declaring over an unswept map.
       if [ "$hunt" = 0 ] && [ -z "$violation" ] && [ -f "$root/PLAN.md" ]; then
         if inv_rows="$(jeffy_section "$root/PLAN.md" 'Surface inventory')"; then
           unswept="$(printf '%s\n' "$inv_rows" | grep '^- \[ \]' | head -n 1)"
@@ -988,7 +996,9 @@ if [ -n "$promise" ]; then
             violation="the Surface inventory in PLAN.md lists ${inv_counts%% *} row(s) and none is swept: a [~] row is not swept, it discloses surface this host cannot reach, and a convergence claim covers surface an audit opened; sweep the rows this host can reach and record each as - [x] with its commit, then re-declare convergence"
           fi
         else
-          echo "jeffy stop hook: PLAN.md has no Surface inventory section; skipping the inventory check." >&2
+          inv_near="$(jeffy_near_heading "$root/PLAN.md" 'Surface inventory')"
+          [ -n "$inv_near" ] && inv_near="; the heading \"$inv_near\" begins with the same words and is not read as that section, which is ## Surface inventory alone or followed by a space, a tab, ( or :"
+          violation="PLAN.md has no Surface inventory section, and a convergence claim covers the mapped surface, so a map this hook cannot read is refused rather than skipped$inv_near; add the heading ## Surface inventory to PLAN.md with one row per surface beneath it - an unswept row as - [ ] <surface>: <scope>, a swept one as - [x] <surface>: swept at <commit> via .jeffy/probes/<battery> - <what the sweep exercised> - sweep every row, then re-declare convergence"
         fi
       fi
       # P0-6: a swept row is a claim about code at a commit, and the code
@@ -1503,8 +1513,9 @@ if [ -n "$promise" ]; then
           # the wrapper runs - jeffy_plan_command trims it and strips a
           # wrapping backtick pair for both - so the gate the run has been
           # watching is the gate adjudicated here.
-          # A PLAN.md with no Verify command section predates it and skips
-          # with a note. A section that yields no command is refused, and
+          # A PLAN.md with no Verify command section is refused: skipping
+          # with a note made one letter on the heading the price of declaring
+          # with no gate run. A section that yields no command is refused, and
           # the refusal says which edit it is: a section with no Command
           # line at all is a different one than a Command line holding
           # nothing. Skipping both let the converged stop run no gate with
@@ -1512,7 +1523,9 @@ if [ -n "$promise" ]; then
           verify_cmd="$(jeffy_plan_command "$root/PLAN.md")"
           vc_rc=$?
           if [ "$vc_rc" -eq 2 ]; then
-            echo "jeffy stop hook: PLAN.md carries no Verify command section; skipping the verify check." >&2
+            vc_near="$(jeffy_near_heading "$root/PLAN.md" 'Verify command')"
+            [ -n "$vc_near" ] && vc_near="; the heading \"$vc_near\" begins with the same words and is not read as that section, which is ## Verify command alone or followed by a space, a tab, ( or :"
+            violation="PLAN.md has no Verify command section, so no gate was run$vc_near; add the heading ## Verify command to PLAN.md with the project's real gate beneath it as a labeled line reading Command: <cmd>, or Command: none with a one-line reason if the project genuinely has no runnable gate, then re-declare"
           elif [ "$vc_rc" -ne 0 ]; then
             violation="the Verify command section of PLAN.md carries no Command line, so no gate was run; write the project's real gate as a labeled line reading Command: <cmd>, or Command: none with a one-line reason if the project genuinely has no runnable gate, then re-declare convergence"
           elif [ -z "$verify_cmd" ]; then

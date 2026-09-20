@@ -2071,8 +2071,10 @@ if command -v jq >/dev/null 2>&1; then
     hb_write_plan() { # $1 command for PLAN.md's Command: line
       # The labeled line is the only shape the hook executes (the bare
       # first-line fallback was removed in 1.5.0), so every fixture that
-      # wants its command run writes it here.
-      printf '# Plan\n\n## Verify command\nCommand: %s\n' "$1" > "$hb_proj/PLAN.md"
+      # wants its command run writes it here. The map holds one swept row,
+      # because from 1.24.0 a declaration over a PLAN.md with no Surface
+      # inventory section is refused.
+      printf '# Plan\n\n## Verify command\nCommand: %s\n\n## Surface inventory\n- [x] core: swept at abc1234 - all entry points probed\n' "$1" > "$hb_proj/PLAN.md"
     }
     hb_write_plan_full() { # $1 Command: payload, $2... Surface inventory rows, one per line
       hb_cmd="$1"; shift
@@ -2602,15 +2604,22 @@ if command -v jq >/dev/null 2>&1; then
     fi
     hb_write_journal 1 3
 
+    # Through 1.23 a PLAN.md with no map failed open with a stderr note, and
+    # deleting the heading was then the price of declaring over an unswept
+    # one. It is refused, and the refusal says what to add.
     hb_write_state sess-1 1 3
-    hb_write_plan none
+    printf '# Plan\n\n## Verify command\nCommand: none\n' > "$hb_proj/PLAN.md"
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'no Surface inventory' "$hb_tmp/hb_err.txt"; then
-      pass "stop hook fails open on a PLAN.md without a Surface inventory section (stderr note)"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'PLAN.md has no Surface inventory section' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'add the heading ## Surface inventory' \
+      && [ -f "$hb_state" ]; then
+      pass "stop hook refuses a declaration over a PLAN.md without a Surface inventory section, naming the heading to add"
     else
       printf '%s\n' "$hb_out"
       fault "stop hook mishandled a pre-inventory PLAN.md at the converged stop"
     fi
+    hb_write_plan none
 
     # P1-46: a Declined entry's premise is a claim the declaration rests on,
     # and it was the one state-file claim the closing sequence never
@@ -2665,9 +2674,9 @@ if command -v jq >/dev/null 2>&1; then
     # the same before and after.
     hb_sec_high='[ ] H1 (High, runtime, correctness): parser returns the wrong value. Acceptance: bash t.sh'
     hb_sec_row='- [x] core: swept at abc1234 - all entry points probed'
-    hb_sec_stage() { # $1 inventory heading, $2 inventory row, $3 BACKLOG.md body (%b), $4 message
+    hb_sec_stage() { # $1 inventory heading, $2 inventory row, $3 BACKLOG.md body (%b), $4 message, $5 Verify section (%b)
       hb_write_state sess-1 1 3
-      printf '# Plan\n\n%s\n\n%s\n\n## Verify command\nCommand: none\n' "$1" "$2" > "$hb_proj/PLAN.md"
+      printf '# Plan\n\n%s\n\n%s\n\n%b\n' "$1" "$2" "${5:-## Verify command\nCommand: none}" > "$hb_proj/PLAN.md"
       printf '# Backlog\n\n%b' "$3" > "$hb_proj/BACKLOG.md"
       hb_out="$(hb_run sess-1 "${4:-done <promise>JEFFY CONVERGED</promise>}" '' 2>"$hb_tmp/hb_err.txt")"
     }
@@ -2777,6 +2786,115 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook read an indented or starred Low as a task with no parseable severity"
     fi
     hb_write_journal 1 3
+
+    # An absent section refuses. jeffy_heading decides which suffixes are the
+    # section, and both callers then skipped their check on "absent" with a
+    # stderr note, so one letter on the heading - "## Surface inventoryX",
+    # "## Verify commands" - or deleting the section turned the check off. The
+    # refusal names the heading it wants and quotes the near miss.
+    hb_sec_clean="## Now\n\n## Next\n\n## Later\n\n## Converged\n"
+    hb_sec_bad=""
+    for hb_sec_h in '## Surface inventoryX' '## Surface Inventory' '### Surface inventory'; do
+      hb_sec_stage "$hb_sec_h" '- [ ] plots: unswept' "$hb_sec_clean"
+      hb_sec_refused 'PLAN.md has no Surface inventory section' && hb_sec_refused "the heading \"$hb_sec_h\" begins with the same words" \
+        && hb_sec_refused 'add the heading ## Surface inventory' || hb_sec_bad="$hb_sec_bad [$hb_sec_h]"
+    done
+    hb_sec_stage '' '' "$hb_sec_clean"
+    hb_sec_refused 'PLAN.md has no Surface inventory section' && hb_sec_refused 'add the heading ## Surface inventory' \
+      && ! hb_sec_refused 'begins with the same words' || hb_sec_bad="$hb_sec_bad [no section]"
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook refuses a declaration whose PLAN.md has no Surface inventory section, and quotes a near-miss heading"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook skipped the inventory check over a Surface inventory heading it does not read, under:$hb_sec_bad"
+    fi
+
+    hb_sec_bad=""
+    for hb_sec_h in '## Verify commands' '## Verify Command' '## Verify command-line'; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_row" "$hb_sec_clean" '' "$hb_sec_h\nCommand: exit 1"
+      hb_sec_refused 'PLAN.md has no Verify command section' && hb_sec_refused "the heading \"$hb_sec_h\" begins with the same words" \
+        && hb_sec_refused 'add the heading ## Verify command' || hb_sec_bad="$hb_sec_bad [$hb_sec_h]"
+    done
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "$hb_sec_clean" '' 'No gate section here.'
+    hb_sec_refused 'PLAN.md has no Verify command section' && hb_sec_refused 'Command: none' \
+      && ! hb_sec_refused 'begins with the same words' || hb_sec_bad="$hb_sec_bad [no section]"
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook refuses a declaration whose PLAN.md has no Verify command section, and quotes a near-miss heading"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook ran no gate over a Verify command heading it does not read, under:$hb_sec_bad"
+    fi
+
+    # --lint reports the same two refusals, and an ordinary turn keeps going.
+    hb_sec_stage '## Surface inventoryX' '- [ ] plots: unswept' "$hb_sec_clean" 'still working'
+    hb_sec_lint1="$(bash "$hb_hook" --lint "$hb_proj" 2>&1 < /dev/null)"; hb_sec_lint1_rc=$?
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "$hb_sec_clean" 'still working' '## Verify commands\nCommand: exit 1'
+    hb_sec_lint2="$(bash "$hb_hook" --lint "$hb_proj" 2>&1 < /dev/null)"; hb_sec_lint2_rc=$?
+    if [ "$hb_sec_lint1_rc" -eq 1 ] && printf '%s' "$hb_sec_lint1" | grep -qF "would be refused - PLAN.md has no Surface inventory section" \
+      && [ "$hb_sec_lint2_rc" -eq 1 ] && printf '%s' "$hb_sec_lint2" | grep -qF "would be refused - PLAN.md has no Verify command section" \
+      && hb_sec_refused 'Do the jeffy iteration now.' && ! hb_sec_refused 'has no Verify command section'; then
+      pass "stop hook --lint reports an absent Surface inventory or Verify command section, and an ordinary turn is re-fed without the refusal"
+    else
+      printf 'rc=%s %s\nrc=%s %s\n%s\n' "$hb_sec_lint1_rc" "$hb_sec_lint1" "$hb_sec_lint2_rc" "$hb_sec_lint2" "$hb_out"
+      fault "stop hook --lint passed a PLAN.md whose Surface inventory or Verify command section is absent"
+    fi
+
+    # A hunt never sweeps, so its PLAN.md owes no map; it still owes a gate.
+    hb_sec_stage '' '' "## Now\n\n## Hunted\n" 'still working'
+    hb_state_addkey 'mode: highs'
+    hb_sec_lint1="$(bash "$hb_hook" --lint "$hb_proj" 2>&1 < /dev/null)"
+    if printf '%s' "$hb_sec_lint1" | grep -qF 'jeffy lint:' && ! printf '%s' "$hb_sec_lint1" | grep -qF 'Surface inventory section'; then
+      pass "stop hook asks no Surface inventory section of a hunt"
+    else
+      printf '%s\n' "$hb_sec_lint1"
+      fault "stop hook demanded a Surface inventory section of a hunt, which never sweeps"
+    fi
+    rm -f "$hb_state"
+
+    # A hyphen straight after the name is another word, not a suffix:
+    # "## Next-gen ideas" was read as the Next section and the unchecked box
+    # under it refused an honest declaration. "## Next - queued" is driven
+    # above and is still Next.
+    hb_sec_bad=""
+    for hb_sec_h in '## Next-gen ideas' '## Now-ish' '## Later-maybe'; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n## Next\n\n## Later\n\n$hb_sec_h\n\n- [ ] N9 (High, runtime, correctness): someday\n\n## Converged\n"
+      [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [$hb_sec_h]"
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook reads no ledger section into a heading that continues its name with a hyphen"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused an honest declaration over prose under a hyphenated heading:$hb_sec_bad"
+    fi
+
+    # An indented checkbox with no severity is a sub-step of the task above
+    # it, not a task: counted, it has no parseable severity and blocks. An
+    # indented or starred line that does carry a severity is a task (above).
+    hb_sec_bad=""
+    for hb_sec_m in '  - [ ] ' '\t* [ ] ' '+ [ ] ' '    - [ ] (no id) '; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [x] T1 (Low, docs, documentation): done.\n${hb_sec_m}sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
+      [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [$hb_sec_m]"
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook reads an indented or starred checkbox with no severity as a sub-step, not an open task"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook blocked an honest declaration on a sub-step checkbox with no severity:$hb_sec_bad"
+    fi
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [ ] sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
+    if hb_sec_refused 'no parseable severity' && hb_sec_refused 'sub-step nobody scored'; then
+      pass "stop hook still blocks on a top-level open task with no parseable severity"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let a top-level task line with no severity through the floor"
+    fi
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Acceptance: done.\n  - [ ] a sub-step\n  - [ ] S12 (Low, docs, documentation): open task. Acceptance: done.\n\n## Next\n\n## Later\n\n## Converged\n" 'still working'
+    if hb_sec_refused 'open tasks Now 2 Next 0 Later 0'; then
+      pass "stop hook leaves a sub-step checkbox out of the open-task counts on a re-feed"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook counted a sub-step checkbox as an open task on a re-feed"
+    fi
 
     # The re-feed reads the same sections for its arithmetic, so the counts
     # it states have to survive the same headings.
@@ -3387,7 +3505,7 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     # meets it is standing at a declaration with a slow suite, not reading
     # this script.
     hb_write_plan_duration() { # $1 command, $2 Verify duration payload
-      printf '# Plan\n\n## Verify command\nCommand: %s\nVerify duration: %s\n' "$1" "$2" > "$hb_proj/PLAN.md"
+      printf '# Plan\n\n## Verify command\nCommand: %s\nVerify duration: %s\n\n## Surface inventory\n- [x] core: swept at abc1234 - all entry points probed\n' "$1" "$2" > "$hb_proj/PLAN.md"
     }
     hb_write_state sess-1 1 3
     hb_write_backlog ''
@@ -3441,7 +3559,7 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     # that line, never the prose - live-reproduced when the prose parsed
     # as the command and exited 127, rejecting a legitimate convergence.
     hb_write_plan_templated() { # $1 command for the Command: line
-      printf '# Plan\n\n## Verify command\nOne runnable command that must exit 0 for this project to count as unbroken.\n\nCommand: %s\n' "$1" > "$hb_proj/PLAN.md"
+      printf '# Plan\n\n## Verify command\nOne runnable command that must exit 0 for this project to count as unbroken.\n\nCommand: %s\n\n## Surface inventory\n- [x] core: swept at abc1234 - all entry points probed\n' "$1" > "$hb_proj/PLAN.md"
     }
     hb_write_state sess-1 1 3
     hb_write_backlog ''
@@ -3993,6 +4111,9 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     fi
     hb_write_backlog ''
 
+    # No map here: a clean ledger over a swept map at the last iteration is
+    # what the closing extension is granted on, and this turn has to end.
+    printf '# Plan\n\n## Verify command\nCommand: none\n' > "$hb_proj/PLAN.md"
     hb_write_state_stall sess-1 6 6 none "$hb_ck0" 1
     hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
     if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && ! grep -q 'stalled' "$hb_tmp/hb_err.txt"; then
@@ -4001,6 +4122,7 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       printf '%s\n' "$hb_out"
       fault "stop hook let the stall gate interfere with budget exhaustion"
     fi
+    hb_write_plan none
 
     hb_write_state_stall sess-1 2 6 none "$hb_ck0" 1
     hb_write_plan none
@@ -4788,11 +4910,12 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fi
       rm -f "$hb_state"
 
-      # The legal neighbours: a green Command with no space after the colon,
-      # the ungated form in the capitalisation the wrapper has always taken,
-      # and a PLAN.md that predates the section all still close.
+      # The legal neighbours: a green Command with no space after the colon
+      # and the ungated form in the capitalisation the wrapper has always
+      # taken both still close. A PLAN.md with no section at all is refused
+      # (driven beside the section reader's fixtures).
       hb_p1_legal=""
-      for hb_p1_sec in '## Verify command\nCommand:true\n\n' '## Verify command\nCommand: None  \n\n' ''; do
+      for hb_p1_sec in '## Verify command\nCommand:true\n\n' '## Verify command\nCommand: None  \n\n'; do
         hb_write_state sess-1 1 3
         # shellcheck disable=SC2059  # the section is a format fragment on purpose
         printf "# Plan\n\n$hb_p1_sec## Surface inventory\n%s\n" "$hb_p1_row" > "$hb_proj/PLAN.md"
@@ -4801,11 +4924,11 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then hb_p1_legal="${hb_p1_legal}y"; else hb_p1_legal="${hb_p1_legal}n"; printf '%s\n' "$hb_out"; fi
         rm -f "$hb_state"
       done
-      if [ "$hb_p1_legal" = "yyy" ] && grep -q 'carries no Verify command section; skipping the verify check' "$hb_tmp/hb_err.txt"; then
-        pass "stop hook still closes on Command:true, on Command: None, and on a PLAN.md with no Verify command section (stderr note)"
+      if [ "$hb_p1_legal" = "yy" ]; then
+        pass "stop hook still closes on Command:true and on Command: None"
       else
         cat "$hb_tmp/hb_err.txt"
-        fault "stop hook refused a legal Verify section (Command:true, Command: None, no section: $hb_p1_legal)"
+        fault "stop hook refused a legal Verify section (Command:true, Command: None: $hb_p1_legal)"
       fi
 
       # A failing suite behind a pipe: the converged stop ran the Command
@@ -7571,7 +7694,7 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     hb_cc="skills/jeffy/hooks/lib/check-claims.sh"
     hb_write_counts_plan() { # $1 prose line, $2... table rows (label|stated|command)
       {
-        printf '# Plan\n\n## Verify command\nCommand: none\n\n## Method\n\n%s\n\n' "$1"
+        printf '# Plan\n\n## Verify command\nCommand: none\n\n## Surface inventory\n- [x] core: swept at abc1234 - all entry points probed\n\n## Method\n\n%s\n\n' "$1"
         shift
         if [ "$#" -gt 0 ]; then
           printf "  done <<'COUNTS'\n"
