@@ -803,37 +803,139 @@ fi
 # PASS. The hook only ever reads the current run's artifact, written by a gate
 # the iteration prompt shipped beside this file instructs, so the verdict is
 # one machine line and there is no older shape to stay compatible with.
-# A verdict line reads exactly "Verdict: PASS" or "Verdict: REJECT": a CR,
-# blanks around the line and markdown emphasis (* and _) around the label and
-# the word are stripped, one or more blanks follow the colon, and nothing else
-# is on the line - no reason, full stop, heading marker, bullet, blockquote or
-# backtick. The artifact's verdict is that line's when the file holds exactly
-# one and it is the last non-blank line. More than one reads "several" and is
-# refused, whatever their kinds or order; none, or one with anything after
-# it, reads "none". Literal characters and bracket lists only, never a range,
-# so mawk, gawk and BSD awk agree under any locale. The second word printed
-# is 1 when any verdict line reads REJECT, which is what the cap counts.
+# The reader keeps RECOGNITION apart from ACCEPTANCE, and recognition is a
+# superset of acceptance. A recognised line can only ever add to the count of
+# verdict lines or raise the REJECT flag, so widening recognition can never
+# turn a refusal into a pass. The one-line reader that came before narrowed
+# both at once: a REJECT the gate wrote as "Verdict: REJECT." or "Overall:
+# REJECT" was invisible to the count and to the cap, and one appended
+# "Verdict: PASS" read as a lone PASS.
+# A line is first normalised: a trailing CR goes, a no-break space reads as a
+# blank, and leading decoration goes - blanks, heading, blockquote and bullet
+# markers, emphasis, backticks, and up to sixteen characters outside ASCII,
+# which is a BOM, a zero-width space or an emoji ahead of the label.
+# RECOGNISED is a line that then begins, in any letter case, with Verdict,
+# Final Verdict, Overall Verdict, Overall, Result or Outcome, then a colon or
+# a hyphen, en dash or em dash with blanks and emphasis either side, then
+# PASS or PASSED, or REJECT, REJECTED, FAIL or FAILED, and then the end of the
+# line or anything but a letter or a digit. A line with no label is never
+# one, so a per-check "PASS: unit tests" stays prose.
+# ACCEPTED is a recognised line whose label is Verdict and whose separator is
+# the colon, with nothing after the word but blanks, emphasis, one full stop,
+# an exclamation mark, bytes outside ASCII such as a tick, or a reason set
+# off as blank, hyphen, blank. A bracket, a word or any other punctuation
+# after the word is recognised and not accepted, as is every other label and
+# a dash for the colon.
+# The artifact reads pass or reject only when it holds exactly one recognised
+# line, that line is accepted, and nothing follows it but blank lines: empty
+# lines, lines of decoration alone such as a horizontal rule or a closing
+# fence, and a fence of backticks or tildes with a language word. More than
+# one recognised line reads "several". Anything else reads "none", and with
+# exactly one recognised line the output also carries its line number and
+# whether its form or its place (last) is what failed, for the refusal to
+# quote. Literal characters, bracket lists and index() only, never a range
+# or tolower(), so mawk, gawk and BSD awk agree under any locale; the dashes
+# are compared as strings, which is bytewise in C and whole characters in
+# UTF-8. The second word printed is 1 when any recognised line is on the
+# REJECT side, which is what the cap counts.
 ev_art_read="$(awk '
-  { sub(/\r$/, "") }
-  /^[ \t]*$/ { next }
+  function up(s,   i, c, k, o) {
+    o = ""
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1); k = index(LO, c)
+      o = o (k ? substr(UP, k, 1) : c)
+    }
+    return o
+  }
+  # 0 not a verdict line; 1 recognised, PASS side; 2 recognised, REJECT side;
+  # 3 the accepted form reading PASS; 4 the accepted form reading REJECT.
+  function verdict(s,   h, t, c, i, w, acc, rej, dots) {
+    h = up(substr(s, 1, 24))
+    if (match(h, /^VERDICT/)) acc = 1
+    else if (match(h, /^(FINAL|OVERALL)[ \t]+VERDICT/) || match(h, /^(OVERALL|RESULT|OUTCOME)/)) acc = 0
+    else return 0
+    t = substr(s, RLENGTH + 1)
+    sub(/^[ \t*_`]+/, "", t)
+    if (substr(t, 1, 1) == ":") t = substr(t, 2)
+    else {
+      acc = 0
+      for (i = 0; ; i++) {
+        if (substr(t, 1, 1) == "-") t = substr(t, 2)
+        else if (substr(t, 1, length(EN)) == EN || substr(t, 1, length(EM)) == EM) t = substr(t, length(EM) + 1)
+        else break
+      }
+      if (!i) return 0
+    }
+    sub(/^[ \t*_`]+/, "", t)
+    w = ""
+    for (i = 1; i <= 9; i++) {
+      c = substr(t, i, 1)
+      if (c == "" || !index(AN, c)) break
+      w = w c
+    }
+    t = substr(t, i)
+    w = up(w)
+    if (w == "PASS" || w == "PASSED") rej = 0
+    else if (w == "REJECT" || w == "REJECTED" || w == "FAIL" || w == "FAILED") rej = 1
+    else return 0
+    if (!acc) return 1 + rej
+    if (t ~ /^[ \t]+-[ \t]/) return 3 + rej
+    dots = 0
+    for (i = 1; i <= length(t); i++) {
+      c = substr(t, i, 1)
+      if (c == ".") { if (++dots > 1) return 1 + rej }
+      else if (index(AN, c) || index(BAD, c)) return 1 + rej
+    }
+    return 3 + rej
+  }
+  BEGIN {
+    LO = "abcdefghijklmnopqrstuvwxyz"; UP = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    AN = LO UP "0123456789"
+    BAD = "\"#$%&\047()+,-/:;<=>?@[\\]^{|}~"
+    ASCII = AN BAD " \t!*._`"
+    NBSP = "\302\240"; EN = "\342\200\223"; EM = "\342\200\224"
+    FENCE = "^[ \t]*(```+|~~~+)[ \t]*[" AN "]*[ \t]*$"
+  }
   {
-    nb++
-    s = $0; sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
-    sub(/^[*_]+/, "", s); sub(/[*_]+$/, "", s)
+    s = $0
+    sub(/\r$/, "", s)
+    if (index(s, NBSP)) gsub(NBSP, " ", s)
+    if (s ~ FENCE) next
+    for (i = 0; i < 16; i++) {
+      sub(/^[ \t#>*+_`-]+/, "", s)
+      c = substr(s, 1, 1)
+      if (c == "" || index(ASCII, c)) break
+      s = substr(s, 2)
+    }
+    if (s == "") next
+    v = verdict(s)
+    if (!v) { after++; next }
+    n++; after = 0; form = v; at = NR
+    if (v == 2 || v == 4) r = 1
   }
-  s ~ /^Verdict[*_]*:[*_]*[ \t]+[*_]*(PASS|REJECT)$/ {
-    n++; at = nb
-    if (s ~ /PASS$/) w = "pass"; else { w = "reject"; r = 1 }
+  END {
+    if (n > 1) print "several", r + 0
+    else if (n == 1 && form > 2 && !after) print (form == 3 ? "pass" : "reject"), r + 0
+    else if (n == 1) print "none", r + 0, at, (form > 2 ? "last" : "form")
+    else print "none", r + 0
   }
-  END { print (n > 1 ? "several" : n == 1 && at == nb ? w : "none"), r + 0 }
 ' "$root/.jeffy/evaluator/$runid8${ev_art_ord:+-$ev_art_ord}.md" 2>/dev/null)"
-ev_art_verdict="${ev_art_read% *}"
+ev_art_verdict="${ev_art_read%% *}"
 ev_art_reject="${ev_art_read#* }"
+ev_art_at=""
+ev_art_why=""
+case "$ev_art_reject" in
+  *' '*)
+    ev_art_why="${ev_art_reject##* }"
+    ev_art_at="${ev_art_reject#* }"; ev_art_at="${ev_art_at%% *}"
+    ev_art_reject="${ev_art_reject%% *}"
+    ;;
+esac
 # Past every cap the contract can grant: three journal REJECTs, a fourth
-# ordinal, or a third whose latest artifact carries a REJECT verdict line,
-# alone, among several or with something appended after it. The last arm is
-# what holds when a journal heading is retyped away from EVALUATOR, which
-# drops its REJECT from the count above at no cost.
+# ordinal, or a third whose latest artifact carries a recognised REJECT line,
+# accepted or not, alone, among several or with something appended after it.
+# The last arm is what holds when a journal heading is retyped away from
+# EVALUATOR, which drops its REJECT from the count above at no cost.
 ev_capped=0
 if [ "$ev_rejects" -ge 3 ] || [ "$ev_spent" -ge 4 ] \
   || { [ "$ev_spent" -ge 3 ] && [ "$ev_art_reject" = 1 ]; }; then
@@ -1503,12 +1605,31 @@ if [ -n "$promise" ]; then
               fi
               # Read last, once the file is known to be the committed one:
               # what it says only matters if it is the gate's.
+              # Which branch of "re-invoke or end blocked" applies is a number
+              # this hook holds and the run does not, so the refusal says it:
+              # a run at its third ordinal is never sent to write a fourth.
+              if [ "$ev_spent" -ge 3 ]; then
+                ev_next="the highest gate ordinal on this run's record is $ev_spent and the contract grants at most 3, so every invocation is spent: write no further ordinal, spend what budget is left in gate salvage on the findings the gate filed and end the run blocked as 'blocked - N gate findings closed, declaration deferred', never re-invoking and never declaring"
+              elif [ "$ev_spent" -eq 2 ]; then
+                ev_next="the highest gate ordinal on this run's record is 2, and a third invocation exists only when the first landed before the midpoint of the budget: if it did, re-invoke the gate, which must end its artifact with the line 'Verdict: PASS' or 'Verdict: REJECT', and declare on the PASS ordinal 3 records, and if it did not, none remains, so end blocked in gate salvage, never re-invoking and never declaring"
+              else
+                ev_next="the highest gate ordinal on this run's record is $ev_spent, so an invocation remains: re-invoke the gate, which must end its artifact with the line 'Verdict: PASS' or 'Verdict: REJECT', and declare on the PASS its next ordinal records"
+              fi
               if [ -z "$violation" ] && [ "$ev_art_verdict" = "several" ]; then
-                violation="the closing entry records Evaluator: PASS but the gate's own artifact $ev_art carries more than one verdict line - a line reading exactly 'Verdict: PASS' or 'Verdict: REJECT'; the gate ends its artifact with one such line and writes no other anywhere in it, an earlier round's quoted verdict included, and the artifact is never edited after it, so nothing here says which one the gate returned - with an invocation remaining re-invoke the gate and declare on the PASS its next ordinal records, and with none remaining end blocked in gate salvage, never re-invoking and never declaring"
+                violation="the closing entry records Evaluator: PASS but the gate's own artifact $ev_art carries more than one verdict line - a line that begins with Verdict, Final Verdict, Overall Verdict, Overall, Result or Outcome and states PASS, REJECT or FAIL, in whatever form; the gate ends its artifact with one line reading exactly 'Verdict: PASS' or 'Verdict: REJECT' and writes no other line beginning with a verdict label anywhere in it, an earlier round's quoted verdict included, and the artifact is never edited after it, so nothing here says which one the gate returned; $ev_next"
               elif [ -z "$violation" ] && [ "$ev_art_verdict" = "reject" ]; then
                 violation="the closing entry records Evaluator: PASS but the gate's own artifact $ev_art records REJECT; the artifact is the verdict and the journal line only transcribes it, so file each reason it names that this run can reproduce and work them - with an invocation remaining, re-invoke the gate and declare on the PASS its next ordinal records, and with none remaining end blocked in gate salvage, never re-invoking and never declaring"
               elif [ -z "$violation" ] && [ "$ev_art_verdict" != "pass" ]; then
-                violation="the closing entry records Evaluator: PASS but $ev_art carries no verdict line: the hook reads the verdict from a final line reading exactly 'Verdict: PASS' or 'Verdict: REJECT' - that label, the colon, a space and the word in capitals, with nothing else on the line but markdown emphasis, so no reason, full stop, heading marker, list bullet, blockquote or backtick, the reasons above it, only blank lines below it and no other line of that form anywhere in the file - and this artifact holds no such line or does not end on it, so nothing the gate wrote says it passed; the artifact is the verdict and the journal line only transcribes it, and it is never edited after the gate returns, so with an invocation remaining re-invoke the gate, which must end its artifact with that line, and declare on the PASS its next ordinal records, and with none remaining end blocked in gate salvage, never re-invoking and never declaring"
+                ev_art_said=": "
+                if [ -n "$ev_art_at" ]; then
+                  ev_art_line="$(sed -n "${ev_art_at}p" "$root/$ev_art" 2>/dev/null | tr -d '\r' | cut -c1-120)"
+                  if [ "$ev_art_why" = "last" ]; then
+                    ev_art_said=" the hook accepts: line $ev_art_at reads '$ev_art_line', and it is not the last line of the artifact - "
+                  else
+                    ev_art_said=" the hook accepts: line $ev_art_at reads '$ev_art_line', which counts as a verdict line and is not in the form that is read as one - "
+                  fi
+                fi
+                violation="the closing entry records Evaluator: PASS but $ev_art carries no verdict line${ev_art_said}the hook reads the verdict from a final line reading exactly 'Verdict: PASS' or 'Verdict: REJECT' - that label, the colon and the word, with no bracket and no further word on the line, the reasons above it, nothing below it but blank lines, and no other line beginning with Verdict, Final Verdict, Overall Verdict, Overall, Result or Outcome anywhere in the file - so nothing the gate wrote says it passed; the artifact is the verdict and the journal line only transcribes it, and it is never edited after the gate returns; $ev_next"
               fi
               ;;
           esac

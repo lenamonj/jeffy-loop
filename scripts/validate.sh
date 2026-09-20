@@ -6622,43 +6622,67 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fi
 
       # The refusal is the one sentence a run acts on, so it states the line
-      # the hook reads and what to do with an invocation left and with none.
+      # the hook reads and, from the ordinal the hook holds, which branch
+      # applies: this is the first invocation, so one remains.
       hb_ev_art 'The gate ran and this file says nothing about how it ended.' 'jeffy: evaluator artifact with no verdict'
       hb_ev_run sess-e1 ''
       if hb_ev_refused 'carries no verdict line' \
         && hb_ev_refused "a final line reading exactly 'Verdict: PASS' or 'Verdict: REJECT'" \
-        && hb_ev_refused 're-invoke the gate, which must end its artifact with that line' \
-        && hb_ev_refused 'with none remaining end blocked'; then
-        pass "stop hook refuses a PASS whose artifact carries no verdict line, and the refusal states the exact line it reads"
+        && hb_ev_refused "is 1, so an invocation remains: re-invoke the gate, which must end its artifact with the line 'Verdict: PASS' or 'Verdict: REJECT'" \
+        && ! hb_ev_refused 'every invocation is spent'; then
+        pass "stop hook refuses a PASS whose artifact carries no verdict line, and the refusal states the exact line it reads and that an invocation remains"
       else
         printf '%s\n' "$hb_out"
-        fault "stop hook accepted a PASS over an artifact that records no verdict, or its refusal does not state the required line"
+        fault "stop hook accepted a PASS over an artifact that records no verdict, or its refusal does not state the required line and the branch that applies"
+      fi
+      # One recognised line the hook does not accept: the refusal quotes it.
+      hb_vd_bad=""
+      hb_ev_art 'Every check holds.\n\nVerdict: PASS (3/3 checks)' 'jeffy: a verdict line with a bracket tail'
+      hb_ev_run sess-e1 ''
+      hb_ev_refused "carries no verdict line the hook accepts: line 8 reads 'Verdict: PASS (3/3 checks)'" || hb_vd_bad="$hb_vd_bad [a bracket tail]"
+      hb_ev_refused "a final line reading exactly 'Verdict: PASS' or 'Verdict: REJECT'" || hb_vd_bad="$hb_vd_bad [the form is not stated]"
+      hb_ev_art 'Every check holds.\n\nVerdict: PASS\n\n_Gate, invocation 1._' 'jeffy: a signature after the verdict line'
+      hb_ev_run sess-e1 ''
+      hb_ev_refused "line 8 reads 'Verdict: PASS', and it is not the last line of the artifact" || hb_vd_bad="$hb_vd_bad [a line after the verdict]"
+      if [ -z "$hb_vd_bad" ]; then
+        pass "stop hook quotes the one verdict line it recognised and did not accept, and says whether its form or its place is wrong"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused a recognised verdict line without quoting it:$hb_vd_bad"
       fi
 
       # The verdict is one machine line, the last non-blank line of the file:
-      # exactly 'Verdict: PASS' or 'Verdict: REJECT'. Three prose grammars
-      # were each too loose or too tight, and the hook only ever reads an
-      # artifact written under the prompt it ships with, so there is no older
-      # shape to stay compatible with. What the line may carry: blanks around
-      # it, more than one blank after the colon, and markdown emphasis around
-      # the label and the word. Each shape below needs one stripping step of
-      # the reader, so deleting any step turns this red. The body above the
-      # line is what an honest PASS artifact holds: per-check PASS lines, a
-      # "REJECT reasons: none." summary, an em dash. Driven bytewise and under
-      # a UTF-8 locale where the host has one; octal keeps this file ASCII.
+      # 'Verdict: PASS' or 'Verdict: REJECT'. The prompt asks for exactly
+      # that, and the hook accepts what an instruction-following gate writes
+      # around it: blanks, markdown emphasis and backticks around the label
+      # and the word, a heading marker, bullet or blockquote ahead of it, any
+      # letter case, PASSED, no blank or a no-break space after the colon, a
+      # full stop, a tick or a ' - reason' after the word, and a closing
+      # fence or a horizontal rule below it. Each shape below needs one rule
+      # of the reader, so deleting any rule turns this red. The body above
+      # the line is what an honest PASS artifact holds: per-check PASS lines,
+      # a "REJECT reasons: none." summary, an em dash. Driven bytewise and
+      # under a UTF-8 locale where the host has one; octal keeps this file
+      # ASCII.
       hb_vd_utf8="$(locale -a 2>/dev/null | grep -iE '^(C|en_US)\.utf-?8$' | head -n 1)"
-      hb_vd_body='PASS: unit tests\n- PASS lint\nPASS (3/3) \342\200\224 every check holds\n\nREJECT reasons: none.\n\nPASS rate 98%% over 3 runs.\n\n'
+      hb_vd_body='PASS: unit tests\n- PASS lint\nPASS (3/3) \342\200\224 every check holds\n\nREJECT reasons: none.\n\nPASS rate 98%% over 3 runs.\nOverall PASS rate 98%%, result PASS on every row.\n\n'
       hb_vd_bad=""
       for hb_vd_lc in C $hb_vd_utf8; do
         for hb_vd_t in 'Verdict: PASS' '**Verdict: PASS**' '**Verdict:** PASS' 'Verdict: **PASS**' '**Verdict**: PASS' \
-          '__Verdict:__ _PASS_' 'Verdict:   PASS' 'Verdict:\tPASS' '  Verdict: PASS' 'Verdict: PASS \t'; do
+          '__Verdict:__ _PASS_' 'Verdict:   PASS' 'Verdict:\tPASS' '  Verdict: PASS' 'Verdict: PASS \t' \
+          'Verdict: PASS.' 'VERDICT: PASS' 'verdict: pass' 'Verdict: Passed' 'Verdict:PASS' 'Verdict : PASS' 'Verdict:\302\240PASS' \
+          '\342\234\205 Verdict: PASS' '\tVerdict: PASS' 'Verdict\t: PASS' '_Verdict_: PASS' '\140Verdict\140: PASS' \
+          '## Verdict: PASS' '- Verdict: PASS' '* Verdict: PASS' '+ Verdict: PASS' '> Verdict: PASS' '\140Verdict: PASS\140' 'Verdict: \140PASS\140' \
+          'Verdict: PASS \342\234\205' 'Verdict: PASS - every check holds' \
+          '\140\140\140\nVerdict: PASS\n\140\140\140' '~~~\nVerdict: PASS\n~~~' 'Verdict: PASS\n\n\140\140\140text' \
+          'Verdict: PASS\n\n---' 'Verdict: PASS\n* * *'; do
           hb_ev_art "$hb_vd_body$hb_vd_t" 'jeffy: a PASS artifact closing on the verdict line'
           LC_ALL="$hb_vd_lc" hb_ev_run sess-e1 ''
           hb_ev_accepted || hb_vd_bad="$hb_vd_bad [$hb_vd_lc: $hb_vd_t]"
         done
       done
       if [ -z "$hb_vd_bad" ]; then
-        pass "stop hook reads a final 'Verdict: PASS' line as the PASS it is, under emphasis, extra blanks and a body of per-check PASS lines, bytewise and under a UTF-8 locale"
+        pass "stop hook reads a final 'Verdict: PASS' line as the PASS it is, under emphasis, a heading, bullet or blockquote, any case, a full stop, tick or reason after it, and a fence or rule below it, bytewise and under a UTF-8 locale"
       else
         printf '%s\n' "$hb_out"
         fault "stop hook refused an honest PASS artifact closing on the verdict line:$hb_vd_bad"
@@ -6675,7 +6699,9 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf '%s\n' "$hb_out"
         fault "stop hook refused a PASS artifact over blank lines after its verdict line"
       fi
-      hb_write_evaluator_artifact sess-e1-000000 1 "$(printf 'REJECT reasons: none.\n\nVerdict: PASS')"
+      # The verdict sits in a tilde fence here, because a fence is matched
+      # as a whole line and only the CR strip lets its CRLF twin match.
+      hb_write_evaluator_artifact sess-e1-000000 1 "$(printf 'REJECT reasons: none.\n\n~~~\nVerdict: PASS\n~~~')"
       printf '\n\n' >> "$hb_ev_art_file"
       awk '{ printf "%s\r\n", $0 }' "$hb_ev_art_file" > "$hb_tmp/hb_crlf.md" && cat "$hb_tmp/hb_crlf.md" > "$hb_ev_art_file"
       hb_git -c core.autocrlf=false add -A -- .jeffy >/dev/null 2>&1
@@ -6706,25 +6732,57 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf '%s\n' "$hb_out"
         fault "stop hook picked one of several verdict lines:$hb_vd_bad"
       fi
+      # Recognition is wider than acceptance, and that is what the count
+      # rests on: a REJECT the gate wrote in any form a reader takes for its
+      # verdict is a verdict line, so one 'Verdict: PASS' appended below it
+      # makes two and is refused. Each shape needs one recognition rule: a
+      # full stop, a lower-case line, a reason, the other labels, a heading,
+      # REJECTED, FAIL, FAILED, a hyphen, an en dash or an em dash for the
+      # colon, a blockquote, backticks, a tick, a no-break space, a doubled
+      # CR, a cp1252 dash, a slash, a bracket, a BOM or a cross ahead of the
+      # label. The last file opens on a BOM.
+      hb_vd_bad=""
+      for hb_vd_lc in C $hb_vd_utf8; do
+        for hb_vd_t in 'Verdict: REJECT.' 'verdict: reject' 'Verdict: REJECT - the fix does not hold' 'Overall: REJECT' '## VERDICT: REJECTED' \
+          'Result: FAIL' 'Outcome: Failed' 'Final Verdict: REJECT' 'Overall Verdict: REJECT' 'Verdict - REJECT' 'Verdict \342\200\223 REJECT' \
+          'Verdict \342\200\224 REJECT' '> Verdict: REJECT' '\140Verdict: REJECT\140' 'Verdict: REJECT \342\234\205' 'Verdict:\302\240REJECT' \
+          'Verdict: REJECT\r\r' 'Verdict: REJECT\227' 'Verdict: PASS/REJECT -> REJECT' 'Verdict: REJECT (2 of 5 checks fail)' \
+          '\357\273\277Verdict: REJECT' '\342\235\214 Verdict: REJECT' BOM; do
+          case "$hb_vd_lc:$hb_vd_t" in C:* | *'\342'* | *'\302'* | *'\227'* | *'\357'* | *BOM) ;; *) continue ;; esac
+          if [ "$hb_vd_t" = BOM ]; then
+            printf '\357\273\277Verdict: REJECT\nVerdict: PASS\n' > "$hb_ev_art_file"
+            hb_ev_commit 'jeffy: a REJECT artifact opening on a BOM, a PASS line appended'
+          else
+            hb_ev_art "REJECT reason 1: product.txt:1 the fix does not hold\n\n$hb_vd_t\nVerdict: PASS" 'jeffy: a REJECT artifact, a PASS line appended'
+          fi
+          LC_ALL="$hb_vd_lc" hb_ev_run sess-e1 ''
+          hb_ev_refused 'carries more than one verdict line' || hb_vd_bad="$hb_vd_bad [$hb_vd_lc: $hb_vd_t]"
+        done
+      done
+      if [ -z "$hb_vd_bad" ]; then
+        pass "stop hook counts a REJECT written in any recognised form, so a 'Verdict: PASS' line appended below it is refused as several"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a lone PASS off a REJECT artifact with one 'Verdict: PASS' line appended:$hb_vd_bad"
+      fi
 
-      # Everything else is not a verdict line, so an artifact whose only
-      # conclusion is one of these reads as carrying none and is refused,
-      # never passed: a bare word, a reason or a full stop or a tick on the
-      # line, a heading, a bullet, a blockquote, a backtick, another label, a
-      # respelled label or word, no blank after the colon, the word appended
-      # after a REJECT verdict line, a verdict line that is not the last
-      # non-blank line, and one inside a fenced block, whose last line is the
-      # closing fence.
+      # Everything else reads as carrying no verdict and is refused, never
+      # passed. Not recognised at all: a bare word, a per-check line, a
+      # bracketed or tabled label, a label with no separator, a longer word.
+      # Recognised and counted, never accepted: another label, a dash for the
+      # colon, a bracket, a word, an em dash reason, a question mark or a
+      # second full stop after the word. And the accepted form anywhere but
+      # last: the word appended after a REJECT verdict line, a note or a
+      # signature below the verdict line.
       hb_vd_bad=""
       for hb_vd_lc in C $hb_vd_utf8; do
         for hb_vd_t in 'PASS' '## Verdict\n\nPASS. Every check holds.' 'PASS \342\200\224 every check holds' \
-          'Verdict: PASS \342\200\224 every check holds' 'Verdict: PASS - every check holds' 'Verdict: PASS.' \
-          'PASS: every check holds' 'PASS (3/3)' 'PASS \342\234\205' 'Verdict: PASS \342\234\205' '[Verdict: PASS]' \
-          '# Verdict: PASS' '- Verdict: PASS' '* Verdict: PASS' '+ Verdict: PASS' '> Verdict: PASS' '\140Verdict: PASS\140' 'Verdict: \140PASS\140' \
-          'verdict: PASS' 'VERDICT: PASS' 'Verdict: pass' 'Verdict: Pass' 'Verdict: PASSED' 'Verdict:PASS' 'Verdict : PASS' \
-          'Final Verdict: PASS' 'Overall: PASS' 'Verdict: PASS REJECT' \
+          'Verdict: PASS \342\200\224 every check holds' 'PASS: every check holds' 'PASS (3/3)' 'PASS \342\234\205' '[Verdict: PASS]' \
+          '| Verdict | PASS |' 'Verdict PASS' 'Verdict: PASSING' 'Result: PASSWORD' \
+          'Final Verdict: PASS' 'Overall Verdict: PASS' 'Overall: PASS' 'Result: PASS' 'Outcome: PASS' 'Verdict - PASS' 'Verdict \342\200\224 PASS' \
+          'Verdict: PASS (3/3 checks)' 'Verdict: PASS [3/3]' 'Verdict: PASS REJECT' 'Verdict: PASS for the unit tests' 'Verdict: PASS?' 'Verdict: PASS..' \
           'Verdict: REJECT\nPASS' 'Verdict: PASS\n\nNote: writing this artifact makes the tree dirty by construction.' \
-          '\140\140\140\nVerdict: PASS\n\140\140\140'; do
+          'Verdict: PASS\n\n_Gate, invocation 1._' 'PASS: unit tests\nPASS: lint\n\nI cannot approve this.'; do
           # The UTF-8 pass re-drives only the shapes that hold a multi-byte character.
           case "$hb_vd_lc:$hb_vd_t" in C:* | *'\342'*) ;; *) continue ;; esac
           hb_ev_art "$hb_vd_t" 'jeffy: an artifact whose conclusion is not the verdict line'
@@ -6733,7 +6791,7 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         done
       done
       if [ -z "$hb_vd_bad" ]; then
-        pass "stop hook reads no verdict into a bare word, a tail after the word, a heading, a bullet, a blockquote, a backtick, a respelling, an appended PASS, a verdict line that is not last or one inside a fence"
+        pass "stop hook reads no verdict into a bare word, a per-check line, another label, a dash for the colon, a bracket or a word after the verdict word, an appended PASS or a verdict line that is not last"
       else
         printf '%s\n' "$hb_out"
         fault "stop hook read a verdict into a line that is not the verdict line:$hb_vd_bad"
@@ -6754,10 +6812,15 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         fault "stop hook misread a REJECT artifact over the per-check PASS lines above its verdict line"
       fi
       hb_vd_bad=""
-      for hb_vd_t in 'Overall: REJECT' 'Verdict: REJECTED' 'Result: REJECT' 'Verdict \342\200\224 REJECT' 'PASS? No.'; do
+      for hb_vd_t in 'Overall: REJECT' 'Result: REJECT' 'Verdict \342\200\224 REJECT' 'PASS? No.' 'I cannot approve this.'; do
         hb_ev_art "$hb_vd_checks$hb_vd_t" 'jeffy: a REJECT artifact concluding off the verdict line'
         hb_ev_run sess-e1 ''
         hb_ev_refused 'carries no verdict line' || hb_vd_bad="$hb_vd_bad [$hb_vd_t]"
+      done
+      for hb_vd_t in 'Verdict: REJECTED' 'VERDICT: Failed.' 'Verdict: REJECT - the fix does not hold'; do
+        hb_ev_art "$hb_vd_checks$hb_vd_t" 'jeffy: a REJECT artifact closing on a tolerated verdict line'
+        hb_ev_run sess-e1 ''
+        hb_ev_refused 'own artifact .jeffy/evaluator/sess-e1-000000-1.md records REJECT' || hb_vd_bad="$hb_vd_bad [$hb_vd_t]"
       done
       if [ -z "$hb_vd_bad" ]; then
         pass "stop hook never reads PASS off the per-check lines of an artifact that concludes REJECT in some other form"
@@ -6880,6 +6943,64 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf '%s\n' "$hb_out"
         fault "stop hook let a PASS verdict line appended to the third REJECT artifact lift the invocation cap"
       fi
+      # The cap counts every REJECT the reader recognises, not the accepted
+      # form alone: a third REJECT written with a reason or under another
+      # label caps the run as it stands, and each refused REJECT shape caps
+      # it with 'Verdict: PASS' appended below. The journal records two
+      # REJECTs here, so the artifact is the only evidence of the third.
+      hb_ev_cap3() { # $1 session id, $2 the third artifact's text below its header, a printf format; two REJECT artifacts go before it
+        hb_ev_c0="$(hb_git rev-parse HEAD)"
+        for hb_ev_n in 1 2; do hb_write_evaluator_artifact "$1-000000" "$hb_ev_n" 'Verdict: REJECT'; done
+        # shellcheck disable=SC2059  # the escapes in the format are the point
+        hb_write_evaluator_artifact "$1-000000" 3 "$(printf -- "$2")"
+        hb_ev_commit 'jeffy: two rejected invocations and a third'
+        hb_ev_run "$1" "$hb_ev_c0" \
+          "## iter 1/3 | $1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - one." \
+          "## iter 1/3 | $1-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - two."
+      }
+      hb_vd_bad=""; hb_ev_i=0
+      for hb_vd_t in 'Verdict: REJECT - the fix does not hold' 'Overall: REJECT' \
+        'Verdict: REJECT.\nVerdict: PASS' 'verdict: reject\nVerdict: PASS' 'Verdict: REJECT - the fix does not hold\nVerdict: PASS' \
+        'Overall: REJECT\nVerdict: PASS' '## VERDICT: REJECTED\nVerdict: PASS' 'Result: FAIL\nVerdict: PASS' \
+        'Verdict \342\200\224 REJECT\nVerdict: PASS'; do
+        hb_ev_i=$((hb_ev_i + 1))
+        hb_ev_cap3 "sess-f$hb_ev_i" "$hb_vd_t"
+        hb_ev_refused 'past every invocation cap the contract grants' || hb_vd_bad="$hb_vd_bad [$hb_vd_t]"
+      done
+      if [ -z "$hb_vd_bad" ]; then
+        pass "stop hook holds the cap on a third REJECT written in any recognised form, alone or with a 'Verdict: PASS' line appended"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let a third REJECT it does not accept as the verdict line lift the invocation cap:$hb_vd_bad"
+      fi
+      # The none and several refusals say which branch applies from the
+      # ordinal the hook holds: a third invocation is never told to write a
+      # fourth, and a second is told what a third depends on.
+      hb_vd_bad=""
+      hb_ev_cap3 sess-g1 'Verdict: PASS (3/3 checks)'
+      hb_ev_refused 'carries no verdict line' && hb_ev_refused 'is 3 and the contract grants at most 3, so every invocation is spent' \
+        && ! hb_ev_refused 'an invocation remains' && ! hb_ev_refused 'which must end its artifact' \
+        || hb_vd_bad="$hb_vd_bad [no verdict line at ordinal 3]"
+      hb_ev_cap3 sess-g2 'Verdict: PASS\n\nVerdict: PASS'
+      hb_ev_refused 'carries more than one verdict line' && hb_ev_refused 'so every invocation is spent' \
+        && ! hb_ev_refused 'an invocation remains' \
+        || hb_vd_bad="$hb_vd_bad [several verdict lines at ordinal 3]"
+      hb_ev_c0="$(hb_git rev-parse HEAD)"
+      hb_write_evaluator_artifact sess-g3-000000 1 'Verdict: REJECT'
+      hb_write_evaluator_artifact sess-g3-000000 2 'Verdict: PASS (3/3 checks)'
+      hb_ev_commit 'jeffy: a rejected invocation and a second'
+      hb_ev_run sess-g3 "$hb_ev_c0" \
+        '## iter 1/3 | sess-g3-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - one.'
+      hb_ev_refused 'is 2, and a third invocation exists only when the first landed before the midpoint of the budget' \
+        && ! hb_ev_refused 'every invocation is spent' \
+        || hb_vd_bad="$hb_vd_bad [no verdict line at ordinal 2]"
+      if [ -z "$hb_vd_bad" ]; then
+        pass "stop hook tells a refused artifact's run whether an invocation remains, and never sends a third ordinal to a fourth"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused an artifact without saying which invocation branch applies:$hb_vd_bad"
+      fi
+      hb_git rm -q -- '.jeffy/evaluator/sess-f*' '.jeffy/evaluator/sess-g*' >/dev/null 2>&1
       hb_git rm -q -- '.jeffy/evaluator/sess-e*' >/dev/null 2>&1
       hb_git commit -q -m 'jeffy: drop the verdict and cap scenarios' >/dev/null 2>&1
 
@@ -7222,6 +7343,21 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       else
         printf '%s\n' "$hb_out"
         fault "stop hook certified a RATCHET on a record that is not an accepted declaration:$hb_p2_bad"
+      fi
+      # Nor does a record that carries no verdict at all: the key absent, or
+      # null. Absence of a refusal is not an acceptance.
+      hb_p2_bad=""
+      for hb_p2_v in '"reason":null' '"verdict":null,"reason":null'; do
+        rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+        printf '{"run_token":"old-1-000000","mode":"standard","declaration":{"hash":"%s",%s}}\n' "$hb_p2_legal" "$hb_p2_v" > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+        hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+        hb_p2_uncertified || hb_p2_bad="$hb_p2_bad [$hb_p2_v]"
+      done
+      if [ -z "$hb_p2_bad" ]; then
+        pass "stop hook refuses a RATCHET whose only record of the hash carries no verdict field, or a null one"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook certified a RATCHET on a record with no verdict:$hb_p2_bad"
       fi
       # And the hash has to be this hash, whole: an accepted record for
       # another commit, for a longer string this hash begins, or a full
