@@ -6704,7 +6704,8 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       hb_write_evaluator_artifact sess-e1-000000 1 "$(printf 'REJECT reasons: none.\n\n~~~\nVerdict: PASS\n~~~')"
       printf '\n\n' >> "$hb_ev_art_file"
       awk '{ printf "%s\r\n", $0 }' "$hb_ev_art_file" > "$hb_tmp/hb_crlf.md" && cat "$hb_tmp/hb_crlf.md" > "$hb_ev_art_file"
-      hb_git -c core.autocrlf=false add -A -- .jeffy >/dev/null 2>&1
+      hb_git config core.autocrlf false
+      hb_git add -A -- .jeffy >/dev/null 2>&1
       hb_git commit -q -m 'jeffy: the same PASS artifact in CRLF' >/dev/null 2>&1
       hb_ev_run sess-e1 ''
       if [ "$(grep -c "$(printf '\r')\$" "$hb_tmp/hb_crlf.md")" -ge 5 ] && hb_ev_accepted; then
