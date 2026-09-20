@@ -256,7 +256,7 @@ Each one is enforced by the iteration prompt, the state files, or the Stop hook.
 2. **It cannot wreck your repo.** Every iteration is a local commit, a broken verify is reverted, and nothing is ever pushed.
 3. **"Done" is not the agent's opinion.** An adversarial evaluator and a shell gate re-check every declaration.
 4. **It cannot declare convergence over code it never looked at.** The loop maps the public surface into a checklist, every swept row records the commit it certified, and the Stop hook refuses the declaration while any row is unswept.
-5. **Lessons become machinery.** A rule learned once binds every later iteration, and the engine itself passes <!-- count:checks -->**347 behavioural checks**<!-- /count --> on Linux, Windows and macOS.
+5. **Lessons become machinery.** A rule learned once binds every later iteration, and the engine itself passes at least <!-- count:checks -->**431 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS.
 
 ## Documentation
 

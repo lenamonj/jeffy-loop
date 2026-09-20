@@ -9055,39 +9055,89 @@ else
   fi
 fi
 
-# K. The check count the published pages state is derived from this run,
-#    never transcribed. Two published claims carry a derivation: the converged
+# K. The check count the published pages state is a floor this run clears,
+#    on every host. Two published claims are machine-checked: the converged
 #    and language totals against the eval table (check J), and this count.
-#    Those two are the numbers this project publishes outside the repository,
-#    which is why they are the two that are machine-checked; every other figure
-#    in the pages is ordinary prose and should be read as such. PLAN.md's
-#    Derived and settled numbers section holds the full enumeration.
-#    Published means what a clone runs, so the derivation subtracts what only
-#    a maintainer tree adds: the CHANGELOG pairing above, this check itself,
-#    and a shellcheck lint where the linter is installed. It asserts only in
-#    that maintainer tree, which is where releases are cut and where the
-#    marker is authored; a clone or a CI leg has nothing to author and skips.
+#    Those two are the numbers this project publishes outside the repository;
+#    every other figure in the pages is ordinary prose and should be read as
+#    such. PLAN.md's Derived and settled numbers section holds the full
+#    enumeration.
+#    The pages say "at least N on each of Linux, Windows and macOS", because
+#    no single exact count exists: a host without shellcheck, timeout(1),
+#    PowerShell or cygpath runs fewer checks than one that has them. The
+#    earlier form asserted an exact count, only in a maintainer tree with
+#    PowerShell, so it skipped on every CI leg while the pages named a number
+#    macOS never ran (VB-1). This form has no gate: every host that runs the
+#    suite compares its own count with the marker, and a host that runs fewer
+#    goes red instead of leaving the sentence false for it.
 #    Every marker, never the first: reading one with head -n 1 leaves a second
-#    marker free to state a different number. One marker carries this claim
-#    today, so this is the guard rather than a current disagreement. (M1)
-claim_checks="$(grep -oh '<!-- count:checks -->\*\*[0-9][0-9]* behavioural checks\*\*<!-- /count -->' "${pub_docs[@]}" \
-  | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-if [ -z "$claim_checks" ]; then
-  fault "no published page carries a <!-- count:checks -->N behavioural checks<!-- /count --> marker; the engine's own check count is then an untracked claim"
-elif [ "${claim_checks#* }" != "$claim_checks" ]; then
-  fault "the published pages state the behavioural check count as [$claim_checks]; their count:checks markers disagree, so no single number is published"
-elif [ ! -f CHANGELOG.md ] || [ -z "$ps" ] \
-  || ! command -v jq >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
-  skip "published check-count derivation (asserts in a maintainer tree with jq, git and PowerShell, where the marker is written)"
-else
-  cc_extra=2
-  if command -v shellcheck >/dev/null 2>&1; then cc_extra=$((cc_extra + 1)); fi
-  cc_derived=$((ok_n + 1 - cc_extra))
-  if [ "$cc_derived" -eq "$claim_checks" ]; then
-    pass "published check count is derived, not transcribed ($claim_checks on a clone, $((ok_n + 1)) in this tree)"
-  else
-    fault "the published pages claim $claim_checks behavioural checks but this run derives $cc_derived; the marker ships in the same commit as the scenarios that moved it"
+#    marker free to state a different number. (M1) Both pages must carry one,
+#    and an opening tag whose body is not "**N behavioural checks**" is a
+#    marker nothing reads, so it faults rather than vanishing from the set.
+#    Prints the fault, or nothing when the floor holds.
+cc_floor_fault() { # $1 checks run, this one included; $2.. the pages
+  local cc_ran="$1" cc_page cc_open cc_good cc_nums
+  shift
+  for cc_page in "$@"; do
+    cc_open="$(grep -o '<!-- count:checks -->' "$cc_page" 2>/dev/null | grep -c .)"
+    cc_good="$(grep -o '<!-- count:checks -->\*\*[0-9][0-9]* behavioural checks\*\*<!-- /count -->' "$cc_page" 2>/dev/null | grep -c .)"
+    if [ "$cc_open" -eq 0 ]; then
+      printf '%s\n' "$cc_page carries no <!-- count:checks -->**N behavioural checks**<!-- /count --> marker; the floor it publishes is then an untracked claim"
+      return 0
+    elif [ "$cc_open" -ne "$cc_good" ]; then
+      printf '%s\n' "$cc_page opens $cc_open count:checks marker(s) but only $cc_good read as **N behavioural checks**; an unparseable marker is a number nothing checks"
+      return 0
+    fi
+  done
+  cc_nums="$(grep -oh '<!-- count:checks -->\*\*[0-9][0-9]* behavioural checks\*\*<!-- /count -->' "$@" \
+    | tr -dc '0-9\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+  if [ "${cc_nums#* }" != "$cc_nums" ]; then
+    printf '%s\n' "the published pages state the behavioural check floor as [$cc_nums]; their count:checks markers disagree, so no single number is published"
+  elif [ "$cc_ran" -lt "$cc_nums" ]; then
+    printf '%s\n' "this host ran $cc_ran behavioural checks, below the floor of $cc_nums the published pages promise on every host; lower the marker or restore the checks in the same commit"
   fi
+  return 0
+}
+cc_pages=(README.md docs/how-it-works.md)
+
+# K's own fixtures, ahead of K so that K stays the last check and the count
+# it compares is final. Synthetic pages, a synthetic count.
+cc_tmp="$(mktemp -d)" || cc_tmp=""
+if [ -z "$cc_tmp" ]; then
+  fault "the check-count floor fixture could not create its sandbox (mktemp failed)"
+else
+  printf 'passes at least <!-- count:checks -->**10 behavioural checks**<!-- /count --> on each host.\n' > "$cc_tmp/a.md"
+  cp "$cc_tmp/a.md" "$cc_tmp/b.md"
+  printf 'held to <!-- count:checks -->**11 behavioural checks**<!-- /count --> here.\n' > "$cc_tmp/eleven.md"
+  printf 'no marker on this page.\n' > "$cc_tmp/none.md"
+  printf 'held to <!-- count:checks -->**ten behavioural checks**<!-- /count --> here.\n' > "$cc_tmp/word.md"
+  cc_low="$(cc_floor_fault 9 "$cc_tmp/a.md" "$cc_tmp/b.md")"
+  if printf '%s' "$cc_low" | grep -qF 'ran 9 behavioural checks, below the floor of 10' \
+    && cc_floor_fault 10 "$cc_tmp/a.md" "$cc_tmp/eleven.md" | grep -qF 'markers disagree' \
+    && cc_floor_fault 99 "$cc_tmp/a.md" "$cc_tmp/none.md" | grep -qF 'none.md carries no' \
+    && cc_floor_fault 99 "$cc_tmp/a.md" "$cc_tmp/word.md" | grep -qF 'unparseable marker'; then
+    pass "check K's comparison refuses a marker above the count naming both numbers, and refuses disagreeing, missing and unparseable markers"
+  else
+    printf '%s\n' "$cc_low"
+    fault "check K's comparison accepted a marker above the count, or disagreeing, missing or unparseable markers"
+  fi
+  if [ -z "$(cc_floor_fault 10 "$cc_tmp/a.md" "$cc_tmp/b.md")" ] \
+    && [ -z "$(cc_floor_fault 11 "$cc_tmp/a.md" "$cc_tmp/b.md")" ]; then
+    pass "check K's comparison accepts a count at the marker and a count above it (control)"
+  else
+    fault "check K's comparison refused a count at or above the marker"
+  fi
+  rm -rf "$cc_tmp"
+fi
+
+cc_stray="$(grep -l '<!-- count:checks -->' "${pub_docs[@]}" 2>/dev/null | grep -vxF -e README.md -e docs/how-it-works.md | tr '\n' ' ')"
+cc_fault="$(cc_floor_fault "$((ok_n + 1))" "${cc_pages[@]}")"
+if [ -n "$cc_stray" ]; then
+  fault "a count:checks marker is published on a page check K does not read: $cc_stray"
+elif [ -n "$cc_fault" ]; then
+  fault "$cc_fault"
+else
+  pass "published check count is a floor this host clears ($((ok_n + 1)) ran, this check included)"
 fi
 
 echo ""
