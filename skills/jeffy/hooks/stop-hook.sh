@@ -1559,6 +1559,8 @@ if [ -n "$promise" ]; then
                 rm -f "$vlog"
                 if [ "$vrc" -eq 124 ]; then
                   violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; if the suite legitimately runs long, record its measured time as a labeled line reading Verify duration: <N>s in PLAN.md under Verify command (or set verify_timeout_seconds in the loop state file frontmatter), then get it green and re-declare convergence"
+                elif [ "$vrc" -eq 141 ]; then
+                  violation="the Verify command ($verify_cmd) exited 141, which is SIGPIPE: a stage closed its pipe early and the Command runs under pipefail; let that stage drain its input, or open the Command with set +o pipefail, then re-declare convergence"
                 elif [ "$vrc" -ne 0 ]; then
                   violation="the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence"
                 fi

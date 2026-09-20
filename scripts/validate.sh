@@ -701,6 +701,64 @@ else
   else
     fault "quiet-verify and the stop hook read different Commands from one PLAN.md (see the lines above)"
   fi
+
+  # A pipeline's exit status is its last stage's, so a failing suite behind
+  # `| tee verify.log` - the ordinary way to keep a gate's output - was green
+  # here every iteration and green at the converged stop. The Command runs
+  # under pipefail, so a failure of any stage is the run's.
+  qv_tmp="$(mktemp -d)"
+  qv_plan="$qv_tmp/PLAN.md"
+  qv_bad=0
+  for qv_stage in 'tee verify.log' 'cat' 'grep -v noise' 'sed s/a/b/' 'sort'; do
+    qv_case "Command: bash -c \"echo 3 failed; exit 1\" | $qv_stage" 'Oracle class: deterministic'
+    bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+    if [ "$?" -ne 1 ] || ! grep -q '^verify: FAILED (exit 1,' "$qv_tmp/err"; then
+      qv_bad=1; echo "  a suite that exited 1 behind | $qv_stage was not red: [$(cat "$qv_tmp/err")]"
+    fi
+  done
+  if [ "$qv_bad" -eq 0 ]; then
+    pass "quiet-verify is red when any stage of a piped Command fails (tee, cat, grep -v, sed, sort)"
+  else
+    fault "quiet-verify reports a failing suite behind a pipe as green (see the lines above)"
+  fi
+
+  # The legal neighbours, and the pipelines pipefail must not touch. A stage
+  # that closes its pipe early (grep -q, head, an awk that exits) kills the
+  # stage feeding it with SIGPIPE, status 141: under pipefail a healthy
+  # `suite | grep -q "0 failures"` is red, and a Command that reads a
+  # pipeline as its failure test (`... | grep -q FAIL && rc=1`, smithy-go's
+  # gate) goes green over a red suite. A Command holding such a stage runs
+  # as written, without pipefail.
+  qv_bad=0
+  qv_case 'Command: echo 5 passed | tee verify.log' 'Oracle class: deterministic'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  a green piped Command is no longer green: [$(cat "$qv_tmp/err")]"
+  fi
+  qv_case 'Command: seq 1 200000 | grep -q 5' 'Oracle class: deterministic'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  a green gate whose last stage closes the pipe early is red: [$(cat "$qv_tmp/err")]"
+  fi
+  qv_case 'Command: seq 1 200000 | head -n 1 | grep 1' 'Oracle class: deterministic'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  a green gate with head mid-pipeline is red: [$(cat "$qv_tmp/err")]"
+  fi
+  # shellcheck disable=SC2016  # the payload is the fixture, run by the wrapper
+  qv_case 'Command: o=$(echo "FAIL pkg"; seq 1 200000); rc=0; printf "%s\n" "$o" | grep -qE "^(FAIL|MODFAIL)" && rc=1; exit $rc' 'Oracle class: deterministic'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  if [ "$?" -ne 1 ]; then
+    qv_bad=1; echo "  a red suite read through | grep -q FAIL && rc=1 went green: [$(cat "$qv_tmp/err")]"
+  fi
+  qv_case 'Command: bash -c "exit 3"' 'Oracle class: deterministic'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  if [ "$?" -ne 3 ]; then
+    qv_bad=1; echo "  a Command with no pipe no longer reports its own status: [$(cat "$qv_tmp/err")]"
+  fi
+  rm -rf "$qv_tmp"
+  if [ "$qv_bad" -eq 0 ]; then
+    pass "quiet-verify leaves a green piped Command green and runs a Command with an early-closing stage (grep -q, head) as written"
+  else
+    fault "quiet-verify changed the result of a legal piped Command (see the lines above)"
+  fi
 fi
 
 # One ladder, two callers. The hook must resolve its converged-stop bound
@@ -4748,6 +4806,48 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       else
         cat "$hb_tmp/hb_err.txt"
         fault "stop hook refused a legal Verify section (Command:true, Command: None, no section: $hb_p1_legal)"
+      fi
+
+      # A failing suite behind a pipe: the converged stop ran the Command
+      # without pipefail, so `| tee verify.log` - which the truncator lint
+      # above does not name - reported tee's status and the declaration was
+      # accepted over failing tests.
+      hb_p1_pipe=""
+      for hb_p1_stage in 'tee verify.log' 'grep -v noise' 'sort'; do
+        hb_write_state sess-1 1 3
+        hb_write_plan_full "bash -c \"echo 3 failed; exit 1\" | $hb_p1_stage" "$hb_p1_row"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+        if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF "| $hb_p1_stage) exited 1"; then
+          hb_p1_pipe="${hb_p1_pipe}y"
+        else
+          hb_p1_pipe="${hb_p1_pipe}n"; printf '%s\n' "$hb_out"
+        fi
+        rm -f "$hb_state" "$hb_proj/verify.log"
+      done
+      if [ "$hb_p1_pipe" = "yyy" ]; then
+        pass "stop hook refuses a declaration whose suite fails behind a pipe (tee, grep -v, sort)"
+      else
+        fault "stop hook accepted a declaration over a suite that failed behind a pipe (tee, grep -v, sort: $hb_p1_pipe)"
+      fi
+
+      # The legal neighbours: a green piped Command still closes, and so does
+      # a green gate whose last stage closes the pipe early - the stage
+      # feeding it dies of SIGPIPE, which pipefail would report as exit 141.
+      hb_p1_legal=""
+      for hb_p1_cmd in 'echo 5 passed | tee verify.log' 'seq 1 200000 | grep -q 5'; do
+        hb_write_state sess-1 1 3
+        hb_write_plan_full "$hb_p1_cmd" "$hb_p1_row"
+        hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+        if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then hb_p1_legal="${hb_p1_legal}y"; else hb_p1_legal="${hb_p1_legal}n"; printf '%s\n' "$hb_out"; fi
+        rm -f "$hb_state" "$hb_proj/verify.log"
+      done
+      if [ "$hb_p1_legal" = "yy" ]; then
+        pass "stop hook still closes on a green piped Command and on a green gate ending in grep -q"
+      else
+        fault "stop hook refused a green piped Command (tee, grep -q: $hb_p1_legal)"
       fi
 
       # Regression guard for the bash -n check: parentheses inside quotes

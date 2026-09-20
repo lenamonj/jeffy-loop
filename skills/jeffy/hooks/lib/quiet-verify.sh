@@ -135,6 +135,24 @@ jeffy_verify_bound() { # $1 plan path, $2 verify_timeout_seconds from state (may
   printf '%s' "$vt"
 }
 
+# Whether the Command runs under pipefail. A pipeline's exit status is its
+# last stage's, so a failing suite behind `| tee verify.log` was green in the
+# wrapper and at the converged stop; under pipefail a failure of any stage is
+# the run's. The exception is a stage that closes its pipe before draining it
+# (grep -q or -m, head, an awk that exits): the stage feeding it dies of
+# SIGPIPE, status 141, so pipefail turns a healthy `suite | grep -q "0
+# failures"` red, and turns a gate that reads a pipeline as its failure test
+# (`... | grep -q FAIL && rc=1`, smithy-go's) green over a red suite. A
+# Command holding such a stage runs as written. `set +o pipefail` at the head
+# of a Command is the author's own way out.
+jeffy_verify_pipefail() { # $1 command; prints -o or +o
+  if printf '%s\n' "$1" | grep -Eq '(^|[^|])[|][[:space:]]*([ef]?grep[[:space:]]([^|;&]*[[:space:]])?(-[A-Za-z]*[qm]|--quiet|--silent|--max-count)|head([[:space:]]|$)|awk[[:space:]][^|]*exit)'; then
+    printf '%s' '+o'
+  else
+    printf '%s' '-o'
+  fi
+}
+
 # Run a command under the bound, output captured to a file, and return its
 # real exit status (124 for a timeout). The gate has to run everywhere it is
 # claimed to run: stock macOS ships no GNU timeout, and skipping the run
@@ -142,6 +160,7 @@ jeffy_verify_bound() { # $1 plan path, $2 verify_timeout_seconds from state (may
 # platform. Resolve timeout, then gtimeout, then a shell watchdog.
 jeffy_verify_run() { # $1 project root, $2 command, $3 bound seconds, $4 output file
   vr_root="$1"; vr_cmd="$2"; vr_bound="$3"; vr_out="$4"
+  vr_pf="$(jeffy_verify_pipefail "$vr_cmd")"
   vto=""
   if command -v timeout >/dev/null 2>&1; then
     vto=timeout
@@ -149,7 +168,7 @@ jeffy_verify_run() { # $1 project root, $2 command, $3 bound seconds, $4 output 
     vto=gtimeout
   fi
   if [ -n "$vto" ]; then
-    ( cd "$vr_root" && PYTHONDONTWRITEBYTECODE=1 "$vto" "$vr_bound" bash -c "$vr_cmd" ) >"$vr_out" 2>&1
+    ( cd "$vr_root" && PYTHONDONTWRITEBYTECODE=1 "$vto" "$vr_bound" bash "$vr_pf" pipefail -c "$vr_cmd" ) >"$vr_out" 2>&1
     return $?
   fi
   # Watchdog: run in the background and arm a killer that leaves a sentinel
@@ -161,7 +180,7 @@ jeffy_verify_run() { # $1 project root, $2 command, $3 bound seconds, $4 output 
   # steps so the watchdog exits as soon as the gate does.
   vr_sent="${TMPDIR:-/tmp}/jeffy-verify-timeout-$$"
   rm -f "$vr_sent"
-  ( cd "$vr_root" && PYTHONDONTWRITEBYTECODE=1 bash -c "$vr_cmd" ) >"$vr_out" 2>&1 &
+  ( cd "$vr_root" && PYTHONDONTWRITEBYTECODE=1 bash "$vr_pf" pipefail -c "$vr_cmd" ) >"$vr_out" 2>&1 &
   vr_pid=$!
   ( vr_waited=0
     while [ "$vr_waited" -lt "$vr_bound" ]; do
@@ -261,6 +280,9 @@ qv_main() {
   if [ "$qv_rc" -ne 0 ]; then
     echo "verify: FAILED (exit $qv_rc, ${qv_secs}s) - last $qv_budget lines:" >&2
     tail -n "$qv_budget" "$qv_out" >&2
+    if [ "$qv_rc" -eq 141 ]; then
+      echo "verify: exit 141 is SIGPIPE - a stage closed its pipe early and the Command runs under pipefail; let that stage drain its input, or open the Command with set +o pipefail" >&2
+    fi
     rm -f "$qv_out"
     exit "$qv_rc"
   fi
