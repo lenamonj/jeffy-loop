@@ -87,6 +87,23 @@ jeffy_iter_type() { # $1 journal path, $2 run token "| <runid8> |", $3 iteration
   ' "$1"
 }
 
+# True when this run's record holds an AUDIT entry. The record is the archive
+# and the journal together, read the way jeffy_declaration_certified reads
+# them: rotation keeps the last ten entries in JOURNAL.md, so on a long run
+# the opening AUDIT entry is legitimately in JOURNAL-archive.md. Existence is
+# all this derives - cleanliness is prose the hook does not parse. Defined
+# once because the declaration and the convergence-readiness notes both ask.
+jeffy_run_audited() { # $1 project root, $2 run token "| <runid8> |"
+  cat "$1/JOURNAL-archive.md" "$1/JOURNAL.md" 2>/dev/null | awk -v tok="$2" '
+    { sub(/\r$/, "") }
+    /^## iter / && index($0, tok) {
+      split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (t == "AUDIT") found = 1
+    }
+    END { exit found ? 0 : 1 }
+  '
+}
+
 qv_lib="${BASH_SOURCE[0]%/*}/lib/quiet-verify.sh"
 if [ -f "$qv_lib" ]; then
   # shellcheck source-path=SCRIPTDIR
@@ -564,6 +581,22 @@ $(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { t
 EOF
 }
 
+# True when the certified line's second field is a hash and not a rev
+# expression. The field reached git verbatim through 1.23, so Converged: HEAD
+# was a commit and every certified-tree test became HEAD against HEAD. The
+# form is 7 to 40 hexadecimal characters, and where it resolves the commit's
+# full hash has to begin with it, because a branch may be given a hexadecimal
+# name. A hash that does not resolve passes here and is refused by the caller
+# under its own message.
+jeffy_names_hash() { # $1 project root, $2 the field
+  case "$2" in *[!0-9a-fA-F]*) return 1 ;; esac
+  [ "${#2}" -ge 7 ] && [ "${#2}" -le 40 ] || return 1
+  jnh_full="$(git -C "$1" rev-parse --verify --quiet "$2^{commit}" 2>/dev/null)"
+  jnh_lc="$(printf '%s' "$2" | tr 'A-F' 'a-f')"
+  case "$jnh_full" in '' | "$jnh_lc"*) return 0 ;; esac
+  return 1
+}
+
 # The certified-hash check, one function because two paths call it at two
 # points: the standard declaration at the head of its chain, where the
 # evaluator checks that date their evidence against the hash follow it, and
@@ -596,6 +629,8 @@ jeffy_cert_hash_check() {
     # lint the prompt runs before its checkpoint, so its absence is
     # the one shape lint reports as pending rather than refuses.
     hunt_pending="$hunt_pending${hunt_pending:+; and }the ## Hunted section of BACKLOG.md does not name a commit yet"
+  elif [ -n "$conv_hash" ] && ! jeffy_names_hash "$root" "$conv_hash"; then
+    violation="the $cert_sec line names $conv_hash, which is not a commit named by its hexadecimal hash; HEAD, @, a branch or a tag moves with the tree, so every test of the certified tree would compare HEAD with itself and the receipt would record a name no clone resolves to the same commit - write the hash itself, 7 to 40 hexadecimal characters"
   elif [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
     violation="the ## $cert_sec section of BACKLOG.md does not name a commit in this repository; append the $cert_sec line for the certified checkpoint"
   else
@@ -903,8 +938,15 @@ if [ -n "$promise" ]; then
       if [ "$hunt" = 0 ] && [ -z "$violation" ] && [ -f "$root/PLAN.md" ]; then
         if grep -q '^## Surface inventory' "$root/PLAN.md"; then
           unswept="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { print; exit }' "$root/PLAN.md")"
+          # P1-7c: refusing [ ] alone let a map made entirely of [~] rows
+          # declare with nothing swept. A [~] row is a disclosure, not a
+          # sweep, so a map that holds rows has to hold a swept one. A section
+          # with no row at all is left to the note-free legacy path it had.
+          inv_counts="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[[ x~]\]/ { r++; if ($0 ~ /^- \[x\]/) s++ } END { print r + 0, s + 0 }' "$root/PLAN.md")"
           if [ -n "$unswept" ]; then
             violation="the Surface inventory in PLAN.md still lists an unswept row, first: $unswept; sweep it and record the commit, or record why it is out of scope, then re-declare convergence"
+          elif [ "${inv_counts%% *}" -gt 0 ] && [ "${inv_counts##* }" -eq 0 ]; then
+            violation="the Surface inventory in PLAN.md lists ${inv_counts%% *} row(s) and none is swept: a [~] row is not swept, it discloses surface this host cannot reach, and a convergence claim covers surface an audit opened; sweep the rows this host can reach and record each as - [x] with its commit, then re-declare convergence"
           fi
         else
           echo "jeffy stop hook: PLAN.md has no Surface inventory section; skipping the inventory check." >&2
@@ -1317,10 +1359,25 @@ if [ -n "$promise" ]; then
           # path P1-3 opened for the run whose first verdict was REJECT, and
           # a hook that refused there would close it again. Below this bound
           # the prompt owns the rule and the artifact price guards it.
+          # The closing rule's first member is a full audit on this run's
+          # record, and through 1.23 nothing on this path looked for one: a
+          # task entry carrying Evaluator: PASS converged a run that had never
+          # audited. Existence is what is derivable, so existence is what is
+          # required. A RATCHET close is the one legal declaration with no
+          # audit behind it - it re-declares a tree an earlier run certified,
+          # and its own arm below checks that - and a record with no entry at
+          # all keeps the message that says so.
+          case "$ev_verdict" in
+            none | ratchet) ;;
+            *) jeffy_run_audited "$root" "| $runid8 |" || ev_verdict="unaudited" ;;
+          esac
           if [ "$ev_capped" = 1 ]; then
             ev_verdict="capped"
           fi
           case "$ev_verdict" in
+            unaudited)
+              violation="JOURNAL.md and JOURNAL-archive.md hold no AUDIT entry headed with this run's id $runid8, and a declaration rests on a full fresh-evidence audit this run scored zero High and zero Medium in-envelope - only a RATCHET close, which re-declares a tree an earlier run certified, carries none; run that audit, record its AUDIT entry, take a clean result through the gate, then re-declare - except inside the closing extension window, which never admits an audit, where the run ends unconverged and convergence falls to the next run's fresh audit"
+              ;;
             capped)
               violation="this run's journal records $ev_rejects Evaluator: REJECT verdicts, the highest evaluator artifact ordinal on its record - the working tree, the commits since base_head and this hook's own metrics - is $ev_spent, and the latest artifact in the tree reads $ev_art_verdict, past every invocation cap the contract grants - 2, or 3 when the first invocation landed before the midpoint of the budget - so no invocation remains to produce the verdict a declaration requires; spend what budget is left in gate salvage on the findings the gate filed, then end the run blocked as 'blocked - N gate findings closed, declaration deferred', because convergence waits for the next run's fresh gate"
               ;;
@@ -2366,17 +2423,8 @@ fi
 # self-run was missing. When an entry exists the hook cannot tell clean from
 # scoring, and the notes below say only what is derivable.
 run_has_audit=0
-if [ -n "$runid8" ] && [ -f "$root/JOURNAL.md" ]; then
-  if awk -v tok="| $runid8 |" '
-    { sub(/\r$/, "") }
-    /^## iter / && index($0, tok) {
-      split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
-      if (t == "AUDIT") { found = 1; exit }
-    }
-    END { exit found ? 0 : 1 }
-  ' "$root/JOURNAL.md"; then
-    run_has_audit=1
-  fi
+if [ -n "$runid8" ] && [ -f "$root/JOURNAL.md" ] && jeffy_run_audited "$root" "| $runid8 |"; then
+  run_has_audit=1
 fi
 final_note=""
 if [ "$hunt" = 0 ] && [ "$next" -eq "$max" ] && [ -z "$extension" ] && [ -z "$violation" ] \

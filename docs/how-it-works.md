@@ -15,7 +15,7 @@ Running `/jeffy` in a Claude Code session:
 
 1. **Bootstraps the loop's memory** at the project root: `PLAN.md` (goal, operating envelope, surface inventory, verify command, lessons, definition of done), `BACKLOG.md` (the task ledger - findings prioritized most severe first, plus proposals awaiting your decision, settled defect classes, and the Converged record), and `JOURNAL.md` (append-only iteration log). They persist between runs.
 2. **Runs the budgeted loop.** The first audit fills the surface inventory and the backlog. Each iteration after that either audits or executes exactly one task, verifies it, and checkpoints it; a task that newly breaks the verify command is reverted. Once one full audit comes back clean of High and Medium, the run stops auditing and finishes the ledger.
-3. **Stops for a reason and reports.** Convergence - a clean audit, zero open High or Medium with every carried Low named, a fully swept inventory, the adversarial evaluator's PASS, all re-checked in shell by the Stop hook - or the budget, a stall, a hard blocker, or your cancel. The run report lists tasks closed with severities, the diffstat, rows swept of rows total, and anything waiting on your decision.
+3. **Stops for a reason and reports.** Convergence - a clean audit, zero open High or Medium with every carried Low named, a fully swept inventory, the adversarial evaluator's PASS, re-checked in shell by the Stop hook as far as shell can derive them (that an audit is on the run's record, not that it was clean) - or the budget, a stall, a hard blocker, or your cancel. The run report lists tasks closed with severities, the diffstat, rows swept of rows total, and anything waiting on your decision.
 
 ## What the engine enforces
 
@@ -25,7 +25,7 @@ Each one is enforced by the iteration prompt, the state files, or the Stop hook,
 
 **It cannot wreck your repo.** Every iteration ends in a local checkpoint commit, and a verify gate reverts any iteration that breaks the project. Nothing is pushed, no branches are created.
 
-**"Done" is not the agent's opinion.** A declaration needs a fresh audit finding zero High and zero Medium, a fully swept surface inventory, and an adversarial evaluator's countersignature. Then a plain shell script re-checks all of it, re-runs your test suite, and refuses the stop if anything fails.
+**"Done" is not the agent's opinion.** A declaration needs a fresh audit finding zero High and zero Medium, a fully swept surface inventory, and an adversarial evaluator's countersignature. Then a plain shell script re-checks what it can derive - an audit on the run's own record, the ledger, an inventory with no unswept row and at least one swept one, the evaluator's own artifact, a Converged line naming a commit by its hash - re-runs your test suite, and refuses the stop if anything fails.
 
 **It cannot declare convergence over code it never looked at.** The loop maps the public surface into a checklist, each swept row records the commit it certified, a row reopens when its code changes, and the Stop hook refuses the declaration while any row is unswept. A convergence can never mean "nowhere looked".
 

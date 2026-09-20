@@ -2048,7 +2048,15 @@ if command -v jq >/dev/null 2>&1; then
       # below declare convergence on it, and from 1.5.0 a closing entry that
       # states no verdict is itself the violation. The cases that exercise
       # that check write their own journals with hb_write_journal_entries.
+      # From 1.24.0 a declaration also needs an AUDIT entry on the run's
+      # record. It is written to the archive, the shape rotation leaves on a
+      # long run, because JOURNAL.md here stays the single entry the hygiene
+      # and index fixtures count.
       printf '# Journal\n\n## iter %s/%s | sess-1-000000 | 2026-01-01 | T1 | done\n\nTask: t.\nVerification: Evaluator: PASS - clean sweep.\n' "$1" "$2" > "$hb_proj/JOURNAL.md"
+      hb_write_archive_audit
+    }
+    hb_write_archive_audit() { # the run's AUDIT entry, where rotation leaves it
+      printf '# Journal archive\n\n## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit\n\nTask: t.\n' > "$hb_proj/JOURNAL-archive.md"
     }
     # Mirrors the hook's ledger signal exactly. From 1.8.0 that signal is a
     # digest of the task lines under Now, Next and Later rather than a cksum
@@ -2406,6 +2414,92 @@ if command -v jq >/dev/null 2>&1; then
       printf '%s\n' "$hb_out"
       fault "stop hook rejected convergence with a fully swept Surface inventory"
     fi
+
+    # P1-7c: a [~] row is a disclosure, not a sweep. The check above refuses
+    # only a [ ] row and nothing counted the [x] ones, so a map made entirely
+    # of [~] rows declared convergence with no row swept and the hook said
+    # nothing. One swept row beside a [~] row is the legal shape and stays so.
+    hb_write_state sess-1 1 3
+    printf '# Plan\n\n## Surface inventory\n\n- [~] core: unreachable on this host - no display\n- [~] plots: unreachable on this host - no display\n\n## Verify command\nCommand: none\n' > "$hb_proj/PLAN.md"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'Surface inventory' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'a [~] row is not swept' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook rejects the promise over a Surface inventory in which no row is swept (every row [~])"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted convergence over a Surface inventory made only of [~] rows (nothing swept)"
+    fi
+
+    hb_write_state sess-1 1 3
+    printf '# Plan\n\n## Surface inventory\n\n- [x] core: swept at abc1234 - all entry points probed\n- [~] plots: unreachable on this host - no display\n\n## Verify command\nCommand: none\n' > "$hb_proj/PLAN.md"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+      pass "stop hook accepts the promise over a swept row beside a [~] row"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook rejected convergence over a swept row beside a [~] row"
+    fi
+
+    # The closing rule's first member is a full audit on this run's record,
+    # and the declaration never looked for one: a task entry carrying
+    # Evaluator: PASS converged a run that had never audited. The record is
+    # JOURNAL-archive.md and JOURNAL.md together, because rotation moves a
+    # long run's opening AUDIT entry into the archive; another run's AUDIT
+    # entry is not this run's; and a RATCHET close re-declares a tree an
+    # earlier run certified, so it carries none by design.
+    hb_write_state sess-1 2 3
+    rm -f "$hb_proj/JOURNAL-archive.md"
+    hb_write_journal_entries \
+      '## iter 4/5 | sess-1-111111 | 2026-01-01 | AUDIT | audit' \
+      '## iter 2/3 | sess-1-000000 | 2026-01-01 | T1 | done:::Verification: Evaluator: PASS - clean sweep.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no AUDIT entry headed with this run' \
+      && grep -q '^iteration: 3$' "$hb_state"; then
+      pass "stop hook rejects the promise when this run's record holds no AUDIT entry"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted convergence with no AUDIT entry on this run's record"
+    fi
+
+    hb_write_state sess-1 2 3
+    hb_write_journal_entries \
+      '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit' \
+      '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - clean sweep.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+      pass "stop hook accepts the promise over an AUDIT entry of this run in JOURNAL.md"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook rejected a declaration whose run audited (AUDIT entry in JOURNAL.md)"
+    fi
+
+    hb_write_state sess-1 2 3
+    hb_write_archive_audit
+    hb_write_journal_entries \
+      '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - clean sweep.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+      pass "stop hook accepts the promise over an AUDIT entry rotation moved to JOURNAL-archive.md"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook rejected a declaration whose AUDIT entry was rotated into JOURNAL-archive.md"
+    fi
+
+    hb_write_state sess-1 1 3
+    rm -f "$hb_proj/JOURNAL-archive.md"
+    hb_write_journal_entries \
+      '## iter 1/3 | sess-1-000000 | 2026-01-01 | RATCHET | converged:::Task: re-declared an unchanged tree.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>/dev/null)"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+      pass "stop hook asks no AUDIT entry of a RATCHET close"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook demanded an AUDIT entry of a RATCHET close, which re-declares a certified tree and never audits"
+    fi
+    hb_write_journal 1 3
 
     hb_write_state sess-1 1 3
     hb_write_plan none
@@ -3568,8 +3662,8 @@ if command -v jq >/dev/null 2>&1; then
         fault "stop hook flagged a legitimate appending rotation"
       fi
 
-      rm -f "$hb_proj/JOURNAL-archive.md"
       hb_write_journal 1 3
+      rm -f "$hb_proj/JOURNAL-archive.md"
       hb_write_state_archive sess-1 1 3 4
       hb_git add -A >/dev/null 2>&1
       hb_git commit -q -m archive-deleted >/dev/null 2>&1 || true
@@ -3585,6 +3679,7 @@ if command -v jq >/dev/null 2>&1; then
       # A project that has never rotated must not trip the check, and the
       # first re-feed of an upgraded run has no recorded baseline at all.
       hb_write_journal 1 3
+      rm -f "$hb_proj/JOURNAL-archive.md"
       hb_write_state sess-1 1 3
       hb_git add -A >/dev/null 2>&1
       hb_git commit -q -m archive-absent >/dev/null 2>&1 || true
@@ -4078,7 +4173,7 @@ if command -v jq >/dev/null 2>&1; then
       # The same fix on the converged-tree test: state files committed after
       # the Converged hash must not read as product paths here either.
       hb_sub_conv="$(hb_subgit rev-parse HEAD)"
-      hb_write_journal_entries '## iter 2/9 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
+      hb_write_journal_entries         '## iter 1/9 | sess-1-000000 | 2026-01-01 | AUDIT | audit'         '## iter 2/9 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok'
       hb_write_backlog '' "Converged: $hb_sub_conv - 2026-01-01"
       hb_write_evaluator_artifact
       hb_subgit add -A >/dev/null 2>&1
@@ -4219,6 +4314,40 @@ if command -v jq >/dev/null 2>&1; then
       else
         printf '%s\n' "$hb_out"
         fault "stop hook rejected a Converged line combining a list marker with a backticked hash"
+      fi
+
+      # The line's second field reached git verbatim, so any rev expression
+      # was a commit: Converged: HEAD made every certified-tree test HEAD
+      # against HEAD, and the metrics recorded HEAD as the converged commit.
+      # A branch with a hexadecimal name is the same expression in disguise.
+      # An abbreviated hash that resolves is the legal short form.
+      hb_git branch -q cafe1234 >/dev/null 2>&1
+      hb_p1_revs=""
+      for hb_p1_rev in HEAD @ main cafe1234; do
+        hb_write_state sess-1 1 3
+        hb_write_backlog '' "Converged: $hb_p1_rev - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+        if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'by its hexadecimal hash'; then
+          hb_p1_revs="$hb_p1_revs $hb_p1_rev"
+        fi
+        rm -f "$hb_state"
+      done
+      hb_git branch -q -D cafe1234 >/dev/null 2>&1
+      if [ "$hb_p1_revs" = " HEAD @ main cafe1234" ]; then
+        pass "stop hook rejects a Converged line naming a rev expression (HEAD, @, a branch, a hex-named branch)"
+      else
+        fault "stop hook accepted a Converged line naming a rev expression instead of a hash (refused only:${hb_p1_revs:- none})"
+      fi
+
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $(hb_git rev-parse --short=7 HEAD) - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+        pass "stop hook accepts a Converged line naming an abbreviated hash that resolves"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook rejected a Converged line naming a seven-character hash of HEAD"
       fi
 
       # E1: a backticked Command payload reaches bash -c as command
@@ -4684,6 +4813,7 @@ if command -v jq >/dev/null 2>&1; then
     # declaration is possible inside it. Controls prove an on-record audit
     # silences both, so neither note can become ambient noise.
     hb_write_journal 1 3
+    rm -f "$hb_proj/JOURNAL-archive.md"
     hb_write_backlog_counts 0 0 0
     hb_write_plan_full none '- [x] core: swept at abc1234 - all entry points probed'
     hb_write_state sess-1 2 3
@@ -4712,6 +4842,7 @@ if command -v jq >/dev/null 2>&1; then
     rm -f "$hb_state"
 
     hb_write_journal 3 3
+    rm -f "$hb_proj/JOURNAL-archive.md"
     hb_write_state sess-1 3 3
     hb_out="$(hb_run sess-1 'still working' '')"
     if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
