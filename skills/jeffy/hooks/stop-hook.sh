@@ -838,25 +838,30 @@ fi
 # The verdict is the artifact's. The journal line is the run's transcription
 # of it, and through 1.23 nothing opened the file, so a typed PASS stood over
 # an artifact recording REJECT. No grammar was ever stated to the gate, so
-# this reads what gates actually wrote: the last line whose first word is
-# PASS or REJECT, bare or after a Verdict label, under whatever markdown
-# decoration. Replayed over 815 artifacts in 93 trees it read a verdict in
-# every one, and the right one where a last-token scan did not - the word
-# REJECT closes many a PASS artifact, inside "not a REJECT reason".
+# this reads what gates actually wrote: a line whose first word is PASS or
+# REJECT, bare or after a Verdict label, under whatever markdown decoration,
+# where the word ends the line or is followed by a full stop or a spaced
+# hyphen. Every verdict line in the 123 distinct artifacts on this machine
+# has one of those three tails, and the lines that begin with the word and
+# are not verdicts have none of them: "REJECT reasons", "REJECT reason 1
+# (Medium, ...)", a quoted "PASS: ..." line of a check's output. The gate
+# writes one verdict, so an artifact carrying both kinds reads "both" and is
+# refused: taking the last one let a single PASS line appended to the
+# committed REJECT artifact converge the run.
 ev_art_verdict="$(awk '
   { sub(/\r$/, ""); s = $0; sub(/^[ \t#>*_`-]*/, "", s) }
   match(s, /^[Vv][Ee][Rr][Dd][Ii][Cc][Tt][ \t:*_`-]*/) { s = substr(s, RLENGTH + 1) }
-  s ~ /^PASS([^A-Za-z]|$)/ { v = "pass" }
-  s ~ /^REJECT([^A-Za-z]|$)/ { v = "reject" }
-  END { print (v == "" ? "none" : v) }
+  s ~ /^PASS[*_`]*([ \t]*$|\.|[ \t]+-)/ { p = 1 }
+  s ~ /^REJECT[*_`]*([ \t]*$|\.|[ \t]+-)/ { r = 1 }
+  END { print (p && r ? "both" : p ? "pass" : r ? "reject" : "none") }
 ' "$root/.jeffy/evaluator/$runid8${ev_art_ord:+-$ev_art_ord}.md" 2>/dev/null)"
 # Past every cap the contract can grant: three journal REJECTs, a fourth
-# ordinal, or a third whose latest artifact records REJECT. The last arm is
-# what holds when a journal heading is retyped away from EVALUATOR, which
-# drops its REJECT from the count above at no cost.
+# ordinal, or a third whose latest artifact carries a REJECT verdict. The
+# last arm is what holds when a journal heading is retyped away from
+# EVALUATOR, which drops its REJECT from the count above at no cost.
 ev_capped=0
 if [ "$ev_rejects" -ge 3 ] || [ "$ev_spent" -ge 4 ] \
-  || { [ "$ev_spent" -ge 3 ] && [ "$ev_art_verdict" = "reject" ]; }; then
+  || { [ "$ev_spent" -ge 3 ] && { [ "$ev_art_verdict" = "reject" ] || [ "$ev_art_verdict" = "both" ]; }; }; then
   ev_capped=1
 fi
 
@@ -1506,10 +1511,12 @@ if [ -n "$promise" ]; then
               fi
               # Read last, once the file is known to be the committed one:
               # what it says only matters if it is the gate's.
-              if [ -z "$violation" ] && [ "$ev_art_verdict" = "reject" ]; then
+              if [ -z "$violation" ] && [ "$ev_art_verdict" = "both" ]; then
+                violation="the closing entry records Evaluator: PASS but the gate's own artifact $ev_art carries two verdicts, a PASS line and a REJECT line; the gate writes one verdict and the artifact is never edited after it, so nothing here says which one the gate returned - with an invocation remaining re-invoke the gate and declare on the PASS its next ordinal records, and with none remaining end blocked in gate salvage, never re-invoking and never declaring"
+              elif [ -z "$violation" ] && [ "$ev_art_verdict" = "reject" ]; then
                 violation="the closing entry records Evaluator: PASS but the gate's own artifact $ev_art records REJECT; the artifact is the verdict and the journal line only transcribes it, so file each reason it names that this run can reproduce and work them - with an invocation remaining, re-invoke the gate and declare on the PASS its next ordinal records, and with none remaining end blocked in gate salvage, never re-invoking and never declaring"
               elif [ -z "$violation" ] && [ "$ev_art_verdict" != "pass" ]; then
-                violation="the closing entry records Evaluator: PASS but $ev_art carries no verdict line - no line whose first word is PASS or REJECT, bare, under a Verdict heading or after a 'Verdict:' label - so nothing the gate wrote says it passed; the artifact is the verdict and the journal line only transcribes it, so with an invocation remaining re-invoke the gate, whose next ordinal closes on its verdict line, and with none remaining end blocked in gate salvage"
+                violation="the closing entry records Evaluator: PASS but $ev_art carries no verdict line - no line whose first word is PASS or REJECT, bare, under a Verdict heading or after a 'Verdict:' label, with the word ending the line or followed by a full stop or ' - ' and the reason - so nothing the gate wrote says it passed; the artifact is the verdict and the journal line only transcribes it, so with an invocation remaining re-invoke the gate, whose next ordinal closes on its verdict line, and with none remaining end blocked in gate salvage"
               fi
               ;;
           esac

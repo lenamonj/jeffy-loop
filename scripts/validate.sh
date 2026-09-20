@@ -6388,6 +6388,53 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         fault "stop hook refused an honest PASS artifact written in the pre-grammar shape"
       fi
 
+      # The gate writes one verdict. The reader took the last verdict line, so
+      # one line reading PASS appended to the committed REJECT artifact inside
+      # the declaring checkpoint converged the run. An artifact carrying both
+      # kinds is refused in either order, which leaves no ordering rule for a
+      # later edit to get wrong.
+      hb_write_evaluator_artifact sess-e1-000000 1 "$(printf 'Verdict: REJECT - product.txt:1 the fix does not hold\nPASS')"
+      hb_ev_commit 'jeffy: a PASS appended to the REJECT artifact'
+      hb_ev_run sess-e1 ''
+      if hb_ev_refused 'carries two verdicts'; then
+        pass "stop hook refuses a REJECT artifact with a PASS line appended as carrying two verdicts"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a PASS appended to the gate's REJECT artifact as the verdict"
+      fi
+      hb_write_evaluator_artifact sess-e1-000000 1 "$(printf 'PASS\n\nVerdict: REJECT - product.txt:1 the fix does not hold')"
+      hb_ev_commit 'jeffy: the same two verdicts, PASS first'
+      hb_ev_run sess-e1 ''
+      if hb_ev_refused 'carries two verdicts'; then
+        pass "stop hook refuses a PASS line followed by a REJECT line as two verdicts, whichever comes first"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook picked one of two verdict lines by its position in the artifact"
+      fi
+
+      # A verdict line is the word and then nothing, a full stop, or a spaced
+      # hyphen. Prose that merely begins with the word is not a verdict: the
+      # REJECT-reasons headings real gates wrote, a summary reading "REJECT
+      # reasons: none", a quoted "PASS: ..." line of some check's output.
+      hb_write_evaluator_artifact sess-e1-000000 1 "$(printf '**PASS** - every check holds.\n\nREJECT reasons: none.\n\n- REJECT reasons: none')"
+      hb_ev_commit 'jeffy: a PASS artifact whose summary begins with the word REJECT'
+      hb_ev_run sess-e1 ''
+      if hb_ev_accepted; then
+        pass "stop hook reads a PASS artifact closing on 'REJECT reasons: none' as the PASS it is"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a prose line beginning with the word REJECT as the gate's verdict"
+      fi
+      hb_write_evaluator_artifact sess-e1-000000 1 "$(printf 'REJECT.\n\n## REJECT reasons\n\n### REJECT reason 1 (High, runtime, correctness) - product.txt:1\n\n    PASS: the claims check holds (no unknown yes)')"
+      hb_ev_commit 'jeffy: a REJECT artifact quoting a check that printed PASS:'
+      hb_ev_run sess-e1 ''
+      if hb_ev_refused 'own artifact .jeffy/evaluator/sess-e1-000000-1.md records REJECT'; then
+        pass "stop hook reads a REJECT artifact that quotes a 'PASS: ...' output line as the REJECT it is"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a quoted 'PASS: ...' output line as the gate's verdict"
+      fi
+
       # The legacy name alone is never the offence: a run with a base_head and
       # no ordinal anywhere on its record still falls back to the single path.
       hb_ev_c0="$(hb_git rev-parse HEAD)"
@@ -6467,6 +6514,23 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       else
         printf '%s\n' "$hb_out"
         fault "stop hook refused a run that spent its third invocation legally and passed"
+      fi
+
+      # The retyped-heading cap again, with a PASS appended to the third
+      # REJECT artifact: a REJECT verdict line still stands in it.
+      hb_ev_c0="$(hb_git rev-parse HEAD)"
+      for hb_ev_n in 1 2; do hb_write_evaluator_artifact sess-e7-000000 "$hb_ev_n" 'Verdict: REJECT - a finding stands'; done
+      hb_write_evaluator_artifact sess-e7-000000 3 "$(printf 'Verdict: REJECT - a finding stands\nPASS')"
+      hb_ev_commit 'jeffy: three rejected invocations, a PASS appended to the third'
+      hb_ev_run sess-e7 "$hb_ev_c0" \
+        '## iter 1/3 | sess-e7-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - one.' \
+        '## iter 1/3 | sess-e7-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - two.' \
+        '## iter 2/3 | sess-e7-000000 | 2026-01-01 | G9 | done:::Verification: Evaluator: REJECT - three.'
+      if hb_ev_refused 'no invocation remains'; then
+        pass "stop hook holds the cap when a PASS line is appended to the third REJECT artifact"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let a PASS appended to the third REJECT artifact lift the invocation cap"
       fi
       hb_git rm -q -- '.jeffy/evaluator/sess-e*' >/dev/null 2>&1
       hb_git commit -q -m 'jeffy: drop the verdict and cap scenarios' >/dev/null 2>&1
