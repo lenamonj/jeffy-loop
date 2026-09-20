@@ -3013,6 +3013,25 @@ if command -v jq >/dev/null 2>&1; then
       printf '%s\n' "$hb_out"
       fault "stop hook converged over an open High that one space of indent and a respelled severity took off the ledger:$hb_sec_bad"
     fi
+    # One rule for the three sections: the same indented open High under
+    # Next and under Later, and an indented unscored checkbox under each.
+    hb_sec_bad=""
+    for hb_sec_s in Next Later; do
+      for hb_sec_m in '  - [ ] H1 (HIGH, runtime, correctness): open. Acceptance: x.|open High or Medium' '\t* [ ] sub-step nobody scored|no parseable severity'; do
+        hb_sec_l="- [x] T0 (High, runtime, correctness): done. Acceptance: x.\n${hb_sec_m%%|*}\n"
+        case "$hb_sec_s" in
+          Next) hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n## Next\n\n$hb_sec_l\n## Later\n\n## Converged\n" ;;
+          Later) hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n## Next\n\n## Later\n\n$hb_sec_l\n## Converged\n" ;;
+        esac
+        hb_sec_refused "${hb_sec_m##*|}" || hb_sec_bad="$hb_sec_bad [$hb_sec_s: ${hb_sec_m%%|*}]"
+      done
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook reads an indented or starred open checkbox under Next and under Later as the open task it is under Now"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook held the every-open-checkbox rule under Now and dropped it under another section:$hb_sec_bad"
+    fi
     hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [ ] sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
     if hb_sec_refused 'no parseable severity' && hb_sec_refused 'sub-step nobody scored' && ! hb_sec_refused 'tick the sub-step'; then
       pass "stop hook still blocks on a top-level open task with no parseable severity"
@@ -7150,6 +7169,76 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt" 2>/dev/null
         fault "stop hook refused a RATCHET over a legal repoint of a certified hash"
+      fi
+
+      # The records are read line by line and file by file, so a line jq
+      # cannot parse - a record torn when its run was killed, a conflict
+      # marker - hides nothing after it, and a file ending mid-record with no
+      # newline cannot swallow the first line of the next. One aborted jq
+      # refused every later ratchet in the tree with a message saying the
+      # record does not exist.
+      hb_p2_rec() { # $1 run id, $2 hash, $3 verdict
+        printf '{"run_token":"%s","mode":"standard","declaration":{"hash":"%s","verdict":"%s","reason":null}}\n' "$1" "$2" "$3"
+      }
+      hb_p2_torn="$(hb_p2_rec old-1-000000 "$hb_p2_legal" accepted | cut -c1-120)"
+      hb_p2_bad=""
+      rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+      { printf '<<<<<<< HEAD\n%s\n' "$hb_p2_torn"; hb_p2_rec old-1-000000 "$hb_p2_legal" accepted; } > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+      [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_p2_bad="$hb_p2_bad [malformed lines ahead of the record in its file]"
+      rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+      printf '%s' "$hb_p2_torn" > "$hb_proj/.jeffy/metrics/aaa-1-000000.jsonl"
+      hb_p2_rec old-1-000000 "$hb_p2_legal" accepted > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+      [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_p2_bad="$hb_p2_bad [an earlier file ending mid-record with no newline]"
+      if [ -z "$hb_p2_bad" ]; then
+        pass "stop hook reads the certifying record past a torn line, a conflict marker and an earlier metrics file that ends mid-record"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook refused a legal RATCHET because a malformed metrics line came before the certifying record:$hb_p2_bad"
+      fi
+      # A torn record is not a record, however much of it names the hash.
+      rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+      printf '%s\n' "$hb_p2_torn" > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+      if hb_p2_uncertified; then
+        pass "stop hook refuses a RATCHET whose only record of the hash is a torn line"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook certified a RATCHET on a torn metrics line"
+      fi
+      # The record has to say the declaration was accepted: another run's
+      # refused declaration of this very hash certifies nothing.
+      hb_p2_bad=""
+      for hb_p2_v in refused rejected ''; do
+        rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+        hb_p2_rec old-1-000000 "$hb_p2_legal" "$hb_p2_v" > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+        hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+        hb_p2_uncertified || hb_p2_bad="$hb_p2_bad [verdict '$hb_p2_v']"
+      done
+      if [ -z "$hb_p2_bad" ]; then
+        pass "stop hook refuses a RATCHET whose hash another run declared and this hook refused"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook certified a RATCHET on a record that is not an accepted declaration:$hb_p2_bad"
+      fi
+      # And the hash has to be this hash, whole: an accepted record for
+      # another commit, for a longer string this hash begins, or a full
+      # record under an abbreviated Converged line is no match.
+      hb_p2_bad=""
+      hb_p2_short="$(printf '%s' "$hb_p2_legal" | cut -c1-7)"
+      for hb_p2_v in "$hb_p2_state_only|$hb_p2_legal" "${hb_p2_legal}ff|$hb_p2_legal" "ff$hb_p2_legal|$hb_p2_legal" "$hb_p2_legal|$hb_p2_short"; do
+        rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+        hb_p2_rec old-1-000000 "${hb_p2_v%%|*}" accepted > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+        hb_p2_s2 "Converged: ${hb_p2_v##*|} - 2026-01-01" "$hb_p2_state_only"
+        hb_p2_uncertified || hb_p2_bad="$hb_p2_bad [record|Converged $hb_p2_v]"
+      done
+      if [ -z "$hb_p2_bad" ]; then
+        pass "stop hook refuses a RATCHET unless the accepted record names the Converged hash exactly, never another commit, a longer string or a prefix"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook certified a RATCHET on a record whose hash is not the Converged hash:$hb_p2_bad"
       fi
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"

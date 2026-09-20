@@ -302,9 +302,13 @@ jeffy_declaration_certified() { # $1 project root, $2 converged hash, $3 this ru
   # highs, and it certifies that an audit found no High, never a
   # convergence. A record with no mode field predates hunts (1.22.0) and is
   # a standard one.
-  cat "$1"/.jeffy/metrics/*.jsonl 2>/dev/null \
-    | jq -r --arg me "${3:-}" 'select(.declaration != null) | select((.mode // "standard") != "highs") | select(.declaration.verdict == "accepted") | select((.run_token // "") != $me) | (.declaration.hash // "")' 2>/dev/null \
-    | grep -qix -- "$2"
+  # Read line by line and file by file: jq stops at the first value it
+  # cannot parse, so one torn record or conflict marker ahead of the
+  # certifying line, or a file ending mid-record ahead of its file, refused
+  # every later ratchet in the tree as if the record did not exist.
+  for jdc_f in "$1"/.jeffy/metrics/*.jsonl; do
+    jq -R -r --arg me "${3:-}" 'fromjson? | objects | select(.declaration != null) | select((.mode // "standard") != "highs") | select(.declaration.verdict == "accepted") | select((.run_token // "") != $me) | (.declaration.hash // "")' "$jdc_f" 2>/dev/null
+  done | grep -qix -- "$2"
 }
 
 # P1-66: the Verify count cell. quiet-verify.sh records the total the summary
