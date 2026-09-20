@@ -3018,6 +3018,34 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf '%s\n' "$hb_out"
         fault "stop hook refused a row over a glob that matches no changed path"
       fi
+      # A paths file checked out under core.autocrlf=true ends every line in
+      # CR, and this was the one reader that kept it: the glob was
+      # "product.txt\r", matched nothing, and the gate was inert - live on two
+      # of the engine's own three batteries in the maintainer's tree. A CRLF
+      # paths file gates exactly like an LF one, in both directions.
+      printf 'docs/*.md\r\nproduct.txt\r\n' > "$hb_proj/.jeffy/probes/core/paths"
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is stale' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'product.txt has changed since'; then
+        pass "stop hook derives staleness through a CRLF paths file"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook kept the CR of a CRLF paths file in the glob and accepted convergence over a stale row"
+      fi
+      rm -f "$hb_state"
+      printf 'docs/*.md\r\n\r\n' > "$hb_proj/.jeffy/probes/core/paths"
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+        pass "stop hook accepts a row whose CRLF paths file covers nothing that moved"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused a row over a CRLF paths file that matches no changed path"
+      fi
       rm -f "$hb_proj/.jeffy/probes/core/paths"
       hb_write_state sess-1 1 3
       hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
@@ -4380,6 +4408,37 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       pass "stop hook leaves a foreign session's state file untouched"
     else
       fault "stop hook touched a foreign session's state file"
+    fi
+
+    # A state file saved with CRLF line endings - a hand edit in a Windows
+    # editor - is still this session's. The frontmatter reader kept the CR, so
+    # "sess-1\r" was not sess-1: the owning session's run was classed as
+    # another session's and ended after one turn with nothing on stderr. Read
+    # without the CR the file has to re-feed like any other and keep counting,
+    # because a rewriter that cannot see "---\r" close the frontmatter never
+    # advances the counter; and --lint has to read the same session.
+    hb_write_state sess-1 1 9
+    awk '{ printf "%s\r\n", $0 }' "$hb_state" > "$hb_state.crlf" && mv "$hb_state.crlf" "$hb_state"
+    hb_crlf_lint="$(bash "$hb_hook" --lint "$hb_proj" 2>&1 < /dev/null)"
+    hb_out="$(hb_run sess-1 'still working' '')"
+    hb_out2="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ "$(printf '%s' "$hb_out2" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ "$(tr -d '\r' < "$hb_state" | grep -c '^iteration: 3$')" = "1" ] \
+      && printf '%s' "$hb_crlf_lint" | grep -q '^jeffy lint: '; then
+      pass "stop hook reads a CRLF state file as this session's, re-feeds it and keeps counting (and --lint reads it)"
+    else
+      printf '%s\n%s\n%s\n' "$hb_out" "$hb_out2" "$hb_crlf_lint"
+      fault "stop hook read this session's CRLF state file as a foreign session's and ended the run in silence"
+    fi
+    # ...and a CRLF state file that names another session is still left alone.
+    hb_write_state sess-other 1 9
+    awk '{ printf "%s\r\n", $0 }' "$hb_state" > "$hb_state.crlf" && mv "$hb_state.crlf" "$hb_state"
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ -z "$hb_out" ] && [ "$(tr -d '\r' < "$hb_state" | grep -c '^iteration: 1$')" = "1" ]; then
+      pass "stop hook leaves a foreign session's CRLF state file untouched"
+    else
+      fault "stop hook touched a foreign session's CRLF state file"
     fi
 
     rm -f "$hb_state"

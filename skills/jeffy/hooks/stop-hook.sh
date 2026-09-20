@@ -127,15 +127,18 @@ fi
 if [ "$lint" = 1 ]; then
   # No stdin in lint mode: the session is the state file's own.
   input='{}'
-  session_id="$(sed -n 's/^session_id: //p' "$state" | head -n 1)"
+  session_id="$(tr -d '\r' < "$state" | sed -n 's/^session_id: //p' | head -n 1)"
 else
   input="$(cat)"
   session_id="$(printf '%s' "$input" | jq -r '.session_id // empty')"
 fi
 
 # Frontmatter fields are fixed single-line keys written by the /jeffy launch;
-# the state file body never starts a line with any of them.
-fm() { sed -n "s/^$1: //p" "$state" | head -n 1; }
+# the state file body never starts a line with any of them. CR is dropped at
+# every read of the file: a state file saved with CRLF endings carried
+# "<session>\r", compared unequal to its own session, and the owning run ended
+# after one turn as another session's orphan, in silence.
+fm() { tr -d '\r' < "$state" | sed -n "s/^$1: //p" | head -n 1; }
 fm_session="$(fm session_id)"
 iter="$(fm iteration)"
 max="$(fm max_iterations)"
@@ -584,7 +587,9 @@ jeffy_derive_stale_rows() { # $1 project root
     # reported by the caller rather than silently passed (P0-8).
     [ -f "$jsr_pf" ] || { jsr_nopaths=$((jsr_nopaths + 1)); continue; }
     git -C "$1" rev-parse --verify --quiet "$jsr_c^{commit}" >/dev/null 2>&1 || continue
-    jsr_pat="$(grep -v '^[[:space:]]*$' "$jsr_pf" 2>/dev/null)"
+    # CR dropped as every other reader here drops it: a paths file checked out
+    # under core.autocrlf=true made each glob "src/a.c\r", which matches nothing.
+    jsr_pat="$(tr -d '\r' < "$jsr_pf" 2>/dev/null | grep -v '^[[:space:]]*$')"
     [ -n "$jsr_pat" ] || continue
     jsr_moved=""
     while IFS= read -r jsr_chg; do
@@ -1830,7 +1835,7 @@ extension=""
 ext_lows_grant=""
 corrective=""
 if [ "$iter" -ge "$max" ]; then
-  fm_close="$(grep -c '^---$' "$state" 2>/dev/null || true)"
+  fm_close="$(tr -d '\r' < "$state" 2>/dev/null | grep -c '^---$' || true)"
   case "$fm_close" in '' | *[!0-9]*) fm_close=0 ;; esac
   # A run past every invocation cap has no convergence sequence left for the
   # window to buy: it cannot re-invoke, so it cannot produce the verdict a
@@ -2445,7 +2450,11 @@ tmp="$state.tmp"
 # archive_migrated rides along with the strict archive baseline it certifies:
 # the baseline this rewrite stores is strict, so the naive escape above has
 # done its one job and must never be taken again.
+# CR is dropped from every line first, so "---\r" closes the frontmatter - a
+# rewriter that cannot see it close never advances the counter - and a CRLF
+# state file is LF from its first re-feed on.
 if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory" -v rh="$new_rows_hist" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" -v it="$now_epoch" -v ov="$new_overrun" -v fp="$new_fp_hist" -v os="$new_osc" -v cb="$new_ctx_base" '
+  { sub(/\r$/, "") }
   /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!sli) print "last_inventory: " li; if (rh != "" && !srh) print "rows_history: " rh; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (it != "0" && !sit) print "iteration_started_at: " it; if (!sov) print "overrun: " ov; if (fp != "" && !sfp) print "fingerprints: " fp; if (!sos) print "oscillation: " os; if (cb != "" && !scb) print "context_base_bytes: " cb; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
   fmc == 1 && /^last_inventory: / { print "last_inventory: " li; sli = 1; next }
