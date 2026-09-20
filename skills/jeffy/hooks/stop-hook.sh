@@ -486,11 +486,12 @@ EOF
 # presence and content come from one pass and cannot disagree. A checkbox
 # line is read whatever its bullet or indent ("  - [ ]", "* [ ]", "+ [ ]")
 # and handed on as "- [ ]", so every matcher downstream keeps one anchor.
-# One exception, in the ledger: under Now, Next and Later a line that is not a
-# top-level "- [ ]" is a task only when it carries a severity in the task
-# line's own form. An indented checkbox with none is a sub-step of the task
-# above it, and handing it on made it an open task with no parseable
-# severity, which blocks. A top-level "- [ ]" keeps the fail-closed rule.
+# The ledger is no exception. Reading an indented checkbox with no severity
+# in the task line's exact form as a sub-step took the line off the ledger
+# before the severity floor saw it, so one space of indent and one extra
+# space before "(High," hid an open High. Under Now, Next and Later every
+# open checkbox is an open task, and the refusal says what to do with a real
+# sub-step.
 # jeffy_heading itself is defined in lib/quiet-verify.sh, whose reader of the
 # Verify command section applies the same test when the wrapper runs alone.
 jeffy_section() { # $1 file, $2 section names joined by |, $3 non-empty prefixes each line with "<Name>|"
@@ -498,9 +499,7 @@ jeffy_section() { # $1 file, $2 section names joined by |, $3 non-empty prefixes
     { sub(/\r$/, "") }
     /^## / { sec = jeffy_heading($0, names); if (sec != "") found = 1; next }
     sec == "" { next }
-    /^[ \t]*[-*+] \[.\]/ {
-      if ((sec != "Now" && sec != "Next" && sec != "Later") || /^- / || /^[ \t]*[-*+] \[.\] [^ ]+ \((High|Medium|Low)[,)]/) sub(/^[ \t]*[-*+] /, "- ")
-    }
+    /^[ \t]*[-*+] \[.\]/ { sub(/^[ \t]*[-*+] /, "- ") }
     { if (tag != "") print sec "|" $0; else print }
     END { exit !found }
   ' "$1" 2>/dev/null
@@ -948,6 +947,7 @@ if [ -n "$promise" ]; then
       # open tasks and are untouched, exactly as before.
       open_blocking=""
       open_carried=""
+      open_substep=""
       hunt_nonhigh=""
       hunt_pending=""
       ledger_no_now=0
@@ -969,15 +969,22 @@ if [ -n "$promise" ]; then
           open_blocking="$(printf '%s\n' "$open_scan" | awk -F'\t' '{ print $2 }' | grep '^- \[ \] [^ ]* (High[,)]' | head -n 1)"
           open_carried=""
         fi
+        # The line a refusal will name, when it carries no parseable severity
+        # and is not a top-level "- [ ]" line of the file, is most often a
+        # sub-step, so the refusal says what an honest run does with one.
+        open_first="$(printf '%s\n' "${hunt_nonhigh:-$open_blocking}" | awk 'NR == 1 && $0 !~ /^- \[ \] [^ ]+ \((High|Medium|Low)[,)]/')"
+        if [ -n "$open_first" ] && ! tr -d '\r' < "$root/BACKLOG.md" | grep -qxF -- "$open_first"; then
+          open_substep="; an indented or starred open checkbox is an open task like any other, so if this one is a sub-step, tick the sub-step, or fold it into its parent task's text, or give it a severity as - [ ] <ID> (<Severity>, <area>, <dimension>)"
+        fi
       fi
       if [ ! -f "$root/BACKLOG.md" ]; then
         violation="BACKLOG.md is missing at $root, and every closing gate reads it - the open-task test and the $cert_sec hash that certifies the tree live in that file; restore the ledger with its Now and $cert_sec sections, then re-declare"
       elif [ "$ledger_no_now" = 1 ]; then
         violation="BACKLOG.md has no Now section, and the closing rule reads open tasks under the Now, Next and Later headings - a ledger without them is one the severity floor cannot read, not a clean one; restore the ## Now heading with every open task beneath it, then re-declare"
       elif [ "$hunt" = 1 ] && [ -n "$hunt_nonhigh" ]; then
-        violation="BACKLOG.md lists an open task that is not a High, and a hunt ledger carries Highs only - a Medium or Low an audit notices goes on that AUDIT entry's Noted, not filed: line, never on the ledger, and a line with no parseable severity is refused the same way, first: $hunt_nonhigh"
+        violation="BACKLOG.md lists an open task that is not a High, and a hunt ledger carries Highs only - a Medium or Low an audit notices goes on that AUDIT entry's Noted, not filed: line, never on the ledger, and a line with no parseable severity is refused the same way, first: $hunt_nonhigh$open_substep"
       elif [ -n "$open_blocking" ]; then
-        violation="BACKLOG.md still lists open High or Medium tasks in Now, Next, or Later (a task line with no parseable severity counts as blocking - the closing rule reads severity from the task line itself), first: $(printf '%s' "$open_blocking" | head -n 1)"
+        violation="BACKLOG.md still lists open High or Medium tasks in Now, Next, or Later (a task line with no parseable severity counts as blocking - the closing rule reads severity from the task line itself), first: $(printf '%s' "$open_blocking" | head -n 1)$open_substep"
       elif [ "$hunt" = 0 ] && command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
         jeffy_cert_hash_check
       fi

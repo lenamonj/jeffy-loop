@@ -2948,33 +2948,82 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook refused an honest declaration over prose under a hyphenated heading:$hb_sec_bad"
     fi
 
-    # An indented checkbox with no severity is a sub-step of the task above
-    # it, not a task: counted, it has no parseable severity and blocks. An
-    # indented or starred line that does carry a severity is a task (above).
+    # Under Now, Next and Later every open checkbox is an open task, whatever
+    # its indent or marker, and one with no parseable severity blocks. Reading
+    # an indented one as a sub-step made one leading space and one extra space
+    # before "(High," the price of an open High: the line left the ledger
+    # before the severity floor saw it. The refusal tells an honest run what
+    # to do with a real sub-step.
     hb_sec_bad=""
     for hb_sec_m in '  - [ ] ' '\t* [ ] ' '+ [ ] ' '    - [ ] (no id) '; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [x] T1 (Low, docs, documentation): done.\n${hb_sec_m}sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
+      hb_sec_refused 'no parseable severity' && hb_sec_refused 'sub-step nobody scored' \
+        && hb_sec_refused 'tick the sub-step' && hb_sec_refused "fold it into its parent task's text" || hb_sec_bad="$hb_sec_bad [$hb_sec_m]"
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook blocks on an indented or starred open checkbox with no severity and says what to do with a sub-step"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook read an open checkbox out of the ledger because it was indented or starred and carried no severity:$hb_sec_bad"
+    fi
+    # The two-character bypass first, then each spelling that hid an open High
+    # behind a marker that is not a top-level "- ".
+    hb_sec_bad=""
+    for hb_sec_m in ' - [ ] H1  (High, runtime, correctness): open. Acceptance: x.' \
+      '  - [ ] H1 (HIGH, runtime, correctness): open. Acceptance: x.' \
+      '  - [ ] H1 [High]: open. Acceptance: x.' \
+      '  - [ ] H1 High: open. Acceptance: x.' \
+      '  - [ ] (High, runtime, correctness): open. Acceptance: x.' \
+      '* [ ] H1 (HIGH, runtime, correctness): open. Acceptance: x.' \
+      '\t- [ ] H1 (HIGH, runtime, correctness): open. Acceptance: x.'; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [x] T0 (High, runtime, correctness): done. Acceptance: x.\n$hb_sec_m\n\n## Next\n\n## Later\n\n## Converged\n"
+      hb_sec_refused 'open High or Medium' && hb_sec_refused 'open. Acceptance: x.' || hb_sec_bad="$hb_sec_bad [$hb_sec_m]"
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook refuses an open High behind an indented or starred marker however its severity is spelled"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook converged over an open High that one space of indent and a respelled severity took off the ledger:$hb_sec_bad"
+    fi
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [ ] sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
+    if hb_sec_refused 'no parseable severity' && hb_sec_refused 'sub-step nobody scored' && ! hb_sec_refused 'tick the sub-step'; then
+      pass "stop hook still blocks on a top-level open task with no parseable severity"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let a top-level task line with no severity through the floor, or called it a sub-step"
+    fi
+    # A severity the floor's grammar cannot parse blocks; it is never skipped
+    # and never read as a Low.
+    hb_sec_bad=""
+    for hb_sec_m in '(HIGH, runtime, correctness)' '(High)' '[High]' 'High:' '(LOW, docs, documentation)' '(low, docs, documentation)'; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [ ] H1 $hb_sec_m open. Acceptance: x.\n\n## Next\n\n## Later\n\n## Converged\n"
+      hb_sec_refused 'open High or Medium' && hb_sec_refused "H1 $hb_sec_m" || hb_sec_bad="$hb_sec_bad [$hb_sec_m]"
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook blocks on a top-level open task whose severity is spelled a way the floor cannot parse"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook skipped or carried a top-level open task over the spelling of its severity:$hb_sec_bad"
+    fi
+    # The legal neighbours: a ticked sub-step, whatever its marker, is not an
+    # open task, and neither is a plain indented bullet under a finished one.
+    hb_sec_bad=""
+    for hb_sec_m in '  - [x] ' '\t* [x] ' '+ [x] ' '  - [~] ' '  - '; do
       hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [x] T1 (Low, docs, documentation): done.\n${hb_sec_m}sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
       [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [$hb_sec_m]"
     done
     if [ -z "$hb_sec_bad" ]; then
-      pass "stop hook reads an indented or starred checkbox with no severity as a sub-step, not an open task"
+      pass "stop hook accepts a declaration whose sub-steps are ticked or are plain bullets"
     else
       printf '%s\n' "$hb_out"
-      fault "stop hook blocked an honest declaration on a sub-step checkbox with no severity:$hb_sec_bad"
-    fi
-    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [ ] sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
-    if hb_sec_refused 'no parseable severity' && hb_sec_refused 'sub-step nobody scored'; then
-      pass "stop hook still blocks on a top-level open task with no parseable severity"
-    else
-      printf '%s\n' "$hb_out"
-      fault "stop hook let a top-level task line with no severity through the floor"
+      fault "stop hook blocked an honest declaration on a ticked sub-step or a plain indented bullet:$hb_sec_bad"
     fi
     hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Acceptance: done.\n  - [ ] a sub-step\n  - [ ] S12 (Low, docs, documentation): open task. Acceptance: done.\n\n## Next\n\n## Later\n\n## Converged\n" 'still working'
-    if hb_sec_refused 'open tasks Now 2 Next 0 Later 0'; then
-      pass "stop hook leaves a sub-step checkbox out of the open-task counts on a re-feed"
+    if hb_sec_refused 'open tasks Now 3 Next 0 Later 0'; then
+      pass "stop hook counts an open sub-step checkbox as an open task on a re-feed, as the declaration will"
     else
       printf '%s\n' "$hb_out"
-      fault "stop hook counted a sub-step checkbox as an open task on a re-feed"
+      fault "stop hook left an open sub-step checkbox out of the open-task counts the declaration blocks on"
     fi
 
     # The re-feed reads the same sections for its arithmetic, so the counts
