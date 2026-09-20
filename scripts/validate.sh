@@ -6020,7 +6020,10 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         '## iter 2/3 | sess-1-000000 | 2026-01-01 | RATCHET | converged:::Task: re-declared an unchanged tree.'
       hb_p2_fixture
       hb_state_addkey "base_head: $hb_p2_c1"
+      mkdir -p "$hb_proj/.jeffy/metrics"
+      printf '{"run_token":"old-1-000000","mode":"standard","declaration":{"hash":"%s","verdict":"accepted","reason":null}}\n' "$hb_p2_c1" > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      rm -f "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
       if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook exempts a RATCHET closing entry from the evaluator requirement"
       else
@@ -6867,12 +6870,14 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       hb_write_backlog '' "Converged: $hb_p2_base - 2026-01-01"
       hb_write_state_base 1 3 "$hb_p2_base"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
-        pass "stop hook accepts a genuine ratchet whose Converged hash predates the run"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'nothing records that the Stop hook accepted that declaration' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'audit and gate this run'; then
+        pass "stop hook refuses a RATCHET over a hash no record certifies, though git and base_head both date it"
       else
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt" 2>/dev/null
-        fault "stop hook rejected a ratchet re-declaring the tree its run started on"
+        fault "stop hook accepted a RATCHET over a never-recorded hash: absence of evidence certified the tree"
       fi
 
       printf 'v3\n' > "$hb_proj/product.txt"
@@ -6940,6 +6945,82 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt" 2>/dev/null
         fault "stop hook refused a legal RATCHET close: git, base_head, a Converged hash that predates the run, no AUDIT entry"
+      fi
+
+      # base_head sits in the state file, which the run can rewrite, and a
+      # commit is its own ancestor: naming the commit the run just made passed
+      # the ancestry test, and with no record of any earlier run the
+      # certification test abstained. The ratchet rests on the certified hash
+      # instead: an accepted standard declaration recorded under another run's
+      # id, and nothing but loop state changed since.
+      hb_p2_s2() { # $1 Converged line(s), $2 base_head; the journal holds an earlier run that closed converged
+        hb_write_journal_entries \
+          '## iter 3/3 | old-1-000000 | 2025-12-31 | T9 | converged:::Verification: Evaluator: PASS - ok.' \
+          '## iter 1/3 | sess-1-000000 | 2026-01-01 | RATCHET | converged:::Task: re-declared an unchanged tree.'
+        hb_write_plan_full none "$hb_p2_row"
+        hb_write_backlog '' "$1"
+        hb_write_state_base 1 3 "$2"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      }
+      hb_p2_uncertified() {
+        [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'nothing records that the Stop hook accepted that declaration'
+      }
+      printf 'v5\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: work this run did itself' >/dev/null 2>&1
+      hb_p2_made="$(hb_git rev-parse HEAD)"
+      hb_p2_s2 "Converged: $hb_p2_made - 2026-01-01" "$hb_p2_made"
+      if hb_p2_uncertified; then
+        pass "stop hook refuses a RATCHET over the run's own commit when base_head is rewritten to name it"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook converged a RATCHET over work the run committed itself: one rewritten base_head line was the whole price"
+      fi
+      # A record under this run's own id is the run's say-so.
+      printf '{"run_token":"sess-1-000000","mode":"standard","declaration":{"hash":"%s","verdict":"accepted","reason":null}}\n' "$hb_p2_made" > "$hb_proj/.jeffy/metrics/sess-1-000000.jsonl"
+      hb_p2_s2 "Converged: $hb_p2_made - 2026-01-01" "$hb_p2_made"
+      if hb_p2_uncertified; then
+        pass "stop hook refuses a RATCHET whose only accepted record carries the ratcheting run's own id"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let a run certify its own RATCHET with a record under its own id"
+      fi
+      rm -f "$hb_proj/.jeffy/metrics/sess-1-000000.jsonl"
+      # The certified hash with product moved after it: the record is real and
+      # the tree it certified is not the one declared.
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_made"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF "product path product.txt changed after the Converged hash $hb_p2_legal"; then
+        pass "stop hook refuses a RATCHET over a certified hash the product has moved past"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a RATCHET whose certified hash predates a product change"
+      fi
+      # Legal neighbours. base_head names a later loop-state commit: the key
+      # decides nothing here. And a Converged line repointed after a
+      # tree-preserving rewrite is certified by the record of the hash it
+      # repoints.
+      hb_git reset -q --hard "$hb_p2_legal" >/dev/null 2>&1
+      mkdir -p "$hb_proj/.jeffy/metrics"
+      printf '{"run_token":"old-1-000000","mode":"standard","declaration":{"hash":"%s","verdict":"accepted","reason":null}}\n' "$hb_p2_legal" > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      hb_git commit -q --allow-empty -m 'jeffy: the same tree under a later commit' >/dev/null 2>&1
+      hb_p2_state_only="$(hb_git rev-parse HEAD)"
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+        pass "stop hook accepts a RATCHET certified by another run's record whatever later commit base_head names"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook refused a legal RATCHET over a hash another run's accepted record certifies"
+      fi
+      hb_p2_s2 "$(printf 'Converged: %s - 2026-01-01\nConverged: %s - 2026-01-02 (repoints %s, tree unchanged)' "$hb_p2_legal" "$hb_p2_state_only" "$hb_p2_legal")" "$hb_p2_state_only"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+        pass "stop hook accepts a RATCHET over a repointed Converged line whose superseded hash another run's record certifies"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook refused a RATCHET over a legal repoint of a certified hash"
       fi
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
@@ -8682,9 +8763,9 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     rm -rf "$hh_proj/.jeffy/metrics"
     hh_ratchet_case "$hb_hook" "$hh_h1"
     if hh_ratchet_refused; then
-      pass "with no metrics record, the journal fallback reads an earlier run's hunted close as no certification (1.24.0)"
+      pass "with no metrics record at all, a standard RATCHET after an earlier run's hunted close is refused (1.24.0)"
     else
-      printf '%s\n' "$hh_out"; fault "the journal fallback certified a standard RATCHET over an earlier run that closed hunted"
+      printf '%s\n' "$hh_out"; fault "a standard RATCHET was certified with no metrics record, over an earlier run that closed hunted"
     fi
     rm -f "$hh_state"
     mkdir -p "$hh_proj/.jeffy/metrics"

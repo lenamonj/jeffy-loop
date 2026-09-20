@@ -90,8 +90,7 @@ jeffy_iter_type() { # $1 journal path, $2 run token "| <runid8> |", $3 iteration
 }
 
 # True when this run's record holds an AUDIT entry. The record is the archive
-# and the journal together, read the way jeffy_declaration_certified reads
-# them: rotation keeps the last ten entries in JOURNAL.md, so on a long run
+# and the journal together: rotation keeps the last ten entries in JOURNAL.md, so on a long run
 # the opening AUDIT entry is legitimately in JOURNAL-archive.md. Existence is
 # all this derives - cleanliness is prose the hook does not parse. Defined
 # once because the declaration and the convergence-readiness notes both ask.
@@ -278,79 +277,34 @@ trap jeffy_write_metrics EXIT
 # appended, declaration refused on the packaging channel, run closed blocked,
 # and every outside reader called the tree converged).
 #
-# The record is this hook's own metrics line. Trees that predate the field
-# fall back to the journal's closing entry, which is the same authority the
-# evaluator check reads: an accepted declaration ENDS the run, so the last
-# entry a run leaves behind is its converged one. A refused declaration is
-# always followed by more work - the corrective entry saying so at minimum -
-# and the last entry then carries done, blocked or audit. Rotation and
-# salvage entries are bookkeeping and are skipped here exactly as they are
-# there - by type as well as by status, because `records` closed with a
-# SALVAGE entry whose status is `done`.
+# The record is this hook's own metrics line, and it is the only evidence
+# read. Through 1.23 a tree with no record fell back to the journal - the last
+# status an earlier run left behind - and abstained where the journal held no
+# earlier run. Neither reading is bound to the hash, and the ratchet is this
+# function's only caller: its other test dated the hash against base_head, a
+# line of the state file the run can rewrite, so a run that committed its own
+# work, named that commit on the Converged line and wrote it into base_head
+# ratcheted over itself wherever the fallback said yes or said nothing. A
+# ratchet's whole claim is an earlier certification, so the claim needs the
+# record: an accepted standard declaration for this very hash, written under
+# a run id other than the ratcheting run's. A tree with no such record - one
+# that predates the field, or whose metrics were lost - audits fresh; the
+# cost is one real audit instead of a ratchet, never a false certification.
 #
-# What the fallback cannot tell apart, stated rather than papered over: a
-# legacy run that declared, was accepted, and then kept working in the same
-# run (`dayjs`, iteration 3 of 12, under an engine that allowed it) reads
-# here as not certified, because a refused declaration followed by more work
-# wears the same shape. The cost is one real audit instead of a ratchet,
-# never a false certification, and from 1.18.0 the metrics record answers
-# exactly while the shape itself cannot recur: an accepted declaration
-# deletes the state file and ends the run.
-#
-# The fallback reads only entries written before this run: a ratchet's own
-# closing entry is itself typed converged, so a fallback that read the last
-# entry of all would certify every ratchet by its own say-so and check
-# nothing. Entries carrying this run's id are skipped, and the question asked
-# is what the previous run left behind.
-#
-# It deliberately does not key on the hash. The declaring entry's Checkpoint
-# field names that iteration's checkpoint, and the commit the Converged line
-# finally rides is often a later bookkeeping commit, so three published
-# convergences (cobra, more-itertools, phpdotenv) carry no entry naming their
-# certified hash at all. The hash is checked for reachability and for the
-# nothing-but-state rule elsewhere in this file; what is asked here is only
-# whether the declaration that produced it was accepted.
-jeffy_declaration_certified() { # $1 project root, $2 converged hash, $3 this run's id prefix
+# What stays forgeable, stated rather than papered over: the metrics file is
+# in the tree, so a run can write an accepted line for its own commit under
+# an invented run id. That is a fabricated record in a file the run is told
+# never to touch, not one rewritten key.
+jeffy_declaration_certified() { # $1 project root, $2 converged hash, $3 this run's id
   [ -n "$2" ] || return 1
-  if [ -d "$1/.jeffy/metrics" ] && command -v jq >/dev/null 2>&1; then
-    # 1.24.0: a hunt's accepted close is recorded on the same line with mode
-    # highs, and it certifies that an audit found no High, never a
-    # convergence. A record with no mode field predates hunts (1.22.0) and is
-    # a standard one.
-    if cat "$1"/.jeffy/metrics/*.jsonl 2>/dev/null \
-      | jq -r 'select(.declaration != null) | select((.mode // "standard") != "highs") | select(.declaration.verdict == "accepted") | (.declaration.hash // "")' 2>/dev/null \
-      | grep -qix -- "$2"; then
-      return 0
-    fi
-    # An explicit refused record for this very hash is the verdict itself,
-    # and no older evidence certifies over it. A hunt's record for this hash
-    # is read the same way: what this hook recorded about it is a hunt.
-    if cat "$1"/.jeffy/metrics/*.jsonl 2>/dev/null \
-      | jq -r 'select(.declaration != null) | (.declaration.hash // "")' 2>/dev/null \
-      | grep -qix -- "$2"; then
-      return 1
-    fi
-  fi
-  jdc_last="$(cat "$1/JOURNAL-archive.md" "$1/JOURNAL.md" 2>/dev/null | awk -v me="${3:-}" '
-    { sub(/\r$/, "") }
-    /^## iter [0-9]+\/[0-9]+ \| / {
-      n = split($0, f, / \| /); st = f[n]; run = f[2]; ty = f[n - 1]
-      sub(/[ \t]+$/, "", st); sub(/^[ \t]+/, "", run); sub(/[ \t]+$/, "", run)
-      sub(/^[ \t]+/, "", ty); sub(/[ \t]+$/, "", ty)
-      if (st == "rotation" || st == "salvage") next
-      if (ty == "ROTATION" || ty == "SALVAGE") next
-      if (me != "" && index(run, me) == 1) next
-      last = st
-    }
-    END { print last }')"
-  # Absence is not evidence. A tree whose journal holds no entry from any
-  # earlier run - rotated away, or a ratchet run first in its own journal -
-  # says nothing about how the declaration went, and this hook abstains
-  # wherever its evidence is missing rather than refusing (the same rule the
-  # oracle, staleness and base_head checks follow). What is refused is
-  # positive evidence: an earlier run whose last word was not converged.
-  [ -n "$jdc_last" ] || return 0
-  [ "$jdc_last" = "converged" ]
+  [ -d "$1/.jeffy/metrics" ] && command -v jq >/dev/null 2>&1 || return 1
+  # 1.24.0: a hunt's accepted close is recorded on the same line with mode
+  # highs, and it certifies that an audit found no High, never a
+  # convergence. A record with no mode field predates hunts (1.22.0) and is
+  # a standard one.
+  cat "$1"/.jeffy/metrics/*.jsonl 2>/dev/null \
+    | jq -r --arg me "${3:-}" 'select(.declaration != null) | select((.mode // "standard") != "highs") | select(.declaration.verdict == "accepted") | select((.run_token // "") != $me) | (.declaration.hash // "")' 2>/dev/null \
+    | grep -qix -- "$2"
 }
 
 # P1-66: the Verify count cell. quiet-verify.sh records the total the summary
@@ -1480,15 +1434,21 @@ if [ -n "$promise" ]; then
               # exempts it from everything below - and that made the type the
               # cheapest bypass in the hook, seven characters where
               # unavailable took eleven, because nothing checked that the
-              # certified commit predated this run. base_head, written by the
-              # launch, is what a run cannot forge from inside itself: a
-              # genuine ratchet names a commit at or before the tree the run
-              # started on. Both are known to resolve here: a close that had
-              # no Converged hash or no base_head was refused as undated.
+              # certified commit predated this run. A genuine ratchet names
+              # a commit at or before base_head, the tree the run started on;
+              # both resolve here, since a close with no Converged hash or no
+              # base_head was refused as undated. That test alone is not the
+              # anchor: base_head is a line of the state file, and a run that
+              # rewrites it to the commit it just made passes. The anchor is
+              # the certified hash: another run's accepted record for it, or
+              # for the hash a legal repoint supersedes, whose tree the check
+              # above has shown equal; and that check has already refused any
+              # product change between the hash and HEAD.
               if ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_base" 2>/dev/null; then
                 violation="the closing entry is typed RATCHET but the Converged hash $conv_hash is not an ancestor of the commit this run started on; a ratchet re-declares a tree an earlier run certified and never invokes the evaluator, so work committed during this run has to converge the ordinary way, through a fresh audit and the gate"
-              elif ! jeffy_declaration_certified "$root" "$conv_hash" "$runid8"; then
-                violation="the Converged hash $conv_hash was declared, but nothing records that the Stop hook accepted that declaration - no accepted declaration in .jeffy/metrics/, and the last entry an earlier run left in the journal is not a converged one - so what that line records is a declaration this hook refused, and it certifies nothing; audit and gate this run rather than ratchet over it"
+              elif ! jeffy_declaration_certified "$root" "$conv_hash" "$runid8" \
+                && { [ -z "$conv_old" ] || ! jeffy_declaration_certified "$root" "$conv_old" "$runid8"; }; then
+                violation="the Converged hash $conv_hash was declared, but nothing records that the Stop hook accepted that declaration - .jeffy/metrics/ holds no accepted standard declaration for that hash written under a run id other than this run's $runid8 - and a ratchet re-declares a tree an earlier run certified, so a hash no earlier run's record certifies is one this run vouches for alone; audit and gate this run rather than ratchet over it"
               fi
               ;;
             missing)
