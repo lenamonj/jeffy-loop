@@ -2591,16 +2591,24 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook rejected a declaration whose AUDIT entry was rotated into JOURNAL-archive.md"
     fi
 
+    # A RATCHET close is only what git can certify. This sandbox has no git,
+    # so nothing dates the certified tree against the run, and the type was
+    # one word that exempted the run from its audit and from the gate. The
+    # legal ratchet, which owes no AUDIT entry, is driven in the git sandbox.
     hb_write_state sess-1 1 3
     rm -f "$hb_proj/JOURNAL-archive.md"
     hb_write_journal_entries \
       '## iter 1/3 | sess-1-000000 | 2026-01-01 | RATCHET | converged:::Task: re-declared an unchanged tree.'
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>/dev/null)"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
-      pass "stop hook asks no AUDIT entry of a RATCHET close"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'a ratchet re-declares a tree an earlier run certified' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'this project has no git HEAD' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'audit fresh instead' \
+      && grep -q '^iteration: 2$' "$hb_state"; then
+      pass "stop hook refuses a RATCHET close in a project with no git, where nothing can date the certified tree"
     else
       printf '%s\n' "$hb_out"
-      fault "stop hook demanded an AUDIT entry of a RATCHET close, which re-declares a certified tree and never audits"
+      fault "stop hook converged a run with no audit and no gate on the word RATCHET, in a project with no git"
     fi
     hb_write_journal 1 3
 
@@ -5814,6 +5822,7 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         '## iter 1/3 | sess-1-000000 | 2026-01-01 | SALVAGE | salvage:::Task: recovered the state files.' \
         '## iter 2/3 | sess-1-000000 | 2026-01-01 | RATCHET | converged:::Task: re-declared an unchanged tree.'
       hb_p2_fixture
+      hb_state_addkey "base_head: $hb_p2_c1"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
       if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
         pass "stop hook exempts a RATCHET closing entry from the evaluator requirement"
@@ -6622,20 +6631,54 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         fault "stop hook let seven characters in a heading turn the evaluator gate off"
       fi
 
-      # The bound: a state file written before base_head existed cannot be
-      # dated, and the hook says so rather than refusing every legacy ratchet.
+      # Through 1.23 a state file with no base_head failed open with a note,
+      # so deleting the line skipped both ratchet tests - the ancestry test
+      # and the accepted-declaration test. A RATCHET close without a
+      # base_head that resolves is refused, a legacy state file included: the
+      # run audits fresh instead.
+      hb_p2_bad=""
+      for hb_p2_bh in '' 'base_head: none' 'base_head: 0123456789abcdef0123456789abcdef01234567'; do
+        hb_p2_ratchet_journal
+        hb_write_plan_full none "$hb_p2_row"
+        hb_write_backlog '' "Converged: $hb_p2_own - 2026-01-01"
+        hb_write_state sess-1 1 3
+        [ -z "$hb_p2_bh" ] || hb_state_addkey "$hb_p2_bh"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>/dev/null)"
+        [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'a ratchet re-declares a tree an earlier run certified' \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'carries no base_head that resolves to a commit' \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'audit fresh instead' \
+          || hb_p2_bad="$hb_p2_bad [${hb_p2_bh:-no key}]"
+      done
+      if [ -z "$hb_p2_bad" ]; then
+        pass "stop hook refuses a RATCHET close whose state file carries no base_head that resolves (both ratchet tests were skipped)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a RATCHET close it could not date, base_head:$hb_p2_bad"
+      fi
+
+      # The legal neighbour, end to end: git, the launch's base_head, a
+      # Converged hash at or before it that an earlier standard run's accepted
+      # declaration certifies, nothing but loop state changed since, and no
+      # AUDIT entry anywhere on the record.
+      printf 'v4\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null 2>&1
+      hb_git commit -q -m 'an earlier run converged here' >/dev/null 2>&1
+      hb_p2_legal="$(hb_git rev-parse HEAD)"
+      mkdir -p "$hb_proj/.jeffy/metrics"
+      printf '{"run_token":"old-1-000000","mode":"standard","declaration":{"hash":"%s","verdict":"accepted","reason":null}}\n' "$hb_p2_legal" > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      rm -f "$hb_proj/JOURNAL-archive.md"
       hb_p2_ratchet_journal
       hb_write_plan_full none "$hb_p2_row"
-      hb_write_backlog '' "Converged: $hb_p2_own - 2026-01-01"
-      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_p2_legal - 2026-01-01"
+      hb_write_state_base 1 3 "$hb_p2_legal"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
-        && grep -q 'no resolvable base_head' "$hb_tmp/hb_err.txt"; then
-        pass "stop hook fails open on a ratchet whose state file predates base_head (stderr note)"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+        pass "stop hook asks no AUDIT entry of a RATCHET close that git and base_head certify"
       else
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt" 2>/dev/null
-        fault "stop hook mishandled a legacy state file at the ratchet check"
+        fault "stop hook refused a legal RATCHET close: git, base_head, a Converged hash that predates the run, no AUDIT entry"
       fi
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"

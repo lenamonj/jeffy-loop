@@ -1419,8 +1419,27 @@ if [ -n "$promise" ]; then
           # audit behind it - it re-declares a tree an earlier run certified,
           # and its own arm below checks that - and a record with no entry at
           # all keeps the message that says so.
+          # That exemption is only as good as the arm behind it, and the arm
+          # skipped both of its tests with a stderr note wherever it had
+          # nothing to date the hash against: a project with no git, where one
+          # word converged a run with no audit and no gate, and a state file
+          # whose base_head line had been deleted. A RATCHET close is accepted
+          # only where both tests can run - a git HEAD, whose Converged hash
+          # the check above has already resolved, and a base_head that
+          # resolves to a commit.
           case "$ev_verdict" in
-            none | ratchet) ;;
+            none) ;;
+            ratchet)
+              ev_base="$(fm base_head)"
+              if [ -z "$conv_hash" ]; then
+                ev_verdict="undated"
+                ev_undated="this project has no git HEAD carrying a Converged hash"
+              elif [ -z "$ev_base" ] || [ "$ev_base" = "none" ] \
+                || ! git -C "$root" rev-parse --verify --quiet "$ev_base^{commit}" >/dev/null 2>&1; then
+                ev_verdict="undated"
+                ev_undated="the loop state file carries no base_head that resolves to a commit"
+              fi
+              ;;
             *) jeffy_run_audited "$root" "| $runid8 |" || ev_verdict="unaudited" ;;
           esac
           if [ "$ev_capped" = 1 ]; then
@@ -1432,6 +1451,9 @@ if [ -n "$promise" ]; then
               ;;
             capped)
               violation="this run's journal records $ev_rejects Evaluator: REJECT verdicts, the highest evaluator artifact ordinal on its record - the working tree, the commits since base_head and this hook's own metrics - is $ev_spent, and the latest artifact in the tree reads $ev_art_verdict, past every invocation cap the contract grants - 2, or 3 when the first invocation landed before the midpoint of the budget - so no invocation remains to produce the verdict a declaration requires; spend what budget is left in gate salvage on the findings the gate filed, then end the run blocked as 'blocked - N gate findings closed, declaration deferred', because convergence waits for the next run's fresh gate"
+              ;;
+            undated)
+              violation="the closing entry is typed RATCHET, and a ratchet re-declares a tree an earlier run certified: that needs git and the base_head the launch wrote to the loop state file, so this hook can test that the certified commit predates the run and that its declaration was accepted, and $ev_undated; a RATCHET that cannot be dated is one word in a heading, so audit fresh instead - run the full audit, record its AUDIT entry, take a clean result through the gate, then re-declare"
               ;;
             none)
               violation="JOURNAL.md holds no primary entry headed with the run id $runid8, and that entry is the only place the evaluator verdict is read from; write the closing entry under the run's own heading grammar, then re-declare"
@@ -1445,15 +1467,9 @@ if [ -n "$promise" ]; then
               # certified commit predated this run. base_head, written by the
               # launch, is what a run cannot forge from inside itself: a
               # genuine ratchet names a commit at or before the tree the run
-              # started on. A state file without the key predates this and
-              # fails open with a note.
-              ev_base="$(fm base_head)"
-              if [ -z "$conv_hash" ]; then
-                echo "jeffy stop hook: no Converged hash to date the ratchet against; skipping the ratchet's own check." >&2
-              elif [ -z "$ev_base" ] || [ "$ev_base" = "none" ] \
-                || ! git -C "$root" rev-parse --verify --quiet "$ev_base^{commit}" >/dev/null 2>&1; then
-                echo "jeffy stop hook: the loop state carries no resolvable base_head; skipping the ratchet's own check." >&2
-              elif ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_base" 2>/dev/null; then
+              # started on. Both are known to resolve here: a close that had
+              # no Converged hash or no base_head was refused as undated.
+              if ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_base" 2>/dev/null; then
                 violation="the closing entry is typed RATCHET but the Converged hash $conv_hash is not an ancestor of the commit this run started on; a ratchet re-declares a tree an earlier run certified and never invokes the evaluator, so work committed during this run has to converge the ordinary way, through a fresh audit and the gate"
               elif ! jeffy_declaration_certified "$root" "$conv_hash" "$runid8"; then
                 violation="the Converged hash $conv_hash was declared, but nothing records that the Stop hook accepted that declaration - no accepted declaration in .jeffy/metrics/, and the last entry an earlier run left in the journal is not a converged one - so what that line records is a declaration this hook refused, and it certifies nothing; audit and gate this run rather than ratchet over it"
