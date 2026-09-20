@@ -624,13 +624,14 @@ EOF
 # True when the certified line's second field is a hash and not a rev
 # expression. The field reached git verbatim through 1.23, so Converged: HEAD
 # was a commit and every certified-tree test became HEAD against HEAD. The
-# form is 7 to 40 hexadecimal characters, and where it resolves the commit's
-# full hash has to begin with it, because a branch may be given a hexadecimal
-# name. A hash that does not resolve passes here and is refused by the caller
-# under its own message.
+# form is 7 to 64 hexadecimal characters - a SHA-256 repository names a
+# commit with 64, and a cap of 40 refused every declaration in one - and
+# where it resolves the commit's full hash has to begin with it, because a
+# branch may be given a hexadecimal name. A hash that does not resolve passes
+# here and is refused by the caller under its own message.
 jeffy_names_hash() { # $1 project root, $2 the field
   case "$2" in *[!0-9a-fA-F]*) return 1 ;; esac
-  [ "${#2}" -ge 7 ] && [ "${#2}" -le 40 ] || return 1
+  [ "${#2}" -ge 7 ] && [ "${#2}" -le 64 ] || return 1
   jnh_full="$(git -C "$1" rev-parse --verify --quiet "$2^{commit}" 2>/dev/null)"
   jnh_lc="$(printf '%s' "$2" | tr 'A-F' 'a-f')"
   case "$jnh_full" in '' | "$jnh_lc"*) return 0 ;; esac
@@ -670,7 +671,7 @@ jeffy_cert_hash_check() {
     # the one shape lint reports as pending rather than refuses.
     hunt_pending="$hunt_pending${hunt_pending:+; and }the ## Hunted section of BACKLOG.md does not name a commit yet"
   elif [ -n "$conv_hash" ] && ! jeffy_names_hash "$root" "$conv_hash"; then
-    violation="the $cert_sec line names $conv_hash, which is not a commit named by its hexadecimal hash; HEAD, @, a branch or a tag moves with the tree, so every test of the certified tree would compare HEAD with itself and the receipt would record a name no clone resolves to the same commit - write the hash itself, 7 to 40 hexadecimal characters"
+    violation="the $cert_sec line names $conv_hash, which is not a commit named by its hexadecimal hash; HEAD, @, a branch or a tag moves with the tree, so every test of the certified tree would compare HEAD with itself and the receipt would record a name no clone resolves to the same commit - write the commit's full hash - the field is read as 7 to 64 hexadecimal characters, so an abbreviation that resolves is accepted"
   elif [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
     violation="the ## $cert_sec section of BACKLOG.md does not name a commit in this repository; append the $cert_sec line for the certified checkpoint"
   else
@@ -992,12 +993,15 @@ if [ -n "$promise" ]; then
           unswept="$(printf '%s\n' "$inv_rows" | grep '^- \[ \]' | head -n 1)"
           # P1-7c: refusing [ ] alone let a map made entirely of [~] rows
           # declare with nothing swept. A [~] row is a disclosure, not a
-          # sweep, so a map that holds rows has to hold a swept one. A section
-          # with no row at all is left to the note-free legacy path it had.
+          # sweep, so a map has to hold a swept one. A section with no row at
+          # all passed in silence, which made deleting the rows and keeping
+          # the heading the price of declaring over an unswept map.
           inv_counts="$(printf '%s\n' "$inv_rows" | awk '/^- \[[ x~]\]/ { r++; if ($0 ~ /^- \[x\]/) s++ } END { print r + 0, s + 0 }')"
           if [ -n "$unswept" ]; then
             violation="the Surface inventory in PLAN.md still lists an unswept row, first: $unswept; sweep it and record the commit, or record why it is out of scope, then re-declare convergence"
-          elif [ "${inv_counts%% *}" -gt 0 ] && [ "${inv_counts##* }" -eq 0 ]; then
+          elif [ "${inv_counts%% *}" -eq 0 ]; then
+            violation="the Surface inventory in PLAN.md lists no row: no line under the heading begins - [ ], - [x] or - [~], and a convergence claim covers surface an audit opened, so an empty map certifies nothing; map the surface one row each as - [ ] <surface>: <scope>, sweep the rows this host can reach and record each as - [x] with its commit, then re-declare convergence"
+          elif [ "${inv_counts##* }" -eq 0 ]; then
             violation="the Surface inventory in PLAN.md lists ${inv_counts%% *} row(s) and none is swept: a [~] row is not swept, it discloses surface this host cannot reach, and a convergence claim covers surface an audit opened; sweep the rows this host can reach and record each as - [x] with its commit, then re-declare convergence"
           fi
         else

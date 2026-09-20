@@ -2847,6 +2847,34 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook --lint passed a PLAN.md whose Surface inventory or Verify command section is absent"
     fi
 
+    # The same bypass one step on: keep the heading and delete the rows. A
+    # section holding no - [ ], - [x] or - [~] row passed in silence.
+    hb_sec_bad=""
+    for hb_sec_r in '' 'The map is being redrawn.' '- core: swept at abc1234 - a bullet with no checkbox'; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_r" "$hb_sec_clean"
+      hb_sec_refused 'the Surface inventory in PLAN.md lists no row' || hb_sec_bad="$hb_sec_bad [$hb_sec_r]"
+    done
+    hb_sec_stage '## Surface inventory' '' "$hb_sec_clean" 'still working'
+    hb_sec_lint1="$(bash "$hb_hook" --lint "$hb_proj" 2>&1 < /dev/null)"; hb_sec_lint1_rc=$?
+    if [ -z "$hb_sec_bad" ] && [ "$hb_sec_lint1_rc" -eq 1 ]       && printf '%s' "$hb_sec_lint1" | grep -qF 'would be refused - the Surface inventory in PLAN.md lists no row'       && hb_sec_refused 'Do the jeffy iteration now.' && ! hb_sec_refused 'lists no row'; then
+      pass "stop hook refuses a declaration over a Surface inventory section holding no row, --lint reports it, and an ordinary turn is re-fed without the refusal"
+    else
+      printf 'rc=%s %s
+%s
+' "$hb_sec_lint1_rc" "$hb_sec_lint1" "$hb_out"
+      fault "stop hook accepted a Surface inventory heading with its rows deleted, under:$hb_sec_bad"
+    fi
+    hb_sec_stage '## Surface inventory' "$(printf 'Mapped at iteration 1; one surface.
+
+%s' "$hb_sec_row")" "$hb_sec_clean"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+      pass "stop hook accepts a Surface inventory holding prose and a single swept row"
+    else
+      printf '%s
+' "$hb_out"
+      fault "stop hook refused a one-row swept Surface inventory that carries a line of prose"
+    fi
+
     # A hunt never sweeps, so its PLAN.md owes no map; it still owes a gate.
     hb_sec_stage '' '' "## Now\n\n## Hunted\n" 'still working'
     hb_state_addkey 'mode: highs'
@@ -4777,6 +4805,49 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       else
         printf '%s\n' "$hb_out"
         fault "stop hook rejected a Converged line naming a seven-character hash of HEAD"
+      fi
+
+      # A SHA-256 repository names every commit with 64 hexadecimal
+      # characters. The field was capped at 40, so no declaration there could
+      # ever be accepted, and the refusal asked for "7 to 40" against prompts
+      # that ask for the full hash. 80 characters is no hash in either format.
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: ${hb_p1_c1}${hb_p1_c1} - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ]         && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'by its hexadecimal hash'         && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF '7 to 64 hexadecimal characters'; then
+        pass "stop hook refuses a hexadecimal field longer than any hash and asks for 7 to 64 characters"
+      else
+        printf '%s
+' "$hb_out"
+        fault "stop hook did not refuse an over-long hexadecimal field under the 7-to-64 rule"
+      fi
+      rm -f "$hb_state"
+      if git init -q -b main --object-format=sha256 "$hb_tmp/p1sha" >/dev/null 2>&1; then
+        hb_p1_proj="$hb_proj"
+        hb_proj="$hb_tmp/p1sha"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+        mkdir -p "$hb_proj/.claude"
+        printf 'v1
+' > "$hb_proj/product.txt"
+        hb_write_evaluator_artifact
+        hb_git add product.txt .jeffy >/dev/null
+        hb_git commit -q -m c1
+        hb_p1_sha="$(hb_git rev-parse HEAD)"
+        hb_write_journal 1 3
+        hb_write_state sess-1 1 3
+        hb_write_plan_full none "$hb_p1_row"
+        hb_write_backlog '' "Converged: $hb_p1_sha - 2026-01-01"
+        hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+        if [ "${#hb_p1_sha}" -eq 64 ] && [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+          pass "stop hook accepts a Converged line naming the 64-character hash of a SHA-256 repository"
+        else
+          printf '%s
+' "$hb_out"
+          fault "stop hook refused the full commit hash of a SHA-256 repository"
+        fi
+        rm -f "$hb_state"
+        hb_proj="$hb_p1_proj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      else
+        skip "SHA-256 Converged-hash scenario (this git has no --object-format=sha256)"
       fi
 
       # E1: a backticked Command payload reaches bash -c as command
