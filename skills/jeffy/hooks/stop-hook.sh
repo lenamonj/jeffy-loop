@@ -472,6 +472,44 @@ $(git -C "$1" diff --name-only --relative "$2" HEAD -- '.jeffy/probes/*/README.m
 EOF
 }
 
+# One reader for the named sections of PLAN.md and BACKLOG.md. Whether a
+# section exists used to be asked with a prefix grep and its rows read with a
+# byte-exact awk, so every heading the two disagreed on - one trailing space,
+# "## Surface inventory (12 rows)", "## Declined (1 open premise)" - read as
+# present with zero rows, and the declaration passed over an unswept row or an
+# underived premise with no note; the ledger scans were exact on both sides
+# and blind the same way. jeffy_heading is the one heading test: trailing CR
+# and whitespace are dropped, and the heading is the section when it reads
+# "## <Name>" alone or goes on with a space, a tab, "(", "-" or ":" - a
+# suffixed heading is read as the section, because refusing to read it is the
+# silent skip again. "## Nowhere" is not Now. jeffy_section prints the lines
+# under the named sections and its exit status says whether any was found, so
+# presence and content come from one pass and cannot disagree. A checkbox
+# line is read whatever its bullet or indent ("  - [ ]", "* [ ]", "+ [ ]")
+# and handed on as "- [ ]", so every matcher downstream keeps one anchor.
+# shellcheck disable=SC2016  # an awk program, not a shell expansion
+jeffy_awk_heading='function jeffy_heading(h, names,    n, want, i, p, c) {
+  sub(/\r$/, "", h); sub(/[ \t]+$/, "", h)
+  n = split(names, want, "|")
+  for (i = 1; i <= n; i++) {
+    p = "## " want[i]
+    if (index(h, p) != 1) continue
+    c = substr(h, length(p) + 1, 1)
+    if (c == "" || c == " " || c == "\t" || c == "(" || c == "-" || c == ":") return want[i]
+  }
+  return ""
+}'
+jeffy_section() { # $1 file, $2 section names joined by |, $3 non-empty prefixes each line with "<Name>|"
+  awk -v names="$2" -v tag="${3:-}" "$jeffy_awk_heading"'
+    { sub(/\r$/, "") }
+    /^## / { sec = jeffy_heading($0, names); if (sec != "") found = 1; next }
+    sec == "" { next }
+    /^[ \t]*[-*+] \[.\]/ { sub(/^[ \t]*[-*+] /, "- ") }
+    { if (tag != "") print sec "|" $0; else print }
+    END { exit !found }
+  ' "$1" 2>/dev/null
+}
+
 # 1.18.2 (P1-67): a count a governance document states is an executable
 # claim. PLAN.md carries a Stated counts table - rows `label|stated|command`
 # inside a COUNTS heredoc, executed by hooks/lib/check-claims.sh - and prose
@@ -494,13 +532,12 @@ jeffy_stated_counts_violation() { # $1 project root
   jscv_wx='sixty|seventy|eighty|ninety|hundred|thousand|million|billion'
   for jscv_f in PLAN.md BACKLOG.md; do
     [ -f "$1/$jscv_f" ] || continue
-    jscv_vals="$(tr -d '\r' < "$1/$jscv_f" | awk '
+    jscv_vals="$(tr -d '\r' < "$1/$jscv_f" | awk "$jeffy_awk_heading"'
         /^[[:space:]]*done <<'"'"'?COUNTS'"'"'?[[:space:]]*$/ { t = 1; next }
         /^COUNTS[[:space:]]*$/ { t = 0; next }
         t { next }
         /^- \[[ x~]\]/ { next }
-        /^## (Declined|Settled classes)$/ { z = 1; next }
-        /^## / { z = 0 }
+        /^## / { z = (jeffy_heading($0, "Declined|Settled classes") != ""); if (z) next }
         z { next }
         { print }' \
       | grep -oE 'returns [A-Za-z0-9][A-Za-z0-9-]*' | sed 's/^returns //' | sort -u)"
@@ -582,7 +619,7 @@ EOF2
       break
     fi
   done <<EOF
-$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[x\]/ { print }' "$1/PLAN.md" 2>/dev/null)
+$(jeffy_section "$1/PLAN.md" 'Surface inventory' | grep '^- \[x\]')
 EOF
 }
 
@@ -909,8 +946,12 @@ if [ -n "$promise" ]; then
       open_carried=""
       hunt_nonhigh=""
       hunt_pending=""
+      ledger_no_now=0
       if [ -f "$root/BACKLOG.md" ]; then
-        open_scan="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { if ($0 ~ /^- \[ \] [^ ]+ \(Low[,)]/) print "L\t" $0; else print "B\t" $0 }' "$root/BACKLOG.md")"
+        # A ledger with no Now section gives the floor nothing to read, and an
+        # empty scan is exactly what a clean ledger returns.
+        jeffy_section "$root/BACKLOG.md" 'Now' >/dev/null || ledger_no_now=1
+        open_scan="$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' | awk '/^- \[ \]/ { if ($0 ~ /^- \[ \] [^ ]+ \(Low[,)]/) print "L\t" $0; else print "B\t" $0 }')"
         open_blocking="$(printf '%s\n' "$open_scan" | awk -F'\t' '$1 == "B" { print $2 }')"
         open_carried="$(printf '%s\n' "$open_scan" | awk -F'\t' '$1 == "L" { print $2 }')"
         if [ "$hunt" = 1 ]; then
@@ -927,6 +968,8 @@ if [ -n "$promise" ]; then
       fi
       if [ ! -f "$root/BACKLOG.md" ]; then
         violation="BACKLOG.md is missing at $root, and every closing gate reads it - the open-task test and the $cert_sec hash that certifies the tree live in that file; restore the ledger with its Now and $cert_sec sections, then re-declare"
+      elif [ "$ledger_no_now" = 1 ]; then
+        violation="BACKLOG.md has no Now section, and the closing rule reads open tasks under the Now, Next and Later headings - a ledger without them is one the severity floor cannot read, not a clean one; restore the ## Now heading with every open task beneath it, then re-declare"
       elif [ "$hunt" = 1 ] && [ -n "$hunt_nonhigh" ]; then
         violation="BACKLOG.md lists an open task that is not a High, and a hunt ledger carries Highs only - a Medium or Low an audit notices goes on that AUDIT entry's Noted, not filed: line, never on the ledger, and a line with no parseable severity is refused the same way, first: $hunt_nonhigh"
       elif [ -n "$open_blocking" ]; then
@@ -941,13 +984,13 @@ if [ -n "$promise" ]; then
       # cleanliness. A PLAN.md without the section predates this check and
       # fails open with a stderr note.
       if [ "$hunt" = 0 ] && [ -z "$violation" ] && [ -f "$root/PLAN.md" ]; then
-        if grep -q '^## Surface inventory' "$root/PLAN.md"; then
-          unswept="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { print; exit }' "$root/PLAN.md")"
+        if inv_rows="$(jeffy_section "$root/PLAN.md" 'Surface inventory')"; then
+          unswept="$(printf '%s\n' "$inv_rows" | grep '^- \[ \]' | head -n 1)"
           # P1-7c: refusing [ ] alone let a map made entirely of [~] rows
           # declare with nothing swept. A [~] row is a disclosure, not a
           # sweep, so a map that holds rows has to hold a swept one. A section
           # with no row at all is left to the note-free legacy path it had.
-          inv_counts="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[[ x~]\]/ { r++; if ($0 ~ /^- \[x\]/) s++ } END { print r + 0, s + 0 }' "$root/PLAN.md")"
+          inv_counts="$(printf '%s\n' "$inv_rows" | awk '/^- \[[ x~]\]/ { r++; if ($0 ~ /^- \[x\]/) s++ } END { print r + 0, s + 0 }')"
           if [ -n "$unswept" ]; then
             violation="the Surface inventory in PLAN.md still lists an unswept row, first: $unswept; sweep it and record the commit, or record why it is out of scope, then re-declare convergence"
           elif [ "${inv_counts%% *}" -gt 0 ] && [ "${inv_counts##* }" -eq 0 ]; then
@@ -1006,14 +1049,12 @@ if [ -n "$promise" ]; then
       # closed: an underivable premise blocks exactly as an unparseable
       # severity does, and the remedy is cheap - record the derivation, or
       # move the entry back to the ledger.
-      if [ -z "$violation" ] && [ -f "$root/BACKLOG.md" ] \
-        && grep -q '^## Declined' "$root/BACKLOG.md"; then
-        underived="$(awk '
-          { sub(/\r$/, "") }
-          /^## Declined$/ { take = 1; next }
-          /^## / { take = 0 }
-          take && /^- / && !/Derivation:/ && !/cost: exceeds one iteration/ { print substr($0, 1, 120); exit }
-        ' "$root/BACKLOG.md")"
+      # A Derivation: label holding nothing, or the template's <command>
+      # placeholder, records no derivation.
+      if [ -z "$violation" ] && [ -f "$root/BACKLOG.md" ]; then
+        underived="$(jeffy_section "$root/BACKLOG.md" 'Declined' | awk '
+          /^- / && !/Derivation:[ \t]*[^ \t<]/ && !/cost: exceeds one iteration/ { print substr($0, 1, 120); exit }
+        ')"
         if [ -n "$underived" ]; then
           violation="a Declined entry carries no recorded derivation, first: $underived; record the command or measurement that establishes its premise as Derivation: <command> (the priced reason cost: exceeds one iteration needs none), re-run it, then re-declare convergence"
         fi
@@ -1035,14 +1076,10 @@ if [ -n "$promise" ]; then
       # prompt teaches for new lines. Declined-style settlements need none -
       # a decline is policy, and the Declined section's own check covers a
       # declined premise.
-      if [ -z "$violation" ] && [ -f "$root/BACKLOG.md" ] \
-        && grep -q '^## Settled classes' "$root/BACKLOG.md"; then
-        unenumerated="$(awk '
-          { sub(/\r$/, "") }
-          /^## Settled classes$/ { take = 1; next }
-          /^## / { take = 0 }
-          take && /^- / && !/[Ee]numerated by/ && !/Derivation:/ && !/[Dd]eclined/ && !/`/ { print substr($0, 1, 120); exit }
-        ' "$root/BACKLOG.md")"
+      if [ -z "$violation" ] && [ -f "$root/BACKLOG.md" ]; then
+        unenumerated="$(jeffy_section "$root/BACKLOG.md" 'Settled classes' | awk '
+          /^- / && !/[Ee]numerated by/ && !/Derivation:/ && !/[Dd]eclined/ && !/`/ { print substr($0, 1, 120); exit }
+        ')"
         if [ -n "$unenumerated" ]; then
           violation="a Settled-class line settled as fixed records no enumeration, first: $unenumerated; record the command that lists every site of the class on the line as enumerated by: <command> (a declined settlement instead states declined with its reason), run it, then re-declare convergence"
         fi
@@ -1640,19 +1677,14 @@ open_now=""
 open_next=""
 open_later=""
 if [ -f "$root/BACKLOG.md" ]; then
-  read -r open_now open_next open_later <<< "$(awk '
-    { sub(/\r$/, "") }
-    /^## Now$/ { sec = 1; next }
-    /^## Next$/ { sec = 2; next }
-    /^## Later$/ { sec = 3; next }
-    /^## / { sec = 0 }
-    sec && /^- \[ \]/ { n[sec]++ }
-    END { printf "%d %d %d", n[1], n[2], n[3] }
-  ' "$root/BACKLOG.md")"
+  read -r open_now open_next open_later <<< "$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' tag | awk -F'|' '
+    /^[A-Za-z]+\|- \[ \]/ { n[$1]++ }
+    END { printf "%d %d %d", n["Now"], n["Next"], n["Later"] }
+  ')"
 fi
 unswept_rows=""
-if [ -f "$root/PLAN.md" ] && grep -q '^## Surface inventory' "$root/PLAN.md"; then
-  unswept_rows="$(awk '{ sub(/\r$/, "") } /^## Surface inventory$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ { n++ } END { printf "%d", n }' "$root/PLAN.md")"
+if [ -f "$root/PLAN.md" ] && inv_rows="$(jeffy_section "$root/PLAN.md" 'Surface inventory')"; then
+  unswept_rows="$(printf '%s\n' "$inv_rows" | grep -c '^- \[ \]')"
 fi
 # 1.22.0: a hunt never sweeps, so the unswept count is not a quantity any
 # reader below may act on - the sweep history and its fail-fast, the closing
@@ -1670,7 +1702,7 @@ fi
 # BACKLOG.md is absent, and every reader treats empty as cannot-evaluate.
 open_hm=""
 if [ -f "$root/BACKLOG.md" ]; then
-  open_hm="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \(Low[,)]/ { n++ } END { printf "%d", n }' "$root/BACKLOG.md")"
+  open_hm="$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' | awk '/^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \(Low[,)]/ { n++ } END { printf "%d", n }')"
 fi
 # P0-5: the High-or-unparseable count, beside the High-or-Medium one. Under
 # coverage-first ordering only an open High outranks the map, so the sweep
@@ -1681,7 +1713,7 @@ fi
 # empty as cannot-evaluate.
 open_high=""
 if [ -f "$root/BACKLOG.md" ]; then
-  open_high="$(awk '{ sub(/\r$/, "") } /^## (Now|Next|Later)$/ { take = 1; next } /^## / { take = 0 } take && /^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \((Low|Medium)[,)]/ { n++ } END { printf "%d", n }' "$root/BACKLOG.md")"
+  open_high="$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' | awk '/^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \((Low|Medium)[,)]/ { n++ } END { printf "%d", n }')"
 fi
 
 # P0-5: the sweep history and its projection. rows_history on the state file
@@ -2137,14 +2169,8 @@ if [ -f "$root/BACKLOG.md" ]; then
   # this version compares a stored whole-file cksum against the new digest,
   # mismatches, and reads a single spurious progress. Never a false stall,
   # and the next turn compares like with like.
-  cur_backlog="$(awk '
-    { sub(/\r$/, "") }
-    /^## Now$/ { sec = "Now"; next }
-    /^## Next$/ { sec = "Next"; next }
-    /^## Later$/ { sec = "Later"; next }
-    /^## / { sec = "" }
-    sec != "" && /^- \[[ b]\]/ { print sec "|" $0 }
-  ' "$root/BACKLOG.md" | cksum | tr ' \t' '--')"
+  cur_backlog="$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' tag \
+    | grep -E '^[A-Za-z]+\|- \[[ b]\]' | cksum | tr ' \t' '--')"
 fi
 # P0-5 (P1-47): the inventory signal. A sweep iteration by construction
 # touches only PLAN.md and .jeffy/, which was exactly the no-progress
@@ -2154,13 +2180,8 @@ fi
 # read over the row lines alone so PLAN.md prose stays out of it, the same
 # shape as the ledger signal above.
 cur_inventory="none"
-if [ -f "$root/PLAN.md" ] && grep -q '^## Surface inventory' "$root/PLAN.md"; then
-  cur_inventory="$(awk '
-    { sub(/\r$/, "") }
-    /^## Surface inventory$/ { take = 1; next }
-    /^## / { take = 0 }
-    take && /^- \[[ xb]\]/ { print }
-  ' "$root/PLAN.md" | cksum | tr ' \t' '--')"
+if [ -f "$root/PLAN.md" ] && inv_rows="$(jeffy_section "$root/PLAN.md" 'Surface inventory')"; then
+  cur_inventory="$(printf '%s\n' "$inv_rows" | grep '^- \[[ xb]\]' | cksum | tr ' \t' '--')"
 fi
 last_head="$(fm last_head)"
 last_backlog="$(fm last_backlog)"

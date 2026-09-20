@@ -2551,6 +2551,145 @@ if command -v jq >/dev/null 2>&1; then
     fi
     hb_write_backlog ''
 
+    # --- one reader per section -------------------------------------------
+    # The hook asked whether a section exists with a prefix grep and read its
+    # rows with a byte-exact awk, so any heading the two disagreed on - one
+    # trailing space, "## Surface inventory (12 rows)", "## Declined (1 open
+    # premise)" - read as present with zero rows, and the gate passed over an
+    # unswept row or an underived premise without a note. The ledger scans
+    # were exact on both sides and blind the same way: an open High under
+    # "## Now " was never counted, nor one written "  - [ ]" or "* [ ]". One
+    # reader now decides presence and content together, and every variant is
+    # driven here because a fixture holding only the canonical heading reads
+    # the same before and after.
+    hb_sec_high='[ ] H1 (High, runtime, correctness): parser returns the wrong value. Acceptance: bash t.sh'
+    hb_sec_row='- [x] core: swept at abc1234 - all entry points probed'
+    hb_sec_stage() { # $1 inventory heading, $2 inventory row, $3 BACKLOG.md body (%b), $4 message
+      hb_write_state sess-1 1 3
+      printf '# Plan\n\n%s\n\n%s\n\n## Verify command\nCommand: none\n' "$1" "$2" > "$hb_proj/PLAN.md"
+      printf '# Backlog\n\n%b' "$3" > "$hb_proj/BACKLOG.md"
+      hb_out="$(hb_run sess-1 "${4:-done <promise>JEFFY CONVERGED</promise>}" '' 2>"$hb_tmp/hb_err.txt")"
+    }
+    hb_sec_refused() { # $1 text the refusal must carry
+      [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF -- "$1" \
+        && grep -q '^iteration: 2$' "$hb_state"
+    }
+
+    hb_sec_bad=""
+    for hb_sec_h in '## Now ' '## Now (this run)' '## Next - queued' '## Later\t'; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n## Next\n\n## Later\n\n$hb_sec_h\n\n- $hb_sec_high\n\n## Converged\n"
+      hb_sec_refused 'open High or Medium' && hb_sec_refused 'H1 (High' || hb_sec_bad="$hb_sec_bad [$hb_sec_h]"
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook refuses an open High under a ledger heading carrying trailing whitespace or a suffix"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a declaration over an open High its ledger scan never read, under:$hb_sec_bad"
+    fi
+
+    hb_sec_bad=""
+    for hb_sec_m in '  - ' '\t- ' '* ' '+ '; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n$hb_sec_m$hb_sec_high\n\n## Next\n\n## Later\n\n## Converged\n"
+      hb_sec_refused 'open High or Medium' && hb_sec_refused 'H1 (High' || hb_sec_bad="$hb_sec_bad [$hb_sec_m]"
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook refuses an open High whose task marker is indented or written with * or +"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a declaration over an open High behind a task marker it does not read:$hb_sec_bad"
+    fi
+
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Backlog\n\n- $hb_sec_high\n\n## Converged\n"
+    if hb_sec_refused 'no Now section'; then
+      pass "stop hook refuses a declaration whose ledger has no Now section to read"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook accepted a declaration over a ledger with no Now section, where the severity floor reads nothing"
+    fi
+
+    hb_sec_bad=""
+    for hb_sec_h in '## Surface inventory ' '## Surface inventory (2 rows)' '## Surface inventory - mapped at iteration 1'; do
+      hb_sec_stage "$hb_sec_h" "$hb_sec_row
+- [ ] plots: unswept" "## Now\n\n## Next\n\n## Later\n\n## Converged\n"
+      hb_sec_refused 'plots: unswept' || hb_sec_bad="$hb_sec_bad [$hb_sec_h]"
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook refuses an unswept row under a Surface inventory heading carrying trailing whitespace or a suffix"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook read a suffixed Surface inventory heading as a section with no rows, under:$hb_sec_bad"
+    fi
+
+    hb_sec_bad=""
+    for hb_sec_h in '## Declined ' '## Declined (1 open premise)' '## Declined findings'; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n## Next\n\n## Later\n\n$hb_sec_h\n\n- D1: testing that path is impractical on this host.\n\n## Converged\n"
+      hb_sec_refused 'Declined entry carries no recorded derivation' || hb_sec_bad="$hb_sec_bad [$hb_sec_h]"
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook refuses an underived Declined entry under a heading carrying trailing whitespace or a suffix"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook read a suffixed Declined heading as a section with no entries, under:$hb_sec_bad"
+    fi
+
+    hb_sec_bad=""
+    for hb_sec_d in 'Derivation:' 'Derivation:   ' 'Derivation: <command>'; do
+      hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n## Next\n\n## Later\n\n## Declined\n\n- D1: data loss on restart is not reproducible here. $hb_sec_d\n\n## Converged\n"
+      hb_sec_refused 'Declined entry carries no recorded derivation' || hb_sec_bad="$hb_sec_bad [$hb_sec_d]"
+    done
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook refuses a Declined entry whose Derivation: label holds nothing or the template placeholder"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook took a bare Derivation: label for a recorded derivation:$hb_sec_bad"
+    fi
+
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n## Next\n\n## Later\n\n## Settled classes (1 class)\n\n- Unchecked casts across the parser: fixed class-complete at iteration 4.\n\n## Converged\n"
+    if hb_sec_refused 'records no enumeration'; then
+      pass "stop hook refuses an unenumerated Settled-class line under a suffixed heading"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook read a suffixed Settled classes heading as a section with no lines"
+    fi
+
+    # The honest shapes. Every heading suffixed and everything under it in
+    # order is a declaration the hook accepts, and a heading that merely
+    # begins with a section's letters ("## Nowhere near done") is not that
+    # section, so the unchecked box under it is prose and blocks nothing.
+    hb_sec_stage '## Surface inventory (1 row)' "$hb_sec_row" "## Now (this run)\n\n- [x] T1 (High, runtime, correctness): fixed. Acceptance: bash t.sh\n\n## Next \n\n## Later\n\n## Nowhere near done\n\n- [ ] an idea nobody filed\n\n## Declined (1 premise)\n\n- D1: that path needs a live origin remote. Derivation: git remote -v | grep -c origin\n\n## Settled classes (1 class)\n\n- Unchecked casts: fixed class-complete, enumerated by: \`grep -rn \"as any\" src/\` -> 0 sites.\n\n## Converged\n"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+      pass "stop hook accepts a declaration whose suffixed sections hold nothing open, and reads no section into a heading that only shares its first letters"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook refused a clean ledger and map over the spelling of their headings"
+    fi
+
+    hb_write_journal_entries '## iter 1/3 | sess-1-000000 | 2026-01-01 | T1 | done:::Verification: Evaluator: PASS - ok. Carried: X9.'
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n  * [ ] X9 (Low, docs, documentation): imprecise sentence. Acceptance: rewritten.\n\n## Next\n\n## Later\n\n## Converged\n"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean \
+      && grep -q 'carried Low' "$hb_tmp/hb_err.txt" \
+      && grep -qF 'X9 (Low' "$hb_tmp/hb_err.txt"; then
+      pass "stop hook carries an indented * [ ] Low rather than blocking on it (the marker is read once, before the severity)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook read an indented or starred Low as a task with no parseable severity"
+    fi
+    hb_write_journal 1 3
+
+    # The re-feed reads the same sections for its arithmetic, so the counts
+    # it states have to survive the same headings.
+    hb_sec_stage '## Surface inventory (3 rows)' "- [ ] alpha: unswept
+- [ ] beta: unswept
+$hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Acceptance: done.\n  - [ ] S12 (Low, docs, documentation): open task. Acceptance: done.\n\n## Next (queued)\n\n- [ ] S21 (Low, docs, documentation): open task. Acceptance: done.\n\n## Later\n\n## Converged\n" 'still working'
+    if hb_sec_refused 'open tasks Now 2 Next 1 Later 0' && hb_sec_refused 'unswept rows 2'; then
+      pass "stop hook states the open-task and unswept-row counts under suffixed headings on a re-feed"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook lost the RUN STATE counts to a heading suffix"
+    fi
+    hb_write_backlog ''
+
     # --- P1-10: the Verify command declares what it grades ----------------
     # An exit status is the only thing this hook can read from a project's
     # own gate, and go-yaml showed how little that can mean. That run's
