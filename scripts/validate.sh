@@ -7730,6 +7730,177 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     fi
     rm -f "$hh_state"
 
+    # 10. the close rests on this run's own clean audit: the last AUDIT entry
+    #     of the run takes status hunted and no later primary entry of the run
+    #     follows it. An audit that filed a High and was followed by the work
+    #     is stale; an AUDIT entry headed salvage is bookkeeping; a later
+    #     AUDIT entry supersedes an earlier hunted one. A ROTATION entry after
+    #     the closing audit is additional, and the close stands.
+    hh_h6="$(hh_git rev-parse HEAD)"
+    hh_stale_case() { # $1... journal entries; commits them under a Hunted line naming hh_h6, then declares
+      hh_journal "$@"
+      hh_backlog '' "Hunted: $hh_h6 - 2026-01-01 - 0 Highs closed"
+      hh_git add -A >/dev/null 2>&1; hh_git commit -q -m stale >/dev/null 2>&1
+      hh_close_case "$hb_hook"
+    }
+    hh_stale_case "## iter 1/5 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Checkpoint: $hh_h6" \
+      "## iter 2/5 | sess-1-000000 | 2026-01-01 | H1 | done:::Checkpoint: $hh_h6"
+    if hh_refused_with 'carries status audit, not hunted'; then
+      pass "stop hook refuses a hunt close whose last AUDIT entry filed a High and was never repeated (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook accepted a hunt close on a stale audit: the last AUDIT entry does not carry status hunted"
+    fi
+    rm -f "$hh_state"
+    hh_stale_case "## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | salvage:::Checkpoint: $hh_h6"
+    if hh_refused_with 'carries status salvage, not hunted'; then
+      pass "stop hook refuses a hunt close on an AUDIT entry headed salvage (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook accepted a hunt close on an AUDIT entry whose status word is salvage"
+    fi
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    if hh_sabotage 'elif [ "$fa_st" != "hunted" ]; then' 'elif false; then'; then
+      hh_close_case "$hb_tmp/hh_sab.sh"
+      if hh_refused_with 'not hunted'; then
+        fault "sabotage proof: dropping the status test left its refusal standing"
+      else
+        pass "sabotage proof: the stale-audit refusal rests on the status test (1.24.0)"
+      fi
+    else
+      fault "sabotage proof for the stale-audit refusal could not be built"
+    fi
+    rm -f "$hh_state"
+    hh_stale_case "## iter 1/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: $hh_h6" \
+      "## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Checkpoint: $hh_h6"
+    if hh_refused_with 'carries status audit, not hunted'; then
+      pass "a later AUDIT entry of the run supersedes an earlier hunted one (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook closed a hunt on an earlier hunted entry although a later audit of the run did not close"
+    fi
+    rm -f "$hh_state"
+    hh_stale_case "## iter 1/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: $hh_h6" \
+      "## iter 2/5 | sess-1-000000 | 2026-01-01 | H1 | done:::Checkpoint: $hh_h6"
+    if hh_refused_with 'a later entry of this run follows it'; then
+      pass "stop hook refuses a hunt close when the run worked on after its hunted audit (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook accepted a hunt close whose hunted audit is not the run's closing entry"
+    fi
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    if hh_sabotage 'elif [ "$fa_after" = 1 ]; then' 'elif false; then'; then
+      hh_close_case "$hb_tmp/hh_sab.sh"
+      if hh_refused_with 'a later entry of this run follows it'; then
+        fault "sabotage proof: dropping the closing-entry test left its refusal standing"
+      else
+        pass "sabotage proof: the worked-after-the-audit refusal rests on its own test (1.24.0)"
+      fi
+    else
+      fault "sabotage proof for the worked-after-the-audit refusal could not be built"
+    fi
+    rm -f "$hh_state"
+    hh_stale_case "## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: $hh_h6" \
+      "## iter 2/5 | sess-1-000000 | 2026-01-01 | ROTATION | rotation:::Rotated."
+    if [ -z "$hh_out" ] && [ ! -f "$hh_state" ]; then
+      pass "stop hook accepts a hunt close whose hunted audit is followed only by a ROTATION entry (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook refused a legal hunt close over the ROTATION entry its closing iteration appended"
+    fi
+    rm -f "$hh_state"
+
+    # 11. a standard RATCHET is never certified by a hunt's accepted close.
+    #     The metrics line for hh_h1 (fixture 2) reads mode highs, verdict
+    #     accepted; a later standard run ratcheting over that hash is refused.
+    #     A record with no mode field predates hunts and is a standard one, so
+    #     it still certifies, as a mode standard record does.
+    hh_ratchet_case() { # $1 hook path, $2 the Converged hash; a second run, standard, typed RATCHET
+      hh_journal "## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: $hh_h6" \
+        '## iter 1/3 | sess-1-000001 | 2026-01-01 | RATCHET | converged:::Task: re-declared an unchanged tree.'
+      printf '# Plan\n\n## Verify command\nCommand: none\n\n## Surface inventory\n- [x] core: swept at abc1234 - all entry points probed\n' > "$hh_proj/PLAN.md"
+      printf '# Backlog\n\n## Now\n\n## Next\n\n## Later\n\n## Converged\n\nConverged: %s - 2026-01-01\n' "$2" > "$hh_proj/BACKLOG.md"
+      rm -f "$hh_proj/.jeffy/metrics/sess-1-000001.jsonl"
+      hh_git add -A >/dev/null 2>&1; hh_git commit -q -m ratchet >/dev/null 2>&1
+      {
+        printf -- '---\nsession_id: sess-1\niteration: 1\nmax_iterations: 3\nprompt_path: %s\nfocus:\n' "$hb_tmp/prompt.txt"
+        printf 'completion_promise: JEFFY CONVERGED\nstarted_at: 2026-01-01T00:00:01Z\nbase_head: %s\n---\nJeffy loop state.\n' "$(hh_git rev-parse HEAD)"
+      } > "$hh_state"
+      hh_out="$(hh_run "$1" 'done <promise>JEFFY CONVERGED</promise>')"
+    }
+    hh_ratchet_refused() { [ "$(printf '%s' "$hh_out" | jq -r '.decision' 2>/dev/null)" = "block" ] && hh_reason | grep -qF 'nothing records that the Stop hook accepted that declaration'; }
+    hh_ratchet_case "$hb_hook" "$hh_h1"
+    if hh_ratchet_refused; then
+      pass "stop hook refuses a standard RATCHET over a hash only a hunt's accepted close records (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "a hunt's accepted close certified a standard RATCHET: the certification reader ignored the record's mode"
+    fi
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    if hh_sabotage 'select((.mode // "standard") != "highs") | ' ''; then
+      hh_ratchet_case "$hb_tmp/hh_sab.sh" "$hh_h1"
+      if hh_ratchet_refused; then
+        fault "sabotage proof: dropping the mode test left the hunt-record refusal standing"
+      else
+        pass "sabotage proof: the hunt-record refusal rests on the record's mode (1.24.0)"
+      fi
+    else
+      fault "sabotage proof for the hunt-record refusal could not be built"
+    fi
+    rm -f "$hh_state"
+    rm -rf "$hh_proj/.jeffy/metrics"
+    hh_ratchet_case "$hb_hook" "$hh_h1"
+    if hh_ratchet_refused; then
+      pass "with no metrics record, the journal fallback reads an earlier run's hunted close as no certification (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "the journal fallback certified a standard RATCHET over an earlier run that closed hunted"
+    fi
+    rm -f "$hh_state"
+    mkdir -p "$hh_proj/.jeffy/metrics"
+    printf '{"run_token":"old-1-000000","declaration":{"hash":"%s","verdict":"accepted","reason":null}}\n' "$hh_h5" > "$hh_proj/.jeffy/metrics/old-1-000000.jsonl"
+    hh_ratchet_case "$hb_hook" "$hh_h5"
+    if [ -z "$hh_out" ] && [ ! -f "$hh_state" ]; then
+      pass "stop hook accepts a RATCHET certified by a legacy accepted record that carries no mode field (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook refused a RATCHET over a legacy accepted record with no mode field, which is a standard record"
+    fi
+    rm -f "$hh_state"
+    printf '{"run_token":"old-1-000000","mode":"standard","declaration":{"hash":"%s","verdict":"accepted","reason":null}}\n' "$hh_h5" > "$hh_proj/.jeffy/metrics/old-1-000000.jsonl"
+    hh_ratchet_case "$hb_hook" "$hh_h5"
+    if [ -z "$hh_out" ] && [ ! -f "$hh_state" ]; then
+      pass "stop hook accepts a RATCHET certified by an accepted mode standard record (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook refused a RATCHET over an accepted standard-mode record"
+    fi
+    rm -f "$hh_state"
+
+    # 12. no git HEAD: the diff against the audit's checkpoint cannot be
+    #     derived, and the Hunted line is a git-only artifact, but the AUDIT
+    #     entry needs no git and the close still rests on it.
+    hh_saved_proj="$hh_proj"; hh_saved_state="$hh_state"
+    hh_proj="$hb_tmp/huntnogit"; hh_state="$hh_proj/.claude/jeffy-loop.local.md"
+    mkdir -p "$hh_proj/.claude"
+    hh_plan true; hh_backlog '' ''
+    hh_journal '## iter 2/5 | sess-1-000000 | 2026-01-01 | T1 | done:::Checkpoint: none (no git)'
+    hh_close_case "$hb_hook"
+    if hh_refused_with 'holds no AUDIT entry headed with this run'; then
+      pass "stop hook refuses a hunt close with no AUDIT entry in a project with no git HEAD (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "a hunt closed with no AUDIT entry at all in a project with no git HEAD"
+    fi
+    rm -f "$hh_state"
+    hh_journal '## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Checkpoint: none (no git)'
+    hh_close_case "$hb_hook"
+    if hh_refused_with 'carries status audit, not hunted'; then
+      pass "stop hook reads the closing audit's status in a project with no git HEAD (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "a hunt closed on an audit that did not close it in a project with no git HEAD"
+    fi
+    rm -f "$hh_state"
+    hh_journal '## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: none (no git)'
+    hh_close_case "$hb_hook"
+    if [ -z "$hh_out" ] && [ ! -f "$hh_state" ] && grep -q 'no git HEAD' "$hb_tmp/hh_err.txt"; then
+      pass "stop hook accepts a hunt close on a hunted audit in a project with no git HEAD, and says what it could not compare (1.24.0)"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook refused a legal hunt close in a project with no git HEAD"
+    fi
+    rm -f "$hh_state"
+    hh_proj="$hh_saved_proj"; hh_state="$hh_saved_state"
+
     rm -rf "$hb_tmp"
   fi
 else

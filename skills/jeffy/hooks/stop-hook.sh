@@ -306,13 +306,18 @@ trap jeffy_write_metrics EXIT
 jeffy_declaration_certified() { # $1 project root, $2 converged hash, $3 this run's id prefix
   [ -n "$2" ] || return 1
   if [ -d "$1/.jeffy/metrics" ] && command -v jq >/dev/null 2>&1; then
+    # 1.24.0: a hunt's accepted close is recorded on the same line with mode
+    # highs, and it certifies that an audit found no High, never a
+    # convergence. A record with no mode field predates hunts (1.22.0) and is
+    # a standard one.
     if cat "$1"/.jeffy/metrics/*.jsonl 2>/dev/null \
-      | jq -r 'select(.declaration != null) | select(.declaration.verdict == "accepted") | (.declaration.hash // "")' 2>/dev/null \
+      | jq -r 'select(.declaration != null) | select((.mode // "standard") != "highs") | select(.declaration.verdict == "accepted") | (.declaration.hash // "")' 2>/dev/null \
       | grep -qix -- "$2"; then
       return 0
     fi
     # An explicit refused record for this very hash is the verdict itself,
-    # and no older evidence certifies over it.
+    # and no older evidence certifies over it. A hunt's record for this hash
+    # is read the same way: what this hook recorded about it is a hunt.
     if cat "$1"/.jeffy/metrics/*.jsonl 2>/dev/null \
       | jq -r 'select(.declaration != null) | (.declaration.hash // "")' 2>/dev/null \
       | grep -qix -- "$2"; then
@@ -1188,30 +1193,48 @@ if [ -n "$promise" ]; then
       # iteration's own AUDIT entry has no Checkpoint yet (the prompt runs lint
       # before the checkpoint), so that one shape is reported as pending rather
       # than refused; a resolvable checkpoint with product changes after it is
-      # refused under lint exactly as at the close. A project without git
-      # cannot derive the diff and says so.
+      # refused under lint exactly as at the close.
+      # 1.24.0: the entry's own words are read too. The audit that finds no
+      # High takes status hunted and is the run's closing entry, so a last
+      # AUDIT entry headed audit filed a High that was then disposed of with
+      # no audit after it, one headed salvage or rotation is bookkeeping, and
+      # a primary entry of this run after it is work the audit never saw
+      # whether or not a product path moved. ROTATION and SALVAGE entries are
+      # additional and may follow it. None of that needs git, so a project
+      # with no git HEAD is held to it; only the checkpoint comparison is
+      # skipped there, with a note, as the Hunted line is.
       if [ "$hunt" = 1 ] && [ -z "$violation" ]; then
         if [ ! -f "$root/JOURNAL.md" ]; then
           violation="JOURNAL.md is missing at $root, and a hunt closes on the last AUDIT entry recorded there; restore the journal, record the closing audit, then close again"
-        elif ! command -v git >/dev/null 2>&1 || ! git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
-          echo "jeffy stop hook: no git HEAD, so the fresh-audit test cannot compare the tree against the last audit's checkpoint; skipping it." >&2
         else
           fa_line="$(awk -v tok="| $runid8 |" '
             { sub(/\r$/, "") }
             /^## iter / {
+              take = 0
+              if (!index($0, tok)) next
               split($0, f, "|"); t = f[4]; gsub(/^[ \t]+|[ \t]+$/, "", t)
-              if (index($0, tok) && t == "AUDIT") { n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n); it = n + 0; cp = ""; take = 1 } else { take = 0 }
+              if (t == "AUDIT") { n = f[1]; sub(/^## iter[ \t]*/, "", n); sub(/\/.*/, "", n); it = n + 0; st = f[5]; gsub(/^[ \t]+|[ \t]+$/, "", st); after = 0; cp = ""; take = 1 }
+              else if (t != "ROTATION" && t != "SALVAGE") after = 1
               next
             }
             take && index($0, "Checkpoint:") == 1 { cp = $0; sub(/^Checkpoint:[ \t]*/, "", cp) }
-            END { if (it) print it "\t" cp }
+            END { if (it) print it "\t" st "\t" after "\t" cp }
           ' "$root/JOURNAL.md")"
           fa_iter="${fa_line%%	*}"
           fa_cp="${fa_line#*	}"
-          [ "$fa_cp" = "$fa_line" ] && fa_cp=""
+          fa_st="${fa_cp%%	*}"
+          fa_cp="${fa_cp#*	}"
+          fa_after="${fa_cp%%	*}"
+          fa_cp="${fa_cp#*	}"
           fa_hash="$(printf '%s' "$fa_cp" | grep -oE '[0-9a-f]{7,40}' | head -n 1)"
           if [ -z "$fa_line" ]; then
             violation="JOURNAL.md holds no AUDIT entry headed with this run's id $runid8, and a hunt closes only on a fresh full audit of this run that found no High; run that audit, record its entry with its Checkpoint, then close"
+          elif [ "$fa_st" != "hunted" ]; then
+            violation="the last AUDIT entry of this run (iteration $fa_iter) carries status ${fa_st:-none}, not hunted; the audit that finds no High takes status hunted and closes the hunt in its own iteration, so an audit that filed a High, or a bookkeeping entry, closes nothing - once no High is open, run the fresh full audit and close in that same iteration"
+          elif [ "$fa_after" = 1 ]; then
+            violation="the last AUDIT entry of this run (iteration $fa_iter) carries status hunted but a later entry of this run follows it; the audit that finds no High is the run's closing entry, so audit again and close in that same iteration"
+          elif ! command -v git >/dev/null 2>&1 || ! git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+            echo "jeffy stop hook: no git HEAD, so the fresh-audit test cannot compare the tree against the last audit's checkpoint; skipping it." >&2
           elif [ -z "$fa_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$fa_hash^{commit}" >/dev/null 2>&1; then
             fa_msg="the last AUDIT entry of this run (iteration $fa_iter) carries no resolvable Checkpoint (${fa_cp:-none}); the closing audit's entry names its checkpoint commit, because the close certifies the tree that audit examined"
             if [ "$lint" = 1 ] && [ "$fa_iter" = "$iter" ]; then
