@@ -834,11 +834,11 @@ fi
 # exactly one recognised line the output also carries its line number and
 # whether its form or its place (last) is what failed, for the refusal to
 # quote. Literal characters, bracket lists and index() only, never a range
-# or tolower(), so mawk, gawk and BSD awk agree under any locale; the dashes
-# are compared as strings, which is bytewise in C and whole characters in
-# UTF-8. The second word printed is 1 when any recognised line is on the
+# or tolower(), and the program runs under LC_ALL=C, so mawk, gawk and BSD awk
+# all read bytes: left to a UTF-8 locale, BSD awk takes whole characters and
+# misses a REJECT line behind a BOM. The second word printed is 1 when any recognised line is on the
 # REJECT side, which is what the cap counts.
-ev_art_read="$(awk '
+ev_art_read="$(LC_ALL=C awk '
   function up(s,   i, c, k, o) {
     o = ""
     for (i = 1; i <= length(s); i++) {
