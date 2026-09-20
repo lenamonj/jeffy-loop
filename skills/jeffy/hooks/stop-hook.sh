@@ -727,6 +727,63 @@ for ev_cand in "$root/.jeffy/evaluator/$runid8"-*.md; do
     ev_art_ord="$ev_n"
   fi
 done
+# The ordinals in the working tree are what the run chose to leave there:
+# renaming the fourth to the pre-1.8.0 single path, or deleting them, read as
+# a run that had never invoked the gate. ev_spent is the highest ordinal on
+# any record, and two of its three readings are ones a rename does not reach.
+# The commits since base_head still name every ordinal path they touched,
+# deleted or not - bounded by base_head rather than read over all history
+# because a state file without it predates the key, and the ratchet fails
+# open on the same bound. And this hook's own metrics line has recorded the
+# ordinal at every earlier turn end, which answers where git cannot: a
+# non-git project, a state file with no base_head. Neither is unforgeable -
+# history can be rewritten and the metrics file deleted - but each costs a
+# visible act against a record the run is told never to touch, where the
+# bypass cost one mv. The single path itself is never the offence: a run
+# whose record holds no ordinal is a pre-1.8.0 run and reads 0 here.
+ev_spent="${ev_art_ord:-0}"
+ev_base="$(fm base_head)"
+if [ -n "$ev_base" ] && [ "$ev_base" != "none" ] && command -v git >/dev/null 2>&1 \
+  && git -C "$root" rev-parse --verify --quiet "$ev_base^{commit}" >/dev/null 2>&1; then
+  ev_n="$(git -C "$root" log --format= --name-only "$ev_base..HEAD" -- .jeffy/evaluator 2>/dev/null | awk -v p="$runid8-" '
+    { n = $0; sub(/.*\//, "", n) }
+    index(n, p) == 1 && n ~ /\.md$/ {
+      n = substr(n, length(p) + 1); sub(/\.md$/, "", n)
+      if (n ~ /^[0-9]+$/ && n + 0 > m) m = n + 0
+    }
+    END { print m + 0 }')"
+  case "$ev_n" in '' | *[!0-9]*) ev_n=0 ;; esac
+  [ "$ev_n" -gt "$ev_spent" ] && ev_spent="$ev_n"
+fi
+if [ -f "$root/.jeffy/metrics/$runid8.jsonl" ]; then
+  ev_n="$(sed -n 's/.*"evaluator_invocations":\([0-9][0-9]*\).*/\1/p' "$root/.jeffy/metrics/$runid8.jsonl" | sort -n | tail -n 1)"
+  case "$ev_n" in '' | *[!0-9]*) ev_n=0 ;; esac
+  [ "$ev_n" -gt "$ev_spent" ] && ev_spent="$ev_n"
+fi
+# The verdict is the artifact's. The journal line is the run's transcription
+# of it, and through 1.23 nothing opened the file, so a typed PASS stood over
+# an artifact recording REJECT. No grammar was ever stated to the gate, so
+# this reads what gates actually wrote: the last line whose first word is
+# PASS or REJECT, bare or after a Verdict label, under whatever markdown
+# decoration. Replayed over 815 artifacts in 93 trees it read a verdict in
+# every one, and the right one where a last-token scan did not - the word
+# REJECT closes many a PASS artifact, inside "not a REJECT reason".
+ev_art_verdict="$(awk '
+  { sub(/\r$/, ""); s = $0; sub(/^[ \t#>*_`-]*/, "", s) }
+  match(s, /^[Vv][Ee][Rr][Dd][Ii][Cc][Tt][ \t:*_`-]*/) { s = substr(s, RLENGTH + 1) }
+  s ~ /^PASS([^A-Za-z]|$)/ { v = "pass" }
+  s ~ /^REJECT([^A-Za-z]|$)/ { v = "reject" }
+  END { print (v == "" ? "none" : v) }
+' "$root/.jeffy/evaluator/$runid8${ev_art_ord:+-$ev_art_ord}.md" 2>/dev/null)"
+# Past every cap the contract can grant: three journal REJECTs, a fourth
+# ordinal, or a third whose latest artifact records REJECT. The last arm is
+# what holds when a journal heading is retyped away from EVALUATOR, which
+# drops its REJECT from the count above at no cost.
+ev_capped=0
+if [ "$ev_rejects" -ge 3 ] || [ "$ev_spent" -ge 4 ] \
+  || { [ "$ev_spent" -ge 3 ] && [ "$ev_art_verdict" = "reject" ]; }; then
+  ev_capped=1
+fi
 
 # Extension honesty, first half: the +2 window buys the convergence sequence
 # and never an audit. A full audit run inside the window manufactures the
@@ -1260,12 +1317,12 @@ if [ -n "$promise" ]; then
           # path P1-3 opened for the run whose first verdict was REJECT, and
           # a hook that refused there would close it again. Below this bound
           # the prompt owns the rule and the artifact price guards it.
-          if [ "$ev_rejects" -ge 3 ] || { [ -n "$ev_art_ord" ] && [ "$ev_art_ord" -ge 4 ]; }; then
+          if [ "$ev_capped" = 1 ]; then
             ev_verdict="capped"
           fi
           case "$ev_verdict" in
             capped)
-              violation="this run's journal records $ev_rejects Evaluator: REJECT verdicts and its highest evaluator artifact ordinal is ${ev_art_ord:-none}, past every invocation cap the contract grants - 2, or 3 when the first invocation landed before the midpoint of the budget - so no invocation remains to produce the verdict a declaration requires; spend what budget is left in gate salvage on the findings the gate filed, then end the run blocked as 'blocked - N gate findings closed, declaration deferred', because convergence waits for the next run's fresh gate"
+              violation="this run's journal records $ev_rejects Evaluator: REJECT verdicts, the highest evaluator artifact ordinal on its record - the working tree, the commits since base_head and this hook's own metrics - is $ev_spent, and the latest artifact in the tree reads $ev_art_verdict, past every invocation cap the contract grants - 2, or 3 when the first invocation landed before the midpoint of the budget - so no invocation remains to produce the verdict a declaration requires; spend what budget is left in gate salvage on the findings the gate filed, then end the run blocked as 'blocked - N gate findings closed, declaration deferred', because convergence waits for the next run's fresh gate"
               ;;
             none)
               violation="JOURNAL.md holds no primary entry headed with the run id $runid8, and that entry is the only place the evaluator verdict is read from; write the closing entry under the run's own heading grammar, then re-declare"
@@ -1321,6 +1378,13 @@ if [ -n "$promise" ]; then
                   && ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_art_commit" 2>/dev/null; then
                   violation="the evaluator artifact $ev_art was last committed at $ev_art_commit, which predates the Converged hash $conv_hash; a PASS answers the tree the gate actually examined, so re-invoke the gate in the declaring iteration - a re-invocation writes the next ordinal, .jeffy/evaluator/$runid8-<n+1>.md, which the checkpoint commits alongside the one it supersedes - and re-declare"
                 fi
+              fi
+              # Read last, once the file is known to be the committed one:
+              # what it says only matters if it is the gate's.
+              if [ -z "$violation" ] && [ "$ev_art_verdict" = "reject" ]; then
+                violation="the closing entry records Evaluator: PASS but the gate's own artifact $ev_art records REJECT; the artifact is the verdict and the journal line only transcribes it, so file each reason it names that this run can reproduce and work them - with an invocation remaining, re-invoke the gate and declare on the PASS its next ordinal records, and with none remaining end blocked in gate salvage, never re-invoking and never declaring"
+              elif [ -z "$violation" ] && [ "$ev_art_verdict" != "pass" ]; then
+                violation="the closing entry records Evaluator: PASS but $ev_art carries no verdict line - no line whose first word is PASS or REJECT, bare, under a Verdict heading or after a 'Verdict:' label - so nothing the gate wrote says it passed; the artifact is the verdict and the journal line only transcribes it, so with an invocation remaining re-invoke the gate, whose next ordinal closes on its verdict line, and with none remaining end blocked in gate salvage"
               fi
               ;;
           esac
@@ -1715,7 +1779,7 @@ if [ "$iter" -ge "$max" ]; then
   # the corrective grant below still applies to a refused close at budget.
   if [ "$hunt" = 0 ] && [ "$iter" -eq "$max" ] && [ "$fm_close" -ge 2 ] \
     && [ "$(fm extension_granted)" != "1" ] \
-    && [ "$ev_rejects" -lt 3 ] && { [ -z "$ev_art_ord" ] || [ "$ev_art_ord" -lt 4 ]; } \
+    && [ "$ev_capped" = 0 ] \
     && [ "$open_hm" = "0" ] \
     && [ "$unswept_rows" = "0" ]; then
     extension=1

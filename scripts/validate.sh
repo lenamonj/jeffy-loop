@@ -2079,7 +2079,7 @@ if command -v jq >/dev/null 2>&1; then
     # in a git sandbox it must be committed the way the checkpoint commits it.
     # Run token 000000 comes from the harness started_at, as everywhere else.
     hb_art_n=0
-    hb_write_evaluator_artifact() { # $1 optional run id (default sess-1-000000), $2 optional invocation ordinal (default 1)
+    hb_write_evaluator_artifact() { # $1 optional run id (default sess-1-000000), $2 optional invocation ordinal (default 1), $3 optional closing verdict text (default 'Verdict: PASS')
       # From 1.8.0 the path carries the invocation ordinal, so each verdict
       # is a distinct path no history operation can fold away. hb_art_n is
       # kept for content churn alone: a re-commit at the same ordinal has to
@@ -2092,7 +2092,7 @@ if command -v jq >/dev/null 2>&1; then
       {
         printf '# Evaluator gate - run %s, invocation %s, iteration 2 of 3 (write %s)\n\n' "$hb_art_id" "$hb_art_ord" "$hb_art_n"
         printf 'Command: bash -c true\nExit: 0\n\n'
-        printf 'Verdict: PASS\n'
+        printf '%s\n' "${3:-Verdict: PASS}"
       } > "$hb_proj/.jeffy/evaluator/$hb_art_id-$hb_art_ord.md"
     }
     # Takes the run id positionally like its sibling; shellcheck flags an
@@ -5648,6 +5648,155 @@ if command -v jq >/dev/null 2>&1; then
       fi
       hb_git rm -q .jeffy/evaluator/sess-1-000000-4.md >/dev/null 2>&1
       hb_git commit -q -m 'jeffy: drop the fourth ordinal' >/dev/null 2>&1
+      # The hook's metrics now hold that fourth ordinal for this run id, and
+      # the cap reads them. Every scenario here shares the id, so the record
+      # goes with the artifact or each later declaration would be past the cap.
+      rm -rf "$hb_proj/.jeffy/metrics"
+
+      # --- the verdict is the artifact's, and the cap reads the record ------
+      # Everything above tests that the artifact exists, is committed and is
+      # recent, and nothing opened it: a typed Evaluator: PASS stood over an
+      # artifact recording REJECT. And both cap readings were of things the
+      # run edits for free - the ordinals in the working tree, where a rename
+      # to the pre-1.8.0 path or a plain delete read as no invocations, and
+      # the journal's EVALUATOR headings, where retyping one dropped a REJECT
+      # from the count. Each scenario below runs under its own run id, so the
+      # hook's metrics records for one never reach the next.
+      hb_ev_run() { # $1 session id, $2 base_head or '', $3... entries placed before the closing PASS entry
+        hb_ev_sid="$1"; hb_ev_base="$2"; shift 2
+        hb_write_journal_entries \
+          "## iter 1/3 | $hb_ev_sid-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit." \
+          "$@" \
+          "## iter 2/3 | $hb_ev_sid-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - ok"
+        hb_write_state "$hb_ev_sid" 2 3
+        if [ -n "$hb_ev_base" ]; then hb_state_addkey "base_head: $hb_ev_base"; fi
+        hb_write_plan_full 'exit 0' "$hb_p2_row"
+        hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+        hb_out="$(hb_run "$hb_ev_sid" 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
+      }
+      hb_ev_commit() { hb_git add -A -- .jeffy >/dev/null 2>&1; hb_git commit -q -m "$1" >/dev/null 2>&1; }
+      hb_ev_refused() { # $1 fixed string the refusal must carry
+        [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
+          && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF -- "$1"
+      }
+      hb_ev_accepted() { [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; }
+
+      hb_write_evaluator_artifact sess-e1-000000 1 'Verdict: REJECT - product.txt:1 the fix does not hold'
+      hb_ev_commit 'jeffy: evaluator artifact recording REJECT'
+      hb_ev_run sess-e1 ''
+      if hb_ev_refused 'own artifact .jeffy/evaluator/sess-e1-000000-1.md records REJECT'; then
+        pass "stop hook refuses a typed Evaluator: PASS over a committed artifact that records REJECT"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a journal PASS while the gate's own artifact records REJECT"
+      fi
+
+      hb_write_evaluator_artifact sess-e1-000000 1 'The gate ran and this file says nothing about how it ended.'
+      hb_ev_commit 'jeffy: evaluator artifact with no verdict'
+      hb_ev_run sess-e1 ''
+      if hb_ev_refused 'carries no verdict line'; then
+        pass "stop hook refuses a PASS whose artifact carries no verdict line"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a PASS over an artifact that records no verdict at all"
+      fi
+
+      # The shapes real gates wrote before any grammar was stated: a bare
+      # verdict under a Verdict heading, a sentence after it, notes trailing
+      # it that use the other word. None of that is a reason to refuse.
+      hb_write_evaluator_artifact sess-e1-000000 1 "$(printf '## Verdict\n\nPASS. Every check holds.\n\nNote, not a finding and not a REJECT reason: writing this artifact makes the tree dirty by construction.')"
+      hb_ev_commit 'jeffy: evaluator artifact in the legacy shape'
+      hb_ev_run sess-e1 ''
+      if hb_ev_accepted; then
+        pass "stop hook reads a bare PASS under a Verdict heading, with notes trailing it, as the PASS it is"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused an honest PASS artifact written in the pre-grammar shape"
+      fi
+
+      # The legacy name alone is never the offence: a run with a base_head and
+      # no ordinal anywhere on its record still falls back to the single path.
+      hb_ev_c0="$(hb_git rev-parse HEAD)"
+      hb_write_legacy_artifact sess-e2-000000
+      hb_ev_commit 'jeffy: a genuine single-path artifact'
+      hb_ev_run sess-e2 "$hb_ev_c0"
+      if hb_ev_accepted && grep -q 'pre-1.8.0 single-path artifact' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook still accepts a single-path artifact from a run whose record holds no ordinal"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt"
+        fault "stop hook refused a legal single-path artifact for its name"
+      fi
+
+      # P1-22. Four invocations committed since base_head, then the fourth
+      # renamed to the single path and the rest deleted. The commits remain.
+      hb_ev_c0="$(hb_git rev-parse HEAD)"
+      for hb_ev_n in 1 2 3 4; do hb_write_evaluator_artifact sess-e3-000000 "$hb_ev_n"; done
+      hb_ev_commit 'jeffy: four invocations'
+      hb_git mv .jeffy/evaluator/sess-e3-000000-4.md .jeffy/evaluator/sess-e3-000000.md >/dev/null 2>&1
+      hb_git rm -q .jeffy/evaluator/sess-e3-000000-1.md .jeffy/evaluator/sess-e3-000000-2.md .jeffy/evaluator/sess-e3-000000-3.md >/dev/null 2>&1
+      hb_ev_commit 'jeffy: the fourth ordinal renamed to the single path'
+      hb_ev_run sess-e3 "$hb_ev_c0"
+      if hb_ev_refused 'no invocation remains'; then
+        pass "stop hook reads the invocation cap off the ordinals committed since base_head, so a rename to the single path does not reset it"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let a fourth invocation declare once its artifact was renamed to the pre-1.8.0 path"
+      fi
+
+      # The same bypass where git history cannot answer - no base_head here,
+      # and no repository at all in a non-git project. The hook's own metrics
+      # record of an earlier turn end already holds the ordinal it saw.
+      for hb_ev_n in 1 2 3 4; do hb_write_evaluator_artifact sess-e4-000000 "$hb_ev_n"; done
+      hb_ev_commit 'jeffy: four invocations, no base_head'
+      hb_ev_run sess-e4 ''
+      hb_git mv .jeffy/evaluator/sess-e4-000000-4.md .jeffy/evaluator/sess-e4-000000.md >/dev/null 2>&1
+      hb_git rm -q .jeffy/evaluator/sess-e4-000000-1.md .jeffy/evaluator/sess-e4-000000-2.md .jeffy/evaluator/sess-e4-000000-3.md >/dev/null 2>&1
+      hb_ev_commit 'jeffy: renamed again'
+      hb_ev_run sess-e4 ''
+      if hb_ev_refused 'no invocation remains'; then
+        pass "stop hook reads the invocation cap off its own metrics record where git history cannot answer"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook forgot an ordinal it had already recorded once the artifacts were renamed and deleted"
+      fi
+
+      # Three REJECTs, one of them under a heading retyped from EVALUATOR to a
+      # task id. The journal now counts two; the third artifact still says
+      # what the third invocation returned.
+      hb_ev_c0="$(hb_git rev-parse HEAD)"
+      for hb_ev_n in 1 2 3; do hb_write_evaluator_artifact sess-e5-000000 "$hb_ev_n" 'Verdict: REJECT - a finding stands'; done
+      hb_ev_commit 'jeffy: three rejected invocations'
+      hb_ev_run sess-e5 "$hb_ev_c0" \
+        '## iter 1/3 | sess-e5-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - one.' \
+        '## iter 1/3 | sess-e5-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - two.' \
+        '## iter 2/3 | sess-e5-000000 | 2026-01-01 | G9 | done:::Verification: Evaluator: REJECT - three.'
+      if hb_ev_refused 'no invocation remains'; then
+        pass "stop hook holds the cap when a third REJECT is hidden by retyping its journal heading"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let a retyped journal heading reset the REJECT count"
+      fi
+
+      # And the path that reading must leave open: two REJECTs, then a third
+      # invocation that passed, on a run whose whole record is in range.
+      hb_ev_c0="$(hb_git rev-parse HEAD)"
+      hb_write_evaluator_artifact sess-e6-000000 1 'Verdict: REJECT - one'
+      hb_write_evaluator_artifact sess-e6-000000 2 'Verdict: REJECT - two'
+      hb_write_evaluator_artifact sess-e6-000000 3
+      hb_ev_commit 'jeffy: two rejected invocations and a pass'
+      hb_ev_run sess-e6 "$hb_ev_c0" \
+        '## iter 1/3 | sess-e6-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - one.' \
+        '## iter 1/3 | sess-e6-000000 | 2026-01-01 | EVALUATOR | audit:::Verification: Evaluator: REJECT - two.'
+      if hb_ev_accepted; then
+        pass "stop hook accepts a third invocation's PASS artifact after two REJECT artifacts (the cap-3 path stays open)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused a run that spent its third invocation legally and passed"
+      fi
+      hb_git rm -q -- '.jeffy/evaluator/sess-e*' >/dev/null 2>&1
+      hb_git commit -q -m 'jeffy: drop the verdict and cap scenarios' >/dev/null 2>&1
 
       # The bound counts gate verdicts, not the word. An ordinary task entry
       # names the rejection that filed its task - "G1, filed by the gate at
