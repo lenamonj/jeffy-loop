@@ -753,9 +753,26 @@ else
   if [ "$?" -ne 3 ]; then
     qv_bad=1; echo "  a Command with no pipe no longer reports its own status: [$(cat "$qv_tmp/err")]"
   fi
+  # Exit 141 is what an early-closing stage the engine does not recognise
+  # looks like under pipefail, and the wrapper says so; the way out it names,
+  # set +o pipefail at the head of the Command, has to work.
+  qv_case 'Command: bash -c "exit 141"' 'Oracle class: deterministic'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  if [ "$?" -ne 141 ] || ! grep -q '^verify: exit 141 is SIGPIPE' "$qv_tmp/err" || ! grep -qF 'set +o pipefail' "$qv_tmp/err"; then
+    qv_bad=1; echo "  exit 141 was not diagnosed as SIGPIPE under pipefail: [$(cat "$qv_tmp/err")]"
+  fi
+  qv_case 'Command: bash -c "exit 1"' 'Oracle class: deterministic'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  if [ "$?" -ne 1 ] || grep -q 'SIGPIPE' "$qv_tmp/err"; then
+    qv_bad=1; echo "  an ordinary exit 1 was diagnosed as SIGPIPE: [$(cat "$qv_tmp/err")]"
+  fi
+  qv_case 'Command: set +o pipefail; bash -c "exit 1" | cat' 'Oracle class: deterministic'
+  if ! bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; then
+    qv_bad=1; echo "  set +o pipefail at the head of the Command did not opt out: [$(cat "$qv_tmp/err")]"
+  fi
   rm -rf "$qv_tmp"
   if [ "$qv_bad" -eq 0 ]; then
-    pass "quiet-verify leaves a green piped Command green and runs a Command with an early-closing stage (grep -q, head) as written"
+    pass "quiet-verify leaves a green piped Command green, runs a Command with an early-closing stage (grep -q, head) as written, names exit 141 as SIGPIPE and honours set +o pipefail"
   else
     fault "quiet-verify changed the result of a legal piped Command (see the lines above)"
   fi
@@ -2567,6 +2584,20 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook accepted convergence with no AUDIT entry on this run's record"
     fi
 
+    # The shape every declaring standard run writes: it closes on its own
+    # EVALUATOR entry. That entry is the gate's, not an audit, and with no
+    # AUDIT entry anywhere on the record the declaration is still refused.
+    hb_write_state sess-1 2 3
+    hb_write_journal_entries       '## iter 2/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - clean sweep.'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ]       && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no AUDIT entry headed with this run'       && grep -q '^iteration: 3$' "$hb_state"; then
+      pass "stop hook does not count the run's own EVALUATOR entry as its audit"
+    else
+      printf '%s
+' "$hb_out"
+      fault "stop hook read an EVALUATOR entry as the audit a declaration rests on"
+    fi
+
     hb_write_state sess-1 2 3
     hb_write_journal_entries \
       '## iter 1/3 | sess-1-000000 | 2026-01-01 | AUDIT | audit' \
@@ -2724,6 +2755,20 @@ if command -v jq >/dev/null 2>&1; then
     else
       printf '%s\n' "$hb_out"
       fault "stop hook accepted a declaration over a ledger with no Now section, where the severity floor reads nothing"
+    fi
+    # The shape the refusal is named for: Next and Later are there, Now is not.
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Next
+
+## Later
+
+## Converged
+"
+    if hb_sec_refused 'no Now section'; then
+      pass "stop hook refuses a ledger that carries Next and Later and no Now section"
+    else
+      printf '%s
+' "$hb_out"
+      fault "stop hook took a Next or Later section as standing in for the missing Now section"
     fi
 
     hb_sec_bad=""
@@ -5051,6 +5096,38 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       else
         fault "stop hook refused a green piped Command (tee, grep -q: $hb_p1_legal)"
       fi
+
+      # Exit 141 at the converged stop is named as SIGPIPE with the way out,
+      # an ordinary failure is not, and the way out works.
+      hb_write_state sess-1 1 3
+      hb_write_plan_full 'bash -c "exit 141"' "$hb_p1_row"
+      hb_write_backlog '' "Converged: $hb_p1_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      hb_p1_141="$(printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null)"
+      rm -f "$hb_state"
+      hb_write_state sess-1 1 3
+      hb_write_plan_full 'bash -c "exit 1"' "$hb_p1_row"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if printf '%s' "$hb_p1_141" | grep -qF 'exited 141, which is SIGPIPE'         && printf '%s' "$hb_p1_141" | grep -qF 'set +o pipefail'         && [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ]         && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'SIGPIPE'; then
+        pass "stop hook names a Verify command that exits 141 as SIGPIPE under pipefail, and an exit 1 as plain failure"
+      else
+        printf '%s
+%s
+' "$hb_p1_141" "$hb_out"
+        fault "stop hook did not diagnose exit 141 as SIGPIPE, or diagnosed an ordinary failure as one"
+      fi
+      rm -f "$hb_state"
+      hb_write_state sess-1 1 3
+      hb_write_plan_full 'set +o pipefail; bash -c "exit 1" | sort' "$hb_p1_row"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+        pass "stop hook runs a Command that opens with set +o pipefail as written"
+      else
+        printf '%s
+' "$hb_out"
+        fault "stop hook ignored set +o pipefail at the head of the Command"
+      fi
+      rm -f "$hb_state"
 
       # Regression guard for the bash -n check: parentheses inside quotes
       # are legitimate shell and must still run. The check rejects
