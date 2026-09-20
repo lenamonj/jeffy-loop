@@ -909,7 +909,35 @@ tbl_merged_projects="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard
 # is a merged patch (Jeff, 2026-09-06: only a merge enters the merged list).
 # Such a merge is a bullet in the Merged upstream list whose PR URL appears in
 # no scorecard row; each adds one patch, and each distinct repository one project.
-hunt_urls="$(awk '/^## Merged upstream/{p=1; next} /^## /{p=0} p' "$scorecard" | grep -oE '^- \*\*[^]]*\[[^]]+\]\(https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+\) - merged\.\*\*' | grep -oE 'https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+' | while IFS= read -r u; do grep -qF "$u" <(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard") || printf '%s\n' "$u"; done)"
+# The exclusion compares whole PR URLs, extracted from the rows with their
+# full number: a substring match found .../pull/123 inside a row's
+# .../pull/1234 and dropped that hunt merge from both counts.
+hunt_urls_of() { # $1 scorecard file
+  local hu_u
+  awk '/^## Merged upstream/{p=1; next} /^## /{p=0} p' "$1" | grep -oE '^- \*\*[^]]*\[[^]]+\]\(https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+\) - merged\.\*\*' | grep -oE 'https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+' | while IFS= read -r hu_u; do
+    grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$1" | grep -oE 'https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+' | grep -qxF "$hu_u" || printf '%s\n' "$hu_u"
+  done
+}
+hu_tmp="$(mktemp -d)" || hu_tmp=""
+if [ -z "$hu_tmp" ]; then
+  fault "the hunt-merge exclusion fixture could not create its sandbox (mktemp failed)"
+else
+  {
+    printf '| acme-lib | Go | [details](acme-lib/REPORT.md) - [PR merged](https://github.com/acme/lib/pull/1234) | Fixed |\n'
+    printf '| acme-row | Go | [details](acme-row/REPORT.md) - [PR merged](https://github.com/acme/row/pull/77) | Fixed |\n'
+    printf '\n## Merged upstream\n\n'
+    printf -- '- **acme/lib [#123](https://github.com/acme/lib/pull/123) - merged.** A hunt merge whose number is a prefix of a row'"'"'s.\n'
+    printf -- '- **acme/row [#77](https://github.com/acme/row/pull/77) - merged.** The row'"'"'s own merge, listed again.\n'
+  } > "$hu_tmp/scorecard.md"
+  hu_got="$(hunt_urls_of "$hu_tmp/scorecard.md" | tr '\n' ' ')"
+  if [ "$hu_got" = "https://github.com/acme/lib/pull/123 " ]; then
+    pass "check J counts a hunt merge whose PR number is a prefix of a scorecard row's, and still excludes a row's own merge"
+  else
+    fault "check J's hunt-merge exclusion read [$hu_got]: a hunt PR URL matched as a substring of a row's longer PR number, or a row's own merge was counted twice"
+  fi
+  rm -rf "$hu_tmp"
+fi
+hunt_urls="$(hunt_urls_of "$scorecard")"
 hunt_merged="$(printf '%s\n' "$hunt_urls" | grep -c '/pull/')"
 hunt_merged_projects="$(printf '%s\n' "$hunt_urls" | grep -oE 'github\.com/[^/]+/[^/]+' | sort -u | grep -c .)"
 tbl_merged=$((tbl_merged + hunt_merged))
@@ -4788,10 +4816,13 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     hb_write_state sess-1 1 3
     rm -f "$hb_tmp/prompt.txt"
     hb_out="$(hb_run sess-1 'still working' '' 2>/dev/null)"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
-      pass "stop hook ends the loop when the prompt file is missing (state deleted, stop allowed)"
+    # The pointer is the assertion: empty stdout and a deleted state file are
+    # what every run-ending path leaves, and hb_end_clean cannot see "ending
+    # the loop", so without it this passed for any ending at all.
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]       && grep -qF "iteration prompt missing at $hb_tmp/prompt.txt" "$hb_tmp/hb_err_cap.txt"; then
+      pass "stop hook ends the loop when the prompt file is missing, and says which file (state deleted, stop allowed)"
     else
-      fault "stop hook mishandled a missing prompt file"
+      fault "stop hook mishandled a missing prompt file, or ended the loop without naming it"
     fi
 
     # --- v1.5.0 Phase 1 expectations (E1, E6, E7, E8) --------------------
