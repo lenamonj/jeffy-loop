@@ -6708,7 +6708,7 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       hb_git add -A -- .jeffy >/dev/null 2>&1
       hb_git commit -q -m 'jeffy: the same PASS artifact in CRLF' >/dev/null 2>&1
       hb_ev_run sess-e1 ''
-      if [ "$(grep -c "$(printf '\r')\$" "$hb_tmp/hb_crlf.md")" -ge 5 ] && hb_ev_accepted; then
+      if [ "$(tr -cd '\r' < "$hb_tmp/hb_crlf.md" | wc -c)" -ge 5 ] && hb_ev_accepted; then
         pass "stop hook reads a CRLF artifact's verdict line, and the blank CRLF lines after it, as it reads the LF one"
       else
         printf '%s\n' "$hb_out"
