@@ -163,6 +163,15 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>4 days</td>
   </tr>
   <tr>
+    <td rowspan="2"><img src="https://github.com/cloudflare.png" width="20" height="20" alt="" align="absmiddle"> Cloudflare</td>
+    <td><a href="https://github.com/cloudflare/circl/pull/700">circl #700</a><br>The PKI marshal functions panicked on the library's own post-quantum keys instead of returning an error</td>
+    <td>1 day</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/cloudflare/circl/pull/699">circl #699</a><br>The hybrid KEM derived a different key pair from the same seed on a random subset of calls</td>
+    <td>1 day</td>
+  </tr>
+  <tr>
     <td rowspan="2"><img src="https://github.com/JetBrains.png" width="20" height="20" alt="" align="absmiddle"> JetBrains</td>
     <td><a href="https://github.com/Kotlin/kotlinx-datetime/pull/650">kotlinx-datetime #650</a><br>Deprecation quick-fixes pointed developers at the wrong replacement</td>
     <td>90 minutes</td>
@@ -175,15 +184,6 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td><img src="https://github.com/nodejs.png" width="20" height="20" alt="" align="absmiddle"> Node.js</td>
     <td><a href="https://github.com/ada-url/ada/pull/1244">ada #1244</a><br>The URL parser Node.js ships reported <code>host_end</code> one byte short</td>
     <td>12 minutes</td>
-  </tr>
-  <tr>
-    <td rowspan="2"><img src="https://github.com/cloudflare.png" width="20" height="20" alt="" align="absmiddle"> Cloudflare</td>
-    <td><a href="https://github.com/cloudflare/circl/pull/700">circl #700</a><br>The PKI marshal functions panicked on the library's own post-quantum keys instead of returning an error</td>
-    <td>1 day</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/cloudflare/circl/pull/699">circl #699</a><br>The hybrid KEM derived a different key pair from the same seed on a random subset of calls</td>
-    <td>1 day</td>
   </tr>
   <tr>
     <td><img src="https://github.com/SethMMorton.png" width="20" height="20" alt="" align="absmiddle"> natsort</td>
