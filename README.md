@@ -30,7 +30,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->48<!-- /count -->** | **<!-- count:prs-open -->28<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->49<!-- /count -->** | **<!-- count:prs-open -->28<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -45,7 +45,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->48<!-- /count --> times, across <!-- count:merged-projects -->37<!-- /count --> open source projects, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->49<!-- /count --> times, across <!-- count:merged-projects -->38<!-- /count --> open source projects, including those below.
 
 <table>
   <tr>
@@ -138,6 +138,11 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td><img src="https://github.com/oracle.png" width="20" height="20" alt="" align="absmiddle"> Oracle</td>
     <td><a href="https://github.com/oracle/macaron/pull/1466">macaron #1466</a><br>The build spec dropped the JDK version read from the JAR whenever the artifact recorded no language version</td>
     <td>3 days</td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/IBM.png" width="20" height="20" alt="" align="absmiddle"> IBM</td>
+    <td><a href="https://github.com/IBM/sarama/pull/3740">sarama #3740</a><br>The round-robin balancer never returned when the topics map held a topic no consumer group member subscribed to</td>
+    <td>14 days</td>
   </tr>
   <tr>
     <td rowspan="2"><img src="https://github.com/cisco.png" width="20" height="20" alt="" align="absmiddle"> Cisco</td>
