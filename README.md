@@ -30,7 +30,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->49<!-- /count -->** | **<!-- count:prs-open -->28<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->50<!-- /count -->** | **<!-- count:prs-open -->28<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -45,7 +45,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->49<!-- /count --> times, across <!-- count:merged-projects -->38<!-- /count --> open source projects, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->50<!-- /count --> times, across <!-- count:merged-projects -->39<!-- /count --> open source projects, including those below.
 
 <table>
   <tr>
@@ -61,6 +61,11 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   <tr>
     <td><a href="https://github.com/NVIDIA/k8s-device-plugin/pull/2002">k8s-device-plugin #2002</a><br>An empty <code>deviceListStrategy</code> list in the config file passed validation, and the container started with no GPU access and no error</td>
     <td>13 days</td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/teslamotors.png" width="20" height="20" alt="" align="absmiddle"> Tesla</td>
+    <td><a href="https://github.com/teslamotors/vehicle-command/pull/479">vehicle-command #479</a><br>The proxy read every client request body with no size limit, so any client that reached the listener could drive memory allocation without bound</td>
+    <td>15 days</td>
   </tr>
   <tr>
     <td rowspan="2"><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
