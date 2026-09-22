@@ -30,7 +30,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->50<!-- /count -->** | **<!-- count:prs-open -->28<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->51<!-- /count -->** | **<!-- count:prs-open -->28<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -45,7 +45,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->50<!-- /count --> times, across <!-- count:merged-projects -->39<!-- /count --> open source projects, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->51<!-- /count --> times, across <!-- count:merged-projects -->40<!-- /count --> open source projects, including those below.
 
 <table>
   <tr>
@@ -77,7 +77,7 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>7 days</td>
   </tr>
   <tr>
-    <td rowspan="5"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
+    <td rowspan="6"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
     <td><a href="https://github.com/apple/swift-log/pull/504">swift-log #504</a><br>A documented no-op setter asserted instead</td>
     <td>2 days</td>
   </tr>
@@ -96,6 +96,10 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   <tr>
     <td><a href="https://github.com/apple/swift-metrics/pull/244">swift-metrics #244</a><br>The package's own test kit crashed on a repeated dimension name</td>
     <td>4 days</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/apple/swift-certificates/pull/317">swift-certificates #317</a><br>A <code>/0</code> iPAddress name constraint matched nothing, so a CA barred from every IP address by <code>0.0.0.0/0</code> and <code>::/0</code> exclusions still verified a leaf with an IP SAN</td>
+    <td>16 days</td>
   </tr>
   <tr>
     <td rowspan="4"><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
