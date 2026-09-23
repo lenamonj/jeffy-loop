@@ -30,7 +30,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->53<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->54<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -45,7 +45,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->53<!-- /count --> times, across <!-- count:merged-projects -->42<!-- /count --> open source projects, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->54<!-- /count --> times, across <!-- count:merged-projects -->43<!-- /count --> open source projects, including those below.
 
 <table>
   <tr>
@@ -117,6 +117,11 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   <tr>
     <td><a href="https://github.com/microsoft/GSL/pull/1272">GSL #1272</a><br><code>dyn_array_iterator</code> declared random access but had no relational operators, no <code>-&gt;</code> and no <code>n + it</code>, so <code>std::sort</code> over a <code>dyn_array</code> did not compile</td>
     <td>9 days</td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/Netflix.png" width="20" height="20" alt="" align="absmiddle"> Netflix</td>
+    <td><a href="https://github.com/Netflix/zuul/pull/2213">zuul #2213</a><br><code>HttpQueryParams.get</code> lower-cased the lookup key against names stored verbatim, so every query parameter with an uppercase letter in its name came back empty</td>
+    <td>17 days</td>
   </tr>
   <tr>
     <td rowspan="6"><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
