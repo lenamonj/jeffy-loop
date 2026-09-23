@@ -195,6 +195,11 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>12 minutes</td>
   </tr>
   <tr>
+    <td><img src="https://github.com/canonical.png" width="20" height="20" alt="" align="absmiddle"> Canonical (Ubuntu)</td>
+    <td><a href="https://github.com/canonical/pebble/pull/938">pebble #938</a><br>With more than one service or check, the metrics endpoint repeated each <code># HELP</code> and <code># TYPE</code> family and the Prometheus parser rejected the whole response</td>
+    <td>16 days</td>
+  </tr>
+  <tr>
     <td><img src="https://github.com/SethMMorton.png" width="20" height="20" alt="" align="absmiddle"> natsort</td>
     <td><a href="https://github.com/SethMMorton/natsort/pull/196">natsort #196</a><br>The locale sentinel meant to sort last was three ASCII bytes, so PyICU keys sorted after it (19 million PyPI downloads a month)</td>
     <td>8 days</td>
