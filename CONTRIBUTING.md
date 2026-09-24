@@ -20,6 +20,7 @@ A CLA is signed once; a DCO is a `Signed-off-by` line on every commit.
 | Dropbox | CLA | 2026-09-07 |
 | Shopify | CLA | 2026-09-07 |
 | Square | CLA | 2026-09-07 |
+| Grafana | CLA | 2026-09-24 |
 
 ## Before you open a PR
 
