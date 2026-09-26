@@ -3523,6 +3523,36 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fi
       rm -f "$hb_state"
 
+      # HB-3: git diff follows renames and --name-only prints the destination
+      # alone, so code moved OUT of a battery's declared paths matched nothing
+      # and the row that swept it stayed fresh. --no-renames lists the deleted
+      # source, which the paths line covers. Its own sandbox, because a product
+      # commit here would outdate the Converged hash every later case declares on.
+      hb_rn_proj="$hb_proj"; hb_rn_state="$hb_state"
+      hb_proj="$hb_tmp/renameproj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      mkdir -p "$hb_proj/.claude" "$hb_proj/src" "$hb_proj/lib" "$hb_proj/.jeffy/probes/core"
+      hb_git init -q -b main
+      printf 'v1\n' > "$hb_proj/src/a.c"
+      printf 'src/a.c\n' > "$hb_proj/.jeffy/probes/core/paths"
+      hb_git add -A >/dev/null
+      hb_git commit -q -m base
+      hb_rn_c="$(hb_git rev-parse HEAD)"
+      hb_git mv src/a.c lib/a.c
+      hb_git commit -q -m 'move the swept file'
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_write_plan_full none "- [x] core: swept at $hb_rn_c via .jeffy/probes/core - probed every entry point"
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALE ROWS:' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'src/a.c has changed since'; then
+        pass "stop hook names a swept row stale when its file was renamed out of the battery's paths (HB-3)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a file renamed out of a battery's paths as unchanged and kept the row fresh"
+      fi
+      hb_proj="$hb_rn_proj"; hb_state="$hb_rn_state"
+
       # P1-60: the loop leaks through any channel that derives a published
       # artifact from the tree, and rust-semver's crate tarball would have
       # shipped 43 loop paths because its packaging probe graded exit status
@@ -4914,6 +4944,55 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     else
       printf '%s\n' "$hb_out"; cat "$hb_tmp/hb_err.txt"
       fault "stop hook re-fed a state file that carries no iteration line"
+    fi
+
+    # HB-4: the rewriter advances the counter only inside a frontmatter opened
+    # by a line reading exactly ---, while fm() reads a key anywhere, so an
+    # opener with a trailing space or a UTF-8 BOM re-fed forever at one count
+    # with no budget, stall or oscillation baseline ever stamped. A counter the
+    # rewrite could not move is refused the way a malformed one is.
+    hb_hb4_ok=1
+    for hb_hb4 in space bom; do
+      hb_write_state sess-1 1 3
+      if [ "$hb_hb4" = bom ]; then
+        { printf '\357\273\277'; cat "$hb_state"; } > "$hb_state.b" && mv "$hb_state.b" "$hb_state"
+      else
+        awk 'NR == 1 { $0 = $0 " " } { print }' "$hb_state" > "$hb_state.b" && mv "$hb_state.b" "$hb_state"
+      fi
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -n "$hb_out" ] || [ ! -f "$hb_state" ] \
+        || ! grep -q 'could not advance the iteration counter' "$hb_tmp/hb_err.txt"; then
+        printf '%s: %s\n' "$hb_hb4" "$hb_out"; cat "$hb_tmp/hb_err.txt"
+        hb_hb4_ok=0
+      fi
+    done
+    if [ "$hb_hb4_ok" = 1 ]; then
+      pass "stop hook refuses to re-feed a state file whose opener is not exactly --- (trailing space, BOM) rather than re-feeding forever at one count (HB-4)"
+    else
+      fault "stop hook re-fed a state file whose iteration counter its rewrite could not advance"
+    fi
+
+    # HB-5: /jeffy 08 is a decimal budget. Bash arithmetic read the leading
+    # zero as octal: 08 killed the hook after the counter had advanced, with
+    # no re-feed, and 010 counted as eight, which also annulled the +2 window.
+    hb_write_state sess-1 1 08
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^iteration: 2$' "$hb_state" \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 2 of 8; 6 remain after it'; then
+      pass "stop hook re-feeds a budget written with a leading zero (08) instead of dying on it as bad octal (HB-5)"
+    else
+      printf '%s\n' "$hb_out"; cat "$hb_tmp/hb_err.txt"
+      fault "stop hook died on, or miscounted, max_iterations 08"
+    fi
+    hb_write_state sess-1 1 010
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 2 of 10; 8 remain after it'; then
+      pass "stop hook counts max_iterations 010 as ten, not octal eight (HB-5)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook computed the remaining budget of max_iterations 010 in octal"
     fi
 
     hb_write_state sess-1 1 3
@@ -8323,6 +8402,36 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fault "a time ceiling preempted the closing extension, killing a run at its finish line"
     fi
 
+    # HB-1: ...and on every turn inside the window it granted. The flag is
+    # stamped once, on the granting re-feed, and the turn after it is the gate
+    # turn the window exists to buy; both ceilings ended the run there, against
+    # usage.md and SKILL.md ("neither preempts a closing extension").
+    hb_write_state sess-1 11 12
+    hb_state_addkey 'extension_granted: 1'
+    hb_state_addkey "run_started_at: $((hb_now - 999999))"
+    hb_state_addkey 'max_wall_clock_seconds: 60'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^iteration: 12$' "$hb_state" && hb_end_clean; then
+      pass "a blown wall-clock ceiling yields inside the closing extension window, not only on the granting turn (HB-1)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "the wall-clock ceiling ended the run inside the closing extension window it had yielded to one turn earlier"
+    fi
+    hb_write_state sess-1 11 12
+    hb_state_addkey 'extension_granted: 1'
+    hb_state_addkey "iteration_started_at: $((hb_now - 600))"
+    hb_state_addkey 'max_iteration_seconds: 60'
+    hb_state_addkey 'overrun: 1'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^iteration: 12$' "$hb_state" && hb_end_clean; then
+      pass "a second per-iteration overrun yields inside the closing extension window (HB-1)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "the per-iteration ceiling ended the run inside the closing extension window"
+    fi
+
     # And never a VALID converged promise: acceptance exits inside the
     # promise case, before the ceilings. The word valid is load-bearing and
     # this fixture is the proof: its first shipped shape inherited a journal
@@ -8345,6 +8454,31 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       printf '%s\n' "$hb_out"
       cat "$hb_tmp/hb_err_cap.txt" 2>/dev/null
       fault "a time ceiling disturbed a valid convergence"
+    fi
+
+    # HB-7: the ceilings measure the iteration to the turn end, never the
+    # hook's own Verify re-run. A quick iteration whose declaration the re-run
+    # refused was charged the re-run's seconds as an overrun, and on a second
+    # strike the run ended before the rejection was delivered. "exited 1" is
+    # what proves the re-run happened: a refusal on an earlier check would
+    # pass the rest of this with no verify run at all.
+    hb_write_state sess-1 3 10
+    hb_state_addkey "iteration_started_at: $(date +%s)"
+    hb_state_addkey 'max_iteration_seconds: 3'
+    hb_state_addkey 'overrun: 1'
+    hb_write_backlog ''
+    hb_write_journal 3 10
+    hb_write_plan 'sleep 4; exit 1'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 1' \
+      && grep -q '^overrun: 0$' "$hb_state" && hb_end_clean; then
+      pass "the hook's own Verify re-run is not billed to the iteration ceiling; the rejection is re-fed (HB-7)"
+    else
+      printf '%s\n' "$hb_out"
+      cat "$hb_tmp/hb_err_cap.txt" 2>/dev/null
+      fault "the hook billed its own Verify re-run to the iteration and ended the run before re-feeding the rejection"
     fi
 
     # P0-5 (P1-47): a Surface inventory row flip is progress to the stall
