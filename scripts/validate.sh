@@ -2373,6 +2373,25 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook trapped a legacy state file that carries no started_at"
     fi
 
+    # The re-feed carries the shipped iteration prompt, not the sandbox's one
+    # sentence. At 33,731 bytes it is over the Windows command-line limit
+    # (32,767), so a reason passed to jq as an argument fails there with
+    # "Argument list too long", no block is printed, and a native-Windows run
+    # ends after its first turn.
+    cp "$hb_tmp/prompt.txt" "$hb_tmp/prompt.txt.sandbox"
+    cp skills/jeffy/references/iteration-prompt.txt "$hb_tmp/prompt.txt"
+    hb_write_state sess-1 1 3
+    hb_write_journal 1 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ "$(printf '%s' "$hb_out" | jq -r '.reason | length')" -gt 30000 ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'This is jeffy iteration 2 of 3'; then
+      pass "re-feed carries the full shipped prompt"
+    else
+      fault "re-feed with the shipped prompt did not block or truncated the reason"
+    fi
+    mv "$hb_tmp/prompt.txt.sandbox" "$hb_tmp/prompt.txt"
+
     hb_write_journal 1 3
 
     hb_write_state sess-1 3 3
