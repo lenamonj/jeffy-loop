@@ -63,13 +63,13 @@ fi
 # mood: is-system-running exits nonzero on a merely degraded manager (one
 # failed unit anywhere), and this wrapper's first shipped test flip-flopped on
 # exactly that while real scopes worked fine throughout.
-SECONDS=0
 have_scope=0
 if command -v systemd-run >/dev/null 2>&1 \
   && systemd-run --user --scope --quiet true >/dev/null 2>&1; then
   have_scope=1
 fi
 
+SECONDS=0
 if [ "$have_scope" -eq 1 ]; then
   systemd-run --user --scope --quiet \
     -p "MemoryMax=${mem_mb}M" -p MemorySwapMax=0 \

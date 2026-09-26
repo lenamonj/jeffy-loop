@@ -8830,6 +8830,19 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf 'rc=%s\n' "$hb_rp_rc"; cat "$hb_tmp/rp2.err"
         fault "run-probe.sh's wall ceiling stopped enforcing on a host that has timeout(1)"
       fi
+      # The wall clock that names a 137 a timeout starts at the probe, not at
+      # the user-manager capability check: a slow check (3s here) must not turn
+      # a probe's own instant SIGKILL into a wall-ceiling timeout.
+      hb_slowsr="$hb_tmp/slowsr"; mkdir -p "$hb_slowsr"
+      printf '#!/bin/sh\nsleep 3\nexit 1\n' > "$hb_slowsr/systemd-run"; chmod +x "$hb_slowsr/systemd-run"
+      # shellcheck disable=SC2016  # the probe, not this shell, expands $$
+      PATH="$hb_slowsr:$PATH" JEFFY_PROBE_TIMEOUT_S=2 "$BASH" "$hb_rp" bash -c 'kill -9 $$' >/dev/null 2>"$hb_tmp/rp3.err"; hb_rp_rc=$?
+      if [ "$hb_rp_rc" -eq 137 ] && ! grep -qF 'wall ceiling and was ended' "$hb_tmp/rp3.err"; then
+        pass "run-probe.sh times the wall ceiling from the probe, not from the capability check"
+      else
+        printf 'rc=%s\n' "$hb_rp_rc"; cat "$hb_tmp/rp3.err"
+        fault "run-probe.sh billed its capability check to the probe and named an instant SIGKILL a wall timeout"
+      fi
     else
       skip "run-probe.sh wall-ceiling control (no timeout(1) or gtimeout(1) on this host)"
     fi
