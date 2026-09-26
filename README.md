@@ -30,7 +30,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->56<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->57<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 <div align="center">
 
@@ -45,7 +45,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->56<!-- /count --> times, across <!-- count:merged-projects -->44<!-- /count --> open source projects, including those below.
+A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->57<!-- /count --> times, across <!-- count:merged-projects -->45<!-- /count --> open source projects, including those below.
 
 <table>
   <tr>
@@ -163,9 +163,13 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
     <td>3 days</td>
   </tr>
   <tr>
-    <td><img src="https://github.com/IBM.png" width="20" height="20" alt="" align="absmiddle"> IBM</td>
+    <td rowspan="2"><img src="https://github.com/IBM.png" width="20" height="20" alt="" align="absmiddle"> IBM</td>
     <td><a href="https://github.com/IBM/sarama/pull/3740">sarama #3740</a><br>The round-robin balancer never returned when the topics map held a topic no consumer group member subscribed to</td>
     <td>14 days</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/IBM/fp-go/pull/236">fp-go #236</a><br>A provider graph that referred back to itself deadlocked the dependency injector forever with no diagnostic; it now reports the chain that closes the circle</td>
+    <td>10 hours</td>
   </tr>
   <tr>
     <td rowspan="2"><img src="https://github.com/cisco.png" width="20" height="20" alt="" align="absmiddle"> Cisco</td>
