@@ -7425,23 +7425,95 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf '%s\n' "$hb_out"
         fault "stop hook certified a RATCHET on a record with no verdict:$hb_p2_bad"
       fi
-      # And the hash has to be this hash, whole: an accepted record for
-      # another commit, for a longer string this hash begins, or a full
-      # record under an abbreviated Converged line is no match.
+      # And the hash has to name this commit: an accepted record for another
+      # commit (one with the same tree included), for a longer string this
+      # hash begins, or for a revision expression that resolves to it is no
+      # match.
       hb_p2_bad=""
       hb_p2_short="$(printf '%s' "$hb_p2_legal" | cut -c1-7)"
-      for hb_p2_v in "$hb_p2_state_only|$hb_p2_legal" "${hb_p2_legal}ff|$hb_p2_legal" "ff$hb_p2_legal|$hb_p2_legal" "$hb_p2_legal|$hb_p2_short"; do
+      for hb_p2_v in "$hb_p2_state_only|$hb_p2_legal" "${hb_p2_legal}ff|$hb_p2_legal" "ff$hb_p2_legal|$hb_p2_legal" "HEAD~1|$hb_p2_legal"; do
         rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
         hb_p2_rec old-1-000000 "${hb_p2_v%%|*}" accepted > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
         hb_p2_s2 "Converged: ${hb_p2_v##*|} - 2026-01-01" "$hb_p2_state_only"
         hb_p2_uncertified || hb_p2_bad="$hb_p2_bad [record|Converged $hb_p2_v]"
       done
       if [ -z "$hb_p2_bad" ]; then
-        pass "stop hook refuses a RATCHET unless the accepted record names the Converged hash exactly, never another commit, a longer string or a prefix"
+        pass "stop hook refuses a RATCHET unless the accepted record names the Converged commit, never another commit, a longer string or a revision expression"
       else
         printf '%s\n' "$hb_out"
         fault "stop hook certified a RATCHET on a record whose hash is not the Converged hash:$hb_p2_bad"
       fi
+      # Both sides are read as the commit they name, so an abbreviation on
+      # either side of a full hash certifies (R3).
+      hb_p2_bad=""
+      for hb_p2_v in "$hb_p2_legal|$hb_p2_short" "$hb_p2_short|$hb_p2_legal"; do
+        rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+        hb_p2_rec old-1-000000 "${hb_p2_v%%|*}" accepted > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+        hb_p2_s2 "Converged: ${hb_p2_v##*|} - 2026-01-01" "$hb_p2_state_only"
+        [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_p2_bad="$hb_p2_bad [record|Converged $hb_p2_v]"
+      done
+      if [ -z "$hb_p2_bad" ]; then
+        pass "stop hook accepts a RATCHET whose record and Converged line name one commit, one abbreviated and one full"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook refused a RATCHET over the spelling of one commit's hash:$hb_p2_bad"
+      fi
+      # A two-hop repoint whose middle record was lost is certified by the
+      # first hop's record, every hop carrying the certified tree; a hop whose
+      # tree differs ends the chain (R3).
+      rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+      hb_p2_rec old-1-000000 "$hb_p2_legal" accepted > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      hb_git commit -q --allow-empty -m 'jeffy: a second rewrite, tree unchanged' >/dev/null 2>&1
+      hb_p2_hop2="$(hb_git rev-parse HEAD)"
+      hb_p2_s2 "$(printf 'Converged: %s - 2026-01-01\nConverged: %s - 2026-01-02 (repoints %s, tree unchanged)\nConverged: %s - 2026-01-03 (repoints %s, tree unchanged)' "$hb_p2_legal" "$hb_p2_state_only" "$hb_p2_legal" "$hb_p2_hop2" "$hb_p2_state_only")" "$hb_p2_hop2"
+      hb_p2_two=0
+      [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean && hb_p2_two=1
+      hb_git reset -q --hard "$hb_p2_state_only" >/dev/null 2>&1
+      printf 'v6\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null 2>&1
+      hb_git commit -q -m 'a product change repointed as if unchanged' >/dev/null 2>&1
+      hb_p2_moved="$(hb_git rev-parse HEAD)"
+      hb_git commit -q --allow-empty -m 'jeffy: a rewrite of the moved tree' >/dev/null 2>&1
+      hb_p2_hop2="$(hb_git rev-parse HEAD)"
+      rm -f "$hb_proj"/.jeffy/metrics/sess-1-000000.jsonl
+      hb_p2_s2 "$(printf 'Converged: %s - 2026-01-01\nConverged: %s - 2026-01-02 (repoints %s, tree unchanged)\nConverged: %s - 2026-01-03 (repoints %s, tree unchanged)' "$hb_p2_legal" "$hb_p2_moved" "$hb_p2_legal" "$hb_p2_hop2" "$hb_p2_moved")" "$hb_p2_hop2"
+      if [ "$hb_p2_two" = 1 ] && hb_p2_uncertified; then
+        pass "stop hook certifies a two-hop repoint through the first hop's record, and never across a hop whose tree differs"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook refused a two-hop repoint of a certified tree, or certified a chain across a changed tree (two-hop accepted: $hb_p2_two)"
+      fi
+      hb_git reset -q --hard "$hb_p2_state_only" >/dev/null 2>&1
+      # Two records glued on one line by a torn append are both read, and a
+      # line that yields no record is named on stderr (U6).
+      rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+      { hb_p2_rec a-1-000000 "$hb_p2_state_only" refused | tr -d '\n'; hb_p2_rec old-1-000000 "$hb_p2_legal" accepted; } > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+      hb_p2_glued=0
+      [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean && hb_p2_glued=1
+      rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+      printf '%s\n' "$hb_p2_torn" > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+      if [ "$hb_p2_glued" = 1 ] && hb_p2_uncertified \
+        && grep -qF '.jeffy/metrics/old-1-000000.jsonl:1 holds no metrics record' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook reads two metrics records glued on one line, and names a line that holds none"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook dropped a record glued to another on one line, or refused over a torn line without naming it (glued accepted: $hb_p2_glued)"
+      fi
+      # A tree with no metrics directory at all is told so.
+      rm -rf "$hb_proj/.jeffy/metrics"
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+      if hb_p2_uncertified && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no .jeffy/metrics directory at all'; then
+        pass "stop hook refuses a RATCHET in a tree with no .jeffy/metrics and says the directory is absent"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused a RATCHET in a tree with no .jeffy/metrics without saying the directory is absent"
+      fi
+      mkdir -p "$hb_proj/.jeffy/metrics"
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
