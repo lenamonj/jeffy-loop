@@ -139,9 +139,11 @@ jeffy_plan_command() { # $1 plan path
 # file as an orphan (P1-58). The clamp is said on stderr where it happens.
 JEFFY_VERIFY_BOUND_CAP=1740
 jeffy_verify_bound() { # $1 plan path, $2 verify_timeout_seconds from state (may be empty)
-  vt="${2:-}"
+  # Leading zeros are dropped at both reads: an explicit 0 is unset rather
+  # than GNU timeout's "no limit", and 08s is 8 rather than an octal error.
+  vt="$(printf '%s' "${2:-}" | sed 's/^0*//')"
   case "$vt" in '' | *[!0-9]*)
-    vd="$(jeffy_plan_line "$1" 'Verify duration' 2>/dev/null | sed -n 's/^\([0-9][0-9]*\)s.*/\1/p' | head -n 1)"
+    vd="$(jeffy_plan_line "$1" 'Verify duration' 2>/dev/null | sed -n 's/^0*\([0-9][0-9]*\)s.*/\1/p' | head -n 1)"
     case "$vd" in
       '' | *[!0-9]*) vt=240 ;;
       *) vt=$((vd * 3)); [ "$vt" -lt 240 ] && vt=240 ;;
@@ -187,8 +189,17 @@ jeffy_verify_run() { # $1 project root, $2 command, $3 bound seconds, $4 output 
     vto=gtimeout
   fi
   if [ -n "$vto" ]; then
-    ( cd "$vr_root" && PYTHONDONTWRITEBYTECODE=1 "$vto" "$vr_bound" bash "$vr_pf" pipefail -c "$vr_cmd" ) >"$vr_out" 2>&1
-    return $?
+    # -k: a suite that ignores SIGTERM is killed 5s past the bound, as the
+    # watchdog below does. timeout then exits 137, not 124, and a kill at or
+    # past the bound is the bound's. The outer 2>/dev/null drops the shell's
+    # own "Killed" notice, which would otherwise land on the caller's stderr.
+    vr_start="$(date +%s)"
+    { ( cd "$vr_root" && PYTHONDONTWRITEBYTECODE=1 "$vto" -k 5 "$vr_bound" bash "$vr_pf" pipefail -c "$vr_cmd" ) >"$vr_out" 2>&1; } 2>/dev/null
+    vr_rc=$?
+    if [ "$vr_rc" -eq 137 ] && [ $(( $(date +%s) - vr_start )) -ge "$vr_bound" ]; then
+      vr_rc=124
+    fi
+    return "$vr_rc"
   fi
   # Watchdog: run in the background and arm a killer that leaves a sentinel
   # behind before it fires. The sentinel is what tells a timeout apart from a

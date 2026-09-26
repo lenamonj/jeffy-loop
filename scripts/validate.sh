@@ -776,6 +776,32 @@ else
   else
     fault "quiet-verify changed the result of a legal piped Command (see the lines above)"
   fi
+  # LIBS-3 / HB-8 / LIBS-7: the bound is enforced against a suite that ignores
+  # SIGTERM, an explicit 0 is unset rather than unbounded, and a leading zero
+  # in Verify duration is decimal. exit 124 of the Command's own reads as a
+  # timeout (a Declined quirk), which makes the resolved bound observable at once.
+  qv_tmp="$(mktemp -d)"; qv_plan="$qv_tmp/PLAN.md"; qv_bad=0
+  qv_case "Command: trap '' TERM; sleep 30" 'Oracle class: deterministic'
+  qv_s="$(date +%s)"
+  JEFFY_VERIFY_TIMEOUT_SECONDS=1 bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; qv_rc=$?
+  qv_e=$(( $(date +%s) - qv_s ))
+  if [ "$qv_rc" -ne 124 ] || [ "$qv_e" -ge 15 ] || ! grep -q '^verify: TIMEOUT after' "$qv_tmp/err"; then
+    qv_bad=1; echo "  a TERM-ignoring suite ran ${qv_e}s past a 1s bound (rc=$qv_rc): [$(cat "$qv_tmp/err")]"
+  fi
+  qv_case 'Command: exit 124' 'Oracle class: deterministic'
+  JEFFY_VERIFY_TIMEOUT_SECONDS=0 bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  grep -q '(bound 240s)' "$qv_tmp/err" || { qv_bad=1; echo "  an explicit 0 did not resolve to the 240s default: [$(cat "$qv_tmp/err")]"; }
+  qv_case 'Command: exit 124' 'Oracle class: deterministic' 'Verify duration: 0100s'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  grep -q '(bound 300s)' "$qv_tmp/err" || { qv_bad=1; echo "  Verify duration 0100s did not resolve to 300s: [$(cat "$qv_tmp/err")]"; }
+  qv_case 'Command: true' 'Oracle class: deterministic' 'Verify duration: 08s'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err" || { qv_bad=1; echo "  Verify duration 08s turned a green true red: [$(cat "$qv_tmp/err")]"; }
+  rm -rf "$qv_tmp"
+  if [ "$qv_bad" -eq 0 ]; then
+    pass "quiet-verify ends a TERM-ignoring suite at the bound plus grace as a TIMEOUT, reads an explicit 0 as unset and a leading-zero duration as decimal (LIBS-3, HB-8, LIBS-7)"
+  else
+    fault "quiet-verify's bound is not what the chain resolves, or is not enforced (see the lines above)"
+  fi
 fi
 
 # One ladder, two callers. The hook must resolve its converged-stop bound
@@ -3810,6 +3836,20 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     else
       printf '%s\n' "$hb_out"
       fault "stop hook mishandled precedence between the state key and the PLAN-derived bound"
+    fi
+
+    # HB-8: a state key of 0 is unset, never GNU timeout's "no limit", so the
+    # bound falls through to the measured chain (100s -> 300s).
+    hb_write_state sess-1 1 3 0
+    hb_write_backlog ''
+    hb_write_plan_duration 'exit 124' '100s measured 2026-01-01'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exceeded the 300s timeout'; then
+      pass "stop hook reads verify_timeout_seconds 0 as unset and falls through to the PLAN-derived bound (HB-8)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook passed verify_timeout_seconds 0 through as the bound"
     fi
 
     hb_write_state sess-1 1 3
