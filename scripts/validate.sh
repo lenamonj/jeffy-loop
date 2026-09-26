@@ -295,6 +295,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "bring the standing claims current in this same iteration" \
   "the currency set is that form itself, never a fixed list" \
   "run skills/jeffy/hooks/lib/check-claims.sh and resolve every MISMATCH" \
+  "are the two things it reports as pending rather than refuses" \
   "enumerated by: <command>" \
   "each through the installed run-probe.sh" \
   "land before the re-invocation, never in the checkpoint edit after it" \
@@ -9113,7 +9114,8 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     hb_lint "$hb_proj"
     if [ "$hb_lint_rc" -eq 0 ] && printf '%s' "$hb_lint_out" | grep -qF 'clean apart from the close itself' \
       && printf '%s' "$hb_lint_out" | grep -qF 'Converged section of BACKLOG.md does not name a commit yet' \
-      && printf '%s' "$hb_lint_out" | grep -qF 'no Evaluator verdict yet'; then
+      && printf '%s' "$hb_lint_out" | grep -qF 'no Evaluator verdict yet' \
+      && printf '%s' "$hb_lint_out" | grep -qF "the gate's verdict and the Converged line are what supply it"; then
       pass "stop hook --lint reports the pre-gate tree as pending, not refused (P2-54 control)"
     else
       printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"

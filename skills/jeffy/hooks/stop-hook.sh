@@ -1848,7 +1848,9 @@ if [ -n "$promise" ]; then
           exit 1
         fi
         if [ -n "$hunt_pending" ]; then
-          echo "jeffy lint: clean apart from the close itself - $hunt_pending; the checkpoint and the $cert_sec line are what supply it, and every other check the close derives passes on this tree; the Verify command was not run, so run quiet-verify.sh yourself"
+          lint_supply="the checkpoint and the $cert_sec line"
+          [ "$hunt" = 1 ] || lint_supply="the gate's verdict and the $cert_sec line"
+          echo "jeffy lint: clean apart from the close itself - $hunt_pending; $lint_supply are what supply it, and every other check the close derives passes on this tree; the Verify command was not run, so run quiet-verify.sh yourself"
           exit 0
         fi
         echo "jeffy lint: clean - every check the declaration path derives passes on this tree; the Verify command was not run, so run quiet-verify.sh yourself"
