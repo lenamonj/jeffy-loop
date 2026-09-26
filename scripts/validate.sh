@@ -1928,6 +1928,29 @@ else
       cat "$rt_tmp/upgrade600.log"
       fault "install.sh left a 600s registration in place, below the bound the verify ladder can resolve (got: $(rt_timeouts))"
     fi
+    # INSTALL-1: a registration carried in from another home names a hook that
+    # does not exist; it is removed and this home's hook registered, never
+    # reported as already registered.
+    jq -n '{hooks: {Stop: [{hooks: [{type: "command", command: "bash \"/nonexistent-home/.claude/skills/jeffy/hooks/stop-hook.sh\"", timeout: 1800}]}]}}' > "$rt_home/.claude/settings.json"
+    HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/dead.log" 2>&1 || true
+    if [ "$(rt_count)" = "1" ] && grep -qF 'removed a Stop hook registration naming a hook that does not exist' "$rt_tmp/dead.log" \
+      && jq -r '.hooks.Stop[].hooks[].command' "$rt_home/.claude/settings.json" | grep -qF "$rt_home/.claude/skills/jeffy/hooks/stop-hook.sh"; then
+      pass "install.sh replaces a Stop registration whose hook path does not exist with this home's (INSTALL-1)"
+    else
+      cat "$rt_tmp/dead.log"
+      fault "install.sh kept a Stop registration naming a hook that does not exist"
+    fi
+    # Control: a live registration spelled with ~ is kept verbatim, so the
+    # prune never becomes a rewrite.
+    jq -n '{hooks: {Stop: [{hooks: [{type: "command", command: "bash ~/.claude/skills/jeffy/hooks/stop-hook.sh", timeout: 1800}]}]}}' > "$rt_home/.claude/settings.json"
+    cp "$rt_home/.claude/settings.json" "$rt_tmp/settings.tilde"
+    HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/tilde.log" 2>&1 || true
+    if cmp -s "$rt_home/.claude/settings.json" "$rt_tmp/settings.tilde" && grep -qF 'already registered' "$rt_tmp/tilde.log"; then
+      pass "install.sh keeps a live registration spelled with ~ byte-identical (INSTALL-1 control)"
+    else
+      cat "$rt_tmp/tilde.log"
+      fault "install.sh rewrote or removed a live registration spelled with ~"
+    fi
   else
     skip "install.sh hook-registration assertions (jq not on PATH)"
   fi
@@ -2051,6 +2074,18 @@ if [ -n "$ps" ]; then
       cat "$pr_tmp/upgrade.log"
       echo "----------------------------------------"
       fault "install.ps1 did not upgrade a legacy hook registration with the timeout"
+    fi
+    # INSTALL-1 mirror: a registration naming a hook that does not exist is
+    # removed and this profile's hook registered.
+    printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          { "type": "command", "command": "bash \\"/nonexistent-home/.claude/skills/jeffy/hooks/stop-hook.sh\\"", "timeout": 1800 }\n        ]\n      }\n    ]\n  }\n}\n' \
+      > "$pr_home/.claude/settings.json"
+    pr_run >"$pr_tmp/dead.log" 2>&1 || true
+    if [ "$(pr_count)" = "1" ] && grep -qF 'removed a Stop hook registration naming a hook that does not exist' "$pr_tmp/dead.log" \
+      && ! grep -qF 'nonexistent-home' "$pr_home/.claude/settings.json"; then
+      pass "install.ps1 replaces a Stop registration whose hook path does not exist with this profile's (INSTALL-1) ($ps)"
+    else
+      cat "$pr_tmp/dead.log"; cat "$pr_home/.claude/settings.json"
+      fault "install.ps1 kept a Stop registration naming a hook that does not exist"
     fi
     rm -rf "$pr_tmp"
   fi
