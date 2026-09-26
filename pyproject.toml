@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jeffy-loop"
-version = "1.24.0"
+version = "1.24.1"
 description = "Jeffy Loop is an autonomous software-engineering control system that forces an LLM to continuously audit, act, verify, checkpoint, and prove convergence."
 dynamic = ["readme"]
 license = "MIT"
