@@ -142,6 +142,9 @@ def registered_path(command):
     frag = re.escape(HOOK_FRAGMENT)
     match = re.search("\"([^\"]*" + frag + ")\"|'([^']*" + frag + ")'|([^\"' ]*" + frag + ")", command)
     path = next(group for group in match.groups() if group)
+    if os.name == "nt":
+        # install.sh run from Git Bash writes the hook as /c/...; Windows reads C:/...
+        path = re.sub(r"^/([A-Za-z])/", r"\1:/", path)
     return Path(os.path.expandvars(os.path.expanduser(path)))
 
 

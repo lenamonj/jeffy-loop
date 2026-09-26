@@ -109,6 +109,8 @@ if ($null -ne $settings) {
                     $m = [regex]::Match($c, '"([^"]*skills/jeffy/hooks/stop-hook\.sh)"|''([^'']*skills/jeffy/hooks/stop-hook\.sh)''|([^"'' ]*skills/jeffy/hooks/stop-hook\.sh)')
                     $p = @($m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value) | Where-Object { $_ } | Select-Object -First 1
                     $p = $p -replace '^~', $HOME -replace '\$\{?HOME\}?', $HOME
+                    # install.sh run from Git Bash writes the hook as /c/...; Test-Path reads C:/...
+                    if ($env:OS -eq 'Windows_NT') { $p = $p -replace '^/([A-Za-z])/', '$1:/' }
                     if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
                         Write-Host "[OK] removed a Stop hook registration naming a hook that does not exist: $c"
                         $pruned = $true

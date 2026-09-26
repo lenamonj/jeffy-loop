@@ -2119,6 +2119,22 @@ if [ -n "$ps" ]; then
       cat "$pr_tmp/space.log"; cat "$pr_home/.claude/settings.json"
       fault "install.ps1 called a live registration whose path holds a space dead"
     fi
+    # Control: install.sh run from Git Bash writes the hook as /c/...; the same
+    # live hook read by install.ps1 is kept, never reported as missing.
+    if command -v cygpath >/dev/null 2>&1; then
+      pr_msys="$(cygpath -m "$pr_home/.claude/skills/jeffy/hooks/stop-hook.sh")"
+      pr_msys="/$(printf '%s' "${pr_msys%%:*}" | tr '[:upper:]' '[:lower:]')${pr_msys#?:}"
+      printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          { "type": "command", "command": "bash \\"%s\\"", "timeout": 1800 }\n        ]\n      }\n    ]\n  }\n}\n' \
+        "$pr_msys" > "$pr_home/.claude/settings.json"
+      pr_run >"$pr_tmp/msys.log" 2>&1 || true
+      if [ "$(pr_count)" = "1" ] && grep -qF "$pr_msys" "$pr_home/.claude/settings.json" \
+        && ! grep -qF 'does not exist' "$pr_tmp/msys.log"; then
+        pass "install.ps1 keeps a live registration written by Git Bash as /c/... (INSTALL-1 control) ($ps)"
+      else
+        cat "$pr_tmp/msys.log"; cat "$pr_home/.claude/settings.json"
+        fault "install.ps1 called a live Git Bash /c/... registration dead"
+      fi
+    fi
     rm -rf "$pr_tmp"
   fi
 else
