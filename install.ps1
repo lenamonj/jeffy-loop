@@ -94,6 +94,34 @@ if ((Test-Path $settingsPath) -and ((Get-Item $settingsPath).Length -gt 0)) {
     $settings = New-Object psobject
 }
 if ($null -ne $settings) {
+    # A registration naming a hook that does not exist (a settings.json carried
+    # in from another home) is removed, so the checks below see this home's truth.
+    $pruned = $false
+    if ($settings.PSObject.Properties['hooks'] -and $settings.hooks.PSObject.Properties['Stop']) {
+        $keptEntries = @()
+        foreach ($entry in @($settings.hooks.Stop)) {
+            if ($null -eq $entry -or -not $entry.PSObject.Properties['hooks']) { $keptEntries += $entry; continue }
+            $keptHooks = @()
+            foreach ($h in @($entry.hooks)) {
+                $c = "$($h.command)"
+                if ($null -ne $h -and $c -like "*skills/jeffy/hooks/stop-hook.sh*") {
+                    $p = [regex]::Match($c, "[^`"' ]*skills/jeffy/hooks/stop-hook\.sh").Value
+                    $p = $p -replace '^~', $HOME -replace '\$\{?HOME\}?', $HOME
+                    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
+                        Write-Host "[OK] removed a Stop hook registration naming a hook that does not exist: $c"
+                        $pruned = $true
+                        continue
+                    }
+                }
+                $keptHooks += $h
+            }
+            if ($keptHooks.Count -gt 0) { $entry.hooks = $keptHooks; $keptEntries += $entry }
+        }
+        $settings.hooks.Stop = $keptEntries
+    }
+    if ($pruned) {
+        [System.IO.File]::WriteAllText($settingsPath, (($settings | ConvertTo-Json -Depth 32) + "`n"))
+    }
     $already = $false
     $upgrade = @()
     if ($settings.PSObject.Properties['hooks'] -and $settings.hooks.PSObject.Properties['Stop']) {

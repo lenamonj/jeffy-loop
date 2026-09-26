@@ -51,9 +51,9 @@ export PYTHONDONTWRITEBYTECODE=1
 # time bound rather than report the host's missing tool as the probe's exit.
 tmo=()
 if command -v timeout >/dev/null 2>&1; then
-  tmo=(timeout "${wall_s}s")
+  tmo=(timeout -k 5 "${wall_s}s")
 elif command -v gtimeout >/dev/null 2>&1; then
-  tmo=(gtimeout "${wall_s}s")
+  tmo=(gtimeout -k 5 "${wall_s}s")
 else
   echo "run-probe.sh: no timeout(1) or gtimeout(1) on PATH, wall ceiling unavailable; running the probe with no time bound." >&2
   wall_s=0
@@ -63,6 +63,7 @@ fi
 # mood: is-system-running exits nonzero on a merely degraded manager (one
 # failed unit anywhere), and this wrapper's first shipped test flip-flopped on
 # exactly that while real scopes worked fine throughout.
+SECONDS=0
 have_scope=0
 if command -v systemd-run >/dev/null 2>&1 \
   && systemd-run --user --scope --quiet true >/dev/null 2>&1; then
@@ -84,6 +85,11 @@ else
   rc=$?
 fi
 
+# -k's grace kill exits 137, which the memory arm below would claim; a kill
+# at or past the wall ceiling is the ceiling's.
+if [ "$rc" -eq 137 ] && [ "$wall_s" -ne 0 ] && [ "$SECONDS" -ge "$wall_s" ]; then
+  rc=124
+fi
 if [ "$rc" -eq 124 ] && [ "$wall_s" -ne 0 ]; then
   echo "run-probe.sh: probe exceeded the ${wall_s}s wall ceiling and was ended; a probe that cannot finish in bounded time is an instrument finding about the probe." >&2
 elif [ "$rc" -eq 137 ] && [ "$have_scope" -eq 1 ]; then

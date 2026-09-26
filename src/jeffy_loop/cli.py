@@ -10,6 +10,7 @@ hook in settings.json with the same idempotence and timeout rules.
 import contextlib
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -134,6 +135,36 @@ def matching_hooks(settings):
     return found
 
 
+def registered_path(command):
+    # The command is a shell string; the path is the token ending in the
+    # fragment, with ~ and $HOME expanded the way the shell would.
+    match = re.search(r"[^\"' ]*" + re.escape(HOOK_FRAGMENT), command)
+    return Path(os.path.expandvars(os.path.expanduser(match.group(0))))
+
+
+def prune_dead_hooks(settings):
+    """Remove every Jeffy registration whose hook path is no file.
+
+    A settings.json carried in from another home names that home's hook, and
+    "already registered" would then hold while the loop never fires.
+    """
+    removed = [
+        h for h in matching_hooks(settings)
+        if not registered_path(str(h.get("command", ""))).is_file()
+    ]
+    if not removed:
+        return []
+    kept_entries = []
+    for entry in settings["hooks"]["Stop"]:
+        if isinstance(entry, dict) and isinstance(entry.get("hooks"), list) and entry["hooks"]:
+            entry["hooks"] = [h for h in entry["hooks"] if not any(h is r for r in removed)]
+            if not entry["hooks"]:
+                continue
+        kept_entries.append(entry)
+    settings["hooks"]["Stop"] = kept_entries
+    return [str(h.get("command", "")) for h in removed]
+
+
 def write_settings(path, settings):
     path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
 
@@ -158,6 +189,12 @@ def register_hook():
             return False
     else:
         settings = {}
+
+    removed = prune_dead_hooks(settings)
+    if removed:
+        write_settings(settings_path, settings)
+        for command in removed:
+            print(f"[OK] removed a Stop hook registration naming a hook that does not exist: {command}")
 
     found = matching_hooks(settings)
     if found:

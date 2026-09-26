@@ -101,7 +101,7 @@ while IFS= read -r d; do
     want="${rest%% :: *}"
     cmd="${rest#* :: }"
     checked=$((checked + 1))
-    got="$(cd "$root" && bash "$probe" bash -c "$cmd" 2>/dev/null)"
+    got="$(cd "$root" && bash "$probe" bash -c "$cmd" </dev/null 2>/dev/null)"
     rc=$?
     if [ "$rc" -ne 0 ]; then
       echo "ERROR $bat: exit $rc ($cmd)"; err=$((err + 1)); continue
@@ -140,7 +140,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     *) echo "ERROR PLAN: malformed Stated counts row '$line' (label|stated|command)"; err=$((err + 1)); checked=$((checked + 1)); continue ;;
   esac
   lbl="${line%%|*}"; rest="${line#*|}"; want="${rest%%|*}"; cmd="${rest#*|}"
-  got="$(cd "$root" && bash "$probe" bash -c "$cmd" 2>/dev/null)"
+  got="$(cd "$root" && bash "$probe" bash -c "$cmd" </dev/null 2>/dev/null)"
   rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "ERROR PLAN:$lbl: exit $rc ($cmd)"; err=$((err + 1)); checked=$((checked + 1)); continue

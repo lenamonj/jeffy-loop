@@ -776,6 +776,32 @@ else
   else
     fault "quiet-verify changed the result of a legal piped Command (see the lines above)"
   fi
+  # LIBS-3 / HB-8 / LIBS-7: the bound is enforced against a suite that ignores
+  # SIGTERM, an explicit 0 is unset rather than unbounded, and a leading zero
+  # in Verify duration is decimal. exit 124 of the Command's own reads as a
+  # timeout (a Declined quirk), which makes the resolved bound observable at once.
+  qv_tmp="$(mktemp -d)"; qv_plan="$qv_tmp/PLAN.md"; qv_bad=0
+  qv_case "Command: trap '' TERM; sleep 30" 'Oracle class: deterministic'
+  qv_s="$(date +%s)"
+  JEFFY_VERIFY_TIMEOUT_SECONDS=1 bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"; qv_rc=$?
+  qv_e=$(( $(date +%s) - qv_s ))
+  if [ "$qv_rc" -ne 124 ] || [ "$qv_e" -ge 15 ] || ! grep -q '^verify: TIMEOUT after' "$qv_tmp/err"; then
+    qv_bad=1; echo "  a TERM-ignoring suite ran ${qv_e}s past a 1s bound (rc=$qv_rc): [$(cat "$qv_tmp/err")]"
+  fi
+  qv_case 'Command: exit 124' 'Oracle class: deterministic'
+  JEFFY_VERIFY_TIMEOUT_SECONDS=0 bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  grep -q '(bound 240s)' "$qv_tmp/err" || { qv_bad=1; echo "  an explicit 0 did not resolve to the 240s default: [$(cat "$qv_tmp/err")]"; }
+  qv_case 'Command: exit 124' 'Oracle class: deterministic' 'Verify duration: 0100s'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  grep -q '(bound 300s)' "$qv_tmp/err" || { qv_bad=1; echo "  Verify duration 0100s did not resolve to 300s: [$(cat "$qv_tmp/err")]"; }
+  qv_case 'Command: true' 'Oracle class: deterministic' 'Verify duration: 08s'
+  bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err" || { qv_bad=1; echo "  Verify duration 08s turned a green true red: [$(cat "$qv_tmp/err")]"; }
+  rm -rf "$qv_tmp"
+  if [ "$qv_bad" -eq 0 ]; then
+    pass "quiet-verify ends a TERM-ignoring suite at the bound plus grace as a TIMEOUT, reads an explicit 0 as unset and a leading-zero duration as decimal (LIBS-3, HB-8, LIBS-7)"
+  else
+    fault "quiet-verify's bound is not what the chain resolves, or is not enforced (see the lines above)"
+  fi
 fi
 
 # One ladder, two callers. The hook must resolve its converged-stop bound
@@ -1902,6 +1928,29 @@ else
       cat "$rt_tmp/upgrade600.log"
       fault "install.sh left a 600s registration in place, below the bound the verify ladder can resolve (got: $(rt_timeouts))"
     fi
+    # INSTALL-1: a registration carried in from another home names a hook that
+    # does not exist; it is removed and this home's hook registered, never
+    # reported as already registered.
+    jq -n '{hooks: {Stop: [{hooks: [{type: "command", command: "bash \"/nonexistent-home/.claude/skills/jeffy/hooks/stop-hook.sh\"", timeout: 1800}]}]}}' > "$rt_home/.claude/settings.json"
+    HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/dead.log" 2>&1 || true
+    if [ "$(rt_count)" = "1" ] && grep -qF 'removed a Stop hook registration naming a hook that does not exist' "$rt_tmp/dead.log" \
+      && jq -r '.hooks.Stop[].hooks[].command' "$rt_home/.claude/settings.json" | grep -qF "$rt_home/.claude/skills/jeffy/hooks/stop-hook.sh"; then
+      pass "install.sh replaces a Stop registration whose hook path does not exist with this home's (INSTALL-1)"
+    else
+      cat "$rt_tmp/dead.log"
+      fault "install.sh kept a Stop registration naming a hook that does not exist"
+    fi
+    # Control: a live registration spelled with ~ is kept verbatim, so the
+    # prune never becomes a rewrite.
+    jq -n '{hooks: {Stop: [{hooks: [{type: "command", command: "bash ~/.claude/skills/jeffy/hooks/stop-hook.sh", timeout: 1800}]}]}}' > "$rt_home/.claude/settings.json"
+    cp "$rt_home/.claude/settings.json" "$rt_tmp/settings.tilde"
+    HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/tilde.log" 2>&1 || true
+    if cmp -s "$rt_home/.claude/settings.json" "$rt_tmp/settings.tilde" && grep -qF 'already registered' "$rt_tmp/tilde.log"; then
+      pass "install.sh keeps a live registration spelled with ~ byte-identical (INSTALL-1 control)"
+    else
+      cat "$rt_tmp/tilde.log"
+      fault "install.sh rewrote or removed a live registration spelled with ~"
+    fi
   else
     skip "install.sh hook-registration assertions (jq not on PATH)"
   fi
@@ -2025,6 +2074,18 @@ if [ -n "$ps" ]; then
       cat "$pr_tmp/upgrade.log"
       echo "----------------------------------------"
       fault "install.ps1 did not upgrade a legacy hook registration with the timeout"
+    fi
+    # INSTALL-1 mirror: a registration naming a hook that does not exist is
+    # removed and this profile's hook registered.
+    printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          { "type": "command", "command": "bash \\"/nonexistent-home/.claude/skills/jeffy/hooks/stop-hook.sh\\"", "timeout": 1800 }\n        ]\n      }\n    ]\n  }\n}\n' \
+      > "$pr_home/.claude/settings.json"
+    pr_run >"$pr_tmp/dead.log" 2>&1 || true
+    if [ "$(pr_count)" = "1" ] && grep -qF 'removed a Stop hook registration naming a hook that does not exist' "$pr_tmp/dead.log" \
+      && ! grep -qF 'nonexistent-home' "$pr_home/.claude/settings.json"; then
+      pass "install.ps1 replaces a Stop registration whose hook path does not exist with this profile's (INSTALL-1) ($ps)"
+    else
+      cat "$pr_tmp/dead.log"; cat "$pr_home/.claude/settings.json"
+      fault "install.ps1 kept a Stop registration naming a hook that does not exist"
     fi
     rm -rf "$pr_tmp"
   fi
@@ -3810,6 +3871,20 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     else
       printf '%s\n' "$hb_out"
       fault "stop hook mishandled precedence between the state key and the PLAN-derived bound"
+    fi
+
+    # HB-8: a state key of 0 is unset, never GNU timeout's "no limit", so the
+    # bound falls through to the measured chain (100s -> 300s).
+    hb_write_state sess-1 1 3 0
+    hb_write_backlog ''
+    hb_write_plan_duration 'exit 124' '100s measured 2026-01-01'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exceeded the 300s timeout'; then
+      pass "stop hook reads verify_timeout_seconds 0 as unset and falls through to the PLAN-derived bound (HB-8)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook passed verify_timeout_seconds 0 through as the bound"
     fi
 
     hb_write_state sess-1 1 3
@@ -8665,6 +8740,16 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       cat "$hb_tmp/cc.txt"
       fault "check-claims.sh did not catch a claim whose command disagrees with its recorded value"
     fi
+    # LIBS-2: a claim whose command reads stdin must not swallow the rows after it.
+    printf 'expect 1 :: cat >/dev/null; echo 1\nexpect 999 :: echo 1\n' > "$hb_proj/.jeffy/probes/cc/claims"
+    if ! bash skills/jeffy/hooks/lib/check-claims.sh "$hb_proj" >"$hb_tmp/cc.txt" 2>&1 \
+      && grep -q '^MISMATCH cc: expected 999 got 1$' "$hb_tmp/cc.txt" \
+      && grep -q '^claims: 2 checked, 1 mismatched' "$hb_tmp/cc.txt"; then
+      pass "check-claims.sh runs every claim with no stdin, so a stdin-reading claim cannot swallow the rows after it (LIBS-2)"
+    else
+      cat "$hb_tmp/cc.txt"
+      fault "check-claims.sh let a stdin-reading claim eat the rest of its claims file"
+    fi
     rm -rf "$hb_proj/.jeffy/probes/cc"
     hb_git add -A >/dev/null; hb_git commit -qm cc >/dev/null
 
@@ -8751,6 +8836,17 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     else
       cat "$hb_tmp/cc.txt"
       fault "check-claims.sh mishandled an agreeing or host-unavailable Stated counts row"
+    fi
+    # LIBS-2: a Stated counts row whose command reads stdin must not swallow
+    # the rows after it.
+    hb_write_counts_plan 'It returns 1 row today.' 'one|1|wc -l >/dev/null; echo 1' 'two|999|echo 2'
+    if ! bash "$hb_cc" "$hb_proj" >"$hb_tmp/cc.txt" 2>&1 \
+      && grep -q '^MATCH PLAN:one: 1$' "$hb_tmp/cc.txt" \
+      && grep -q '^MISMATCH PLAN:two: expected 999 got 2$' "$hb_tmp/cc.txt"; then
+      pass "check-claims.sh runs every Stated counts row with no stdin, so a stdin-reading row cannot swallow the rows after it (LIBS-2)"
+    else
+      cat "$hb_tmp/cc.txt"
+      fault "check-claims.sh let a stdin-reading Stated counts row eat the rest of the table"
     fi
     # F2: the hook, declaration path. Prose states 48, the table derives 53.
     hb_write_counts_plan 'It returns 48 mechanisms today, re-derived by running it.' 'mechanisms|53|echo 53'
@@ -8959,6 +9055,38 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     else
       fault "stop hook --lint wrote a metrics record for a turn end that never happened"
     fi
+    # P2-54 (BT-1): the prompt runs lint before the gate and before the
+    # Converged line; both are pending there, and a later refusal is still named.
+    printf '# Journal\n\n## iter 1/3 | sess-1-000000 | 2026-01-01 | T1 | done\n\nTask: t.\n' > "$hb_proj/JOURNAL.md"
+    hb_write_backlog '' ''
+    printf '\n## Declined\n\n- D1: not worth fixing, exotic input\n' >> "$hb_proj/BACKLOG.md"
+    hb_lint "$hb_proj"
+    if [ "$hb_lint_rc" -eq 1 ] && printf '%s' "$hb_lint_out" | grep -qF 'a Declined entry carries no recorded derivation'; then
+      pass "stop hook --lint names a refusal behind the pending Converged line (P2-54)"
+    else
+      printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+      fault "stop hook --lint stopped at the Converged line the prompt has not let the run write yet"
+    fi
+    hb_write_plan 'make test | tail -n 5'
+    hb_write_backlog '' ''
+    hb_lint "$hb_proj"
+    if [ "$hb_lint_rc" -eq 1 ] && printf '%s' "$hb_lint_out" | grep -qF 'ends in tail'; then
+      pass "stop hook --lint names a Verify command refusal behind the pending evaluator verdict (P2-54)"
+    else
+      printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+      fault "stop hook --lint stopped at the evaluator verdict the gate has not returned yet"
+    fi
+    hb_write_plan 'touch verify-ran'
+    hb_lint "$hb_proj"
+    if [ "$hb_lint_rc" -eq 0 ] && printf '%s' "$hb_lint_out" | grep -qF 'clean apart from the close itself' \
+      && printf '%s' "$hb_lint_out" | grep -qF 'Converged section of BACKLOG.md does not name a commit yet' \
+      && printf '%s' "$hb_lint_out" | grep -qF 'no Evaluator verdict yet'; then
+      pass "stop hook --lint reports the pre-gate tree as pending, not refused (P2-54 control)"
+    else
+      printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+      fault "stop hook --lint refused the pre-gate shape the prompt runs it on"
+    fi
+    hb_write_journal 1 3
     rm -f "$hb_state" "$hb_proj/verify-ran"
     hb_write_plan none
     hb_git add -A >/dev/null; hb_git commit -qm lint2 >/dev/null
@@ -9266,6 +9394,30 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     else
       printf '%s\n' "$hh_lo"; fault "lint did not report the closing iteration's pending shapes as pending (rc $hh_lrc)"
     fi
+    # HOOK-HIGHS-6: a relaunched hunt. The section already holds an earlier
+    # hunt's line and this run fixed a product path since; the closing
+    # iteration's lint reports that line as pending, never refuses on it.
+    printf 'fixed\n' > "$hh_proj/relaunch.txt"; hh_git add -A >/dev/null 2>&1; hh_git commit -q -m relaunch-fix >/dev/null 2>&1
+    hh_journal "## iter 3/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: pending"
+    hh_backlog '' "Hunted: $hh_h4 - 2026-01-01 - 0 Highs closed"
+    hh_lo="$(hh_lint)"; hh_lrc=$?
+    if [ "$hh_lrc" = 0 ] && printf '%s' "$hh_lo" | grep -qF 'clean apart from the close itself' && printf '%s' "$hh_lo" | grep -qF "an earlier hunt's"; then
+      pass "lint reports a relaunched hunt's closing iteration as pending over the previous hunt's Hunted line (HOOK-HIGHS-6)"
+    else
+      printf '%s\n' "$hh_lo"; fault "lint refused a relaunched hunt's closing iteration on the previous hunt's Hunted line (rc $hh_lrc)"
+    fi
+    # Control: once this iteration's checkpoint is written, the old Hunted
+    # line is what the close would certify, and lint refuses it.
+    hh_journal "## iter 3/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: $(hh_git rev-parse HEAD)"
+    hh_lo="$(hh_lint)"; hh_lrc=$?
+    if [ "$hh_lrc" = 1 ] && printf '%s' "$hh_lo" | grep -qF 'changed after the Hunted hash'; then
+      pass "lint still refuses the previous hunt's Hunted line once the closing checkpoint is written (HOOK-HIGHS-6 control)"
+    else
+      printf '%s\n' "$hh_lo"; fault "lint let a stale Hunted line through after the closing checkpoint was written (rc $hh_lrc)"
+    fi
+    hh_journal "## iter 3/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: pending"
+    # The later RATCHET fixtures certify hh_h1's tree; take the relaunch fix back out.
+    hh_git rm -q relaunch.txt >/dev/null 2>&1; hh_git commit -q -m relaunch-undo >/dev/null 2>&1
     hh_backlog '- [ ] M1 (Medium, docs, documentation): meh. Acceptance: x.' ''
     hh_lo="$(hh_lint)"; hh_lrc=$?
     if [ "$hh_lrc" = 1 ] && printf '%s' "$hh_lo" | grep -qF 'Highs only'; then

@@ -83,6 +83,34 @@ hook_cmd="bash \"$HOME/.claude/skills/jeffy/hooks/stop-hook.sh\""
 if command -v jq >/dev/null 2>&1; then
   mkdir -p "$HOME/.claude"
   [[ -s "$settings" ]] || printf '{}\n' > "$settings"
+  # A registration names the hook by path, and a settings.json carried in
+  # from another home names that home's hook: "already registered" would
+  # hold while the loop never fires. A Jeffy registration whose path is no
+  # file is removed here, so the steps below see this home's truth.
+  if jq empty "$settings" >/dev/null 2>&1; then
+    dead_cmds=""
+    while IFS= read -r reg_cmd; do
+      # jq on Windows ends every -r line in CRLF.
+      reg_cmd="${reg_cmd%$'\r'}"
+      reg_path="$(printf '%s' "$reg_cmd" | grep -o "[^\"' ]*$hook_frag" | head -n 1)"
+      reg_path="${reg_path/#\~/$HOME}"
+      reg_path="${reg_path//\$\{HOME\}/$HOME}"
+      reg_path="${reg_path//\$HOME/$HOME}"
+      [ -f "$reg_path" ] || dead_cmds="$dead_cmds$reg_cmd"$'\n'
+    done < <(jq -r --arg frag "$hook_frag" '.hooks.Stop[]?.hooks[]?.command // empty | select(contains($frag))' "$settings")
+    if [ -n "$dead_cmds" ]; then
+      tmp="$(mktemp)"
+      if jq --arg dead "$dead_cmds" '($dead | split("\n") | map(select(. != ""))) as $d | .hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | select(((.command // "") as $c | any($d[]; . == $c)) | not)]) else . end | select((.hooks | type) != "array" or (.hooks | length) > 0)]' "$settings" > "$tmp" \
+        && jq empty "$tmp" >/dev/null 2>&1; then
+        mv "$tmp" "$settings"
+        echo "[OK] removed a Stop hook registration naming a hook that does not exist: $(printf '%s' "$dead_cmds" | head -n 1)"
+      else
+        rm -f "$tmp"
+        echo "[FAILED] $settings registers a Stop hook that does not exist ($(printf '%s' "$dead_cmds" | head -n 1)) and it could not be removed; delete that entry by hand and re-run."
+        ok=0
+      fi
+    fi
+  fi
   if ! jq empty "$settings" >/dev/null 2>&1; then
     echo "[FAILED] $settings is not valid JSON; fix it, then re-run this installer to register the hook."
     ok=0
