@@ -295,6 +295,7 @@ check_markers skills/jeffy/references/iteration-prompt.txt \
   "bring the standing claims current in this same iteration" \
   "the currency set is that form itself, never a fixed list" \
   "run skills/jeffy/hooks/lib/check-claims.sh and resolve every MISMATCH" \
+  "are the two things it reports as pending rather than refuses" \
   "enumerated by: <command>" \
   "each through the installed run-probe.sh" \
   "land before the re-invocation, never in the checkpoint edit after it" \
@@ -788,6 +789,9 @@ else
   if [ "$qv_rc" -ne 124 ] || [ "$qv_e" -ge 15 ] || ! grep -q '^verify: TIMEOUT after' "$qv_tmp/err"; then
     qv_bad=1; echo "  a TERM-ignoring suite ran ${qv_e}s past a 1s bound (rc=$qv_rc): [$(cat "$qv_tmp/err")]"
   fi
+  qv_case 'Command: kill -9 $$' 'Oracle class: deterministic'
+  JEFFY_VERIFY_TIMEOUT_SECONDS=60 bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  grep -q 'TIMEOUT' "$qv_tmp/err" && { qv_bad=1; echo "  a suite that died of its own SIGKILL well inside the bound read as a timeout: [$(cat "$qv_tmp/err")]"; }
   qv_case 'Command: exit 124' 'Oracle class: deterministic'
   JEFFY_VERIFY_TIMEOUT_SECONDS=0 bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
   grep -q '(bound 240s)' "$qv_tmp/err" || { qv_bad=1; echo "  an explicit 0 did not resolve to the 240s default: [$(cat "$qv_tmp/err")]"; }
@@ -1951,6 +1955,19 @@ else
       cat "$rt_tmp/tilde.log"
       fault "install.sh rewrote or removed a live registration spelled with ~"
     fi
+    # Control: the installer writes the path quoted, so a home whose path holds
+    # a space must still read as live, never as a dead registration.
+    rt_sp_home="$rt_tmp/space home"; mkdir -p "$rt_sp_home"
+    HOME="$rt_sp_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >/dev/null 2>&1 || true
+    cp "$rt_sp_home/.claude/settings.json" "$rt_tmp/settings.space"
+    HOME="$rt_sp_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/space.log" 2>&1 || true
+    if cmp -s "$rt_sp_home/.claude/settings.json" "$rt_tmp/settings.space" && grep -qF 'already registered' "$rt_tmp/space.log" \
+      && ! grep -qF 'does not exist' "$rt_tmp/space.log"; then
+      pass "install.sh keeps a live registration whose quoted path holds a space (INSTALL-1 control)"
+    else
+      cat "$rt_tmp/space.log"
+      fault "install.sh called a live registration whose path holds a space dead"
+    fi
   else
     skip "install.sh hook-registration assertions (jq not on PATH)"
   fi
@@ -2086,6 +2103,37 @@ if [ -n "$ps" ]; then
     else
       cat "$pr_tmp/dead.log"; cat "$pr_home/.claude/settings.json"
       fault "install.ps1 kept a Stop registration naming a hook that does not exist"
+    fi
+    # Control: a live hook whose quoted path holds a space is kept.
+    pr_sp_hook="$pr_tmp/space home/.claude/skills/jeffy/hooks/stop-hook.sh"
+    mkdir -p "${pr_sp_hook%/*}" && : > "$pr_sp_hook"
+    pr_sp_n="$pr_sp_hook"
+    command -v cygpath >/dev/null 2>&1 && pr_sp_n="$(cygpath -m "$pr_sp_hook")"
+    printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          { "type": "command", "command": "bash \\"%s\\"", "timeout": 1800 }\n        ]\n      }\n    ]\n  }\n}\n' \
+      "$pr_sp_n" > "$pr_home/.claude/settings.json"
+    pr_run >"$pr_tmp/space.log" 2>&1 || true
+    if [ "$(pr_count)" = "1" ] && grep -qF 'space home' "$pr_home/.claude/settings.json" \
+      && ! grep -qF 'does not exist' "$pr_tmp/space.log"; then
+      pass "install.ps1 keeps a live registration whose quoted path holds a space (INSTALL-1 control) ($ps)"
+    else
+      cat "$pr_tmp/space.log"; cat "$pr_home/.claude/settings.json"
+      fault "install.ps1 called a live registration whose path holds a space dead"
+    fi
+    # Control: install.sh run from Git Bash writes the hook as /c/...; the same
+    # live hook read by install.ps1 is kept, never reported as missing.
+    if command -v cygpath >/dev/null 2>&1; then
+      pr_msys="$(cygpath -m "$pr_home/.claude/skills/jeffy/hooks/stop-hook.sh")"
+      pr_msys="/$(printf '%s' "${pr_msys%%:*}" | tr '[:upper:]' '[:lower:]')${pr_msys#?:}"
+      printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          { "type": "command", "command": "bash \\"%s\\"", "timeout": 1800 }\n        ]\n      }\n    ]\n  }\n}\n' \
+        "$pr_msys" > "$pr_home/.claude/settings.json"
+      pr_run >"$pr_tmp/msys.log" 2>&1 || true
+      if [ "$(pr_count)" = "1" ] && grep -qF "$pr_msys" "$pr_home/.claude/settings.json" \
+        && ! grep -qF 'does not exist' "$pr_tmp/msys.log"; then
+        pass "install.ps1 keeps a live registration written by Git Bash as /c/... (INSTALL-1 control) ($ps)"
+      else
+        cat "$pr_tmp/msys.log"; cat "$pr_home/.claude/settings.json"
+        fault "install.ps1 called a live Git Bash /c/... registration dead"
+      fi
     fi
     rm -rf "$pr_tmp"
   fi
@@ -3063,6 +3111,8 @@ if command -v jq >/dev/null 2>&1; then
     hb_sec_refused 'open High or Medium' || hb_sec_bad="$hb_sec_bad [fenced open High]"
     hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n\`\`\`\n- [ ] T9 sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
     hb_sec_refused 'no parseable severity' || hb_sec_bad="$hb_sec_bad [unclosed fence]"
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n\`\`\`\n## Medium findings go in Next\n\`\`\`\n- [ ] M1 (Medium, runtime, correctness): open. Acceptance: x.\n\n## Next\n\n## Later\n\n## Converged\n"
+    hb_sec_refused 'open High or Medium' || hb_sec_bad="$hb_sec_bad [fenced heading naming Medium]"
     if [ -z "$hb_sec_bad" ]; then
       pass "stop hook still reads a fenced open High and every line after an unclosed fence"
     else
@@ -8780,6 +8830,19 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf 'rc=%s\n' "$hb_rp_rc"; cat "$hb_tmp/rp2.err"
         fault "run-probe.sh's wall ceiling stopped enforcing on a host that has timeout(1)"
       fi
+      # The wall clock that names a 137 a timeout starts at the probe, not at
+      # the user-manager capability check: a slow check (3s here) must not turn
+      # a probe's own instant SIGKILL into a wall-ceiling timeout.
+      hb_slowsr="$hb_tmp/slowsr"; mkdir -p "$hb_slowsr"
+      printf '#!/bin/sh\nsleep 3\nexit 1\n' > "$hb_slowsr/systemd-run"; chmod +x "$hb_slowsr/systemd-run"
+      # shellcheck disable=SC2016  # the probe, not this shell, expands $$
+      PATH="$hb_slowsr:$PATH" JEFFY_PROBE_TIMEOUT_S=2 "$BASH" "$hb_rp" bash -c 'kill -9 $$' >/dev/null 2>"$hb_tmp/rp3.err"; hb_rp_rc=$?
+      if [ "$hb_rp_rc" -eq 137 ] && ! grep -qF 'wall ceiling and was ended' "$hb_tmp/rp3.err"; then
+        pass "run-probe.sh times the wall ceiling from the probe, not from the capability check"
+      else
+        printf 'rc=%s\n' "$hb_rp_rc"; cat "$hb_tmp/rp3.err"
+        fault "run-probe.sh billed its capability check to the probe and named an instant SIGKILL a wall timeout"
+      fi
     else
       skip "run-probe.sh wall-ceiling control (no timeout(1) or gtimeout(1) on this host)"
     fi
@@ -9080,7 +9143,8 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     hb_lint "$hb_proj"
     if [ "$hb_lint_rc" -eq 0 ] && printf '%s' "$hb_lint_out" | grep -qF 'clean apart from the close itself' \
       && printf '%s' "$hb_lint_out" | grep -qF 'Converged section of BACKLOG.md does not name a commit yet' \
-      && printf '%s' "$hb_lint_out" | grep -qF 'no Evaluator verdict yet'; then
+      && printf '%s' "$hb_lint_out" | grep -qF 'no Evaluator verdict yet' \
+      && printf '%s' "$hb_lint_out" | grep -qF "the gate's verdict and the Converged line are what supply it"; then
       pass "stop hook --lint reports the pre-gate tree as pending, not refused (P2-54 control)"
     else
       printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"

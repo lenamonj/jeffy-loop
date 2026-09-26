@@ -137,9 +137,15 @@ def matching_hooks(settings):
 
 def registered_path(command):
     # The command is a shell string; the path is the token ending in the
-    # fragment, with ~ and $HOME expanded the way the shell would.
-    match = re.search(r"[^\"' ]*" + re.escape(HOOK_FRAGMENT), command)
-    return Path(os.path.expandvars(os.path.expanduser(match.group(0))))
+    # fragment, quoted or bare, with ~ and $HOME expanded the way the shell
+    # would. A quoted path may hold a space, so the quoted forms are tried first.
+    frag = re.escape(HOOK_FRAGMENT)
+    match = re.search("\"([^\"]*" + frag + ")\"|'([^']*" + frag + ")'|([^\"' ]*" + frag + ")", command)
+    path = next(group for group in match.groups() if group)
+    if os.name == "nt":
+        # install.sh run from Git Bash writes the hook as /c/...; Windows reads C:/...
+        path = re.sub(r"^/([A-Za-z])/", r"\1:/", path)
+    return Path(os.path.expandvars(os.path.expanduser(path)))
 
 
 def prune_dead_hooks(settings):

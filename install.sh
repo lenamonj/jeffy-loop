@@ -92,7 +92,8 @@ if command -v jq >/dev/null 2>&1; then
     while IFS= read -r reg_cmd; do
       # jq on Windows ends every -r line in CRLF.
       reg_cmd="${reg_cmd%$'\r'}"
-      reg_path="$(printf '%s' "$reg_cmd" | grep -o "[^\"' ]*$hook_frag" | head -n 1)"
+      # A quoted path may hold a space, so the quoted token is read first.
+      reg_path="$(printf '%s' "$reg_cmd" | grep -oE "\"[^\"]*$hook_frag\"|'[^']*$hook_frag'|[^\"' ]*$hook_frag" | head -n 1 | tr -d "\"'")"
       reg_path="${reg_path/#\~/$HOME}"
       reg_path="${reg_path//\$\{HOME\}/$HOME}"
       reg_path="${reg_path//\$HOME/$HOME}"
