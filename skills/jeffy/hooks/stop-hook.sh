@@ -580,7 +580,7 @@ $jsr_pat
 EOF2
       [ -n "$jsr_moved" ] && break
     done <<EOF2
-$(git -C "$1" diff --name-only --relative "$jsr_c" HEAD 2>/dev/null)
+$(git -C "$1" diff --no-renames --name-only --relative "$jsr_c" HEAD 2>/dev/null)
 EOF2
     if [ -n "$jsr_moved" ]; then
       jsr_stale="$(printf '%s' "$jsr_row" | cut -c1-90) (recorded at $jsr_c; $jsr_moved has changed since)"

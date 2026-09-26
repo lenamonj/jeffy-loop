@@ -3462,6 +3462,36 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fi
       rm -f "$hb_state"
 
+      # HB-3: git diff follows renames and --name-only prints the destination
+      # alone, so code moved OUT of a battery's declared paths matched nothing
+      # and the row that swept it stayed fresh. --no-renames lists the deleted
+      # source, which the paths line covers. Its own sandbox, because a product
+      # commit here would outdate the Converged hash every later case declares on.
+      hb_rn_proj="$hb_proj"; hb_rn_state="$hb_state"
+      hb_proj="$hb_tmp/renameproj"; hb_state="$hb_proj/.claude/jeffy-loop.local.md"
+      mkdir -p "$hb_proj/.claude" "$hb_proj/src" "$hb_proj/lib" "$hb_proj/.jeffy/probes/core"
+      hb_git init -q -b main
+      printf 'v1\n' > "$hb_proj/src/a.c"
+      printf 'src/a.c\n' > "$hb_proj/.jeffy/probes/core/paths"
+      hb_git add -A >/dev/null
+      hb_git commit -q -m base
+      hb_rn_c="$(hb_git rev-parse HEAD)"
+      hb_git mv src/a.c lib/a.c
+      hb_git commit -q -m 'move the swept file'
+      hb_write_state sess-1 1 3
+      hb_write_backlog ''
+      hb_write_plan_full none "- [x] core: swept at $hb_rn_c via .jeffy/probes/core - probed every entry point"
+      hb_out="$(hb_run sess-1 'still working' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'STALE ROWS:' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'src/a.c has changed since'; then
+        pass "stop hook names a swept row stale when its file was renamed out of the battery's paths (HB-3)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook read a file renamed out of a battery's paths as unchanged and kept the row fresh"
+      fi
+      hb_proj="$hb_rn_proj"; hb_state="$hb_rn_state"
+
       # P1-60: the loop leaks through any channel that derives a published
       # artifact from the tree, and rust-semver's crate tarball would have
       # shipped 43 loop paths because its packaging probe graded exit status
