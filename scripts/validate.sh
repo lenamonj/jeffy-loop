@@ -788,6 +788,9 @@ else
   if [ "$qv_rc" -ne 124 ] || [ "$qv_e" -ge 15 ] || ! grep -q '^verify: TIMEOUT after' "$qv_tmp/err"; then
     qv_bad=1; echo "  a TERM-ignoring suite ran ${qv_e}s past a 1s bound (rc=$qv_rc): [$(cat "$qv_tmp/err")]"
   fi
+  qv_case 'Command: kill -9 $$' 'Oracle class: deterministic'
+  JEFFY_VERIFY_TIMEOUT_SECONDS=60 bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
+  grep -q 'TIMEOUT' "$qv_tmp/err" && { qv_bad=1; echo "  a suite that died of its own SIGKILL well inside the bound read as a timeout: [$(cat "$qv_tmp/err")]"; }
   qv_case 'Command: exit 124' 'Oracle class: deterministic'
   JEFFY_VERIFY_TIMEOUT_SECONDS=0 bash "$qv_sh" "$qv_plan" "$qv_tmp" >/dev/null 2>"$qv_tmp/err"
   grep -q '(bound 240s)' "$qv_tmp/err" || { qv_bad=1; echo "  an explicit 0 did not resolve to the 240s default: [$(cat "$qv_tmp/err")]"; }
