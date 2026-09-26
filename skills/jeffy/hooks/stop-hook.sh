@@ -1348,6 +1348,7 @@ if [ -n "$promise" ]; then
           fa_iter="${fa_line%%	*}"
           fa_cp="${fa_line#*	}"
           fa_st="${fa_cp%%	*}"
+          fa_st="$(printf '%s' "$fa_st" | tr '[:upper:]' '[:lower:]')"
           fa_cp="${fa_cp#*	}"
           fa_after="${fa_cp%%	*}"
           fa_cp="${fa_cp#*	}"

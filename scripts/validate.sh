@@ -9119,6 +9119,19 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
       printf '%s\n' "$hh_out"; fault "stop hook refused a legal hunt close over the ROTATION entry its closing iteration appended"
     fi
     rm -f "$hh_state"
+    # The status word is read in any letter case: the ledger's own certified
+    # line is spelled "Hunted:", one word from the entry heading (R15).
+    hh_bad=""
+    for hh_st in Hunted HUNTED; do
+      hh_stale_case "## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | $hh_st:::Checkpoint: $hh_h6"
+      [ -z "$hh_out" ] && [ ! -f "$hh_state" ] || hh_bad="$hh_bad [$hh_st]"
+      rm -f "$hh_state"
+    done
+    if [ -z "$hh_bad" ]; then
+      pass "stop hook accepts a hunt close whose AUDIT status is hunted in any letter case"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook refused a legal hunt close over the letter case of its status word:$hh_bad"
+    fi
 
     # 11. a standard RATCHET is never certified by a hunt's accepted close.
     #     The metrics line for hh_h1 (fixture 2) reads mode highs, verdict
