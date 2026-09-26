@@ -2791,5 +2791,5 @@ fi
 if [ -n "${budget_note:-}" ]; then
   reason="$reason $budget_note"
 fi
-jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'
+printf '%s' "$reason" | jq -Rs '{decision: "block", reason: .}'
 exit 0

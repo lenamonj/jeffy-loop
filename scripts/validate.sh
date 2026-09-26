@@ -2373,6 +2373,25 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook trapped a legacy state file that carries no started_at"
     fi
 
+    # The re-feed carries the shipped iteration prompt, not the sandbox's one
+    # sentence. At 33,731 bytes it is over the Windows command-line limit
+    # (32,767), so a reason passed to jq as an argument fails there with
+    # "Argument list too long", no block is printed, and a native-Windows run
+    # ends after its first turn.
+    cp "$hb_tmp/prompt.txt" "$hb_tmp/prompt.txt.sandbox"
+    cp skills/jeffy/references/iteration-prompt.txt "$hb_tmp/prompt.txt"
+    hb_write_state sess-1 1 3
+    hb_write_journal 1 3
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ "$(printf '%s' "$hb_out" | jq -r '.reason | length')" -gt 30000 ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'This is jeffy iteration 2 of 3'; then
+      pass "re-feed carries the full shipped prompt"
+    else
+      fault "re-feed with the shipped prompt did not block or truncated the reason"
+    fi
+    mv "$hb_tmp/prompt.txt.sandbox" "$hb_tmp/prompt.txt"
+
     hb_write_journal 1 3
 
     hb_write_state sess-1 3 3
@@ -8765,6 +8784,9 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
       hh_n="$(grep -cF -- "$1" "$hb_hook")"
       if [ "$hh_n" != "1" ]; then echo "  sabotage fragment occurs $hh_n times, not once: $1"; return 1; fi
       awk -v a="$1" -v b="$2" '{ i = index($0, a); if (i) $0 = substr($0, 1, i - 1) b substr($0, i + length(a)) } { print }' "$hb_hook" > "$hb_tmp/hh_sab.sh"
+      # The copy sources its lib from beside itself; without one it ends at the
+      # missing-lib arm before any sabotaged line runs, and every proof passes.
+      mkdir -p "$hb_tmp/lib" && cp skills/jeffy/hooks/lib/*.sh "$hb_tmp/lib/"
     }
 
     # 1. the hunt re-feed: mode and open Highs stated, the last audit named,
