@@ -455,12 +455,15 @@ EOF
 jeffy_section() { # $1 file, $2 section names joined by |, $3 non-empty prefixes each line with "<Name>|"
   awk -v names="$2" -v tag="${3:-}" "$jeffy_awk_heading"'
     { sub(/\r$/, "") }
-    /^## / { sec = jeffy_heading($0, names); if (sec != "") found = 1; next }
+    NR == FNR { if ($0 ~ /^[ \t]*(```|~~~)/) fences++; next }
+    /^[ \t]*(```|~~~)/ { if (fences % 2 == 0) fenced = !fenced; next }
+    fenced && tolower($0) !~ /high|medium/ { next }
+    !fenced && /^## / { sec = jeffy_heading($0, names); if (sec != "") found = 1; next }
     sec == "" { next }
     /^[ \t]*[-*+] \[.\]/ { sub(/^[ \t]*[-*+] /, "- ") }
     { if (tag != "") print sec "|" $0; else print }
     END { exit !found }
-  ' "$1" 2>/dev/null
+  ' "$1" "$1" 2>/dev/null
 }
 
 # 1.18.2 (P1-67): a count a governance document states is an executable
@@ -1051,7 +1054,7 @@ if [ -n "$promise" ]; then
         # sub-step, so the refusal says what an honest run does with one.
         open_first="$(printf '%s\n' "${hunt_nonhigh:-$open_blocking}" | awk 'NR == 1 && $0 !~ /^- \[ \] [^ ]+ \((High|Medium|Low)[,)]/')"
         if [ -n "$open_first" ] && ! tr -d '\r' < "$root/BACKLOG.md" | grep -qxF -- "$open_first"; then
-          open_substep="; an indented or starred open checkbox is an open task like any other, so if this one is a sub-step, tick the sub-step, or fold it into its parent task's text, or give it a severity as - [ ] <ID> (<Severity>, <area>, <dimension>)"
+          open_substep="; an indented or starred open checkbox is an open task like any other, so if this one is a sub-step, tick the sub-step, or fold it into its parent task's text, or give it a severity as - [ ] <ID> (<Severity>, <area>, <dimension>), or, if the line is an example, take it out of the section or put it in a fenced block"
         fi
       fi
       if [ ! -f "$root/BACKLOG.md" ]; then

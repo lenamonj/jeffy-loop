@@ -2948,6 +2948,48 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook refused a one-row swept Surface inventory that carries a line of prose"
     fi
 
+    # A fenced code block is an example, not the document: a "## " line
+    # inside one neither opens nor ends a section, and neither a row nor a
+    # Command: line inside one is read. A map that exists only inside a fence
+    # is no map (S5); a fence quoting a heading inside the real map does not
+    # truncate it (S7); a Verify section is neither ended nor answered by a
+    # fence (R13); a fenced ledger example under a finished task is not an
+    # open task (L3).
+    hb_sec_bad=""
+    # shellcheck disable=SC2016  # literal backticks are the fixture
+    hb_sec_stage '' '' "$hb_sec_clean" '' '## Verify command\nCommand: none\n\n```\n## Surface inventory\n- [x] core: swept at abc1234 - probed\n```'
+    hb_sec_refused 'PLAN.md has no Surface inventory section' || hb_sec_bad="$hb_sec_bad [map only inside a fence]"
+    # shellcheck disable=SC2016  # literal backticks are the fixture
+    hb_sec_stage '## Surface inventory' "$(printf '```\n## Example\n- [ ] <surface>: <scope>\n```\n%s' "$hb_sec_row")" "$hb_sec_clean"
+    [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [fenced heading inside the map]"
+    # shellcheck disable=SC2016  # literal backticks are the fixture
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "$hb_sec_clean" '' '## Verify command\n```\n## Example\n```\nCommand: true'
+    [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [fenced heading inside the Verify section]"
+    # shellcheck disable=SC2016  # literal backticks are the fixture
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "$hb_sec_clean" '' '## Verify command\n```\nCommand: exit 1\n```\nCommand: true'
+    [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [fenced decoy Command]"
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [x] T1 (Low, docs, documentation): done.\n  \`\`\`\n  - [ ] <ID> (<Severity>, <class>, <dimension>): <finding>.\n  \`\`\`\n\n## Next\n\n## Later\n\n## Converged\n"
+    [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [fenced ledger example]"
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook reads no heading, row or Command: line inside a fenced code block"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook read a fenced example as the document:$hb_sec_bad"
+    fi
+    # The fence rule fails closed: a fenced line naming a High or Medium is
+    # still read, and an unclosed fence hides nothing.
+    hb_sec_bad=""
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n\`\`\`\n- [ ] H1 (High, runtime, correctness): open. Acceptance: x.\n\`\`\`\n\n## Next\n\n## Later\n\n## Converged\n"
+    hb_sec_refused 'open High or Medium' || hb_sec_bad="$hb_sec_bad [fenced open High]"
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n\`\`\`\n- [ ] T9 sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
+    hb_sec_refused 'no parseable severity' || hb_sec_bad="$hb_sec_bad [unclosed fence]"
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook still reads a fenced open High and every line after an unclosed fence"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let a fence take an open task off the ledger:$hb_sec_bad"
+    fi
+
     # A hunt never sweeps, so its PLAN.md owes no map; it still owes a gate.
     hb_sec_stage '' '' "## Now\n\n## Hunted\n" 'still working'
     hb_state_addkey 'mode: highs'
