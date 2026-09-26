@@ -87,6 +87,9 @@ jeffy_plan_line() { # $1 plan path, $2 label
   [ -f "$1" ] || return 2
   awk -v lbl="$2" "$jeffy_awk_heading"'
     { sub(/\r$/, "") }
+    NR == FNR { if ($0 ~ /^[ \t]*(```|~~~)/) fences++; next }
+    /^[ \t]*(```|~~~)/ { if (fences % 2 == 0) fenced = !fenced; next }
+    fenced { next }
     /^## / { take = (jeffy_heading($0, "Verify command") != ""); if (take) sec = 1; next }
     take && index($0, lbl "\x3a") == 1 {
       v = substr($0, length(lbl) + 2)
@@ -96,7 +99,7 @@ jeffy_plan_line() { # $1 plan path, $2 label
       exit
     }
     END { exit(found ? 0 : (sec ? 1 : 2)) }
-  ' "$1"
+  ' "$1" "$1"
 }
 
 # The Command payload as both consumers run it. Markdown reflex wraps the

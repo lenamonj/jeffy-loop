@@ -40,8 +40,8 @@ fi
 # own location: the installer copies hooks/ whole, and $0 is where it landed.
 # (P1-50) The lib also holds the one heading test and the one reader of
 # PLAN.md's Verify command section, which the wrapper needs when it runs
-# alone, so without it this hook can read no section: like a missing jq, the
-# stop is allowed and the reason said.
+# alone, so without it this hook can read no section: the run ends with the
+# reason in a block, once the state file is known to be this session's.
 # Loop memory, enumerated once. Three things ask "did anything outside the
 # loop's own bookkeeping move": the converged-tree check, the stall gate, and
 # (from 1.13.0) the oscillation hash. They were two copies of one regex and
@@ -105,17 +105,6 @@ jeffy_run_audited() { # $1 project root, $2 run token "| <runid8> |"
   '
 }
 
-qv_lib="${BASH_SOURCE[0]%/*}/lib/quiet-verify.sh"
-if [ -f "$qv_lib" ]; then
-  # shellcheck source-path=SCRIPTDIR
-  # shellcheck source=lib/quiet-verify.sh
-  . "$qv_lib"
-else
-  echo "jeffy stop hook: the helper $qv_lib is missing, and it holds the heading test, the PLAN.md Verify-section reader and the verify runner; not re-feeding. Reinstall jeffy (the installer copies the whole hooks folder) and re-run /jeffy." >&2
-  [ "$lint" = 1 ] && exit 2
-  exit 0
-fi
-
 # jq is a declared prerequisite; without it the hook cannot parse its stdin,
 # so fail open (allow the stop) and say why, rather than trap the session.
 if ! command -v jq >/dev/null 2>&1; then
@@ -163,6 +152,25 @@ fi
 # Foreign or orphaned state file: another session owns it. Leave it alone;
 # /jeffy pre-flight is the place that adjudicates orphans with the user.
 if [ -z "$fm_session" ] || [ "$fm_session" != "$session_id" ]; then
+  exit 0
+fi
+
+# Sourced only once the state file is known to be this session's: a missing
+# lib ends the run, and ending it deletes the state file, which must never
+# happen to a run another session owns. The reason is a block, not stderr
+# alone: a Stop hook's stderr at exit 0 reaches neither the user nor the
+# model, and the state file is gone, so the next stop is the silent no-op.
+qv_lib="${BASH_SOURCE[0]%/*}/lib/quiet-verify.sh"
+if [ -f "$qv_lib" ]; then
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=lib/quiet-verify.sh
+  . "$qv_lib"
+else
+  qv_msg="jeffy stop hook: the helper $qv_lib is missing, and it holds the heading test, the PLAN.md Verify-section reader and the verify runner; ending the run. Reinstall jeffy (the installer copies the whole hooks folder) and re-run /jeffy."
+  echo "$qv_msg" >&2
+  [ "$lint" = 1 ] && exit 2
+  rm -f "$state"
+  jq -n --arg reason "$qv_msg" '{decision: "block", reason: $reason}'
   exit 0
 fi
 
@@ -295,9 +303,17 @@ trap jeffy_write_metrics EXIT
 # in the tree, so a run can write an accepted line for its own commit under
 # an invented run id. That is a fabricated record in a file the run is told
 # never to touch, not one rewritten key.
-jeffy_declaration_certified() { # $1 project root, $2 converged hash, $3 this run's id
-  [ -n "$2" ] || return 1
-  [ -d "$1/.jeffy/metrics" ] && command -v jq >/dev/null 2>&1 || return 1
+jeffy_full_hash() { # $1 project root, $2 a hash as written; prints the commit it names, nothing when it names none
+  jeffy_names_hash "$1" "$2" || return 0
+  git -C "$1" rev-parse --verify --quiet "$2^{commit}" 2>/dev/null
+}
+jeffy_declaration_certified() { # $1 project root, $2 this run's id, $3.. hashes, any one of which certifies
+  jdc_root="$1"; jdc_me="$2"; shift 2
+  [ -d "$jdc_root/.jeffy/metrics" ] && command -v jq >/dev/null 2>&1 || return 1
+  # Both sides are compared as the commit they resolve to, so an abbreviated
+  # hash on one side and the full one on the other name the same commit.
+  jdc_want="$(for jdc_h in "$@"; do jeffy_full_hash "$jdc_root" "$jdc_h"; done)"
+  [ -n "$jdc_want" ] || return 1
   # 1.24.0: a hunt's accepted close is recorded on the same line with mode
   # highs, and it certifies that an audit found no High, never a
   # convergence. A record with no mode field predates hunts (1.22.0) and is
@@ -306,9 +322,46 @@ jeffy_declaration_certified() { # $1 project root, $2 converged hash, $3 this ru
   # cannot parse, so one torn record or conflict marker ahead of the
   # certifying line, or a file ending mid-record ahead of its file, refused
   # every later ratchet in the tree as if the record did not exist.
-  for jdc_f in "$1"/.jeffy/metrics/*.jsonl; do
-    jq -R -r --arg me "${3:-}" 'fromjson? | objects | select(.declaration != null) | select((.mode // "standard") != "highs") | select(.declaration.verdict == "accepted") | select((.run_token // "") != $me) | (.declaration.hash // "")' "$jdc_f" 2>/dev/null
-  done | grep -qix -- "$2"
+  # A line that is not one record is split where one object closes and the
+  # next opens, so two records glued by a torn append are both read; a line
+  # that yields no record at all is named on stderr, prefixed "!" here.
+  jdc_out="$(for jdc_f in "$jdc_root"/.jeffy/metrics/*.jsonl; do
+    [ -f "$jdc_f" ] || continue
+    jq -R -r --arg me "$jdc_me" --arg f "${jdc_f##*/}" 'select(test("[^ \t\r]")) | [fromjson?] as $one | (if ($one | length) > 0 then $one else [splits("(?<=[}])(?=[{])") | fromjson?] end) as $recs | if ($recs | length) == 0 then "!\($f):\(input_line_number)" else ($recs[] | objects | select(.declaration != null) | select((.mode // "standard") != "highs") | select(.declaration.verdict == "accepted") | select((.run_token // "") != $me) | (.declaration.hash // "")) end' "$jdc_f" 2>/dev/null
+  done)"
+  printf '%s\n' "$jdc_out" | sed -n 's/^!//p' | while IFS= read -r jdc_bad; do
+    echo "jeffy stop hook: .jeffy/metrics/$jdc_bad holds no metrics record this hook can parse, so nothing on that line certifies a hash" >&2
+  done
+  printf '%s\n' "$jdc_out" | grep -v '^!' | while IFS= read -r jdc_h; do
+    jeffy_full_hash "$jdc_root" "$jdc_h"
+  done | grep -qxF -e "$jdc_want"
+}
+
+# The hashes a Converged line's certificate may rest on, newest first: the
+# latest line's own hash, then each hash its repoint chain supersedes, one
+# earlier line at a time. The caller keeps only those whose tree equals the
+# certified one, so a two-hop repoint whose middle record was lost is still
+# certified by the first hop's record.
+jeffy_cert_chain() { # $1 BACKLOG.md, $2 section
+  awk -v sec="$2" '
+    { sub(/\r$/, "") }
+    $0 == "## " sec { take = 1; next }
+    /^## / { take = 0 }
+    take && match($0, /^[-*] +/) && substr($0, RLENGTH + 1, length(sec) + 2) == sec ": " { sub(/^[-*] +/, "") }
+    take && index($0, sec ": ") == 1 {
+      h = $2; gsub(/^`|`$/, "", h); o = ""
+      if (match($0, /\(repoints [^,)]+/)) { o = substr($0, RSTART + 10, RLENGTH - 10); gsub(/^`|`$|^[ \t]+|[ \t]+$/, "", o) }
+      n++; hs[n] = tolower(h); os[n] = tolower(o)
+    }
+    END {
+      want = ""
+      for (i = n; i >= 1; i--) {
+        if (i < n && hs[i] != want) continue
+        print hs[i]; want = os[i]
+        if (want == "") break
+      }
+    }
+  ' "$1" 2>/dev/null
 }
 
 # P1-66: the Verify count cell. quiet-verify.sh records the total the summary
@@ -455,12 +508,15 @@ EOF
 jeffy_section() { # $1 file, $2 section names joined by |, $3 non-empty prefixes each line with "<Name>|"
   awk -v names="$2" -v tag="${3:-}" "$jeffy_awk_heading"'
     { sub(/\r$/, "") }
-    /^## / { sec = jeffy_heading($0, names); if (sec != "") found = 1; next }
+    NR == FNR { if ($0 ~ /^[ \t]*(```|~~~)/) fences++; next }
+    /^[ \t]*(```|~~~)/ { if (fences % 2 == 0) fenced = !fenced; next }
+    fenced && tolower($0) !~ /high|medium/ { next }
+    !fenced && /^## / { sec = jeffy_heading($0, names); if (sec != "") found = 1; next }
     sec == "" { next }
     /^[ \t]*[-*+] \[.\]/ { sub(/^[ \t]*[-*+] /, "- ") }
     { if (tag != "") print sec "|" $0; else print }
     END { exit !found }
-  ' "$1" 2>/dev/null
+  ' "$1" "$1" 2>/dev/null
 }
 
 # 1.18.2 (P1-67): a count a governance document states is an executable
@@ -1051,7 +1107,7 @@ if [ -n "$promise" ]; then
         # sub-step, so the refusal says what an honest run does with one.
         open_first="$(printf '%s\n' "${hunt_nonhigh:-$open_blocking}" | awk 'NR == 1 && $0 !~ /^- \[ \] [^ ]+ \((High|Medium|Low)[,)]/')"
         if [ -n "$open_first" ] && ! tr -d '\r' < "$root/BACKLOG.md" | grep -qxF -- "$open_first"; then
-          open_substep="; an indented or starred open checkbox is an open task like any other, so if this one is a sub-step, tick the sub-step, or fold it into its parent task's text, or give it a severity as - [ ] <ID> (<Severity>, <area>, <dimension>)"
+          open_substep="; an indented or starred open checkbox is an open task like any other, so if this one is a sub-step, tick the sub-step, or fold it into its parent task's text, or give it a severity as - [ ] <ID> (<Severity>, <area>, <dimension>), or, if the line is an example, take it out of the section or put it in a fenced block"
         fi
       fi
       if [ ! -f "$root/BACKLOG.md" ]; then
@@ -1345,6 +1401,7 @@ if [ -n "$promise" ]; then
           fa_iter="${fa_line%%	*}"
           fa_cp="${fa_line#*	}"
           fa_st="${fa_cp%%	*}"
+          fa_st="$(printf '%s' "$fa_st" | tr '[:upper:]' '[:lower:]')"
           fa_cp="${fa_cp#*	}"
           fa_after="${fa_cp%%	*}"
           fa_cp="${fa_cp#*	}"
@@ -1567,11 +1624,20 @@ if [ -n "$promise" ]; then
               # for the hash a legal repoint supersedes, whose tree the check
               # above has shown equal; and that check has already refused any
               # product change between the hash and HEAD.
+              cert_tree="$(git -C "$root" rev-parse --verify --quiet "$conv_hash^{tree}" 2>/dev/null)"
+              cert_chain=""
+              # shellcheck disable=SC2046  # hexadecimal hashes, one a line
+              for cert_h in $(jeffy_cert_chain "$root/BACKLOG.md" "$cert_sec"); do
+                [ "$(git -C "$root" rev-parse --verify --quiet "$cert_h^{tree}" 2>/dev/null)" = "$cert_tree" ] || break
+                cert_chain="$cert_chain $cert_h"
+              done
+              cert_none=""
+              [ -d "$root/.jeffy/metrics" ] || cert_none=" (this tree has no .jeffy/metrics directory at all - one from before 1.18.0, one whose metrics were lost, or one whose .gitignore swallows .jeffy/ - so no record can certify it)"
+              # shellcheck disable=SC2086  # cert_chain holds hexadecimal hashes, split on purpose
               if ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_base" 2>/dev/null; then
                 violation="the closing entry is typed RATCHET but the Converged hash $conv_hash is not an ancestor of the commit this run started on; a ratchet re-declares a tree an earlier run certified and never invokes the evaluator, so work committed during this run has to converge the ordinary way, through a fresh audit and the gate"
-              elif ! jeffy_declaration_certified "$root" "$conv_hash" "$runid8" \
-                && { [ -z "$conv_old" ] || ! jeffy_declaration_certified "$root" "$conv_old" "$runid8"; }; then
-                violation="the Converged hash $conv_hash was declared, but nothing records that the Stop hook accepted that declaration - .jeffy/metrics/ holds no accepted standard declaration for that hash written under a run id other than this run's $runid8 - and a ratchet re-declares a tree an earlier run certified, so a hash no earlier run's record certifies is one this run vouches for alone; audit and gate this run rather than ratchet over it"
+              elif ! jeffy_declaration_certified "$root" "$runid8" $cert_chain; then
+                violation="the Converged hash $conv_hash was declared, but nothing records that the Stop hook accepted that declaration - .jeffy/metrics/ holds no accepted standard declaration for that hash written under a run id other than this run's $runid8$cert_none - and a ratchet re-declares a tree an earlier run certified, so a hash no earlier run's record certifies is one this run vouches for alone; audit and gate this run rather than ratchet over it"
               fi
               ;;
             missing)

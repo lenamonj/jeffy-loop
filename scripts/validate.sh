@@ -2967,6 +2967,48 @@ if command -v jq >/dev/null 2>&1; then
       fault "stop hook refused a one-row swept Surface inventory that carries a line of prose"
     fi
 
+    # A fenced code block is an example, not the document: a "## " line
+    # inside one neither opens nor ends a section, and neither a row nor a
+    # Command: line inside one is read. A map that exists only inside a fence
+    # is no map (S5); a fence quoting a heading inside the real map does not
+    # truncate it (S7); a Verify section is neither ended nor answered by a
+    # fence (R13); a fenced ledger example under a finished task is not an
+    # open task (L3).
+    hb_sec_bad=""
+    # shellcheck disable=SC2016  # literal backticks are the fixture
+    hb_sec_stage '' '' "$hb_sec_clean" '' '## Verify command\nCommand: none\n\n```\n## Surface inventory\n- [x] core: swept at abc1234 - probed\n```'
+    hb_sec_refused 'PLAN.md has no Surface inventory section' || hb_sec_bad="$hb_sec_bad [map only inside a fence]"
+    # shellcheck disable=SC2016  # literal backticks are the fixture
+    hb_sec_stage '## Surface inventory' "$(printf '```\n## Example\n- [ ] <surface>: <scope>\n```\n%s' "$hb_sec_row")" "$hb_sec_clean"
+    [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [fenced heading inside the map]"
+    # shellcheck disable=SC2016  # literal backticks are the fixture
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "$hb_sec_clean" '' '## Verify command\n```\n## Example\n```\nCommand: true'
+    [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [fenced heading inside the Verify section]"
+    # shellcheck disable=SC2016  # literal backticks are the fixture
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "$hb_sec_clean" '' '## Verify command\n```\nCommand: exit 1\n```\nCommand: true'
+    [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [fenced decoy Command]"
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n- [x] T1 (Low, docs, documentation): done.\n  \`\`\`\n  - [ ] <ID> (<Severity>, <class>, <dimension>): <finding>.\n  \`\`\`\n\n## Next\n\n## Later\n\n## Converged\n"
+    [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_sec_bad="$hb_sec_bad [fenced ledger example]"
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook reads no heading, row or Command: line inside a fenced code block"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook read a fenced example as the document:$hb_sec_bad"
+    fi
+    # The fence rule fails closed: a fenced line naming a High or Medium is
+    # still read, and an unclosed fence hides nothing.
+    hb_sec_bad=""
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n\`\`\`\n- [ ] H1 (High, runtime, correctness): open. Acceptance: x.\n\`\`\`\n\n## Next\n\n## Later\n\n## Converged\n"
+    hb_sec_refused 'open High or Medium' || hb_sec_bad="$hb_sec_bad [fenced open High]"
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n\`\`\`\n- [ ] T9 sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
+    hb_sec_refused 'no parseable severity' || hb_sec_bad="$hb_sec_bad [unclosed fence]"
+    if [ -z "$hb_sec_bad" ]; then
+      pass "stop hook still reads a fenced open High and every line after an unclosed fence"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook let a fence take an open task off the ledger:$hb_sec_bad"
+    fi
+
     # A hunt never sweeps, so its PLAN.md owes no map; it still owes a gate.
     hb_sec_stage '' '' "## Now\n\n## Hunted\n" 'still working'
     hb_state_addkey 'mode: highs'
@@ -4784,6 +4826,29 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       pass "stop hook leaves a foreign session's state file untouched"
     else
       fault "stop hook touched a foreign session's state file"
+    fi
+
+    # A hook installed without lib/quiet-verify.sh ends the run where both the
+    # user and the model can see why: the reason rides a block and the state
+    # file goes, so the next stop is the silent no-op rather than the same
+    # silent exit on every turn (R9). Another session's state file is never
+    # touched on the way.
+    mkdir -p "$hb_tmp/nolib"
+    cp "$hb_hook" "$hb_tmp/nolib/stop-hook.sh"
+    jq -n '{session_id: "sess-1", last_assistant_message: "still working", transcript_path: "", hook_event_name: "Stop"}' > "$hb_tmp/stdin.json"
+    hb_write_state sess-1 1 3
+    hb_out="$(CLAUDE_PROJECT_DIR="$hb_proj" bash "$hb_tmp/nolib/stop-hook.sh" < "$hb_tmp/stdin.json" 2>/dev/null)"
+    hb_nolib_own=0
+    [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'lib/quiet-verify.sh is missing' \
+      && [ ! -f "$hb_state" ] && hb_nolib_own=1
+    hb_write_state sess-other 1 3
+    hb_out2="$(CLAUDE_PROJECT_DIR="$hb_proj" bash "$hb_tmp/nolib/stop-hook.sh" < "$hb_tmp/stdin.json" 2>/dev/null)"
+    if [ "$hb_nolib_own" = 1 ] && [ -z "$hb_out2" ] && grep -q '^iteration: 1$' "$hb_state"; then
+      pass "stop hook with no lib ends the run with the reason in a block and no orphan, and leaves another session's state file alone"
+    else
+      printf '%s\n%s\n' "$hb_out" "$hb_out2"
+      fault "stop hook with no lib ended the run in silence, left its state file behind, or touched another session's"
     fi
 
     # A state file saved with CRLF line endings - a hand edit in a Windows
@@ -7379,23 +7444,95 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf '%s\n' "$hb_out"
         fault "stop hook certified a RATCHET on a record with no verdict:$hb_p2_bad"
       fi
-      # And the hash has to be this hash, whole: an accepted record for
-      # another commit, for a longer string this hash begins, or a full
-      # record under an abbreviated Converged line is no match.
+      # And the hash has to name this commit: an accepted record for another
+      # commit (one with the same tree included), for a longer string this
+      # hash begins, or for a revision expression that resolves to it is no
+      # match.
       hb_p2_bad=""
       hb_p2_short="$(printf '%s' "$hb_p2_legal" | cut -c1-7)"
-      for hb_p2_v in "$hb_p2_state_only|$hb_p2_legal" "${hb_p2_legal}ff|$hb_p2_legal" "ff$hb_p2_legal|$hb_p2_legal" "$hb_p2_legal|$hb_p2_short"; do
+      for hb_p2_v in "$hb_p2_state_only|$hb_p2_legal" "${hb_p2_legal}ff|$hb_p2_legal" "ff$hb_p2_legal|$hb_p2_legal" "HEAD~1|$hb_p2_legal"; do
         rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
         hb_p2_rec old-1-000000 "${hb_p2_v%%|*}" accepted > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
         hb_p2_s2 "Converged: ${hb_p2_v##*|} - 2026-01-01" "$hb_p2_state_only"
         hb_p2_uncertified || hb_p2_bad="$hb_p2_bad [record|Converged $hb_p2_v]"
       done
       if [ -z "$hb_p2_bad" ]; then
-        pass "stop hook refuses a RATCHET unless the accepted record names the Converged hash exactly, never another commit, a longer string or a prefix"
+        pass "stop hook refuses a RATCHET unless the accepted record names the Converged commit, never another commit, a longer string or a revision expression"
       else
         printf '%s\n' "$hb_out"
         fault "stop hook certified a RATCHET on a record whose hash is not the Converged hash:$hb_p2_bad"
       fi
+      # Both sides are read as the commit they name, so an abbreviation on
+      # either side of a full hash certifies (R3).
+      hb_p2_bad=""
+      for hb_p2_v in "$hb_p2_legal|$hb_p2_short" "$hb_p2_short|$hb_p2_legal"; do
+        rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+        hb_p2_rec old-1-000000 "${hb_p2_v%%|*}" accepted > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+        hb_p2_s2 "Converged: ${hb_p2_v##*|} - 2026-01-01" "$hb_p2_state_only"
+        [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean || hb_p2_bad="$hb_p2_bad [record|Converged $hb_p2_v]"
+      done
+      if [ -z "$hb_p2_bad" ]; then
+        pass "stop hook accepts a RATCHET whose record and Converged line name one commit, one abbreviated and one full"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook refused a RATCHET over the spelling of one commit's hash:$hb_p2_bad"
+      fi
+      # A two-hop repoint whose middle record was lost is certified by the
+      # first hop's record, every hop carrying the certified tree; a hop whose
+      # tree differs ends the chain (R3).
+      rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+      hb_p2_rec old-1-000000 "$hb_p2_legal" accepted > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      hb_git commit -q --allow-empty -m 'jeffy: a second rewrite, tree unchanged' >/dev/null 2>&1
+      hb_p2_hop2="$(hb_git rev-parse HEAD)"
+      hb_p2_s2 "$(printf 'Converged: %s - 2026-01-01\nConverged: %s - 2026-01-02 (repoints %s, tree unchanged)\nConverged: %s - 2026-01-03 (repoints %s, tree unchanged)' "$hb_p2_legal" "$hb_p2_state_only" "$hb_p2_legal" "$hb_p2_hop2" "$hb_p2_state_only")" "$hb_p2_hop2"
+      hb_p2_two=0
+      [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean && hb_p2_two=1
+      hb_git reset -q --hard "$hb_p2_state_only" >/dev/null 2>&1
+      printf 'v6\n' > "$hb_proj/product.txt"
+      hb_git add product.txt >/dev/null 2>&1
+      hb_git commit -q -m 'a product change repointed as if unchanged' >/dev/null 2>&1
+      hb_p2_moved="$(hb_git rev-parse HEAD)"
+      hb_git commit -q --allow-empty -m 'jeffy: a rewrite of the moved tree' >/dev/null 2>&1
+      hb_p2_hop2="$(hb_git rev-parse HEAD)"
+      rm -f "$hb_proj"/.jeffy/metrics/sess-1-000000.jsonl
+      hb_p2_s2 "$(printf 'Converged: %s - 2026-01-01\nConverged: %s - 2026-01-02 (repoints %s, tree unchanged)\nConverged: %s - 2026-01-03 (repoints %s, tree unchanged)' "$hb_p2_legal" "$hb_p2_moved" "$hb_p2_legal" "$hb_p2_hop2" "$hb_p2_moved")" "$hb_p2_hop2"
+      if [ "$hb_p2_two" = 1 ] && hb_p2_uncertified; then
+        pass "stop hook certifies a two-hop repoint through the first hop's record, and never across a hop whose tree differs"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook refused a two-hop repoint of a certified tree, or certified a chain across a changed tree (two-hop accepted: $hb_p2_two)"
+      fi
+      hb_git reset -q --hard "$hb_p2_state_only" >/dev/null 2>&1
+      # Two records glued on one line by a torn append are both read, and a
+      # line that yields no record is named on stderr (U6).
+      rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+      { hb_p2_rec a-1-000000 "$hb_p2_state_only" refused | tr -d '\n'; hb_p2_rec old-1-000000 "$hb_p2_legal" accepted; } > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+      hb_p2_glued=0
+      [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean && hb_p2_glued=1
+      rm -f "$hb_proj"/.jeffy/metrics/*.jsonl
+      printf '%s\n' "$hb_p2_torn" > "$hb_proj/.jeffy/metrics/old-1-000000.jsonl"
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+      if [ "$hb_p2_glued" = 1 ] && hb_p2_uncertified \
+        && grep -qF '.jeffy/metrics/old-1-000000.jsonl:1 holds no metrics record' "$hb_tmp/hb_err.txt"; then
+        pass "stop hook reads two metrics records glued on one line, and names a line that holds none"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "stop hook dropped a record glued to another on one line, or refused over a torn line without naming it (glued accepted: $hb_p2_glued)"
+      fi
+      # A tree with no metrics directory at all is told so.
+      rm -rf "$hb_proj/.jeffy/metrics"
+      hb_p2_s2 "Converged: $hb_p2_legal - 2026-01-01" "$hb_p2_state_only"
+      if hb_p2_uncertified && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'no .jeffy/metrics directory at all'; then
+        pass "stop hook refuses a RATCHET in a tree with no .jeffy/metrics and says the directory is absent"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused a RATCHET in a tree with no .jeffy/metrics without saying the directory is absent"
+      fi
+      mkdir -p "$hb_proj/.jeffy/metrics"
 
       hb_proj="$hb_saved_proj"; hb_state="$hb_saved_state"
     else
@@ -9099,6 +9236,19 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
       printf '%s\n' "$hh_out"; fault "stop hook refused a legal hunt close over the ROTATION entry its closing iteration appended"
     fi
     rm -f "$hh_state"
+    # The status word is read in any letter case: the ledger's own certified
+    # line is spelled "Hunted:", one word from the entry heading (R15).
+    hh_bad=""
+    for hh_st in Hunted HUNTED; do
+      hh_stale_case "## iter 2/5 | sess-1-000000 | 2026-01-01 | AUDIT | $hh_st:::Checkpoint: $hh_h6"
+      [ -z "$hh_out" ] && [ ! -f "$hh_state" ] || hh_bad="$hh_bad [$hh_st]"
+      rm -f "$hh_state"
+    done
+    if [ -z "$hh_bad" ]; then
+      pass "stop hook accepts a hunt close whose AUDIT status is hunted in any letter case"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook refused a legal hunt close over the letter case of its status word:$hh_bad"
+    fi
 
     # 11. a standard RATCHET is never certified by a hunt's accepted close.
     #     The metrics line for hh_h1 (fixture 2) reads mode highs, verdict
