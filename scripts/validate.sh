@@ -8246,6 +8246,36 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fault "a time ceiling preempted the closing extension, killing a run at its finish line"
     fi
 
+    # HB-1: ...and on every turn inside the window it granted. The flag is
+    # stamped once, on the granting re-feed, and the turn after it is the gate
+    # turn the window exists to buy; both ceilings ended the run there, against
+    # usage.md and SKILL.md ("neither preempts a closing extension").
+    hb_write_state sess-1 11 12
+    hb_state_addkey 'extension_granted: 1'
+    hb_state_addkey "run_started_at: $((hb_now - 999999))"
+    hb_state_addkey 'max_wall_clock_seconds: 60'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^iteration: 12$' "$hb_state" && hb_end_clean; then
+      pass "a blown wall-clock ceiling yields inside the closing extension window, not only on the granting turn (HB-1)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "the wall-clock ceiling ended the run inside the closing extension window it had yielded to one turn earlier"
+    fi
+    hb_write_state sess-1 11 12
+    hb_state_addkey 'extension_granted: 1'
+    hb_state_addkey "iteration_started_at: $((hb_now - 600))"
+    hb_state_addkey 'max_iteration_seconds: 60'
+    hb_state_addkey 'overrun: 1'
+    hb_out="$(hb_run sess-1 'worked the task' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^iteration: 12$' "$hb_state" && hb_end_clean; then
+      pass "a second per-iteration overrun yields inside the closing extension window (HB-1)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "the per-iteration ceiling ended the run inside the closing extension window"
+    fi
+
     # And never a VALID converged promise: acceptance exits inside the
     # promise case, before the ceilings. The word valid is load-bearing and
     # this fixture is the proof: its first shipped shape inherited a journal

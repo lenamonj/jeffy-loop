@@ -2055,12 +2055,17 @@ fi
 # of ten iterations in the published corpus run roughly 60 to 130 minutes.
 #
 # Placement is deliberate and load-bearing. This sits AFTER the closing
-# extension is decided and BEFORE the re-feed, and it yields to an extension
-# granted this turn: the window buys the convergence sequence, and a ceiling
-# that killed a run three iterations from a certified declaration would cost
-# more than the unbounded turn it was protecting against. A converged promise
-# is never touched by either ceiling - that branch has already returned.
+# extension is decided and BEFORE the re-feed, and it yields to the closing
+# extension on the turn that grants it and on every turn inside the window it
+# granted: the window buys the convergence sequence, and a ceiling that killed
+# a run three iterations from a certified declaration would cost more than the
+# unbounded turn it was protecting against. A converged promise is never
+# touched by either ceiling - that branch has already returned.
 now_epoch="$turn_end_epoch"
+in_window=""
+if [ -n "$extension" ] || [ "$(fm extension_granted)" = "1" ]; then
+  in_window=1
+fi
 run_started="$(fm run_started_at)"
 wall_max="$(fm max_wall_clock_seconds)"
 iter_started="$(fm iteration_started_at)"
@@ -2127,7 +2132,7 @@ if [ "$iter_max" -gt 0 ] && [ -n "$iter_started" ] && [ "$now_epoch" -ge "$iter_
   if [ "$iter_elapsed" -gt "$iter_max" ]; then
     # The hook fires after the turn, so it cannot cut a long iteration short;
     # what it can do is refuse to let the next one be shaped the same way.
-    if [ "$overrun_flag" = "1" ] && [ -z "$extension" ]; then
+    if [ "$overrun_flag" = "1" ] && [ -z "$in_window" ]; then
       echo "jeffy stop hook: two consecutive iterations exceeded the ${iter_max}s per-iteration ceiling (latest: iteration $iter at ${iter_elapsed}s); ending the run. Split the work or mark the task blocked in the next run." >&2
       rm -f "$state"
       exit 0
@@ -2138,7 +2143,7 @@ if [ "$iter_max" -gt 0 ] && [ -n "$iter_started" ] && [ "$now_epoch" -ge "$iter_
 fi
 
 if [ "$wall_max" -gt 0 ] && [ -n "$wall_elapsed" ] && [ "$wall_elapsed" -gt "$wall_max" ] \
-  && [ -z "$extension" ] && [ -z "$corrective" ]; then
+  && [ -z "$in_window" ] && [ -z "$corrective" ]; then
   echo "jeffy stop hook: the run reached its wall-clock ceiling (${wall_elapsed}s against ${wall_max}s) at iteration $iter of $max; ending the run out of time rather than out of turns. The ledger and the map carry to the next run." >&2
   rm -f "$state"
   exit 0
