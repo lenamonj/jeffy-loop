@@ -40,8 +40,8 @@ fi
 # own location: the installer copies hooks/ whole, and $0 is where it landed.
 # (P1-50) The lib also holds the one heading test and the one reader of
 # PLAN.md's Verify command section, which the wrapper needs when it runs
-# alone, so without it this hook can read no section: like a missing jq, the
-# stop is allowed and the reason said.
+# alone, so without it this hook can read no section: the run ends with the
+# reason in a block, once the state file is known to be this session's.
 # Loop memory, enumerated once. Three things ask "did anything outside the
 # loop's own bookkeeping move": the converged-tree check, the stall gate, and
 # (from 1.13.0) the oscillation hash. They were two copies of one regex and
@@ -105,17 +105,6 @@ jeffy_run_audited() { # $1 project root, $2 run token "| <runid8> |"
   '
 }
 
-qv_lib="${BASH_SOURCE[0]%/*}/lib/quiet-verify.sh"
-if [ -f "$qv_lib" ]; then
-  # shellcheck source-path=SCRIPTDIR
-  # shellcheck source=lib/quiet-verify.sh
-  . "$qv_lib"
-else
-  echo "jeffy stop hook: the helper $qv_lib is missing, and it holds the heading test, the PLAN.md Verify-section reader and the verify runner; not re-feeding. Reinstall jeffy (the installer copies the whole hooks folder) and re-run /jeffy." >&2
-  [ "$lint" = 1 ] && exit 2
-  exit 0
-fi
-
 # jq is a declared prerequisite; without it the hook cannot parse its stdin,
 # so fail open (allow the stop) and say why, rather than trap the session.
 if ! command -v jq >/dev/null 2>&1; then
@@ -163,6 +152,25 @@ fi
 # Foreign or orphaned state file: another session owns it. Leave it alone;
 # /jeffy pre-flight is the place that adjudicates orphans with the user.
 if [ -z "$fm_session" ] || [ "$fm_session" != "$session_id" ]; then
+  exit 0
+fi
+
+# Sourced only once the state file is known to be this session's: a missing
+# lib ends the run, and ending it deletes the state file, which must never
+# happen to a run another session owns. The reason is a block, not stderr
+# alone: a Stop hook's stderr at exit 0 reaches neither the user nor the
+# model, and the state file is gone, so the next stop is the silent no-op.
+qv_lib="${BASH_SOURCE[0]%/*}/lib/quiet-verify.sh"
+if [ -f "$qv_lib" ]; then
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=lib/quiet-verify.sh
+  . "$qv_lib"
+else
+  qv_msg="jeffy stop hook: the helper $qv_lib is missing, and it holds the heading test, the PLAN.md Verify-section reader and the verify runner; ending the run. Reinstall jeffy (the installer copies the whole hooks folder) and re-run /jeffy."
+  echo "$qv_msg" >&2
+  [ "$lint" = 1 ] && exit 2
+  rm -f "$state"
+  jq -n --arg reason "$qv_msg" '{decision: "block", reason: $reason}'
   exit 0
 fi
 

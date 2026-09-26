@@ -4809,6 +4809,29 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fault "stop hook touched a foreign session's state file"
     fi
 
+    # A hook installed without lib/quiet-verify.sh ends the run where both the
+    # user and the model can see why: the reason rides a block and the state
+    # file goes, so the next stop is the silent no-op rather than the same
+    # silent exit on every turn (R9). Another session's state file is never
+    # touched on the way.
+    mkdir -p "$hb_tmp/nolib"
+    cp "$hb_hook" "$hb_tmp/nolib/stop-hook.sh"
+    jq -n '{session_id: "sess-1", last_assistant_message: "still working", transcript_path: "", hook_event_name: "Stop"}' > "$hb_tmp/stdin.json"
+    hb_write_state sess-1 1 3
+    hb_out="$(CLAUDE_PROJECT_DIR="$hb_proj" bash "$hb_tmp/nolib/stop-hook.sh" < "$hb_tmp/stdin.json" 2>/dev/null)"
+    hb_nolib_own=0
+    [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'lib/quiet-verify.sh is missing' \
+      && [ ! -f "$hb_state" ] && hb_nolib_own=1
+    hb_write_state sess-other 1 3
+    hb_out2="$(CLAUDE_PROJECT_DIR="$hb_proj" bash "$hb_tmp/nolib/stop-hook.sh" < "$hb_tmp/stdin.json" 2>/dev/null)"
+    if [ "$hb_nolib_own" = 1 ] && [ -z "$hb_out2" ] && grep -q '^iteration: 1$' "$hb_state"; then
+      pass "stop hook with no lib ends the run with the reason in a block and no orphan, and leaves another session's state file alone"
+    else
+      printf '%s\n%s\n' "$hb_out" "$hb_out2"
+      fault "stop hook with no lib ended the run in silence, left its state file behind, or touched another session's"
+    fi
+
     # A state file saved with CRLF line endings - a hand edit in a Windows
     # editor - is still this session's. The frontmatter reader kept the CR, so
     # "sess-1\r" was not sess-1: the owning session's run was classed as
