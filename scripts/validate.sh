@@ -4832,6 +4832,32 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fault "stop hook re-fed a state file that carries no iteration line"
     fi
 
+    # HB-4: the rewriter advances the counter only inside a frontmatter opened
+    # by a line reading exactly ---, while fm() reads a key anywhere, so an
+    # opener with a trailing space or a UTF-8 BOM re-fed forever at one count
+    # with no budget, stall or oscillation baseline ever stamped. A counter the
+    # rewrite could not move is refused the way a malformed one is.
+    hb_hb4_ok=1
+    for hb_hb4 in space bom; do
+      hb_write_state sess-1 1 3
+      if [ "$hb_hb4" = bom ]; then
+        { printf '\357\273\277'; cat "$hb_state"; } > "$hb_state.b" && mv "$hb_state.b" "$hb_state"
+      else
+        awk 'NR == 1 { $0 = $0 " " } { print }' "$hb_state" > "$hb_state.b" && mv "$hb_state.b" "$hb_state"
+      fi
+      hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+      if [ -n "$hb_out" ] || [ ! -f "$hb_state" ] \
+        || ! grep -q 'could not advance the iteration counter' "$hb_tmp/hb_err.txt"; then
+        printf '%s: %s\n' "$hb_hb4" "$hb_out"; cat "$hb_tmp/hb_err.txt"
+        hb_hb4_ok=0
+      fi
+    done
+    if [ "$hb_hb4_ok" = 1 ]; then
+      pass "stop hook refuses to re-feed a state file whose opener is not exactly --- (trailing space, BOM) rather than re-feeding forever at one count (HB-4)"
+    else
+      fault "stop hook re-fed a state file whose iteration counter its rewrite could not advance"
+    fi
+
     # HB-5: /jeffy 08 is a decimal budget. Bash arithmetic read the leading
     # zero as octal: 08 killed the hook after the counter had advanced, with
     # no re-feed, and 010 counted as eight, which also annulled the +2 window.
@@ -8212,6 +8238,31 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       printf '%s\n' "$hb_out"
       cat "$hb_tmp/hb_err_cap.txt" 2>/dev/null
       fault "a time ceiling disturbed a valid convergence"
+    fi
+
+    # HB-7: the ceilings measure the iteration to the turn end, never the
+    # hook's own Verify re-run. A quick iteration whose declaration the re-run
+    # refused was charged the re-run's seconds as an overrun, and on a second
+    # strike the run ended before the rejection was delivered. "exited 1" is
+    # what proves the re-run happened: a refusal on an earlier check would
+    # pass the rest of this with no verify run at all.
+    hb_write_state sess-1 3 10
+    hb_state_addkey "iteration_started_at: $(date +%s)"
+    hb_state_addkey 'max_iteration_seconds: 3'
+    hb_state_addkey 'overrun: 1'
+    hb_write_backlog ''
+    hb_write_journal 3 10
+    hb_write_plan 'sleep 4; exit 1'
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'CONVERGENCE REJECTED' \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'exited 1' \
+      && grep -q '^overrun: 0$' "$hb_state" && hb_end_clean; then
+      pass "the hook's own Verify re-run is not billed to the iteration ceiling; the rejection is re-fed (HB-7)"
+    else
+      printf '%s\n' "$hb_out"
+      cat "$hb_tmp/hb_err_cap.txt" 2>/dev/null
+      fault "the hook billed its own Verify re-run to the iteration and ended the run before re-feeding the rejection"
     fi
 
     # P0-5 (P1-47): a Surface inventory row flip is progress to the stall

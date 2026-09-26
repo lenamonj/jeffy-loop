@@ -182,6 +182,13 @@ esac
 iter=$((10#$iter))
 max=$((10#$max))
 
+# The turn ended when the hook was called. The time ceilings measure the
+# iteration to this moment, never the hook's own work below: the Verify
+# re-run alone can take up to the 1740s cap, and billed to the iteration it
+# read as an overrun that ended an honest run before its rejection was
+# delivered. (HB-7)
+turn_end_epoch="$(date +%s 2>/dev/null || echo 0)"
+
 # Run identity: the session prefix alone does not name a run. Relaunching
 # /jeffy in the same Claude Code session reuses the session id, so several
 # runs stamp identical headings and the journal cannot say where one ended -
@@ -2053,7 +2060,7 @@ fi
 # that killed a run three iterations from a certified declaration would cost
 # more than the unbounded turn it was protecting against. A converged promise
 # is never touched by either ceiling - that branch has already returned.
-now_epoch="$(date +%s 2>/dev/null || echo 0)"
+now_epoch="$turn_end_epoch"
 run_started="$(fm run_started_at)"
 wall_max="$(fm max_wall_clock_seconds)"
 iter_started="$(fm iteration_started_at)"
@@ -2597,6 +2604,9 @@ if [ -n "$extension" ]; then
   max=$((max + 2))
 fi
 
+# The next iteration starts when this hook hands it the prompt, so its start
+# is stamped now, after this hook's own work, not at the turn end above.
+stamp_epoch="$(date +%s 2>/dev/null || echo 0)"
 tmp="$state.tmp"
 # The rewriter owns the keys it names and prints every other line verbatim,
 # so the schema is additive: a state file carrying keys this version never
@@ -2610,7 +2620,7 @@ tmp="$state.tmp"
 # CR is dropped from every line first, so "---\r" closes the frontmatter - a
 # rewriter that cannot see it close never advances the counter - and a CRLF
 # state file is LF from its first re-feed on.
-if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory" -v rh="$new_rows_hist" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" -v it="$now_epoch" -v ov="$new_overrun" -v fp="$new_fp_hist" -v os="$new_osc" -v cb="$new_ctx_base" '
+if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory" -v rh="$new_rows_hist" -v sf="$new_stall" -v sc="$new_ceremony" -v la="$cur_archive" -v mx="$max" -v ex="$extension" -v co="$corrective" -v el="$ext_lows_grant" -v it="$stamp_epoch" -v ov="$new_overrun" -v fp="$new_fp_hist" -v os="$new_osc" -v cb="$new_ctx_base" '
   { sub(/\r$/, "") }
   /^---$/ { fmc++; if (fmc == 2) { if (!slh) print "last_head: " lh; if (!slb) print "last_backlog: " lb; if (!sli) print "last_inventory: " li; if (rh != "" && !srh) print "rows_history: " rh; if (!ssf) print "stall: " sf; if (!ssc) print "stall_ceremony: " sc; if (!sla) print "last_archive: " la; if (!sam) print "archive_migrated: 1"; if (it != "0" && !sit) print "iteration_started_at: " it; if (!sov) print "overrun: " ov; if (fp != "" && !sfp) print "fingerprints: " fp; if (!sos) print "oscillation: " os; if (cb != "" && !scb) print "context_base_bytes: " cb; if (ex && !sex) print "extension_granted: 1"; if (ex && el != "" && !sel) print "extension_lows: " el; if (co && !sco) print "corrective_granted: 1" } print; next }
   fmc == 1 && /^iteration: / { print "iteration: " n; next }
@@ -2634,6 +2644,14 @@ if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory
   { print }
 ' "$state" > "$tmp"; then
   mv "$tmp" "$state"
+  # The rewriter advances the counter only inside a frontmatter opened by a
+  # line reading exactly ---. An opener with a trailing space or a UTF-8 BOM
+  # still parsed through fm(), so the run re-fed forever at one count with no
+  # budget, stall or oscillation baseline ever stamped. (HB-4)
+  if [ "$(fm iteration)" != "$next" ]; then
+    echo "jeffy stop hook: could not advance the iteration counter in $state (its frontmatter must open and close with a line reading exactly ---); not re-feeding. Run /cancel-jeffy or delete the file." >&2
+    exit 0
+  fi
 else
   rm -f "$tmp"
   echo "jeffy stop hook: could not update $state; not re-feeding." >&2
