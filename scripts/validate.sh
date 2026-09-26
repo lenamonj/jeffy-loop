@@ -8765,6 +8765,9 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
       hh_n="$(grep -cF -- "$1" "$hb_hook")"
       if [ "$hh_n" != "1" ]; then echo "  sabotage fragment occurs $hh_n times, not once: $1"; return 1; fi
       awk -v a="$1" -v b="$2" '{ i = index($0, a); if (i) $0 = substr($0, 1, i - 1) b substr($0, i + length(a)) } { print }' "$hb_hook" > "$hb_tmp/hh_sab.sh"
+      # The copy sources its lib from beside itself; without one it ends at the
+      # missing-lib arm before any sabotaged line runs, and every proof passes.
+      mkdir -p "$hb_tmp/lib" && cp skills/jeffy/hooks/lib/*.sh "$hb_tmp/lib/"
     }
 
     # 1. the hunt re-feed: mode and open Highs stated, the last audit named,
