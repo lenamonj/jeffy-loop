@@ -691,11 +691,17 @@ jeffy_cert_hash_check() {
   if [ "$hunt" = 1 ]; then
     cert_example="Hunted: <new hash> - <date> - <k> Highs closed (repoints $conv_hash, tree unchanged)"
   fi
-  if [ -z "$conv_hash" ] && [ "$hunt" = 1 ] && [ "$lint" = 1 ]; then
-    # The Hunted line is written by the closing iteration after the
-    # lint the prompt runs before its checkpoint, so its absence is
-    # the one shape lint reports as pending rather than refuses.
-    hunt_pending="$hunt_pending${hunt_pending:+; and }the ## Hunted section of BACKLOG.md does not name a commit yet"
+  if [ -z "$conv_hash" ] && [ "$lint" = 1 ]; then
+    # The certified line is written by the closing iteration after the
+    # lint the prompt runs before its gate or checkpoint, so its absence
+    # is the one shape lint reports as pending rather than refuses, in
+    # either mode.
+    hunt_pending="$hunt_pending${hunt_pending:+; and }the ## $cert_sec section of BACKLOG.md does not name a commit yet"
+  elif [ "$hunt" = 1 ] && [ "$lint" = 1 ] && [ -n "$hunt_pending" ]; then
+    # A relaunched hunt: the section still ends on an earlier hunt's
+    # line, and this iteration's checkpoint, which the new line will
+    # name, is itself pending, so the old line certifies nothing here.
+    hunt_pending="$hunt_pending; and the last Hunted line names $conv_hash, an earlier hunt's, which this iteration's line supersedes"
   elif [ -n "$conv_hash" ] && ! jeffy_names_hash "$root" "$conv_hash"; then
     violation="the $cert_sec line names $conv_hash, which is not a commit named by its hexadecimal hash; HEAD, @, a branch or a tag moves with the tree, so every test of the certified tree would compare HEAD with itself and the receipt would record a name no clone resolves to the same commit - write the commit's full hash - the field is read as 7 to 64 hexadecimal characters, so an abbreviation that resolves is accepted"
   elif [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
@@ -1096,6 +1102,7 @@ if [ -n "$promise" ]; then
       open_substep=""
       hunt_nonhigh=""
       hunt_pending=""
+      ev_pending=0
       ledger_no_now=0
       if [ -f "$root/BACKLOG.md" ]; then
         # A ledger with no Now section gives the floor nothing to read, and an
@@ -1654,7 +1661,15 @@ if [ -n "$promise" ]; then
               fi
               ;;
             missing)
-              violation="the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare - unless this run has spent every invocation its cap allows, in which case it may not re-invoke at all and ends blocked in gate salvage instead"
+              if [ "$lint" = 1 ]; then
+                # The prompt runs lint before it invokes the gate, so the
+                # verdict, and the closing entry that carries it, do not
+                # exist yet: pending, not refused.
+                ev_pending=1
+                hunt_pending="$hunt_pending${hunt_pending:+; and }the closing entry records no Evaluator verdict yet"
+              else
+                violation="the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare - unless this run has spent every invocation its cap allows, in which case it may not re-invoke at all and ends blocked in gate salvage instead"
+              fi
               ;;
             reject)
               violation="the closing entry records Evaluator: REJECT, which is not a verdict a run declares on; file each reason this run can reproduce and work them - with an invocation remaining, declare on a later PASS, and a second REJECT is not terminal while one is left; with none remaining the REJECT is terminal, so spend the rest of the budget in gate salvage on the findings the gate filed and end blocked as 'blocked - N gate findings closed, declaration deferred', never re-invoking and never declaring, because convergence waits for the next run's fresh gate"
@@ -1808,7 +1823,7 @@ if [ -n "$promise" ]; then
       # structured direction: every open carried Low's ID appears in this
       # run's closing entry. Fails closed with the missing ID named, and the
       # remedy is the sentence the closing rule already mandates.
-      if [ -z "$violation" ] && [ -n "$open_carried" ] && [ -f "$root/JOURNAL.md" ]; then
+      if [ -z "$violation" ] && [ "$ev_pending" = 0 ] && [ -n "$open_carried" ] && [ -f "$root/JOURNAL.md" ]; then
         closing_body="$(awk -v tok="| $runid8 |" '
           { sub(/\r$/, "") }
           /^## iter / {
@@ -1833,7 +1848,7 @@ if [ -n "$promise" ]; then
           exit 1
         fi
         if [ -n "$hunt_pending" ]; then
-          echo "jeffy lint: clean apart from the close itself - $hunt_pending; the checkpoint and the Hunted line are what supply it, and every other check the close derives passes on this tree; the Verify command was not run, so run quiet-verify.sh yourself"
+          echo "jeffy lint: clean apart from the close itself - $hunt_pending; the checkpoint and the $cert_sec line are what supply it, and every other check the close derives passes on this tree; the Verify command was not run, so run quiet-verify.sh yourself"
           exit 0
         fi
         echo "jeffy lint: clean - every check the declaration path derives passes on this tree; the Verify command was not run, so run quiet-verify.sh yourself"

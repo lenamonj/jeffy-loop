@@ -9055,6 +9055,38 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     else
       fault "stop hook --lint wrote a metrics record for a turn end that never happened"
     fi
+    # P2-54 (BT-1): the prompt runs lint before the gate and before the
+    # Converged line; both are pending there, and a later refusal is still named.
+    printf '# Journal\n\n## iter 1/3 | sess-1-000000 | 2026-01-01 | T1 | done\n\nTask: t.\n' > "$hb_proj/JOURNAL.md"
+    hb_write_backlog '' ''
+    printf '\n## Declined\n\n- D1: not worth fixing, exotic input\n' >> "$hb_proj/BACKLOG.md"
+    hb_lint "$hb_proj"
+    if [ "$hb_lint_rc" -eq 1 ] && printf '%s' "$hb_lint_out" | grep -qF 'a Declined entry carries no recorded derivation'; then
+      pass "stop hook --lint names a refusal behind the pending Converged line (P2-54)"
+    else
+      printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+      fault "stop hook --lint stopped at the Converged line the prompt has not let the run write yet"
+    fi
+    hb_write_plan 'make test | tail -n 5'
+    hb_write_backlog '' ''
+    hb_lint "$hb_proj"
+    if [ "$hb_lint_rc" -eq 1 ] && printf '%s' "$hb_lint_out" | grep -qF 'ends in tail'; then
+      pass "stop hook --lint names a Verify command refusal behind the pending evaluator verdict (P2-54)"
+    else
+      printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+      fault "stop hook --lint stopped at the evaluator verdict the gate has not returned yet"
+    fi
+    hb_write_plan 'touch verify-ran'
+    hb_lint "$hb_proj"
+    if [ "$hb_lint_rc" -eq 0 ] && printf '%s' "$hb_lint_out" | grep -qF 'clean apart from the close itself' \
+      && printf '%s' "$hb_lint_out" | grep -qF 'Converged section of BACKLOG.md does not name a commit yet' \
+      && printf '%s' "$hb_lint_out" | grep -qF 'no Evaluator verdict yet'; then
+      pass "stop hook --lint reports the pre-gate tree as pending, not refused (P2-54 control)"
+    else
+      printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+      fault "stop hook --lint refused the pre-gate shape the prompt runs it on"
+    fi
+    hb_write_journal 1 3
     rm -f "$hb_state" "$hb_proj/verify-ran"
     hb_write_plan none
     hb_git add -A >/dev/null; hb_git commit -qm lint2 >/dev/null
@@ -9362,6 +9394,30 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     else
       printf '%s\n' "$hh_lo"; fault "lint did not report the closing iteration's pending shapes as pending (rc $hh_lrc)"
     fi
+    # HOOK-HIGHS-6: a relaunched hunt. The section already holds an earlier
+    # hunt's line and this run fixed a product path since; the closing
+    # iteration's lint reports that line as pending, never refuses on it.
+    printf 'fixed\n' > "$hh_proj/relaunch.txt"; hh_git add -A >/dev/null 2>&1; hh_git commit -q -m relaunch-fix >/dev/null 2>&1
+    hh_journal "## iter 3/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: pending"
+    hh_backlog '' "Hunted: $hh_h4 - 2026-01-01 - 0 Highs closed"
+    hh_lo="$(hh_lint)"; hh_lrc=$?
+    if [ "$hh_lrc" = 0 ] && printf '%s' "$hh_lo" | grep -qF 'clean apart from the close itself' && printf '%s' "$hh_lo" | grep -qF "an earlier hunt's"; then
+      pass "lint reports a relaunched hunt's closing iteration as pending over the previous hunt's Hunted line (HOOK-HIGHS-6)"
+    else
+      printf '%s\n' "$hh_lo"; fault "lint refused a relaunched hunt's closing iteration on the previous hunt's Hunted line (rc $hh_lrc)"
+    fi
+    # Control: once this iteration's checkpoint is written, the old Hunted
+    # line is what the close would certify, and lint refuses it.
+    hh_journal "## iter 3/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: $(hh_git rev-parse HEAD)"
+    hh_lo="$(hh_lint)"; hh_lrc=$?
+    if [ "$hh_lrc" = 1 ] && printf '%s' "$hh_lo" | grep -qF 'changed after the Hunted hash'; then
+      pass "lint still refuses the previous hunt's Hunted line once the closing checkpoint is written (HOOK-HIGHS-6 control)"
+    else
+      printf '%s\n' "$hh_lo"; fault "lint let a stale Hunted line through after the closing checkpoint was written (rc $hh_lrc)"
+    fi
+    hh_journal "## iter 3/5 | sess-1-000000 | 2026-01-01 | AUDIT | hunted:::Checkpoint: pending"
+    # The later RATCHET fixtures certify hh_h1's tree; take the relaunch fix back out.
+    hh_git rm -q relaunch.txt >/dev/null 2>&1; hh_git commit -q -m relaunch-undo >/dev/null 2>&1
     hh_backlog '- [ ] M1 (Medium, docs, documentation): meh. Acceptance: x.' ''
     hh_lo="$(hh_lint)"; hh_lrc=$?
     if [ "$hh_lrc" = 1 ] && printf '%s' "$hh_lo" | grep -qF 'Highs only'; then
