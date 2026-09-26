@@ -175,6 +175,12 @@ case "${iter:-x}${max:-x}" in
     exit 0
     ;;
 esac
+# A digit string with a leading zero is still a decimal budget. /jeffy 08
+# killed the hook in $(( )) as bad octal after the counter had advanced, and
+# 010 read as eight to arithmetic and as ten to test, which annulled the +2
+# window. Normalized once, here, so every reader below sees one number. (HB-5)
+iter=$((10#$iter))
+max=$((10#$max))
 
 # Run identity: the session prefix alone does not name a run. Relaunching
 # /jeffy in the same Claude Code session reuses the session id, so several

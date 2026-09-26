@@ -4832,6 +4832,29 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fault "stop hook re-fed a state file that carries no iteration line"
     fi
 
+    # HB-5: /jeffy 08 is a decimal budget. Bash arithmetic read the leading
+    # zero as octal: 08 killed the hook after the counter had advanced, with
+    # no re-feed, and 010 counted as eight, which also annulled the +2 window.
+    hb_write_state sess-1 1 08
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && grep -q '^iteration: 2$' "$hb_state" \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 2 of 8; 6 remain after it'; then
+      pass "stop hook re-feeds a budget written with a leading zero (08) instead of dying on it as bad octal (HB-5)"
+    else
+      printf '%s\n' "$hb_out"; cat "$hb_tmp/hb_err.txt"
+      fault "stop hook died on, or miscounted, max_iterations 08"
+    fi
+    hb_write_state sess-1 1 010
+    hb_out="$(hb_run sess-1 'still working' '')"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'RUN STATE: iteration 2 of 10; 8 remain after it'; then
+      pass "stop hook counts max_iterations 010 as ten, not octal eight (HB-5)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "stop hook computed the remaining budget of max_iterations 010 in octal"
+    fi
+
     hb_write_state sess-1 1 3
     rm -f "$hb_tmp/prompt.txt"
     hb_out="$(hb_run sess-1 'still working' '' 2>/dev/null)"
