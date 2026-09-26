@@ -1951,6 +1951,19 @@ else
       cat "$rt_tmp/tilde.log"
       fault "install.sh rewrote or removed a live registration spelled with ~"
     fi
+    # Control: the installer writes the path quoted, so a home whose path holds
+    # a space must still read as live, never as a dead registration.
+    rt_sp_home="$rt_tmp/space home"; mkdir -p "$rt_sp_home"
+    HOME="$rt_sp_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >/dev/null 2>&1 || true
+    cp "$rt_sp_home/.claude/settings.json" "$rt_tmp/settings.space"
+    HOME="$rt_sp_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/space.log" 2>&1 || true
+    if cmp -s "$rt_sp_home/.claude/settings.json" "$rt_tmp/settings.space" && grep -qF 'already registered' "$rt_tmp/space.log" \
+      && ! grep -qF 'does not exist' "$rt_tmp/space.log"; then
+      pass "install.sh keeps a live registration whose quoted path holds a space (INSTALL-1 control)"
+    else
+      cat "$rt_tmp/space.log"
+      fault "install.sh called a live registration whose path holds a space dead"
+    fi
   else
     skip "install.sh hook-registration assertions (jq not on PATH)"
   fi
@@ -2086,6 +2099,21 @@ if [ -n "$ps" ]; then
     else
       cat "$pr_tmp/dead.log"; cat "$pr_home/.claude/settings.json"
       fault "install.ps1 kept a Stop registration naming a hook that does not exist"
+    fi
+    # Control: a live hook whose quoted path holds a space is kept.
+    pr_sp_hook="$pr_tmp/space home/.claude/skills/jeffy/hooks/stop-hook.sh"
+    mkdir -p "${pr_sp_hook%/*}" && : > "$pr_sp_hook"
+    pr_sp_n="$pr_sp_hook"
+    command -v cygpath >/dev/null 2>&1 && pr_sp_n="$(cygpath -m "$pr_sp_hook")"
+    printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          { "type": "command", "command": "bash \\"%s\\"", "timeout": 1800 }\n        ]\n      }\n    ]\n  }\n}\n' \
+      "$pr_sp_n" > "$pr_home/.claude/settings.json"
+    pr_run >"$pr_tmp/space.log" 2>&1 || true
+    if [ "$(pr_count)" = "1" ] && grep -qF 'space home' "$pr_home/.claude/settings.json" \
+      && ! grep -qF 'does not exist' "$pr_tmp/space.log"; then
+      pass "install.ps1 keeps a live registration whose quoted path holds a space (INSTALL-1 control) ($ps)"
+    else
+      cat "$pr_tmp/space.log"; cat "$pr_home/.claude/settings.json"
+      fault "install.ps1 called a live registration whose path holds a space dead"
     fi
     rm -rf "$pr_tmp"
   fi
