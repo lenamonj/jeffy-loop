@@ -8665,6 +8665,16 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       cat "$hb_tmp/cc.txt"
       fault "check-claims.sh did not catch a claim whose command disagrees with its recorded value"
     fi
+    # LIBS-2: a claim whose command reads stdin must not swallow the rows after it.
+    printf 'expect 1 :: cat >/dev/null; echo 1\nexpect 999 :: echo 1\n' > "$hb_proj/.jeffy/probes/cc/claims"
+    if ! bash skills/jeffy/hooks/lib/check-claims.sh "$hb_proj" >"$hb_tmp/cc.txt" 2>&1 \
+      && grep -q '^MISMATCH cc: expected 999 got 1$' "$hb_tmp/cc.txt" \
+      && grep -q '^claims: 2 checked, 1 mismatched' "$hb_tmp/cc.txt"; then
+      pass "check-claims.sh runs every claim with no stdin, so a stdin-reading claim cannot swallow the rows after it (LIBS-2)"
+    else
+      cat "$hb_tmp/cc.txt"
+      fault "check-claims.sh let a stdin-reading claim eat the rest of its claims file"
+    fi
     rm -rf "$hb_proj/.jeffy/probes/cc"
     hb_git add -A >/dev/null; hb_git commit -qm cc >/dev/null
 
@@ -8751,6 +8761,17 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     else
       cat "$hb_tmp/cc.txt"
       fault "check-claims.sh mishandled an agreeing or host-unavailable Stated counts row"
+    fi
+    # LIBS-2: a Stated counts row whose command reads stdin must not swallow
+    # the rows after it.
+    hb_write_counts_plan 'It returns 1 row today.' 'one|1|wc -l >/dev/null; echo 1' 'two|999|echo 2'
+    if ! bash "$hb_cc" "$hb_proj" >"$hb_tmp/cc.txt" 2>&1 \
+      && grep -q '^MATCH PLAN:one: 1$' "$hb_tmp/cc.txt" \
+      && grep -q '^MISMATCH PLAN:two: expected 999 got 2$' "$hb_tmp/cc.txt"; then
+      pass "check-claims.sh runs every Stated counts row with no stdin, so a stdin-reading row cannot swallow the rows after it (LIBS-2)"
+    else
+      cat "$hb_tmp/cc.txt"
+      fault "check-claims.sh let a stdin-reading Stated counts row eat the rest of the table"
     fi
     # F2: the hook, declaration path. Prose states 48, the table derives 53.
     hb_write_counts_plan 'It returns 48 mechanisms today, re-derived by running it.' 'mechanisms|53|echo 53'

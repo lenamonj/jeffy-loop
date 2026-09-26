@@ -15,7 +15,9 @@ What is pinned, in the order the cases run: a claim that reproduces; a claim
 that no longer reproduces, which must be named with both the expected and the
 got value; the comparison being the last non-empty line, so a command printing
 working output before its answer still compares as its answer; every line of a
-claims file being run rather than the first; a malformed line erroring rather
+claims file being run rather than the first; a claim whose command reads
+stdin being unable to swallow the rows after it, since each claim runs with
+stdin closed; a malformed line erroring rather
 than skipping, since a claims file whose syntax drifted must never read as a
 battery with nothing to check; a command that fails erroring with its own exit
 status; a row this host cannot derive being skipped rather than checked, with

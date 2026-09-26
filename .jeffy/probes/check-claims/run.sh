@@ -53,6 +53,13 @@ printf 'expect 7 :: echo 7\nexpect 9 :: echo 9\n' > "$d/.jeffy/probes/alpha/clai
 ck "every line of a claims file is run, not the first" 0 \
    "claims: 2 checked, 0 mismatched, 0 errored, 0 skipped" "MATCH alpha: 7;MATCH alpha: 9;"
 
+# LIBS-2: a claim runs with stdin closed. It used to inherit the claims file,
+# so a command that reads stdin swallowed every later row, and the summary
+# counted only the rows it reached.
+printf 'expect 1 :: cat >/dev/null; echo 1\nexpect 9 :: echo 8\n' > "$d/.jeffy/probes/alpha/claims"
+ck "a claim that reads stdin cannot swallow the rows after it" 1 \
+   "claims: 2 checked, 1 mismatched, 0 errored, 0 skipped" "MATCH alpha: 1;MISMATCH alpha: expected 9 got 8;"
+
 # A line that is not a claim is an error rather than a skip: a claims file
 # whose syntax drifted must not read as a battery with nothing to check.
 printf 'this is not a claims line\n' > "$d/.jeffy/probes/alpha/claims"
