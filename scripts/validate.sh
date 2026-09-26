@@ -3091,6 +3091,8 @@ if command -v jq >/dev/null 2>&1; then
     hb_sec_refused 'open High or Medium' || hb_sec_bad="$hb_sec_bad [fenced open High]"
     hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n\`\`\`\n- [ ] T9 sub-step nobody scored\n\n## Next\n\n## Later\n\n## Converged\n"
     hb_sec_refused 'no parseable severity' || hb_sec_bad="$hb_sec_bad [unclosed fence]"
+    hb_sec_stage '## Surface inventory' "$hb_sec_row" "## Now\n\n\`\`\`\n## Medium findings go in Next\n\`\`\`\n- [ ] M1 (Medium, runtime, correctness): open. Acceptance: x.\n\n## Next\n\n## Later\n\n## Converged\n"
+    hb_sec_refused 'open High or Medium' || hb_sec_bad="$hb_sec_bad [fenced heading naming Medium]"
     if [ -z "$hb_sec_bad" ]; then
       pass "stop hook still reads a fenced open High and every line after an unclosed fence"
     else
