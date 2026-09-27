@@ -122,12 +122,14 @@ A High hunt fixes only the Highs and stops at the first audit that finds none, s
 
 ## What the engine enforces
 
-Each rule below is enforced by the iteration prompt, the state files or the Stop hook, and each is checkable in this repository. [How.](docs/how-it-works.md#what-the-engine-enforces)
+Each rule is enforced by the iteration prompt, the state files or the Stop hook, and each can be checked in this repository. [How.](docs/how-it-works.md#what-the-engine-enforces)
 
-1. **A finding needs proof.** The loop must point at it and prove it with a runnable check.
-2. **Three checks decide "done".** It takes a fresh audit with zero High and zero Medium, an adversarial evaluator's countersignature, and a shell gate that re-runs your tests. Across the runs of one greenfield build, the evaluator was invoked 8 times and rejected 7. A High hunt skips the evaluator and claims no convergence.
-3. **No convergence over an unswept surface.** The Stop hook refuses convergence while any row of the loop's public-surface checklist is unswept, and a row reopens when its code changes.
-4. **Lessons become checks.** A rule learned once binds every later iteration, and the engine passes at least <!-- count:checks -->**470 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS. [How the loop improves itself.](docs/how-it-works.md#the-loop-improves-the-loop)
+| Rule | What it means |
+|:---|:---|
+| **A finding needs proof** | The loop must point at the defect and prove it with a check that runs. |
+| **Three gates decide done** | A fresh audit with no High or Medium findings, an adversarial evaluator's countersignature, and a shell re-run of your tests. In one greenfield build the evaluator was invoked 8 times and rejected 7. A High hunt skips the evaluator and never claims convergence. |
+| **No convergence over unswept surface** | The Stop hook refuses to converge while any row of the public-surface checklist is unswept, and a row reopens when its code changes. |
+| **Lessons become checks** | A rule learned once binds every later iteration. The engine passes at least <!-- count:checks -->**470 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS. [How the loop improves itself.](docs/how-it-works.md#the-loop-improves-the-loop) |
 
 > [!IMPORTANT]
 > **Trust model.** The engine is `skills/jeffy/hooks/stop-hook.sh` plus the small library beside it in `skills/jeffy/hooks/lib/`, registered as a Claude Code Stop hook. With no live Jeffy state file it exits at once and does nothing. `/cancel-jeffy` ends a run at any time. The loop acts through your Claude Code session with that session's permissions, and its no-push rule lives in the iteration prompt, so never allowlist push or force operations for it ([Usage](docs/usage.md#good-to-know), [Blast radius](SECURITY.md#blast-radius)). The installer writes two skill folders under `~/.claude/skills` and one hook entry in `~/.claude/settings.json`; [Usage](docs/usage.md#already-installed-upgrade) covers upgrading and removing them.
