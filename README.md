@@ -18,7 +18,7 @@
 
 Jeffy Loop turns Claude Code into a self-correcting engineering loop. Type `/jeffy` and it audits your codebase, finds a problem, fixes it, checks the fix, and commits the result locally, one task at a time. It keeps going until the codebase passes a fresh audit, rather than stopping when the first patch looks good.
 
-The loop is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and a second AI reviewer with no part in the run signs off. The goal is changes that survive scrutiny.
+The loop is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI with no part in the run signs off. The goal is changes that survive scrutiny.
 
 There is a real-world test for that. Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. The question is whether someone else will trust the fix enough to merge it. [See them all.](#independent-validation)
 
