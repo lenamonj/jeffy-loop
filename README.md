@@ -29,26 +29,59 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 ## Quick Install
 
-You need [Claude Code](https://claude.com/claude-code), signed in once, and [git](https://git-scm.com/downloads). The installer checks for everything else and asks before installing `jq`.
+You need [Claude Code](https://claude.com/claude-code), signed in once, and [git](https://git-scm.com/downloads). Each installer checks for everything else and asks before installing `jq`.
+
+### Install Jeffy with pip
+
+**Step 1.** Install the package.
+
+```bash
+pip install jeffy-loop
+```
+
+**Step 2.** Install Jeffy as a Claude Code skill.
+
+```bash
+jeffy install
+```
+
+---
+
+### Install Jeffy with uv
+
+**Step 1.** Install the package.
+
+```bash
+uv tool install jeffy-loop
+```
+
+**Step 2.** Install Jeffy as a Claude Code skill.
+
+```bash
+jeffy install
+```
+
+---
+
+### Install Jeffy by cloning the repo locally
+
+**Mac and Linux**
 
 ```bash
 git clone https://github.com/lenamonj/jeffy-loop.git
 cd jeffy-loop
-./install.sh        # Windows PowerShell: .\install.ps1
+./install.sh
 ```
 
-If PowerShell refuses with "running scripts is disabled on this system", run in PowerShell:
+**Windows PowerShell**
 
 ```powershell
+git clone https://github.com/lenamonj/jeffy-loop.git
+cd jeffy-loop
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-Or from PyPI, no clone needed; `pipx install jeffy-loop` and `uv tool install jeffy-loop` work the same way:
-
-```bash
-pip install jeffy-loop
-jeffy install       # installs Jeffy as a Claude Code skill
-```
+The `-ExecutionPolicy Bypass` form runs the installer on a machine where PowerShell scripts are disabled by default and changes no policy.
 
 ## Running Jeffy
 
