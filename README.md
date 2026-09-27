@@ -131,12 +131,16 @@ Each rule is enforced by the iteration prompt, the state files or the Stop hook,
 | **No convergence over unswept surface** | The Stop hook refuses to converge while any row of the public-surface checklist is unswept, and a row reopens when its code changes. |
 | **Lessons become checks** | A rule learned once binds every later iteration. The engine passes at least <!-- count:checks -->**470 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS. [How the loop improves itself.](docs/how-it-works.md#the-loop-improves-the-loop) |
 
-### Trust model
+### <img src="media/seal-mark.png" width="30" alt="" align="absmiddle"> Trust model
 
-- **What runs.** One Stop hook, `skills/jeffy/hooks/stop-hook.sh`, plus the small library beside it in `skills/jeffy/hooks/lib/`. With no live Jeffy state file it exits at once and does nothing.
-- **What it can touch.** The loop acts through your Claude Code session with that session's permissions. Its no-push rule lives in the iteration prompt, so never allowlist push or force operations for it. [Usage](docs/usage.md#good-to-know), [Blast radius](SECURITY.md#blast-radius).
-- **What the installer writes.** Two skill folders under `~/.claude/skills` and one hook entry in `~/.claude/settings.json`. [Upgrading and removing them.](docs/usage.md#already-installed-upgrade)
-- **How to stop it.** `/cancel-jeffy` ends a run at any time.
+| Question | Answer |
+|:---|:---|
+| **What runs** | One Stop hook, `skills/jeffy/hooks/stop-hook.sh`, plus the small library beside it in `skills/jeffy/hooks/lib/`. With no live Jeffy state file it exits at once and does nothing. |
+| **What it can touch** | The loop acts through your Claude Code session with that session's permissions. Its no-push rule lives in the iteration prompt, so never allowlist push or force operations for it. [Usage](docs/usage.md#good-to-know), [Blast radius](SECURITY.md#blast-radius). |
+| **What the installer writes** | Two skill folders under `~/.claude/skills` and one hook entry in `~/.claude/settings.json`. [Upgrading and removing them.](docs/usage.md#already-installed-upgrade) |
+| **How to stop it** | `/cancel-jeffy` ends a run at any time. |
+
+---
 
 <div align="center">
 
