@@ -18,7 +18,7 @@
 
 Jeffy Loop is a Claude Code skill. Type `/jeffy` in a session and it audits your codebase, then fixes what it finds, one task per iteration. Each fix carries a check that ran and passed and lands as a local commit, and an iteration that breaks your tests is reverted. The loop never pushes. A standard run cannot call itself done until a fresh audit, an adversarial evaluator and a shell re-run of your tests all agree.
 
-A High hunt fixes only the Highs and skips the evaluator, and many of the merged patches below came from hunts. The one grade neither mode can give itself is a merge. Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation)
+Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation)
 
 <div align="center">
 
