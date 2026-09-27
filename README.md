@@ -65,6 +65,8 @@ jeffy install
 
 ### Install Jeffy with uv
 
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/). If you do not have it, `pip install uv` gets it.
+
 **Step 1.** Install the package.
 
 ```bash
