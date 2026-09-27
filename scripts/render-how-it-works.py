@@ -16,25 +16,26 @@ src = (root / "media" / "how-it-works.html").as_uri()
 ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
 FPS = 15
 
-with tempfile.TemporaryDirectory() as tmp:
-    frames = pathlib.Path(tmp)
-    with sync_playwright() as p:
-        browser = p.chromium.launch(args=["--force-color-profile=srgb", "--disable-lcd-text"])
-        page = browser.new_page(viewport={"width": 1200, "height": 676}, device_scale_factor=1)
-        page.goto(src)
-        page.wait_for_function("document.fonts.status === 'loaded'")
-        page.wait_for_timeout(300)
-        total = page.evaluate("window.TOTAL")
-        for f in range(total):
-            page.evaluate(f"setFrame({f})")
-            page.screenshot(path=str(frames / f"{f:05d}.png"), animations="disabled")
-        browser.close()
-    seq = str(frames / "%05d.png")
-    gif = root / "media" / "how-it-works.gif"
-    mp4 = root / "media" / "how-it-works.mp4"
-    subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-framerate", str(FPS), "-i", seq,
-                    "-vf", "split[a][b];[a]palettegen=max_colors=192:stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle",
-                    "-loop", "0", str(gif)], check=True)
-    subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-framerate", str(FPS), "-i", seq,
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", str(mp4)], check=True)
-    print(f"wrote {gif} ({gif.stat().st_size // 1024} KB) and {mp4} ({mp4.stat().st_size // 1024} KB)")
+for theme in ("dark", "light"):
+  with tempfile.TemporaryDirectory() as tmp:
+      frames = pathlib.Path(tmp)
+      with sync_playwright() as p:
+          browser = p.chromium.launch(args=["--force-color-profile=srgb", "--disable-lcd-text"])
+          page = browser.new_page(viewport={"width": 1200, "height": 676}, device_scale_factor=1)
+          page.goto(f"{src}?theme={theme}")
+          page.wait_for_function("document.fonts.status === 'loaded'")
+          page.wait_for_timeout(300)
+          total = page.evaluate("window.TOTAL")
+          for f in range(total):
+              page.evaluate(f"setFrame({f})")
+              page.screenshot(path=str(frames / f"{f:05d}.png"), animations="disabled")
+          browser.close()
+      seq = str(frames / "%05d.png")
+      gif = root / "media" / ("how-it-works.gif" if theme == "dark" else "how-it-works-light.gif")
+      mp4 = root / "media" / ("how-it-works.mp4" if theme == "dark" else "how-it-works-light.mp4")
+      subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-framerate", str(FPS), "-i", seq,
+                      "-vf", "split[a][b];[a]palettegen=max_colors=192:stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle",
+                      "-loop", "0", str(gif)], check=True)
+      subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-framerate", str(FPS), "-i", seq,
+                      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", str(mp4)], check=True)
+      print(f"wrote {gif} ({gif.stat().st_size // 1024} KB) and {mp4} ({mp4.stat().st_size // 1024} KB)")

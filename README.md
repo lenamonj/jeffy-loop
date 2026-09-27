@@ -24,7 +24,10 @@ There is a real-world test for that. Maintainers with no stake in this project h
 
 <div align="center">
 
-<img src="media/how-it-works.gif" alt="A run: /jeffy audits the codebase, then fixes one finding per iteration with a check that ran and passed and a local commit, until a fresh audit is clean, the evaluator agrees and the tests pass." width="830">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/how-it-works.gif">
+  <img src="media/how-it-works-light.gif" alt="A run: /jeffy audits the codebase, then fixes one finding per iteration with a check that ran and passed and a local commit, until a fresh audit is clean, the evaluator agrees and the tests pass." width="830">
+</picture>
 
 </div>
 
@@ -102,11 +105,18 @@ Open Claude Code in the project you want to improve and type `/jeffy 10` into th
 
 <div align="center">
 
-<img src="media/running-jeffy.png" alt="Five ways to start a run: /jeffy for ten iterations, /jeffy 5, /jeffy 12 with a focus directive, /jeffy 5 --highs for a High hunt, and /jeffy 10 --max-time 2h." width="830">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/running-jeffy.png">
+  <img src="media/running-jeffy-light.png" alt="Five ways to start a run: /jeffy for ten iterations, /jeffy 5, /jeffy 12 with a focus directive, /jeffy 5 --highs for a High hunt, and /jeffy 10 --max-time 2h." width="830">
+</picture>
 
 </div>
 
-Start a new session for each run, [so each run reads its state files with a clean context](docs/usage.md#use-several-short-runs-not-one-long-one). A High hunt fixes only the Highs and stops at the first audit that finds none, so it is usually the faster run. [Usage](docs/usage.md) covers every flag.
+Start a new session for each run, [so each run reads its state files with a clean context](docs/usage.md#use-several-short-runs-not-one-long-one).
+
+A High hunt fixes only the Highs and stops at the first audit that finds none, so it is usually the faster run.
+
+[Usage](docs/usage.md) covers every flag.
 
 ## What the engine enforces
 

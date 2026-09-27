@@ -43,9 +43,21 @@
            font-size:26px; padding:12px 26px; border-radius:12px; border:3px solid var(--grn); color:var(--grn); }
   #vig { position:absolute; inset:0; pointer-events:none;
          background:radial-gradient(ellipse 80% 70% at 50% 50%, rgba(0,0,0,0) 45%, rgba(0,0,0,.7) 100%); }
+
+  html[data-theme="light"], html[data-theme="light"] body { background:#ffffff; }
+  html[data-theme="light"] { --acc:#c9613f; --acc2:#d97757; --ink:#1f2937; --mut:#57606a; --dim:#8b949e; --grn:#1a7f37; --red:#cf222e; }
+  html[data-theme="light"] #stage, html[data-theme="light"] .bg { background:#ffffff !important; }
+  html[data-theme="light"] .grid { background-image:linear-gradient(rgba(0,0,0,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,.05) 1px, transparent 1px); }
+  html[data-theme="light"] .vig, html[data-theme="light"] #vig { background:none; }
+  html[data-theme="light"] .term { background:#f6f8fa; border-color:#d0d7de; box-shadow:0 20px 60px rgba(0,0,0,.12); }
+  html[data-theme="light"] .term .bar i { background:#d0d7de; }
+  html[data-theme="light"] .cmd { background:#f6f8fa; border-color:#d0d7de; box-shadow:0 10px 30px rgba(0,0,0,.08); }
+  html[data-theme="light"] #glyphGlow { opacity:.5 !important; }
+  html[data-theme="light"] #badge { border-color:#1a7f37; color:#1a7f37; }
 </style>
 </head>
 <body>
+<script>if(location.search.indexOf("theme=light")>=0)document.documentElement.setAttribute("data-theme","light");</script>
 <div id="stage">
   <div id="cam">
     <div id="glyphWrap">
