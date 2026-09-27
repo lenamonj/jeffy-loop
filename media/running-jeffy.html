@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<!-- The Running Jeffy plate: 1660x760 CSS px, rendered by scripts/render-running-jeffy.py and shown at 830 in the README.
+     Same design language as the clip (stage #07090d, Bahnschrift condensed, Cascadia, terracotta). -->
+<html><head><meta charset="utf-8">
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { width:1660px; height:760px; overflow:hidden; background:#07090d; }
+  body { font-family:'Bahnschrift','Segoe UI',sans-serif; -webkit-font-smoothing:antialiased; color:#eef3f8; }
+  :root{ --acc:#d97757; --acc2:#f0956f; --ink:#eef3f8; --mut:#8a95a5; --dim:#5b6675; }
+  #stage { position:absolute; inset:0; overflow:hidden; }
+  .bg { position:absolute; inset:0;
+        background: radial-gradient(ellipse 55% 80% at 18% 25%, rgba(217,119,87,.18) 0%, rgba(217,119,87,0) 60%),
+                    linear-gradient(180deg,#0b0f15 0%,#07090d 100%); }
+  .grid { position:absolute; inset:0; opacity:.35;
+          background-image:linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+          background-size:64px 64px;
+          -webkit-mask-image:radial-gradient(ellipse 70% 70% at 50% 50%, #000 30%, transparent 100%); }
+  .vig { position:absolute; inset:0; background:radial-gradient(ellipse 85% 80% at 50% 50%, rgba(0,0,0,0) 50%, rgba(0,0,0,.55) 100%); }
+  .content { position:absolute; inset:0; display:flex; align-items:center; gap:50px; padding:0 70px; }
+  .left { display:flex; flex-direction:column; align-items:center; gap:26px; width:330px; flex:none; }
+  .seal { width:260px; filter:drop-shadow(0 24px 40px rgba(0,0,0,.6)); }
+  .kicker { font-weight:600; font-stretch:75%; text-transform:uppercase; letter-spacing:6px; font-size:20px; color:var(--mut); text-align:center; line-height:1.5; white-space:nowrap; }
+  .deck { flex:1; display:grid; grid-template-columns:max-content 1fr; column-gap:34px; row-gap:16px; align-items:center; }
+  .row { display:contents; }
+  .cmd { font-family:'Cascadia Code',Consolas,monospace; font-size:26px; color:var(--ink); white-space:pre;
+         background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); border:1px solid rgba(255,255,255,.10);
+         box-shadow:inset 0 1px 0 rgba(255,255,255,.10), 0 16px 40px rgba(0,0,0,.45); border-radius:14px; padding:14px 24px; }
+  .cmd b { color:var(--acc); font-weight:700; }
+  .cmd i { color:var(--acc2); font-style:normal; }
+  .what { font-size:25px; color:var(--mut); }
+  .what b { color:var(--ink); font-weight:600; }
+  .first .cmd { border-color:rgba(217,119,87,.7); box-shadow:inset 0 1px 0 rgba(255,255,255,.12), 0 0 46px rgba(217,119,87,.30); }
+</style></head><body>
+<div id="stage"><div class="bg"></div><div class="grid"></div>
+<div class="content">
+  <div class="left">
+    <img class="seal" src="seal-mark.png" alt="">
+    <div class="kicker">Open Claude Code<br>in your project,<br>then type</div>
+  </div>
+  <div class="deck">
+    <div class="row first"><div class="cmd"><b>/jeffy</b></div><div class="what"><b>10 iterations</b>, full-spectrum improvement</div></div>
+    <div class="row"><div class="cmd"><b>/jeffy</b> 5</div><div class="what"><b>5 iterations</b></div></div>
+    <div class="row"><div class="cmd"><b>/jeffy</b> 12 accessibility and performance</div><div class="what"><b>12 iterations</b> with a focus directive</div></div>
+    <div class="row"><div class="cmd"><b>/jeffy</b> 5 <i>--highs</i></div><div class="what"><b>High hunt</b>: find and fix only the Highs</div></div>
+    <div class="row"><div class="cmd"><b>/jeffy</b> 10 <i>--max-time 2h</i></div><div class="what"><b>10 iterations</b>, but stop after two hours either way</div></div>
+  </div>
+</div>
+<div class="vig"></div></div>
+</body></html>

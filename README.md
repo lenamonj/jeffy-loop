@@ -20,7 +20,7 @@ Jeffy Loop turns Claude Code into a self-correcting engineering loop. Type `/jef
 
 The loop is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI with no part in the run signs off. The goal is changes that survive scrutiny.
 
-There is a real-world test for that. Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. The question is whether someone else will trust the fix enough to merge it. [See them all.](#independent-validation)
+There is a real-world test for that. Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. The question is whether someone else will trust the fix enough to merge it. [See them all.](#independent-validation---the-receipts)
 
 <div align="center">
 
@@ -96,23 +96,15 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 The `-ExecutionPolicy Bypass` form runs the installer on a machine where PowerShell scripts are disabled by default and changes no policy.
 
-<div align="center">
-
-<img src="media/receipt-sealed.jpg" alt="A receipt on an obsidian desk, sealed in terracotta wax pressed with the Jeffy Loop mark." width="830">
-
-</div>
-
 ## Running Jeffy
 
 Open Claude Code in the project you want to improve and type `/jeffy 10` into the session.
 
-```
-/jeffy                                     # 10 iterations, full-spectrum improvement
-/jeffy 5                                   # 5 iterations
-/jeffy 12 accessibility and performance    # 12 iterations with a focus directive
-/jeffy 5 --highs                           # High hunt: find and fix only the Highs
-/jeffy 10 --max-time 2h                    # 10 iterations, but stop after two hours either way
-```
+<div align="center">
+
+<img src="media/running-jeffy.png" alt="Five ways to start a run: /jeffy for ten iterations, /jeffy 5, /jeffy 12 with a focus directive, /jeffy 5 --highs for a High hunt, and /jeffy 10 --max-time 2h." width="830">
+
+</div>
 
 Start a new session for each run, [so each run reads its state files with a clean context](docs/usage.md#use-several-short-runs-not-one-long-one). A High hunt fixes only the Highs and stops at the first audit that finds none, so it is usually the faster run. [Usage](docs/usage.md) covers every flag.
 
@@ -128,7 +120,13 @@ Each rule below is enforced by the iteration prompt, the state files or the Stop
 > [!IMPORTANT]
 > **Trust model.** The engine is `skills/jeffy/hooks/stop-hook.sh` plus the small library beside it in `skills/jeffy/hooks/lib/`, registered as a Claude Code Stop hook. With no live Jeffy state file it exits at once and does nothing. `/cancel-jeffy` ends a run at any time. The loop acts through your Claude Code session with that session's permissions, and its no-push rule lives in the iteration prompt, so never allowlist push or force operations for it ([Usage](docs/usage.md#good-to-know), [Blast radius](SECURITY.md#blast-radius)). The installer writes two skill folders under `~/.claude/skills` and one hook entry in `~/.claude/settings.json`; [Usage](docs/usage.md#already-installed-upgrade) covers upgrading and removing them.
 
-## Independent Validation
+<div align="center">
+
+<img src="media/receipt-sealed.jpg" alt="A receipt on an obsidian desk, sealed in terracotta wax pressed with the Jeffy Loop mark." width="830">
+
+</div>
+
+## Independent Validation - The Receipts
 
 Each finding below was accepted upstream by the project's own maintainers.
 
