@@ -20,7 +20,7 @@
   #glyphGlow { position:absolute; left:50%; top:50%; width:620px; height:620px;
                transform:translate(-50%,-50%); pointer-events:none;
                background:radial-gradient(circle, rgba(217,119,87,.28) 0%, rgba(217,119,87,0) 60%); }
-  #glyph { position:absolute; inset:0; }
+  #glyph { position:absolute; inset:0; transform-origin:50% 50%; }
   #stageLbl { position:absolute; left:0; right:0; top:318px; text-align:center;
               font-weight:600; font-stretch:75%; text-transform:uppercase; letter-spacing:7px;
               font-size:22px; color:var(--mut); white-space:nowrap; }
@@ -50,9 +50,21 @@
   <div id="cam">
     <div id="glyphWrap">
       <div id="glyphGlow"></div>
-      <svg id="glyph" viewBox="0 0 100 100" fill="none">
-        <path d="M 50 12 A 38 38 0 1 1 16.5 31" stroke="#d97757" stroke-width="11" stroke-linecap="round"></path>
-        <path d="M 8 12 L 16.5 31 L 35 22 Z" fill="#d97757"></path>
+      <svg id="glyph" viewBox="160 684 680 680" fill="none">
+        <defs>
+          <linearGradient id="g" x1="240" y1="780" x2="760" y2="1290" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#f0a37f"/><stop offset="0.55" stop-color="#d97757"/><stop offset="1" stop-color="#b3583a"/>
+          </linearGradient>
+          <linearGradient id="hl" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#fff" stop-opacity="0.55"/><stop offset="0.5" stop-color="#fff" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="M 500 764 A 260 260 0 1 1 274.8 894" stroke="url(#g)" stroke-width="78" stroke-linecap="round"/>
+        <g transform="translate(274.8 894) rotate(30)">
+          <path d="M 0 -128 L 96 52 L -96 52 Z" fill="#e8916c"/>
+          <path d="M 0 -128 L 96 52 L 0 40 Z" fill="#c86a48"/>
+        </g>
+        <path d="M 500 764 A 260 260 0 0 1 760 1024" stroke="url(#hl)" stroke-width="22" stroke-linecap="round" transform="translate(0 -14)"/>
       </svg>
       <div id="stageLbl"></div>
     </div>
