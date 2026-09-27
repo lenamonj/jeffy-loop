@@ -16,7 +16,7 @@
 
 </div>
 
-Jeffy Loop is a Claude Code skill. Type `/jeffy` in a session and it audits your codebase, then fixes what it finds, one task per iteration. Each fix carries a check that ran and passed and lands as a local commit, and an iteration that breaks your tests is reverted. The loop never pushes. A standard run cannot call itself done until a fresh audit, an adversarial evaluator and a shell re-run of your tests all agree.
+Jeffy Loop is a Claude Code skill. Type `/jeffy` and it audits your codebase, then fixes what it finds, one task per iteration. Each fix lands as a local commit with an acceptance check that ran and passed. An iteration that breaks your tests is reverted. Nothing is pushed. A standard run calls itself done only when a fresh audit comes back clean, an adversarial evaluator countersigns, and your tests pass again in a shell. Some of its fixes then went to reviewers who owed it nothing.
 
 Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation)
 
