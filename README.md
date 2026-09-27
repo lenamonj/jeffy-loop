@@ -16,11 +16,11 @@
 
 </div>
 
-Jeffy Loop is a Claude Code skill. Type `/jeffy` and it audits your codebase, then fixes what it finds, one task per iteration. Each fix lands as a local commit with an acceptance check that ran and passed.
+Jeffy Loop turns Claude Code into a self-correcting engineering loop. Type `/jeffy` and it audits your codebase, finds a problem, fixes it, checks the fix, and commits the result locally, one task at a time. It keeps going until the codebase passes a fresh audit, rather than stopping when the first patch looks good.
 
-If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run calls itself done only when a fresh audit is clean, a second AI reviewer that took no part in the run signs off, and your tests pass again. The harder test is whether a stranger will merge the patch.
+The loop is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and a second AI reviewer with no part in the run signs off. The goal is changes that survive scrutiny.
 
-Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation)
+There is a real-world test for that. Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. The question is whether someone else will trust the fix enough to merge it. [See them all.](#independent-validation)
 
 <div align="center">
 
