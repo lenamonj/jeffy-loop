@@ -96,6 +96,12 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 The `-ExecutionPolicy Bypass` form runs the installer on a machine where PowerShell scripts are disabled by default and changes no policy.
 
+<div align="center">
+
+<img src="media/receipt-sealed.jpg" alt="A receipt on an obsidian desk, sealed in terracotta wax pressed with the Jeffy Loop mark." width="830">
+
+</div>
+
 ## Running Jeffy
 
 Open Claude Code in the project you want to improve and type `/jeffy 10` into the session.
