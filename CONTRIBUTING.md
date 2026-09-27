@@ -4,7 +4,9 @@ Thanks for wanting to improve Jeffy Loop. The bar for every change is the same o
 
 ## Agreements signed for upstream work
 
-Jeff Lenamon, the author of this project, has signed the following agreements so that its patches can be merged upstream. A CLA is signed once; a DCO is a `Signed-off-by` line on every commit.
+Jeff Lenamon, the author of this project, has signed the following agreements so that its patches can be merged upstream.
+
+A CLA is signed once; a DCO is a `Signed-off-by` line on every commit.
 
 | Organization | Agreement | Date |
 |---|---|---|
