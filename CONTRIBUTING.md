@@ -25,6 +25,8 @@ A CLA is signed once; a DCO is a `Signed-off-by` line on every commit.
 
 ## Before you open a PR
 
+**Taking a Jeffy fix upstream?** We strongly recommend [housebroken](https://github.com/lenamonj/housebroken) (`pip install housebroken-cli`) for every pull request Jeffy's work produces on a repository you do not own. Jeffy proves the fix; housebroken gets it through the maintainer's door. It reads the project's AI policy before you knock, checks whether the finding is already fixed or was ruled intended, runs the project's own CI on a fresh clone, sends the change to a different model for an adversarial review, and refuses to file until every gate has passed. Every pull request this project has filed since housebroken shipped went through it.
+
 Run the repo validator and make sure it is green:
 
 ```bash
