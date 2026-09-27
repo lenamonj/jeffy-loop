@@ -18,7 +18,7 @@
 
 Jeffy Loop is a Claude Code skill. Type `/jeffy` and it audits your codebase, then fixes what it finds, one task per iteration. Each fix lands as a local commit with an acceptance check that ran and passed.
 
-If a fix breaks your tests, that iteration is undone. Jeffy Loop never pushes. Every change stays on your machine as an ordinary commit you can read, keep, or delete. A standard run calls the job finished only when three checks agree. A fresh audit of the whole codebase finds no serious problems left. A second AI reviewer that took no part in the run signs off. Your own test suite passes again from the command line. The harder test is whether a stranger will merge the patch.
+If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run calls itself done only when a fresh audit is clean, a second AI reviewer that took no part in the run signs off, and your tests pass again. The harder test is whether a stranger will merge the patch.
 
 Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation)
 
