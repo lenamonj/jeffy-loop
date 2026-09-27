@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="media/hero-inspector.jpg" alt="Jeffy Loop. A white robot crouched over a glass slab of circuitry, holding a loupe to the crack it found. Done is demonstrated, not declared." width="900">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/wordmark-dark.png">
+  <img src="media/wordmark-light.png" alt="Jeffy Loop" width="420">
+</picture>
 
 [![Validate](https://img.shields.io/github/actions/workflow/status/lenamonj/jeffy-loop/validate.yml?style=for-the-badge&label=validate&logo=githubactions&logoColor=white)](https://github.com/lenamonj/jeffy-loop/actions/workflows/validate.yml)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Skill-D97757?style=for-the-badge&logo=claude&logoColor=white)](https://claude.com/claude-code)
@@ -13,7 +16,15 @@
 
 </div>
 
-Jeffy Loop is a Claude Code skill. Type `/jeffy` in a session and it audits your codebase, then fixes what it finds, one task per iteration. Each fix carries a check that ran and passed and lands as a local commit, and an iteration that breaks your tests is reverted. The loop never pushes. A standard run cannot call itself done until a fresh audit, an adversarial evaluator and a shell re-run of your tests all agree. A High hunt fixes only the Highs and skips the evaluator, and many of the merged patches below came from hunts. The one grade neither mode can give itself is a merge. Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation)
+Jeffy Loop is a Claude Code skill. Type `/jeffy` in a session and it audits your codebase, then fixes what it finds, one task per iteration. Each fix carries a check that ran and passed and lands as a local commit, and an iteration that breaks your tests is reverted. The loop never pushes. A standard run cannot call itself done until a fresh audit, an adversarial evaluator and a shell re-run of your tests all agree.
+
+A High hunt fixes only the Highs and skips the evaluator, and many of the merged patches below came from hunts. The one grade neither mode can give itself is a merge. Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation)
+
+<div align="center">
+
+<img src="media/how-it-works.gif" alt="A run: /jeffy audits the codebase, then fixes one finding per iteration with a check that ran and passed and a local commit, until a fresh audit is clean, the evaluator agrees and the tests pass." width="830">
+
+</div>
 
 ## The record
 

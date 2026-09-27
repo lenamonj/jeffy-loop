@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<!-- Jeffy Loop, the README clip. 1200x676 CSS px, 15 fps, 240 frames (16 s), loops.
+     Deterministic: setFrame(n) fully determines the image. No CSS animations.
+     Same design language as the TikTok film: stage #07090d, Bahnschrift condensed,
+     Cascadia terminal, the loop glyph in terracotta. Rendered by scripts/render-how-it-works.py. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1200px; height:676px; overflow:hidden; background:#07090d; }
+  body { font-family:'Bahnschrift','Segoe UI',sans-serif; -webkit-font-smoothing:antialiased; }
+  :root{ --acc:#d97757; --acc2:#f0956f; --ink:#eef3f8; --mut:#7d8899; --grn:#3fb950; --red:#f85149; }
+
+  #stage { position:absolute; inset:0; overflow:hidden; background:#07090d; }
+  #cam { position:absolute; inset:0; transform-origin:50% 50%; display:flex; align-items:center;
+         justify-content:center; gap:70px; padding:0 60px; }
+
+  #glyphWrap { position:relative; width:300px; height:300px; flex:none; }
+  #glyphGlow { position:absolute; left:50%; top:50%; width:620px; height:620px;
+               transform:translate(-50%,-50%); pointer-events:none;
+               background:radial-gradient(circle, rgba(217,119,87,.28) 0%, rgba(217,119,87,0) 60%); }
+  #glyph { position:absolute; inset:0; }
+  #stageLbl { position:absolute; left:0; right:0; top:318px; text-align:center;
+              font-weight:600; font-stretch:75%; text-transform:uppercase; letter-spacing:7px;
+              font-size:22px; color:var(--mut); white-space:nowrap; }
+  #stageLbl.g { color:var(--grn); }
+
+  .term { width:700px; height:470px; background:#0d1117; border:2px solid #232a35; border-radius:20px;
+          padding:30px 36px; box-shadow:0 40px 120px rgba(0,0,0,.7); position:relative; overflow:hidden; }
+  .term .bar { display:flex; gap:10px; margin-bottom:26px; }
+  .term .bar i { width:13px; height:13px; border-radius:50%; background:#2b323d; display:block; }
+  #feed { display:flex; flex-direction:column; gap:7px; }
+  .fl { font-family:'Cascadia Code',Consolas,monospace; font-size:22px; line-height:1.35;
+        color:var(--ink); white-space:pre; }
+  .fl.m { color:var(--mut); }
+  .fl .a { color:var(--acc); } .fl .ok { color:var(--grn); } .fl .bad { color:var(--red); }
+  .fl .h { color:var(--acc2); font-weight:700; }
+  .cur { display:inline-block; width:13px; height:26px; background:var(--acc); vertical-align:-4px; }
+
+  #badge { position:absolute; right:36px; bottom:30px; opacity:0;
+           font-weight:700; font-stretch:75%; text-transform:uppercase; letter-spacing:4px;
+           font-size:26px; padding:12px 26px; border-radius:12px; border:3px solid var(--grn); color:var(--grn); }
+  #vig { position:absolute; inset:0; pointer-events:none;
+         background:radial-gradient(ellipse 80% 70% at 50% 50%, rgba(0,0,0,0) 45%, rgba(0,0,0,.7) 100%); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="cam">
+    <div id="glyphWrap">
+      <div id="glyphGlow"></div>
+      <svg id="glyph" viewBox="0 0 100 100" fill="none">
+        <path d="M 50 12 A 38 38 0 1 1 16.5 31" stroke="#d97757" stroke-width="11" stroke-linecap="round"></path>
+        <path d="M 8 12 L 16.5 31 L 35 22 Z" fill="#d97757"></path>
+      </svg>
+      <div id="stageLbl"></div>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <div id="feed"></div>
+      <div id="badge">Converged</div>
+    </div>
+  </div>
+  <div id="vig"></div>
+</div>
+<script>
+var F=0, TOTAL=240;
+function $(id){ return document.getElementById(id); }
+function cl(v){ return Math.max(0,Math.min(1,v)); }
+function pr(a,b){ return cl((F-a)/(b-a)); }
+function outCubic(t){ return 1-Math.pow(1-t,3); }
+
+var CMD='/jeffy';
+var T0=4, T1=16;                       // command typed
+var ITER=[[52,'H1'],[98,'H2'],[144,'M1']];
+var FEED=[
+  [22,'m','audit      whole surface, breadth first'],
+  [30,'', '<span class="h">H1</span>  unchecked read on a short header'],
+  [36,'', '<span class="h">H2</span>  off by one at the ring buffer edge'],
+  [42,'', '<span class="h">M1</span>  handle leaked on the error path'],
+];
+ITER.forEach(function(it,i){
+  var f=it[0], id=it[1];
+  FEED.push([f,   'm','iter '+(i+1)+'      fix <span class="h">'+id+'</span>, check written first']);
+  FEED.push([f+16,'', '           check ran   <span class="ok">PASS</span>']);
+  FEED.push([f+26,'m','           commit     <span class="a">'+['2b3eec0','820edde','141926b'][i]+'</span>  local only']);
+});
+var VERIFY=[
+  [190,'m','fresh audit  <span class="ok">clean</span>'],
+  [198,'m','evaluator    <span class="ok">agrees</span>   fresh context, adversarial'],
+  [206,'m','tests        <span class="ok">pass</span>     shell re-run'],
+  [226,'m','nothing pushed. every fix is a local commit.'],
+];
+var MAXL=9;
+
+var STAGES=[[0,'audit',''],[52,'iterate',''],[190,'verify',''],[214,'converged','g']];
+
+function setFrame(n){
+  F=n;
+  var cs=1+0.03*pr(0,TOTAL);
+  $('cam').style.transform='scale('+cs.toFixed(4)+')';
+
+  var html='';
+  var typed=CMD.slice(0,Math.round(pr(T0,T1)*CMD.length));
+  html+='<div class="fl"><span class="a">'+typed+'</span>'+(F<22?'<span class="cur"></span>':'')+'</div>';
+  var lines=(F>=186?VERIFY:FEED).filter(function(l){ return F>=l[0]; });
+  lines.slice(-MAXL).forEach(function(l){
+    var op=outCubic(pr(l[0],l[0]+5));
+    html+='<div class="fl '+l[1]+'" style="opacity:'+op.toFixed(3)+'">'+l[2]+'</div>';
+  });
+  $('feed').innerHTML=html;
+
+  // the glyph turns once per iteration and rests between
+  var ang=0;
+  ITER.forEach(function(it){ ang+=360*outCubic(pr(it[0],it[0]+30)); });
+  $('glyph').style.transform='rotate('+ang.toFixed(2)+'deg)';
+  var glow=0.6+0.4*(F>=214?1:0);
+  $('glyphGlow').style.opacity=glow;
+
+  var st=STAGES[0];
+  STAGES.forEach(function(s){ if(F>=s[0]) st=s; });
+  $('stageLbl').textContent=st[1]; $('stageLbl').className=st[2];
+
+  var b=$('badge'); var bp=pr(214,222);
+  b.style.opacity=outCubic(bp).toFixed(3);
+  b.style.transform='scale('+(0.9+0.1*outCubic(bp)).toFixed(3)+')';
+}
+window.setFrame=setFrame; window.TOTAL=TOTAL;
+setFrame(0);
+</script>
+</body>
+</html>
