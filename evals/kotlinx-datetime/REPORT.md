@@ -97,7 +97,7 @@ loop's own state file.
 ## Upstream
 
 `KDT-5` is [#650](https://github.com/Kotlin/kotlinx-datetime/pull/650),
-merged by the maintainer about six hours after filing; `KDT-1` is
+merged by the maintainer 88 minutes after filing; `KDT-1` is
 [#649](https://github.com/Kotlin/kotlinx-datetime/pull/649), merged 2026-09-07. Both were verified on a fresh clone at upstream HEAD (`e8019ead`, the base): the
 new escaped-quote test fails before the `Unicode.kt` change and passes after
 it, and with both changes applied `jvmTest`, `jsTest` and `wasmJsTest` pass

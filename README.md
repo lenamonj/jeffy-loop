@@ -9,43 +9,76 @@
 
 **[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
 
-## Autonomous Engineering With Proof
-
-**_Agents that don’t just act._**  
-_They audit · verify · attack · and prove._
+## A Claude Code loop that fixes bugs in your repo, each fix backed by a check that ran and passed. Maintainers have merged <!-- count:merged -->57<!-- /count --> of its patches.
 
 </div>
 
-Jeffy Loop is an autonomous engineering system built on one principle: **AI agents shouldn’t just produce work. They should produce evidence that the work is correct.**
+Jeffy Loop is a Claude Code skill. Type `/jeffy` in a session and it audits your codebase, then fixes what it finds, one task per iteration. Each fix carries a check that ran and passed and lands as a local commit, and an iteration that breaks your tests is reverted. The loop never pushes. A standard run cannot call itself done until a fresh audit, an adversarial evaluator and a shell re-run of your tests all agree. A High hunt fixes only the Highs and skips the evaluator, and many of the merged patches below came from hunts. The one grade neither mode can give itself is a merge. Maintainers with no stake in this project have merged its patches, each filed as a pull request from a local clone, in <!-- count:merged-projects -->45<!-- /count --> projects, including ones run by NVIDIA, Meta, Apple, Microsoft, Google and Netflix. [See them all.](#independent-validation)
 
-Every run is an **Audit → Attack → Verify → Prove** loop that ends in a receipt: what changed, why it changed, and how the result was checked.
+## The record
 
-Jeffy applies recursive self-improvement to its own engine: a mistake any run makes, on Jeffy’s source or on a project it was pointed at, becomes a lesson, then a backlog item, then a release that enforces the lesson on every later run, including the next one on Jeffy itself. [How.](docs/how-it-works.md#the-loop-improves-the-loop)
-
-**Jeffy treats “done” as something that must be demonstrated, not declared.**
-
-## The proof
-
-Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projects with no connection to this repository, each judged by its own test suite, every run published, failures included.
+Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projects with no connection to this repository, each judged by its own test suite. Every run is published, failures included.
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->57<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-<div align="center">
+**Converged:** the closing audit came back clean and the loop's adversarial evaluator, a fresh-context sub-agent, countersigned it, a standard this repository set and checks itself. That happened in <!-- count:converged -->103<!-- /count --> projects across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer. **Failed:** the run spent the budget declared before it started without converging, or, for libuv, was abandoned before it had one. That leaves PapaParse, an audit held to the same method rather than a loop run, which the receipts page counts as Fixed alongside the 103.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="media/language-pie-dark.png">
-  <img src="media/language-pie-light.png" alt="Pie chart of the 103 converged public targets by language: Python 20 at 19.4 percent, Rust 14 at 13.6 percent, Go 12 at 11.7 percent, JavaScript 10 at 9.7 percent, C++ 7 at 6.8 percent, Java 6 at 5.8 percent, Ruby 6 at 5.8 percent, Swift 6 at 5.8 percent, C 5 at 4.9 percent, PHP 5 at 4.9 percent, TypeScript 5 at 4.9 percent, Kotlin 4 at 3.9 percent, C# 3 at 2.9 percent." width="900">
-</picture>
+**[See every project, every patch, and every failure](evals/README.md)**
 
-<sub><!-- count:converged -->103<!-- /count --> projects run to convergence across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer or ruleset. Derived from the scorecard at render time.</sub>
+## Quick Install
 
-</div>
+You need [Claude Code](https://claude.com/claude-code), signed in once, and [git](https://git-scm.com/downloads). The installer checks for everything else and asks before installing `jq`.
+
+```bash
+git clone https://github.com/lenamonj/jeffy-loop.git
+cd jeffy-loop
+./install.sh        # Windows PowerShell: .\install.ps1
+```
+
+If PowerShell refuses with "running scripts is disabled on this system", run in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+Or from PyPI, no clone needed; `pipx install jeffy-loop` and `uv tool install jeffy-loop` work the same way:
+
+```bash
+pip install jeffy-loop
+jeffy install       # installs Jeffy as a Claude Code skill
+```
+
+## Running Jeffy
+
+Open Claude Code in the project you want to improve and type `/jeffy 10` into the session.
+
+```
+/jeffy                                     # 10 iterations, full-spectrum improvement
+/jeffy 5                                   # 5 iterations
+/jeffy 12 accessibility and performance    # 12 iterations with a focus directive
+/jeffy 5 --highs                           # High hunt: find and fix only the Highs
+/jeffy 10 --max-time 2h                    # 10 iterations, but stop after two hours either way
+```
+
+Start a new session for each run, [so each run reads its state files with a clean context](docs/usage.md#use-several-short-runs-not-one-long-one). A High hunt fixes only the Highs and stops at the first audit that finds none, so it is usually the faster run. [Usage](docs/usage.md) covers every flag.
+
+## What the engine enforces
+
+Each rule below is enforced by the iteration prompt, the state files or the Stop hook, and each is checkable in this repository. [How.](docs/how-it-works.md#what-the-engine-enforces)
+
+1. **A finding needs proof.** The loop must point at it and prove it with a runnable check.
+2. **Three checks decide "done".** It takes a fresh audit with zero High and zero Medium, an adversarial evaluator's countersignature, and a shell gate that re-runs your tests. Across the runs of one greenfield build, the evaluator was invoked 8 times and rejected 7. A High hunt skips the evaluator and claims no convergence.
+3. **No convergence over an unswept surface.** The Stop hook refuses convergence while any row of the loop's public-surface checklist is unswept, and a row reopens when its code changes.
+4. **Lessons become checks.** A rule learned once binds every later iteration, and the engine passes at least <!-- count:checks -->**470 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS. [How the loop improves itself.](docs/how-it-works.md#the-loop-improves-the-loop)
+
+> [!IMPORTANT]
+> **Trust model.** The engine is `skills/jeffy/hooks/stop-hook.sh` plus the small library beside it in `skills/jeffy/hooks/lib/`, registered as a Claude Code Stop hook. With no live Jeffy state file it exits at once and does nothing. `/cancel-jeffy` ends a run at any time. The loop acts through your Claude Code session with that session's permissions, and its no-push rule lives in the iteration prompt, so never allowlist push or force operations for it ([Usage](docs/usage.md#good-to-know), [Blast radius](SECURITY.md#blast-radius)). The installer writes two skill folders under `~/.claude/skills` and one hook entry in `~/.claude/settings.json`; [Usage](docs/usage.md#already-installed-upgrade) covers upgrading and removing them.
 
 ## Independent Validation
 
-A merged pull request is the one result Jeffy cannot award itself. It takes an independent maintainer, someone with no stake in this project, to review the patch and accept it into their own codebase. Maintainers have done exactly that <!-- count:merged -->57<!-- /count --> times, across <!-- count:merged-projects -->45<!-- /count --> open source projects, including those below.
+Each finding below was accepted upstream by the project's own maintainers.
 
 <table>
   <tr>
@@ -239,61 +272,12 @@ A merged pull request is the one result Jeffy cannot award itself. It takes an i
   </tr>
   <tr>
     <td><img src="https://github.com/anthropics.png" width="20" height="20" alt="" align="absmiddle"> Anthropic</td>
-    <td>A security issue in <a href="https://github.com/anthropics/claude-code-action">claude-code-action</a>, reported through their program and reproduced and triaged by their own security team. The details stay unpublished at their request until the report resolves.</td>
-    <td>14 days</td>
+    <td>A security issue in <a href="https://github.com/anthropics/claude-code-action">claude-code-action</a>, scored Low (2.3), reported through their program and reproduced and triaged by their own security team. The details stay unpublished at their request until the report resolves.</td>
+    <td>Scored Low (2.3) in 6 days</td>
   </tr>
 </table>
 
-**[See every project, every patch, and every failure](evals/README.md)**
-
 **[Contributor agreements signed](CONTRIBUTING.md#agreements-signed-for-upstream-work)**
-
-## Quick Install
-
-You need [Claude Code](https://claude.com/claude-code), signed in once, and [git](https://git-scm.com/downloads). The installer handles everything else, including `jq`.
-
-```bash
-git clone https://github.com/lenamonj/jeffy-loop.git
-cd jeffy-loop
-./install.sh        # Windows PowerShell: .\install.ps1
-```
-
-If PowerShell refuses with "running scripts is disabled on this system", run in PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-Or from PyPI, no clone needed; `pipx install jeffy-loop` and `uv tool install jeffy-loop` work the same way:
-
-```bash
-pip install jeffy-loop
-jeffy install       # installs Jeffy as a Claude Code skill
-```
-
-## Running Jeffy
-
-Open Claude Code in the project you want to improve and type `/jeffy 10`. It is a slash command inside the session, not a shell command.
-
-```
-/jeffy                                     # 10 iterations, full-spectrum improvement
-/jeffy 5                                   # 5 iterations
-/jeffy 12 accessibility and performance    # 12 iterations with a focus directive
-/jeffy 5 --highs                           # High hunt: find and fix only the Highs
-/jeffy 10 --max-time 2h                    # 10 iterations, but stop after two hours either way
-```
-
-When the run ends, start a new session to run it again; [the restart is doing real work](docs/usage.md#use-several-short-runs-not-one-long-one). A High hunt fixes only the Highs and stops at the first audit that finds none, so it is usually the faster run. [Usage](docs/usage.md) covers every flag, rounds and budgets, scoped mode, and cancelling.
-
-## What the engine enforces
-
-Each one is enforced by the iteration prompt, the state files, or the Stop hook. [How.](docs/how-it-works.md#what-the-engine-enforces)
-
-1. **It audits like an engineer, not a linter.** A finding exists only when the loop can point at it and prove it with a runnable check.
-2. **It cannot wreck your repo.** Every iteration is a local commit, a broken verify is reverted, and nothing is ever pushed.
-3. **"Done" is not the agent's opinion.** An adversarial evaluator and a shell gate re-check every declaration.
-4. **It cannot declare convergence over code it never looked at.** The loop maps the public surface into a checklist, every swept row records the commit it certified, and the Stop hook refuses the declaration while any row is unswept.
-5. **Lessons become machinery.** A rule learned once binds every later iteration, and the engine itself passes at least <!-- count:checks -->**470 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS.
 
 ## Documentation
 
@@ -305,18 +289,6 @@ Each one is enforced by the iteration prompt, the state files, or the Stop hook.
 | [The receipts](evals/README.md) | Every open-source target with its outcome, the merged patches, the greenfield builds |
 | [Contributing](CONTRIBUTING.md) | The validator and the review bar |
 | [White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf) | For readers new to agent loops: how loops got here, every rule from first principles, and what this method still cannot do |
-
-> [!IMPORTANT]
-> **Trust model.** The engine is one shell script, `skills/jeffy/hooks/stop-hook.sh`, plus the small library beside it in `skills/jeffy/hooks/lib/`, registered as a Claude Code Stop hook. In a session with no live Jeffy state file it exits at once and does nothing. The installer writes two skill folders under `~/.claude/skills`, one hook entry in `~/.claude/settings.json`, and, only if you say yes when `jq` is missing, a `jq` install through your package manager.
-
-<div align="center">
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="media/logo-dark.png">
-  <img src="media/logo-light.png" alt="Jeffy Loop" width="320">
-</picture>
-
-</div>
 
 ## License
 
