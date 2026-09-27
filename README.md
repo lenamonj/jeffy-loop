@@ -12,7 +12,7 @@
 
 **[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
 
-## A Claude Code loop that fixes bugs in your repo, each fix backed by a check that ran and passed. Maintainers have merged <!-- count:merged -->57<!-- /count --> of its patches.
+## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->57<!-- /count --> of its patches.
 
 </div>
 
