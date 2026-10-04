@@ -881,6 +881,26 @@ else
   fi
 fi
 
+# I1. The public repository carries one branch. A merged pull request's head
+#     and a release staging branch both outlived their work on origin for two
+#     weeks (claude/206-207-y1zglc, release/v1.24.0), because fork-hygiene.sh
+#     skips this repository by design and nothing else looked. origin is asked
+#     directly: a remote-tracking ref only knows what the last fetch saw.
+#     Maintainer tree only, like the CHANGELOG pairing: on CI the branch under
+#     test is itself a branch other than main.
+if [ ! -f CHANGELOG.md ]; then
+  skip "origin carries only main (maintainer-only; runs where the release is cut)"
+elif ! origin_heads="$(git ls-remote --heads origin 2>/dev/null)"; then
+  skip "origin carries only main (origin unreachable)"
+else
+  stray_heads="$(printf '%s\n' "$origin_heads" | sed -n 's|^.*refs/heads/||p' | grep -vx 'main' | tr '\n' ' ' | sed 's/ $//')"
+  if [ -n "$stray_heads" ]; then
+    fault "origin carries branches other than main [$stray_heads]; delete each once its work is on main"
+  else
+    pass "origin carries only main"
+  fi
+fi
+
 # I2. The uv package states the same version. pyproject.toml is the PyPI
 #     release record (1.23.0, `uv tool install jeffy-loop`): its version must
 #     equal JEFFY_VERSION, or PyPI lists one engine and the installed hook
