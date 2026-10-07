@@ -290,13 +290,9 @@ Each finding below was accepted upstream by the project's own maintainers.
     <td>10 hours</td>
   </tr>
   <tr>
-    <td rowspan="2"><img src="https://github.com/cisco.png" width="20" height="20" alt="" align="absmiddle"> Cisco</td>
+    <td><img src="https://github.com/cisco.png" width="20" height="20" alt="" align="absmiddle"> Cisco</td>
     <td><a href="https://github.com/cisco/libsrtp/pull/821">libsrtp #821</a><br>Encrypted packets carrying no authentication tag failed to unprotect, because the key lookup stepped a full tag length back from the packet end to find the key identifier</td>
     <td>4 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/cisco/libsrtp/issues/822">libsrtp #822</a> <sub>issue, not a patch</sub><br>The autotools <code>configure</code> aborted on stock Ubuntu because pkg-config was forced static, so no OpenSSL build was possible; reported here with the diagnosis and fixed by another contributor's <a href="https://github.com/cisco/libsrtp/pull/823">#823</a></td>
-    <td>3 days</td>
   </tr>
   <tr>
     <td rowspan="2"><img src="https://github.com/square.png" width="20" height="20" alt="" align="absmiddle"> Square</td>
@@ -344,6 +340,33 @@ Each finding below was accepted upstream by the project's own maintainers.
     <td><img src="https://github.com/uuid-rs.png" width="20" height="20" alt="" align="absmiddle"> uuid-rs</td>
     <td><a href="https://github.com/uuid-rs/uuid/pull/907">uuid #907</a><br>The UUIDv7 counter lost its top four bits to the version nibble (179 million crates.io downloads in the last 90 days)</td>
     <td>6 days</td>
+  </tr>
+</table>
+
+### Fixed upstream on our report
+
+Each finding below was reproduced by the project's own maintainers, who shipped a fix of their own instead of merging ours.
+
+<table>
+  <tr>
+    <th align="left">Fixed by</th>
+    <th align="left">Finding</th>
+    <th align="left">Report to fix</th>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/Shopify.png" width="20" height="20" alt="" align="absmiddle"> Shopify</td>
+    <td><a href="https://github.com/Shopify/toxiproxy/pull/770">toxiproxy #770</a><br>A slicer toxic with the default attributes recursed until the daemon died with a stack overflow on the first byte through the proxy; a maintainer shipped his own guard and 400 validation in <a href="https://github.com/Shopify/toxiproxy/pull/774">#774</a> and closed ours as handled there</td>
+    <td>30 days</td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/cisco.png" width="20" height="20" alt="" align="absmiddle"> Cisco</td>
+    <td><a href="https://github.com/cisco/libsrtp/issues/822">libsrtp #822</a><br>The autotools <code>configure</code> aborted on stock Ubuntu because pkg-config was forced static, so no OpenSSL build was possible; reported with either patch offered, and another contributor's <a href="https://github.com/cisco/libsrtp/pull/823">#823</a> citing the report was merged</td>
+    <td>3 days</td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
+    <td><a href="https://github.com/apache/casbin/issues/1752">casbin #1752</a><br>Set comparisons sorted live policy rows in place, so later <code>Enforce</code> calls returned the wrong answer; the maintainer closed the issue and our patch pointing at his own <a href="https://github.com/apache/casbin/commit/071dce14">commit</a>, which drops the sort for a counting map</td>
+    <td>8 days</td>
   </tr>
 </table>
 
