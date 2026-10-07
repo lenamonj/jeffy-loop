@@ -6,6 +6,7 @@
 </picture>
 
 [![Validate](https://img.shields.io/github/actions/workflow/status/lenamonj/jeffy-loop/validate.yml?style=for-the-badge&label=validate&logo=githubactions&logoColor=white)](https://github.com/lenamonj/jeffy-loop/actions/workflows/validate.yml)
+[![Behavioural checks](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2Flenamonj%2Fjeffy-loop%2Fmain%2FREADME.md&search=count%3Achecks%20--%3E%5C*%5C*(%5Cd%2B)%20behavioural%20checks&replace=%241%2B%20per%20host&label=behavioural%20checks&style=for-the-badge&color=22C55E)](scripts/validate.sh)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Skill-D97757?style=for-the-badge&logo=claude&logoColor=white)](https://claude.com/claude-code)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Mac%20%7C%20Linux-0EA5E9?style=for-the-badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
