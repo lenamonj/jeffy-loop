@@ -13,7 +13,7 @@
 
 **[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
 
-## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->60<!-- /count --> of its patches.
+## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->63<!-- /count --> of its patches.
 
 </div>
 
@@ -21,7 +21,7 @@ The model writes the patch. The harness around it decides whether that patch can
 
 The harness is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI agent with no part in the run signs off. The goal is fixes that survive scrutiny.
 
-There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->60<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation---the-receipts)
+There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->63<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation---the-receipts)
 
 <div align="center">
 
@@ -38,7 +38,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->60<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->63<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Converged:** the closing audit came back clean and the loop's adversarial evaluator, a fresh-context sub-agent, countersigned it, a standard this repository set and checks itself. That happened in <!-- count:converged -->103<!-- /count --> projects across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer. **Failed:** the run spent the budget declared before it started without converging, or, for libuv, was abandoned before it had one. That leaves PapaParse, an audit held to the same method rather than a loop run, which the receipts page counts as Fixed alongside the 103.
 
@@ -275,6 +275,19 @@ Each finding below was accepted upstream by the project's own maintainers.
   <tr>
     <td><a href="https://github.com/apache/commons-codec/pull/443">commons-codec #443</a><br>The Git tree-id builder sorted entries by UTF-16 code units where Git sorts UTF-8 bytes, so a name outside the Basic Multilingual Plane gave a different id from <code>git write-tree</code></td>
     <td>9 days</td>
+  </tr>
+  <tr>
+    <td rowspan="3"><img src="https://github.com/PaloAltoNetworks.png" width="20" height="20" alt="" align="absmiddle"> Palo Alto Networks</td>
+    <td><a href="https://github.com/PaloAltoNetworks/docusaurus-openapi-docs/pull/1625">docusaurus-openapi-docs #1625</a><br>A query or header parameter declared <code>explode: true</code> with a scalar value was enumerated as an object, so <code>status=available</code> went out as <code>status=</code> in the API explorer request and its code snippet, and a <code>null</code> header threw</td>
+    <td>31 days</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/PaloAltoNetworks/docusaurus-openapi-docs/pull/1624">docusaurus-openapi-docs #1624</a><br><code>clean-api-docs</code> deleted every <code>*.json</code> in the output directory and all of <code>schemas/</code>, so a hand-authored <code>_category_.json</code> went with the generated files</td>
+    <td>31 days</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/PaloAltoNetworks/docusaurus-openapi-docs/pull/1626">docusaurus-openapi-docs #1626</a><br>Every copy of the docs spelled the credential-persistence option <code>authPersistance</code> while the theme reads <code>authPersistence</code>, so a site set to <code>false</code> still wrote reader API keys and passwords to <code>sessionStorage</code></td>
+    <td>31 days</td>
   </tr>
   <tr>
     <td><img src="https://github.com/oracle.png" width="20" height="20" alt="" align="absmiddle"> Oracle</td>
