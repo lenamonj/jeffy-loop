@@ -21,7 +21,7 @@ The model writes the patch. The harness around it decides whether that patch can
 
 The harness is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI agent with no part in the run signs off. The goal is fixes that survive scrutiny.
 
-There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->63<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation---the-receipts)
+There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->63<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation---the-receipts)
 
 <div align="center">
 
