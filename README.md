@@ -13,7 +13,7 @@
 
 **[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)**
 
-## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->63<!-- /count --> of its patches.
+## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->64<!-- /count --> of its patches.
 
 </div>
 
@@ -21,7 +21,7 @@ The model writes the patch. The harness around it decides whether that patch can
 
 The harness is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI agent with no part in the run signs off. The goal is fixes that survive scrutiny.
 
-There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->63<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation---the-receipts)
+There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->64<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation---the-receipts)
 
 <div align="center">
 
@@ -38,7 +38,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->63<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->64<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Converged:** the closing audit came back clean and the loop's adversarial evaluator, a fresh-context sub-agent, countersigned it, a standard this repository set and checks itself. That happened in <!-- count:converged -->103<!-- /count --> projects across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer. **Failed:** the run spent the budget declared before it started without converging, or, for libuv, was abandoned before it had one. That leaves PapaParse, an audit held to the same method rather than a loop run, which the receipts page counts as Fixed alongside the 103.
 
@@ -309,13 +309,18 @@ Each finding below was accepted upstream by the project's own maintainers.
     <td>4 days</td>
   </tr>
   <tr>
-    <td rowspan="2"><img src="https://github.com/square.png" width="20" height="20" alt="" align="absmiddle"> Square</td>
+    <td rowspan="3"><img src="https://github.com/square.png" width="20" height="20" alt="" align="absmiddle"> Square</td>
     <td><a href="https://github.com/square/kotlinpoet/pull/2380">kotlinpoet #2380</a><br>String literals it emitted turned CRLF into LF, and raw strings in a constant context let newlines pick up indentation</td>
     <td>4 days</td>
   </tr>
   <tr>
     <td><a href="https://github.com/square/kotlinpoet/pull/2382">kotlinpoet #2382</a><br>A class in the default package got a <code>ClassName</code> whose <code>toString()</code> threw</td>
     <td>4 days</td>
+  </tr>
+  <tr>
+    <td><a href="https://github.com/square/kotlinpoet/pull/2391">kotlinpoet #2391</a><br><code>trimTrailingNewLine()</code> rewrote the last <code>String</code> argument of any trailing placeholder, so <code>initializer("%S", "cheese
+")</code> emitted a literal denoting <code>"cheese"</code> and nothing reported the change</td>
+    <td>19 days</td>
   </tr>
   <tr>
     <td rowspan="2"><img src="https://github.com/cloudflare.png" width="20" height="20" alt="" align="absmiddle"> Cloudflare</td>
