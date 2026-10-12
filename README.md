@@ -130,7 +130,7 @@ Each rule is enforced by the iteration prompt, the state files or the Stop hook,
 | **A finding needs proof** | The loop must point at the defect and prove it with a check that runs. |
 | **Three gates decide done** | A fresh audit with no High or Medium findings, an adversarial evaluator's countersignature, and a shell re-run of your tests. In one greenfield build the evaluator was invoked 8 times and rejected 7. A High hunt skips the evaluator and never claims convergence. |
 | **No convergence over unswept surface** | The Stop hook refuses to converge while any row of the public-surface checklist is unswept, and a row reopens when its code changes. |
-| **Lessons become checks** | A rule learned once binds every later iteration. The engine passes at least <!-- count:checks -->**475 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS. [How the loop improves itself.](docs/how-it-works.md#the-loop-improves-the-loop) |
+| **Lessons become checks** | A rule learned once binds every later iteration. The engine passes at least <!-- count:checks -->**477 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS. [How the loop improves itself.](docs/how-it-works.md#the-loop-improves-the-loop) |
 
 ### <img src="media/seal-mark.png" width="30" alt="" align="absmiddle"> Trust model
 
