@@ -140,7 +140,7 @@ Then announce the launch in one line - Jeffy v<version>, N iterations, the mode 
 
 ## Step 4: Begin iteration 1
 
-Read "<REF>/iteration-prompt.txt" now, or "<REF>/iteration-prompt-highs.txt" on a `--highs` launch (REF as resolved in Step 2), its only in-context load, and immediately start following it yourself. Do not wait for input. Every later turn end triggers the Stop hook, which re-feeds the same prompt until N iterations complete, the promise fires, or the state file is deleted.
+Read "<REF>/iteration-prompt.txt" now, or "<REF>/iteration-prompt-highs.txt" on a `--highs` launch (REF as resolved in Step 2), its only in-context load, and immediately start following it yourself. Do not wait for input. Every later turn end triggers the Stop hook, which re-feeds the same prompt (or, under --refeed pointer, the run state and a pointer at it) until N iterations complete, the promise fires, or the state file is deleted.
 
 ## Operational notes
 
