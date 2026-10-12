@@ -5159,6 +5159,41 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fault "stop hook computed the remaining budget of max_iterations 010 in octal"
     fi
 
+    # P1-74 (1.25.0): the refeed key. Without it, or with any value but
+    # pointer, the reason opens with the prompt file's text, as every receipt
+    # was earned; with `refeed: pointer` it opens with a pointer at that file
+    # and carries no prompt text, while RUN STATE rides in both. The default
+    # arm is compared to a `refeed: full` arm byte for byte, so the flag's
+    # absence and its explicit default cannot drift apart.
+    hb_rf_head="$(head -c 60 "$hb_tmp/prompt.txt")"
+    hb_rf_ptr='Iteration rules: follow the iteration prompt at '
+    hb_write_state sess-1 1 3
+    hb_rf_default="$(hb_run sess-1 'still working' '' | jq -r '.reason')"
+    hb_write_state sess-1 1 3
+    hb_state_addkey 'refeed: full'
+    hb_rf_full="$(hb_run sess-1 'still working' '' | jq -r '.reason')"
+    hb_write_state sess-1 1 3
+    hb_state_addkey 'refeed: pointer'
+    hb_rf_pointer="$(hb_run sess-1 'still working' '' | jq -r '.reason')"
+    if [ -n "$hb_rf_default" ] && [ "$hb_rf_default" = "$hb_rf_full" ] \
+      && [ "${hb_rf_default#"$hb_rf_head"}" != "$hb_rf_default" ] \
+      && ! printf '%s' "$hb_rf_default" | grep -qF -- "$hb_rf_ptr" \
+      && printf '%s' "$hb_rf_default" | grep -qF 'RUN STATE: iteration 2 of 3'; then
+      pass "stop hook re-feeds the prompt text by default, and refeed: full is byte-identical to no key (P1-74)"
+    else
+      printf 'default: %.200s\nfull: %.200s\n' "$hb_rf_default" "$hb_rf_full"
+      fault "stop hook's default re-feed does not open with the prompt text, or refeed: full differs from no key"
+    fi
+    if [ "${hb_rf_pointer#"$hb_rf_ptr"}" != "$hb_rf_pointer" ] \
+      && printf '%s' "$hb_rf_pointer" | grep -qF -- "$hb_tmp/prompt.txt" \
+      && ! printf '%s' "$hb_rf_pointer" | grep -qF -- "$hb_rf_head" \
+      && printf '%s' "$hb_rf_pointer" | grep -qF 'RUN STATE: iteration 2 of 3'; then
+      pass "stop hook under refeed: pointer re-feeds run state and a pointer at the prompt path, no prompt text (P1-74)"
+    else
+      printf 'pointer: %.300s\n' "$hb_rf_pointer"
+      fault "stop hook under refeed: pointer did not re-feed the pointer sentence with the prompt path and RUN STATE, or still carried the prompt text"
+    fi
+
     hb_write_state sess-1 1 3
     rm -f "$hb_tmp/prompt.txt"
     hb_out="$(hb_run sess-1 'still working' '' 2>/dev/null)"

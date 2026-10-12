@@ -2745,7 +2745,17 @@ else
   echo "jeffy stop hook: could not update $state; not re-feeding." >&2
   exit 0
 fi
-reason="$(cat "$prompt_path")"
+# 1.25.0 (P1-74): the re-fed prompt is 34 KB and was 21 to 29 percent of
+# every measured transcript. Under `refeed: pointer` the reason opens with a
+# pointer at the file the session read at launch instead of the file's text;
+# every other note rides unchanged. Any other value, or no key, is the
+# behaviour every receipt was earned under. The flag ships for the A/B and
+# becomes a default only if that experiment loses no convergence and no gate.
+if [ "$(fm refeed)" = "pointer" ]; then
+  reason="Iteration rules: follow the iteration prompt at $prompt_path, which this session read at launch; re-read that file now if any rule is uncertain."
+else
+  reason="$(cat "$prompt_path")"
+fi
 if [ -n "$focus" ]; then
   reason="$reason Focus this run on: $focus."
 fi

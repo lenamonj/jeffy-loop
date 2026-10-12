@@ -2,7 +2,7 @@
 name: jeffy
 description: Use when the user runs /jeffy to start an autonomous Jeffy improvement loop on the current project
 disable-model-invocation: true
-argument-hint: "[N] [--highs] [focus...]"
+argument-hint: "[N] [--highs] [--refeed pointer] [focus...]"
 ---
 
 # Jeffy
@@ -13,7 +13,7 @@ Project root means the directory Claude Code was started in - the session's prim
 
 ## Arguments
 
-Parse $ARGUMENTS: if the first token is an integer, it is the iteration budget N, default 10, or 5 on a `--highs` launch. Next parse the mode flag and the ceiling flags wherever they appear in the remainder. `--highs` takes no value and selects High-hunt mode for this run: the loop audits the whole surface, fixes only Highs, audits again once no High is open, and closes the first time an audit finds none - no sweep obligation, no Medium or Low queue, no evaluator gate, no closing extension and no convergence claim; a hunt is not a convergence and its receipt is the pull request its Highs produce. The ceiling flags each take one value: `--max-time <duration>` sets `max_wall_clock_seconds`, `--max-iter-time <duration>` sets `max_iteration_seconds`, and `--max-context <N>` sets `max_context_growth`; a duration is a bare number of seconds or a number suffixed `s`, `m`, or `h` (`45m`, `2h`, `900s`, `900`), and `0` means off, the default for all three. A flag missing its value, an unparseable duration, or an unrecognized `--` token is a refusal naming the token, never silently folded into the focus - a documented ceiling that becomes free text is a ceiling that is silently off. Whatever text remains after the budget and the flags is the focus directive for this run. If the token after the optional budget is exactly `enhance`, refuse the launch and stop: Enhance mode was removed in v1.11.0 - the defect loop is the product - and the last release that carries it is v1.10.0. On a fresh project, iteration 1 is always consumed by the audit that generates the backlog, so N=2 executes exactly one task; if the user picks N below 5, proceed but note that larger budgets make materially more progress.
+Parse $ARGUMENTS: if the first token is an integer, it is the iteration budget N, default 10, or 5 on a `--highs` launch. Next parse the mode flag and the ceiling flags wherever they appear in the remainder. `--highs` takes no value and selects High-hunt mode for this run: the loop audits the whole surface, fixes only Highs, audits again once no High is open, and closes the first time an audit finds none - no sweep obligation, no Medium or Low queue, no evaluator gate, no closing extension and no convergence claim; a hunt is not a convergence and its receipt is the pull request its Highs produce. The ceiling flags each take one value: `--max-time <duration>` sets `max_wall_clock_seconds`, `--max-iter-time <duration>` sets `max_iteration_seconds`, and `--max-context <N>` sets `max_context_growth`; a duration is a bare number of seconds or a number suffixed `s`, `m`, or `h` (`45m`, `2h`, `900s`, `900`), and `0` means off, the default for all three. `--refeed` takes one value, `full` or `pointer`, and chooses what the Stop hook re-feeds at every turn end: `full`, the default, is the whole iteration prompt, the behaviour every receipt was earned under; `pointer` is the run state and one sentence pointing at the prompt file this session read at launch, an experimental setting for the pre-registered A/B on context occupancy, never a default until that experiment loses no convergence and no gate. A flag missing its value, an unparseable duration, or an unrecognized `--` token is a refusal naming the token, never silently folded into the focus - a documented ceiling that becomes free text is a ceiling that is silently off. Whatever text remains after the budget and the flags is the focus directive for this run. If the token after the optional budget is exactly `enhance`, refuse the launch and stop: Enhance mode was removed in v1.11.0 - the defect loop is the product - and the last release that carries it is v1.10.0. On a fresh project, iteration 1 is always consumed by the audit that generates the backlog, so N=2 executes exactly one task; if the user picks N below 5, proceed but note that larger budgets make materially more progress.
 
 ## Step 1: Pre-flight
 
@@ -77,6 +77,7 @@ prompt_path: $REF/<iteration-prompt-highs.txt on a --highs launch, else iteratio
 focus: <sanitized focus, or empty>
 completion_promise: <JEFFY HUNT COMPLETE on a --highs launch, else JEFFY CONVERGED>
 <mode: highs on a --highs launch, else omit this line entirely>
+<refeed: pointer on a --refeed pointer launch, else omit this line entirely>
 started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 run_started_at: $(date +%s)
 iteration_started_at: $(date +%s)
