@@ -953,8 +953,6 @@ tbl_odd="$(awk -F'|' '/^\| [^|]+ \| [^|]+ \| \[details\]\(/ { r=$5; gsub(/[ \t]/
 tbl_merged="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -o '\[PR merged\](' | wc -l | tr -d ' ')"
 tbl_issues="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -o '\[issue filed\](' | wc -l | tr -d ' ')"
 tbl_prs_open="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -o '\[PR open\](' | wc -l | tr -d ' ')"
-# Distinct projects, not PRs: a row carrying two merged links is one project.
-tbl_merged_projects="$(grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$scorecard" | grep -c '\[PR merged\](')"
 # A High hunt is not a corpus entry and has no scorecard row, but its merge
 # is a merged patch (Jeff, 2026-09-06: only a merge enters the merged list).
 # Such a merge is a bullet in the Merged upstream list whose PR URL appears in
@@ -967,6 +965,17 @@ hunt_urls_of() { # $1 scorecard file
   awk '/^## Merged upstream/{p=1; next} /^## /{p=0} p' "$1" | grep -oE '^- \*\*[^]]*\[[^]]+\]\(https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+\) - merged\.\*\*' | grep -oE 'https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+' | while IFS= read -r hu_u; do
     grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$1" | grep -oE 'https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+' | grep -qxF "$hu_u" || printf '%s\n' "$hu_u"
   done
+}
+# VB-2 (1.25.0): projects are a set, not a sum. A row's merged repository and
+# a hunt's merged repository can be the same project (a hunt on a corpus
+# target), and adding the two counts would state one project twice; the
+# union is what "merged across N projects" claims. One function derives it so
+# the fixture below and the published count cannot drift apart.
+merged_projects_of() { # $1 scorecard file: distinct github.com/owner/repo with a merged patch, rows and hunt bullets as one set
+  {
+    grep -E '^\| [^|]+ \| [^|]+ \| \[details\]\(' "$1" | grep -oE '\[PR merged\]\(https://github\.com/[^/)]+/[^/)]+/pull/[0-9]+\)' | grep -oE 'github\.com/[^/)]+/[^/)]+'
+    hunt_urls_of "$1" | grep -oE 'github\.com/[^/]+/[^/]+'
+  } | sort -u | grep -c .
 }
 hu_tmp="$(mktemp -d)" || hu_tmp=""
 if [ -z "$hu_tmp" ]; then
@@ -985,13 +994,20 @@ else
   else
     fault "check J's hunt-merge exclusion read [$hu_got]: a hunt PR URL matched as a substring of a row's longer PR number, or a row's own merge was counted twice"
   fi
+  # VB-2: acme/lib has a row merge (#1234) and a hunt merge (#123); acme/row has a row merge.
+  # Two projects. A sum of row count (2) and hunt-repo count (1) says three.
+  hu_mp="$(merged_projects_of "$hu_tmp/scorecard.md")"
+  if [ "$hu_mp" = "2" ]; then
+    pass "check J derives merged-projects as the set union of row and hunt repositories (a hunt on a corpus target is one project, not two)"
+  else
+    fault "check J's merged-projects read [$hu_mp] for two repositories, one of them merged by a row and a hunt: the count is a sum, not a set"
+  fi
   rm -rf "$hu_tmp"
 fi
 hunt_urls="$(hunt_urls_of "$scorecard")"
 hunt_merged="$(printf '%s\n' "$hunt_urls" | grep -c '/pull/')"
-hunt_merged_projects="$(printf '%s\n' "$hunt_urls" | grep -oE 'github\.com/[^/]+/[^/]+' | sort -u | grep -c .)"
 tbl_merged=$((tbl_merged + hunt_merged))
-tbl_merged_projects=$((tbl_merged_projects + hunt_merged_projects))
+tbl_merged_projects="$(merged_projects_of "$scorecard")"
 # Attempts that did not converge, from the ledger of every attempt, so the
 # front page's failed-project count and this figure are two derivations of
 # two tables rather than one typed number and one bridge sentence.
@@ -5123,17 +5139,31 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       else
         awk 'NR == 1 { $0 = $0 " " } { print }' "$hb_state" > "$hb_state.b" && mv "$hb_state.b" "$hb_state"
       fi
+      rm -f "$hb_state.refused"
+      # 1.25.0 (review F9): the first stop after the failed advance is blocked
+      # once, with the opener rule as the reason, so an unattended run is told
+      # instead of ending on a stderr line nobody reads; the second stop is
+      # accepted, because the counter can never advance and a block that
+      # repeats would hold the session forever. The state file is untouched
+      # both times, and the sidecar that remembers the first delivery sits
+      # beside it.
       hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
-      if [ -n "$hb_out" ] || [ ! -f "$hb_state" ] \
-        || ! grep -q 'could not advance the iteration counter' "$hb_tmp/hb_err.txt"; then
-        printf '%s: %s\n' "$hb_hb4" "$hb_out"; cat "$hb_tmp/hb_err.txt"
+      hb_out2="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err2.txt")"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" != "block" ] \
+        || ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'a line reading exactly ---' \
+        || ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'could not advance the iteration counter' \
+        || [ -n "$hb_out2" ] || [ ! -f "$hb_state" ] || [ ! -f "$hb_state.refused" ] \
+        || ! grep -q 'could not advance the iteration counter' "$hb_tmp/hb_err.txt" \
+        || ! grep -q 'could not advance the iteration counter' "$hb_tmp/hb_err2.txt"; then
+        printf '%s: first %.160s | second %.80s\n' "$hb_hb4" "$hb_out" "$hb_out2"; cat "$hb_tmp/hb_err.txt"
         hb_hb4_ok=0
       fi
+      rm -f "$hb_state.refused"
     done
     if [ "$hb_hb4_ok" = 1 ]; then
-      pass "stop hook refuses to re-feed a state file whose opener is not exactly --- (trailing space, BOM) rather than re-feeding forever at one count (HB-4)"
+      pass "stop hook refuses to re-feed a state file whose opener is not exactly --- (trailing space, BOM), says so once as a block with the opener rule, then accepts (HB-4, F9)"
     else
-      fault "stop hook re-fed a state file whose iteration counter its rewrite could not advance"
+      fault "stop hook re-fed a state file whose counter its rewrite could not advance, or did not deliver that refusal exactly once as a block carrying the opener rule"
     fi
 
     # HB-5: /jeffy 08 is a decimal budget. Bash arithmetic read the leading

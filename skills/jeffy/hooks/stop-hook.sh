@@ -2737,9 +2737,20 @@ if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory
   # still parsed through fm(), so the run re-fed forever at one count with no
   # budget, stall or oscillation baseline ever stamped. (HB-4)
   if [ "$(fm iteration)" != "$next" ]; then
-    echo "jeffy stop hook: could not advance the iteration counter in $state (its frontmatter must open and close with a line reading exactly ---); not re-feeding. Run /cancel-jeffy or delete the file." >&2
+    hb4_msg="could not advance the iteration counter in $state (its frontmatter must open and close with a line reading exactly ---); not re-feeding. Run /cancel-jeffy or delete the file."
+    echo "jeffy stop hook: $hb4_msg" >&2
+    # 1.25.0 (review F9): stderr alone reaches nobody in an unattended run, so
+    # the refusal is also said once as a block whose reason is the fix. Once:
+    # the state file cannot be rewritten (that is the defect), so a sidecar
+    # marks that the session has been told, and the next stop is accepted
+    # rather than blocking forever on a counter that never advances.
+    if [ ! -f "$state.refused" ]; then
+      : > "$state.refused"
+      printf '%s' "jeffy stop hook: $hb4_msg This stop was blocked once to deliver that message; the next stop will be accepted." | jq -Rs '{decision: "block", reason: .}'
+    fi
     exit 0
   fi
+  rm -f "$state.refused"
 else
   rm -f "$tmp"
   echo "jeffy stop hook: could not update $state; not re-feeding." >&2
