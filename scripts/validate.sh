@@ -1764,6 +1764,25 @@ for pf_file in "$prompt_file" skills/jeffy/references/iteration-prompt-highs.txt
   fi
 done
 
+# 6b3. P1-73 (1.25.0): exploratory output is redirected, never printed whole.
+#      Bash tool results were 21 to 32 percent of transcript bytes in three
+#      measured runs (macaron x2, kotlinx-collections-immutable, 2026-10-11),
+#      and the only output rule the prompt carried bounded the Verify command.
+#      Both prompts state the redirect rule exactly once, and the edit-scope
+#      sentence names .jeffy/scratch/ so the rule and the scope agree.
+for ex_pf in "$prompt_file" skills/jeffy/references/iteration-prompt-highs.txt; do
+  [ -f "$ex_pf" ] || continue
+  ex_rule_n="$(grep -oF -- 'redirected to a file under .jeffy/scratch/' "$ex_pf" | wc -l | tr -d '[:space:]')"
+  ex_scope="$(grep -o 'Edit only the files the task requires[^;]*' "$ex_pf" | head -n 1)"
+  if [ "$ex_rule_n" -ne 1 ]; then
+    fault "$ex_pf states the exploratory-output redirect rule $ex_rule_n times; it must appear exactly once"
+  elif ! printf '%s' "$ex_scope" | grep -qF -- '.jeffy/scratch/'; then
+    fault "$ex_pf redirects exploratory output under .jeffy/scratch/ but its edit-scope sentence does not name that path"
+  else
+    pass "$ex_pf redirects exploratory output to .jeffy/scratch/ and lists it in the edit scope"
+  fi
+done
+
 # 6b2. P0-2 (1.9.0): the prompt's closing rule is the severity floor, and the
 #      three clauses that make it safe each appear exactly once - the floor
 #      itself, the carried-findings publication duty, and the evaluator
