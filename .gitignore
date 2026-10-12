@@ -8,7 +8,12 @@ __pycache__/
 # Jeffy transient loop state - session-scoped, must never be committed
 # (jeffy-loop.local.md is the 2.0 engine's file; ralph-loop.local.md is legacy)
 .claude/jeffy-loop.local.md
+.claude/jeffy-loop.local.md.refused
 .claude/ralph-loop.local.md
+
+# Jeffy exploratory-output scratch - a run redirects long command output here and reads it
+# back by grep; ignored so a checkpoint never commits a build log (1.25.0)
+.jeffy/scratch/
 
 # Jeffy self-hosting state - dev logs from running Jeffy on this repo, not part
 # of the product. Anchored to the repo root so a future nested product doc with

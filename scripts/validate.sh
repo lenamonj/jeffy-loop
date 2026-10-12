@@ -1794,10 +1794,32 @@ for ex_pf in "$prompt_file" skills/jeffy/references/iteration-prompt-highs.txt; 
     fault "$ex_pf states the exploratory-output redirect rule $ex_rule_n times; it must appear exactly once"
   elif ! printf '%s' "$ex_scope" | grep -qF -- '.jeffy/scratch/'; then
     fault "$ex_pf redirects exploratory output under .jeffy/scratch/ but its edit-scope sentence does not name that path"
+  elif ! grep -qF -- '.jeffy/scratch/ is ignored by git at bootstrap and never committed' "$ex_pf"; then
+    fault "$ex_pf sends exploratory output to .jeffy/scratch/ without saying the path is ignored and never committed (a build log would enter every checkpoint)"
   else
-    pass "$ex_pf redirects exploratory output to .jeffy/scratch/ and lists it in the edit scope"
+    pass "$ex_pf redirects exploratory output to .jeffy/scratch/, lists it in the edit scope, and says it is never committed"
   fi
 done
+# The launcher ignores the three transient paths at every launch, and this repository, which
+# runs the loop on itself, ignores the two that are new in 1.25.0 (review M1, M3).
+ex_bad=""
+for ex_path in '.claude/jeffy-loop.local.md' '.claude/jeffy-loop.local.md.refused' '.jeffy/scratch/'; do
+  grep -qF -- "\`$ex_path\`" skills/jeffy/SKILL.md || ex_bad="$ex_bad $ex_path(SKILL.md)"
+done
+for ex_path in '.claude/jeffy-loop.local.md.refused' '.jeffy/scratch/'; do
+  grep -qxF -- "$ex_path" .gitignore || ex_bad="$ex_bad $ex_path(.gitignore)"
+done
+if [ -z "$ex_bad" ]; then
+  pass "the launcher gitignores the loop state, the refusal sidecar and .jeffy/scratch/ at bootstrap, and this repository ignores the two new paths"
+else
+  fault "transient paths not gitignored where the loop writes them:$ex_bad"
+fi
+# shellcheck disable=SC2016
+if grep -qF -- 'a `--refeed` value other than `full` or `pointer`' skills/jeffy/SKILL.md; then
+  pass "the launcher refuses an invalid --refeed value instead of running the full arm under a mislabelled flag (review M2)"
+else
+  fault "SKILL.md does not name an invalid --refeed value as a launch refusal"
+fi
 
 # 6b2. P0-2 (1.9.0): the prompt's closing rule is the severity floor, and the
 #      three clauses that make it safe each appear exactly once - the floor
