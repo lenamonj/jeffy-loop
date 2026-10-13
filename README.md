@@ -387,6 +387,11 @@ Each finding below was reproduced by the project's own maintainers, who shipped 
     <td><a href="https://github.com/apache/casbin/issues/1752">casbin #1752</a><br>Set comparisons sorted live policy rows in place, so later <code>Enforce</code> calls returned the wrong answer; the maintainer closed the issue and our patch pointing at his own <a href="https://github.com/apache/casbin/commit/071dce14">commit</a>, which drops the sort for a counting map</td>
     <td>8 days</td>
   </tr>
+  <tr>
+    <td><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
+    <td><a href="https://github.com/google/osv-scanner/issues/3107">osv-scanner #3107</a><br>Vulnerability grouping was order dependent: a record that only linked two existing groups when it arrived last left them split, so one alias could appear in two groups of a scan; the maintainer rewrote the grouper around a union-find in his own <a href="https://github.com/google/osv-scanner/pull/3114">pull request</a>, resolving the issue</td>
+    <td>16 days</td>
+  </tr>
 </table>
 
 ## Private security
