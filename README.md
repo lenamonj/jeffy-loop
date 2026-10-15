@@ -13,7 +13,7 @@
 
 **[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)** &nbsp;·&nbsp; **[STE100 description](https://github.com/lenamonj/jeffy-loop/raw/main/Jeffy-Loop-STE100.pdf)**
 
-## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->65<!-- /count --> of its patches.
+## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->66<!-- /count --> of its patches.
 
 </div>
 
@@ -21,7 +21,7 @@ The model writes the patch. The harness around it decides whether that patch can
 
 The harness is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI agent with no part in the run signs off. The goal is fixes that survive scrutiny.
 
-There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->65<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Square, Cloudflare, and more. [See them all.](#independent-validation---the-receipts)
+There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->66<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, and more. [See them all.](#independent-validation---the-receipts)
 
 <div align="center">
 
@@ -38,7 +38,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->65<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->66<!-- /count -->** | **<!-- count:prs-open -->27<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Converged:** the closing audit came back clean and the loop's adversarial evaluator, a fresh-context sub-agent, countersigned it, a standard this repository set and checks itself. That happened in <!-- count:converged -->103<!-- /count --> projects across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer. **Failed:** the run spent the budget declared before it started without converging, or, for libuv, was abandoned before it had one. That leaves PapaParse, an audit held to the same method rather than a loop run, which the receipts page counts as Fixed alongside the 103.
 
@@ -312,6 +312,11 @@ Each finding below was accepted upstream by the project's own maintainers.
     <td><img src="https://github.com/cisco.png" width="20" height="20" alt="" align="absmiddle"> Cisco</td>
     <td><a href="https://github.com/cisco/libsrtp/pull/821">libsrtp #821</a><br>Encrypted packets carrying no authentication tag failed to unprotect, because the key lookup stepped a full tag length back from the packet end to find the key identifier</td>
     <td>4 days</td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/uber.png" width="20" height="20" alt="" align="absmiddle"> Uber</td>
+    <td><a href="https://github.com/uber/h3/pull/1235">h3 #1235</a><br><code>gridRing</code> zeroed the caller's output buffer with a width computed from <code>k</code> before checking <code>k</code>, so a negative <code>k</code> became a size near 1.8e19 and the write ran off the end of the buffer; the domain check now runs first</td>
+    <td>39 days</td>
   </tr>
   <tr>
     <td rowspan="3"><img src="https://github.com/square.png" width="20" height="20" alt="" align="absmiddle"> Square</td>
