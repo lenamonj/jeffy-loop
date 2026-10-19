@@ -1,13 +1,14 @@
 # Usage
 
 ```
-/jeffy [N] [focus...] [--highs] [--max-time <45m|2h|900s>] [--max-iter-time <20m>] [--max-context <4>] [--refeed pointer]
+/jeffy [N] [focus...] [--highs] [--max-time <45m|2h|900s>] [--max-iter-time <20m>] [--max-context <4>] [--max-surface <lines>] [--refeed pointer]
 ```
 
 - `N` - iteration budget, default 10. Sizing is low-stakes in both directions: the loop ends itself at convergence, so unused budget costs nothing, and a budget that runs dry loses no work - the next `/jeffy` picks up where the run stopped. The floor for converging in one run is the opening audit, one iteration per expected finding, and a closing audit; when that arithmetic outgrows the default, prefer a second run over a bigger number (see [Use several short runs](#use-several-short-runs-not-one-long-one)).
 - `focus` - optional directive for the run, e.g. `/jeffy 8 test coverage and error handling`.
 - `--highs` - High-hunt mode, see [High hunt](#high-hunt). Default budget 5.
 - `--max-time` / `--max-iter-time` - optional time ceilings, **off by default**. A turn budget counts turns and a turn is unbounded in time, so these bound the run in hours instead: `--max-time` ends the run out of time the way exhaustion ends it out of turns, and `--max-iter-time` draws a note on a long iteration, ending the run after two consecutive ones. Neither can cut a turn short (the hook fires at turn end) and neither preempts a closing extension or a converged declaration. They default to off rather than to a number nobody measured; for reference, rounds of ten iterations in [the receipts](../evals/README.md) run roughly 60 to 130 minutes. Elapsed wall time is reported every iteration either way.
+- `--max-surface` - the size ceiling, **on by default**: 150,000 tracked source lines on an Improvement launch, 600,000 on a `--highs` launch, `0` off. Pre-flight measures the tree from one git listing (source extensions, vendored directories skipped) and refuses to start above the ceiling, printing the measurement, the five largest files and the exact flag to relaunch with. Every iteration audits the whole surface, so a tree three to ten times the usual one costs three to ten times the hours and the usage; the ceiling makes that a number typed on purpose rather than one discovered at round three. The measurement is a floor: it does not know what is generated or out of scope.
 - `--max-context` - optional context-pressure advisory, **off by default**. The engine re-feeds one session, so context accumulates within a run; past N times the transcript's size at the run's first iteration, the loop is advised to finish its current task and close so the next run reads the state files with a clean window. It advises and never stops: the closing rule governs and a declared budget is never cut short. Measured from the transcript rather than counted in iterations, and reported every iteration whether a threshold is set or not.
 - `--refeed pointer` - experimental, **off by default**. The Stop hook normally re-feeds the whole iteration prompt at every turn end, about 34 KB of text; in three measured runs that text was 21 to 29 percent of the transcript. With `pointer` the hook re-feeds the run state and one sentence pointing at the prompt file the session read at launch, so the rules stay on disk instead of repeating in the window. The default is unchanged and stays so until a pre-registered A/B on converged targets shows the pointer loses no convergence and no evaluator verdict.
 
@@ -18,6 +19,7 @@
 /jeffy 15                                  # one round of 15 - the loose budget for a wide surface
 /jeffy 5 --highs                           # High hunt: find and fix only the Highs
 /jeffy 10 --max-time 2h                    # 10 iterations, but stop after two hours either way
+/jeffy 10 --max-surface 300000             # run a tree measured at 235k source lines, knowingly
 ```
 
 ## High hunt

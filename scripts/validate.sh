@@ -30,7 +30,7 @@ skip() { echo "[SKIP] $1"; skip_n=$((skip_n + 1)); skipped="$skipped$1
 # Interrupt safety: the runtime checks (8 and 9) build mktemp sandboxes; an
 # aborted run must not leak them.
 rt_tmp=""; pr_tmp=""; hb_tmp=""
-trap 'rm -rf ${rt_tmp:+"$rt_tmp"} ${pr_tmp:+"$pr_tmp"} ${hb_tmp:+"$hb_tmp"}' EXIT
+trap 'rm -rf ${rt_tmp:+"$rt_tmp"} ${pr_tmp:+"$pr_tmp"} ${hb_tmp:+"$hb_tmp"} ${k4_tmp:+"$k4_tmp"}' EXIT
 
 # 1. The shell entry points parse cleanly. Parser stderr is shown on failure
 #    so the [FAIL] names the offending line.
@@ -841,6 +841,52 @@ else
     pass "the sandbox detector answers one of three words, honours an explicit declaration, and SECURITY.md states the blast radius"
   else
     fault "blast-radius honesty is broken:$k3_bad"
+  fi
+fi
+
+# K4. Surface ceiling. A budget approved for a tree nobody measured is approved
+#     blind, so pre-flight check 11 measures the tree and refuses above the
+#     ceiling before any state file exists. The library must count tracked
+#     source only (a vendored file and a markdown file do not count), print
+#     the measurement first, exit 3 over the ceiling with the relaunch flag in
+#     its refusal, exit 0 under it, and exit 2 outside a git work tree rather
+#     than reporting zero; and the skill must name both the library and the
+#     flag, or the check exists in the tree and not at launch. (P1-77)
+k4_sh=skills/jeffy/hooks/lib/measure-surface.sh
+if [ ! -f "$k4_sh" ]; then
+  fault "the surface measurer $k4_sh is missing; pre-flight check 11 has nothing to run"
+else
+  k4_bad=""
+  k4_tmp="$(mktemp -d)"; k4_dir="$k4_tmp/repo"; mkdir -p "$k4_dir"
+  git -C "$k4_dir" init -q
+  mkdir -p "$k4_dir/vendor/x" "$k4_dir/src dir"
+  printf 'a\nb\nc\n' > "$k4_dir/src dir/m.py"
+  printf '1\n2\n' > "$k4_dir/vendor/x/v.py"
+  printf 'x\n' > "$k4_dir/main.rs"
+  printf 'doc\n' > "$k4_dir/README.md"
+  git -C "$k4_dir" add -A
+  git -C "$k4_dir" -c user.email=jeffy@test -c user.name=jeffy -c core.autocrlf=false commit -qm fixture
+  k4_out="$(bash "$k4_sh" "$k4_dir" 2>&1)"; k4_rc=$?
+  [ "$k4_rc" = 0 ] || k4_bad="$k4_bad; plain run exited $k4_rc"
+  [ "$(printf '%s\n' "$k4_out" | head -n 1)" = "lines=4 files=2" ] || k4_bad="$k4_bad; measured [$(printf '%s\n' "$k4_out" | head -n 1)], expected lines=4 files=2 (vendored and markdown excluded)"
+  k4_over="$(bash "$k4_sh" "$k4_dir" --ceiling 3 2>&1)"; k4_rc=$?
+  [ "$k4_rc" = 3 ] || k4_bad="$k4_bad; over the ceiling exited $k4_rc, expected 3"
+  printf '%s\n' "$k4_over" | grep -q 'SURFACE OVER CEILING: 4 tracked source lines' || k4_bad="$k4_bad; the refusal does not state the measurement"
+  printf '%s\n' "$k4_over" | grep -q -- '--max-surface 4' || k4_bad="$k4_bad; the refusal does not name the relaunch flag with the measured value"
+  bash "$k4_sh" "$k4_dir" --ceiling 4 >/dev/null 2>&1 || k4_bad="$k4_bad; at the ceiling exited $?, expected 0"
+  k4_nogit="$k4_tmp/nogit"; mkdir -p "$k4_nogit"
+  bash "$k4_sh" "$k4_nogit" >/dev/null 2>&1; k4_rc=$?
+  [ "$k4_rc" = 2 ] || k4_bad="$k4_bad; a non-git root exited $k4_rc, expected 2"
+  bash "$k4_sh" "$k4_dir" --ceiling x >/dev/null 2>&1; k4_rc=$?
+  [ "$k4_rc" = 64 ] || k4_bad="$k4_bad; a non-numeric ceiling exited $k4_rc, expected 64"
+  grep -q '^11\. Surface ceiling' skills/jeffy/SKILL.md || k4_bad="$k4_bad; SKILL.md carries no pre-flight check 11"
+  grep -q 'measure-surface\.sh' skills/jeffy/SKILL.md || k4_bad="$k4_bad; SKILL.md never names the measurer"
+  [ "$(grep -c -- '--max-surface' skills/jeffy/SKILL.md)" -ge 2 ] || k4_bad="$k4_bad; SKILL.md does not parse and document --max-surface"
+  grep -q -- '--max-surface' docs/usage.md || k4_bad="$k4_bad; docs/usage.md does not document --max-surface"
+  if [ -z "$k4_bad" ]; then
+    pass "the surface measurer counts tracked source only, refuses over the ceiling with the relaunch flag, and the skill runs it as pre-flight check 11"
+  else
+    fault "the surface ceiling is broken:$k4_bad"
   fi
 fi
 
