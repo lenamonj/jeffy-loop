@@ -181,16 +181,28 @@ def write_settings(path, settings):
     unwritable settings.json raised PermissionError where every other failure
     here prints [FAILED]. os.replace is atomic on POSIX and on Windows, and
     renaming into place needs write permission on the directory rather than on
-    the file, which is what lets a read-only settings.json be replaced exactly
-    as mv replaces it.
+    the file on POSIX, which is what lets a read-only settings.json be replaced
+    as mv replaces it; Windows refuses the rename over a read-only file and the
+    boundary in main reports that as [FAILED].
     """
-    tmp = path.with_name(path.name + ".jeffy-tmp")
+    # A symlinked settings.json (stow, home-manager) is replaced at its target,
+    # not turned into a regular file beside a dangling link; the existing mode
+    # is carried over, because a rename takes the umask's mode and would open a
+    # 0600 file holding API keys to 0644.
+    if path.is_symlink():
+        path = path.resolve()
+    tmp = path.with_name(f"{path.name}.jeffy-{os.getpid()}.tmp")
     try:
         tmp.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        if path.exists():
+            shutil.copymode(path, tmp)
         os.replace(tmp, path)
-    except OSError:
+    except OSError as exc:
         with contextlib.suppress(OSError):
             tmp.unlink()
+        if exc.filename and str(exc.filename) == str(tmp) and not getattr(exc, "filename2", None):
+            # The temp file is an implementation detail; name the file the user knows.
+            raise OSError(exc.errno, exc.strerror, str(path)) from exc
         raise
 
 
@@ -383,10 +395,8 @@ def main():
         # first draft of this handler named the internal temp file instead.
         target = getattr(exc, "filename2", None) or getattr(exc, "filename", None) or "a file it needed"
         detail = exc.strerror or exc.__class__.__name__
-        print(
-            f"[FAILED] {target}: {detail}; fix that, then re-run this installer.",
-            file=sys.stderr,
-        )
+        # stdout, beside every other [OK] and [FAILED] line this installer prints.
+        print(f"[FAILED] {target}: {detail}; fix that, then re-run this installer.")
         return 1
 
 

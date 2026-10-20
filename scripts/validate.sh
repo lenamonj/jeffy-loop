@@ -10200,6 +10200,13 @@ fi
 if ! command -v python3 >/dev/null 2>&1; then
   skip "shipped Python installer runtime (python3 not on PATH)"
 else
+  # The interpreter the gate found is the one that runs, by absolute path: a
+  # sandboxed PATH of /usr/bin:/bin once dropped a python3 living in
+  # /usr/local/bin (the official Docker images), a pyenv shim or Homebrew,
+  # gated present and then not found, a false red. Windows Python ignores HOME
+  # and reads USERPROFILE for Path.home(), so both point at the sandbox; a
+  # check that redirected only HOME would install into the real profile.
+  v_py="$(command -v python3)"
   v_tmp="$(mktemp -d)" || v_tmp=""
   if [ -z "$v_tmp" ]; then
     fault "the Python installer check could not create its sandbox (mktemp failed)"
@@ -10208,7 +10215,7 @@ else
     for v_m in src/jeffy_loop/*.py; do [ -f "$v_m" ] && v_mods=$((v_mods + 1)); done
     if [ "$v_mods" -eq 0 ]; then
       fault "no Python module found under src/jeffy_loop; the packaged installer this check grades is gone"
-    elif v_err="$(PYTHONPYCACHEPREFIX="$v_tmp/pyc" python3 -m py_compile src/jeffy_loop/*.py 2>&1)"; then
+    elif v_err="$(PYTHONPYCACHEPREFIX="$v_tmp/pyc" "$v_py" -m py_compile src/jeffy_loop/*.py 2>&1)"; then
       pass "src/jeffy_loop compiles ($v_mods modules, py_compile)"
     else
       echo "$v_err"
@@ -10217,6 +10224,7 @@ else
     v_pairs="$(sed -n '/^\[tool.hatch.build.targets.wheel.force-include\]/,/^\[/p' pyproject.toml \
       | sed -n 's/^"\{0,1\}\([^"=]*\)"\{0,1\}[[:space:]]*=[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1|\2/p')"
     v_stage="$v_tmp/pkg"; v_home="$v_tmp/home"; v_bin="$v_tmp/bin"
+    v_profile="$v_home"; command -v cygpath >/dev/null 2>&1 && v_profile="$(cygpath -w "$v_home")"
     mkdir -p "$v_stage/jeffy_loop" "$v_home/.claude" "$v_bin"
     cp src/jeffy_loop/*.py "$v_stage/jeffy_loop/" 2>/dev/null
     v_staged=0
@@ -10247,17 +10255,17 @@ print("jeffy=%d timeouts=%s other=%d" % (len(j), ",".join(str(h.get("timeout")) 
 '
     if [ "$v_staged" -eq 0 ]; then
       fault "pyproject.toml's wheel force-include map read as empty, so this check staged no skills and would pass over a packaging change"
-    elif ! HOME="$v_home" PATH="$v_bin:/usr/bin:/bin" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" \
-        python3 -m jeffy_loop.cli install </dev/null >"$v_tmp/install.log" 2>&1; then
+    elif ! HOME="$v_home" USERPROFILE="$v_profile" PATH="$v_bin:$PATH" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" \
+        "$v_py" -m jeffy_loop.cli install </dev/null >"$v_tmp/install.log" 2>&1; then
       sed -n '1,20p' "$v_tmp/install.log"
       fault "the shipped console script's install exited non-zero against a sandbox HOME (log above)"
     elif [ ! -f "$v_home/.claude/skills/jeffy/hooks/stop-hook.sh" ] || [ ! -f "$v_home/.claude/skills/cancel-jeffy/SKILL.md" ]; then
       fault "the console script's install left the sandbox HOME without the Stop hook or the cancel-jeffy skill"
     else
-      v_got="$(python3 -c "$v_read" "$v_home" 2>&1)"
-      HOME="$v_home" PATH="$v_bin:/usr/bin:/bin" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" \
-        python3 -m jeffy_loop.cli install </dev/null >"$v_tmp/install2.log" 2>&1
-      v_again="$(python3 -c "$v_read" "$v_home" 2>&1)"
+      v_got="$("$v_py" -c "$v_read" "$v_home" 2>&1)"
+      HOME="$v_home" USERPROFILE="$v_profile" PATH="$v_bin:$PATH" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" \
+        "$v_py" -m jeffy_loop.cli install </dev/null >"$v_tmp/install2.log" 2>&1
+      v_again="$("$v_py" -c "$v_read" "$v_home" 2>&1)"
       if [ "$v_got" != "jeffy=1 timeouts=1800 other=1" ]; then
         fault "the console script's install did not leave one Stop hook registration at the 1800s timeout with the unrelated hook intact: $v_got"
       elif [ "$v_again" != "$v_got" ]; then
