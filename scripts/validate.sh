@@ -10237,6 +10237,11 @@ $v_pairs
 EOF
     printf '#!/bin/sh\nexit 0\n' > "$v_bin/claude"; chmod +x "$v_bin/claude"
     printf '#!/bin/sh\nexit 0\n' > "$v_bin/jq"; chmod +x "$v_bin/jq"
+    # A Windows Python resolves shutil.which through PATHEXT, so a bare shell
+    # script is invisible to it and the installer reported Claude Code missing
+    # on the Windows CI leg of 1.26.1; the same stubs as .bat files are what
+    # that interpreter finds. Harmless everywhere else.
+    printf '@exit /b 0\r\n' > "$v_bin/claude.bat"; printf '@exit /b 0\r\n' > "$v_bin/jq.bat"
     printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash \\"%s/.claude/skills/jeffy/hooks/stop-hook.sh\\"","timeout":600}]},{"hooks":[{"type":"command","command":"bash /somewhere/other-hook.sh","timeout":5}]}]}}\n' \
       "$v_home" > "$v_home/.claude/settings.json"
     # Read with the stdlib rather than jq: the Python installer writes this
