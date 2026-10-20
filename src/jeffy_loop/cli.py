@@ -172,7 +172,26 @@ def prune_dead_hooks(settings):
 
 
 def write_settings(path, settings):
-    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    """Replace settings.json atomically.
+
+    install.sh writes this file as mktemp, then a validity gate, then mv, so a
+    write that fails partway cannot truncate the user's whole Claude Code
+    configuration. A direct write_text truncates in place, which is both a
+    narrower guarantee than the sibling installer's and the reason an
+    unwritable settings.json raised PermissionError where every other failure
+    here prints [FAILED]. os.replace is atomic on POSIX and on Windows, and
+    renaming into place needs write permission on the directory rather than on
+    the file, which is what lets a read-only settings.json be replaced exactly
+    as mv replaces it.
+    """
+    tmp = path.with_name(path.name + ".jeffy-tmp")
+    try:
+        tmp.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
 
 
 def register_hook():
@@ -348,6 +367,30 @@ def cmd_help():
 
 
 def main():
+    """Run the command, turning a filesystem failure into the product's own message.
+
+    One boundary rather than a guard at every site: the operating envelope asks
+    for a single place where this class is handled, and an unhandled OSError
+    anywhere below here used to reach the user as a traceback - on an
+    unwritable settings.json, and on a read-only ~/.claude where the skill copy
+    fails first.
+    """
+    try:
+        return _run()
+    except OSError as exc:
+        # os.replace reports the source in filename and the destination in
+        # filename2, and the destination is the path the user recognises - the
+        # first draft of this handler named the internal temp file instead.
+        target = getattr(exc, "filename2", None) or getattr(exc, "filename", None) or "a file it needed"
+        detail = exc.strerror or exc.__class__.__name__
+        print(
+            f"[FAILED] {target}: {detail}; fix that, then re-run this installer.",
+            file=sys.stderr,
+        )
+        return 1
+
+
+def _run():
     args = sys.argv[1:]
     cmd = args[0] if args else "help"
 

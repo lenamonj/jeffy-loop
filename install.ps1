@@ -82,6 +82,31 @@ $settingsDir = Join-Path $HOME ".claude"
 $settingsPath = Join-Path $settingsDir "settings.json"
 $hookScript = (Join-Path $HOME ".claude\skills\jeffy\hooks\stop-hook.sh") -replace '\\', '/'
 $hookCmd = "bash `"$hookScript`""
+
+# A settings.json write never truncates the file it replaces. The JSON goes
+# to a temporary file beside it, is parsed back before anything moves, and
+# replaces the target with a single rename. install.sh has always done this
+# with mktemp, jq empty and mv, and the shipped Python installer does it with
+# os.replace; this is the same contract on Windows. The rename is the fix and
+# not a flourish: Move-Item -Force replaces a read-only destination on NTFS
+# where WriteAllText into that same file is denied, so a profile this
+# installer used to refuse is now updated. (T7)
+function Write-JeffySettings {
+    param([string] $Path, $Data)
+    $dir = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $tmp = Join-Path $dir ("settings.json.jeffy-" + [System.IO.Path]::GetRandomFileName())
+    try {
+        [System.IO.File]::WriteAllText($tmp, (($Data | ConvertTo-Json -Depth 32) + "`n"))
+        # A truncated or unparseable temporary file is never moved into place,
+        # which is the gate install.sh spells as jq empty.
+        $null = (Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json)
+        Move-Item -LiteralPath $tmp -Destination $Path -Force
+    } finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 $settings = $null
 if ((Test-Path $settingsPath) -and ((Get-Item $settingsPath).Length -gt 0)) {
     try {
@@ -97,6 +122,7 @@ if ($null -ne $settings) {
     # A registration naming a hook that does not exist (a settings.json carried
     # in from another home) is removed, so the checks below see this home's truth.
     $pruned = $false
+    $writeFailed = $false
     if ($settings.PSObject.Properties['hooks'] -and $settings.hooks.PSObject.Properties['Stop']) {
         $keptEntries = @()
         foreach ($entry in @($settings.hooks.Stop)) {
@@ -124,7 +150,13 @@ if ($null -ne $settings) {
         $settings.hooks.Stop = $keptEntries
     }
     if ($pruned) {
-        [System.IO.File]::WriteAllText($settingsPath, (($settings | ConvertTo-Json -Depth 32) + "`n"))
+        try {
+            Write-JeffySettings $settingsPath $settings
+        } catch {
+            Write-Host "[FAILED] could not update $settingsPath ($($_.Exception.Message)); remove the stale Stop hook entry by hand (see README) and re-run to verify."
+            $ok = $false
+            $writeFailed = $true
+        }
     }
     $already = $false
     $upgrade = @()
@@ -139,14 +171,18 @@ if ($null -ne $settings) {
             }
         }
     }
-    if ($already -and $upgrade.Count -eq 0) {
+    if ($writeFailed) {
+        # The pruned file never reached disk, so the branches below would write
+        # the same unwritable path and print a second [FAILED] for one cause.
+        # The diagnostic above is the one the user acts on.
+    } elseif ($already -and $upgrade.Count -eq 0) {
         Write-Host "[OK] Jeffy Stop hook already registered in $settingsPath"
     } elseif ($already) {
         # Pre-1.2 registration lacks the field; 1.2-1.14 carries 600s, which the
         # verify bound can exceed (P1-58). Either shape moves to 1800s once.
         try {
             foreach ($h in $upgrade) { if ($h.PSObject.Properties['timeout']) { $h.timeout = 1800 } else { $h | Add-Member -MemberType NoteProperty -Name timeout -Value 1800 } }
-            [System.IO.File]::WriteAllText($settingsPath, (($settings | ConvertTo-Json -Depth 32) + "`n"))
+            Write-JeffySettings $settingsPath $settings
             Write-Host "[OK] Jeffy Stop hook registration upgraded to an 1800s timeout in $settingsPath"
         } catch {
             Write-Host "[FAILED] could not upgrade the Stop hook timeout in $settingsPath ($($_.Exception.Message)); add `"timeout`": 1800 to the hook entry by hand and re-run to verify."
@@ -163,11 +199,12 @@ if ($null -ne $settings) {
                 $settings.hooks | Add-Member -MemberType NoteProperty -Name Stop -Value @()
             }
             $settings.hooks.Stop = @($settings.hooks.Stop) + $entryObj
-            New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
             # WriteAllText writes UTF-8 without a BOM; Set-Content -Encoding UTF8
             # on Windows PowerShell 5.1 would prepend one, and a BOM breaks
-            # strict JSON parsers reading settings.json.
-            [System.IO.File]::WriteAllText($settingsPath, (($settings | ConvertTo-Json -Depth 32) + "`n"))
+            # strict JSON parsers reading settings.json. The helper creates
+            # $settingsDir, so the New-Item that stood here is gone rather than
+            # duplicated.
+            Write-JeffySettings $settingsPath $settings
             Write-Host "[OK] Jeffy Stop hook registered in $settingsPath (1800s timeout)"
         } catch {
             Write-Host "[FAILED] could not update $settingsPath ($($_.Exception.Message)); add the Stop hook entry by hand (see README) and re-run to verify."

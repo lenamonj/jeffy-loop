@@ -29,8 +29,8 @@ skip() { echo "[SKIP] $1"; skip_n=$((skip_n + 1)); skipped="$skipped$1
 
 # Interrupt safety: the runtime checks (8 and 9) build mktemp sandboxes; an
 # aborted run must not leak them.
-rt_tmp=""; pr_tmp=""; hb_tmp=""
-trap 'rm -rf ${rt_tmp:+"$rt_tmp"} ${pr_tmp:+"$pr_tmp"} ${hb_tmp:+"$hb_tmp"} ${k4_tmp:+"$k4_tmp"}' EXIT
+rt_tmp=""; pr_tmp=""; hb_tmp=""; v_tmp=""
+trap 'rm -rf ${rt_tmp:+"$rt_tmp"} ${pr_tmp:+"$pr_tmp"} ${hb_tmp:+"$hb_tmp"} ${k4_tmp:+"$k4_tmp"} ${v_tmp:+"$v_tmp"}' EXIT
 
 # 1. The shell entry points parse cleanly. Parser stderr is shown on failure
 #    so the [FAIL] names the offending line.
@@ -847,7 +847,9 @@ fi
 # K4. Surface ceiling. A budget approved for a tree nobody measured is approved
 #     blind, so pre-flight check 11 measures the tree and refuses above the
 #     ceiling before any state file exists. The library must count tracked
-#     source only (a vendored file and a markdown file do not count), print
+#     source only - a vendored file and a markdown file do not count, and a
+#     shell file does, which W1 added after a 20,000-line shell tree measured
+#     one line and passed a ten-line ceiling - print
 #     the measurement first, exit 3 over the ceiling with the relaunch flag in
 #     its refusal, exit 0 under it, and exit 2 outside a git work tree rather
 #     than reporting zero; and the skill must name both the library and the
@@ -863,17 +865,18 @@ else
   printf 'a\nb\nc\n' > "$k4_dir/src dir/m.py"
   printf '1\n2\n' > "$k4_dir/vendor/x/v.py"
   printf 'x\n' > "$k4_dir/main.rs"
+  printf 'e\nf\n' > "$k4_dir/run.sh"
   printf 'doc\n' > "$k4_dir/README.md"
   git -C "$k4_dir" add -A
   git -C "$k4_dir" -c user.email=jeffy@test -c user.name=jeffy -c core.autocrlf=false commit -qm fixture
   k4_out="$(bash "$k4_sh" "$k4_dir" 2>&1)"; k4_rc=$?
   [ "$k4_rc" = 0 ] || k4_bad="$k4_bad; plain run exited $k4_rc"
-  [ "$(printf '%s\n' "$k4_out" | head -n 1)" = "lines=4 files=2" ] || k4_bad="$k4_bad; measured [$(printf '%s\n' "$k4_out" | head -n 1)], expected lines=4 files=2 (vendored and markdown excluded)"
+  [ "$(printf '%s\n' "$k4_out" | head -n 1)" = "lines=6 files=3" ] || k4_bad="$k4_bad; measured [$(printf '%s\n' "$k4_out" | head -n 1)], expected lines=6 files=3 (python, rust and shell counted; vendored and markdown excluded)"
   k4_over="$(bash "$k4_sh" "$k4_dir" --ceiling 3 2>&1)"; k4_rc=$?
   [ "$k4_rc" = 3 ] || k4_bad="$k4_bad; over the ceiling exited $k4_rc, expected 3"
-  printf '%s\n' "$k4_over" | grep -q 'SURFACE OVER CEILING: 4 tracked source lines' || k4_bad="$k4_bad; the refusal does not state the measurement"
+  printf '%s\n' "$k4_over" | grep -q 'SURFACE OVER CEILING: 6 tracked source lines' || k4_bad="$k4_bad; the refusal does not state the measurement"
   printf '%s\n' "$k4_over" | grep -q -- '--max-surface 10000 ' || k4_bad="$k4_bad; the refusal does not name the relaunch flag with headroom above the measurement"
-  bash "$k4_sh" "$k4_dir" --ceiling 4 >/dev/null 2>&1 || k4_bad="$k4_bad; at the ceiling exited $?, expected 0"
+  bash "$k4_sh" "$k4_dir" --ceiling 6 >/dev/null 2>&1 || k4_bad="$k4_bad; at the ceiling exited $?, expected 0"
   k4_nogit="$k4_tmp/nogit"; mkdir -p "$k4_nogit"
   bash "$k4_sh" "$k4_nogit" >/dev/null 2>&1; k4_rc=$?
   [ "$k4_rc" = 2 ] || k4_bad="$k4_bad; a non-git root exited $k4_rc, expected 2"
@@ -1122,12 +1125,23 @@ pie_expect="$(awk -F'|' '
   | awk -F'\t' -v t="$pie_total" '
     { out = out (out == "" ? "" : ", ") $2 " " $1 " at " sprintf("%.1f", 100 * $1 / t) " percent" }
     END { printf "Pie chart of the %d converged public targets by language: %s.", t, out }')"
-pie_pages=0; pie_bad=""
+# Every alt on every page, never the first on each: head -n 1 here was a
+# first-site read of exactly the kind the comparison-discipline rule names,
+# and the day the chart ships as a light and dark pair - which is how every
+# other themed asset in media/ is already published - the second alt would
+# have gone uncompared while the first kept the check green. The site count
+# is published beside the page count so a run that compared fewer alts than
+# the tree holds says so in the line a reader is already looking at. (U3)
+pie_pages=0; pie_sites=0; pie_bad=""
 for pie_doc in "${pub_docs[@]}"; do
-  pie_alt="$(grep -o 'alt="Pie chart of the [^"]*"' "$pie_doc" 2>/dev/null | head -n 1 | sed 's/^alt="//; s/"$//')"
-  [ -n "$pie_alt" ] || continue
-  pie_pages=$((pie_pages + 1))
-  [ "$pie_alt" = "$pie_expect" ] || pie_bad="${pie_bad}$pie_doc; "
+  pie_seen=0
+  while IFS= read -r pie_alt; do
+    [ -n "$pie_alt" ] || continue
+    pie_seen=$((pie_seen + 1))
+    pie_sites=$((pie_sites + 1))
+    [ "$pie_alt" = "$pie_expect" ] || pie_bad="${pie_bad}${pie_doc}#${pie_seen}; "
+  done < <(grep -o 'alt="Pie chart of the [^"]*"' "$pie_doc" 2>/dev/null | sed 's/^alt="//; s/"$//')
+  [ "$pie_seen" -gt 0 ] && pie_pages=$((pie_pages + 1))
 done
 if [ "$pie_pages" -eq 0 ]; then
   fault "no published page carries the language pie; the chart is the derived surface the front page is built around"
@@ -1135,7 +1149,7 @@ elif [ -n "$pie_bad" ]; then
   echo "expected: $pie_expect"
   fault "the language pie alt text is not the scorecard's derivation on: ${pie_bad%; }"
 else
-  pass "the language pie alt text is the scorecard's derivation on every page carrying it ($pie_pages pages)"
+  pass "the language pie alt text is the scorecard's derivation on every page carrying it ($pie_pages pages, $pie_sites alt texts)"
 fi
 
 # N. Corpus-position claims are queries over the receipts table (P2-39): a
@@ -1406,6 +1420,110 @@ else
   pass "the verify-timeout fallback chain is derived from the hook in every document that states it ($lm_to then a shell watchdog)"
 fi
 
+# U. The pipe early-closer set, from the predicate the verify wrapper decides
+#    pipefail with. Third member of L and M's class and the one that was
+#    unguarded: five shipped documents stated this set in three spellings,
+#    and every one of them named the two short grep flags alone while the
+#    predicate has recognised three long forms since it was written. Nothing
+#    was red, because nothing compared them. (U1)
+#    The derivation accounts for every alternative rather than keeping the
+#    ones it recognises, the rule L1 left behind: each member is extracted by
+#    its own shape, then every classified member and all regex structure is
+#    consumed from the payload, and a word-shaped token surviving that is
+#    reported and faults rather than dropping silently out of the set.
+#    The extraction is confirmed against the predicate instead of trusted:
+#    one probe per derived member must really flip the predicate to +o, and a
+#    control stage must leave it at -o, so a derivation that read dead text
+#    cannot pass. A derived member with no probe faults too, because an
+#    extracted member nobody drove is an unverified claim.
+#    Every site in every document is compared, never the first.
+uec_src="$lm_to_src"
+uec_payload="$(awk '/^jeffy_verify_pipefail\(\)/ { f = 1 } f && /grep -Eq/ { print; exit }' "$uec_src" \
+  | sed "s/.*grep -Eq '//; s/'; then[[:space:]]*\$//")"
+uec_greps=""
+printf '%s\n' "$uec_payload" | grep -q '\[ef\]?grep' && uec_greps="$(printf 'grep\negrep\nfgrep\n')"
+uec_short="$(printf '%s\n' "$uec_payload" | grep -oE '\-\[A-Za-z\]\*\[[a-z]+\]' \
+  | sed 's/.*\[\([a-z]*\)\]$/\1/' \
+  | awk '{ for (i = 1; i <= length($0); i++) print "-" substr($0, i, 1) }')"
+uec_long="$(printf '%s\n' "$uec_payload" | grep -oE '\-\-[a-z-]+')"
+uec_cmd="$(printf '%s\n' "$uec_payload" | grep -oE '[|(][a-z]+(\[\[:space:\]\]|\()' | sed 's/^[|(]//; s/\[\[:space:\]\]$//; s/($//')"
+uec_exit="$(printf '%s\n' "$uec_payload" | grep -oE 'awk\[\[:space:\]\]\[\^\|\]\*exit' | sed 's/.*/exit/')"
+uec_set="$(printf '%s\n%s\n%s\n%s\n%s\n' "$uec_greps" "$uec_short" "$uec_long" "$uec_cmd" "$uec_exit" \
+  | grep -v '^$' | sort -u)"
+uec_want="$(printf '%s\n' "$uec_set" | tr '\n' ' ')"
+# What the classification did not consume. Bracket expressions and POSIX
+# classes are structure and come out first; every classified member comes out
+# next; a word-shaped token left after that is an alternative this check would
+# have dropped, and the documents would have agreed with the gap.
+uec_rest="$(printf '%s\n' "$uec_payload" | sed 's/\[\[:[a-z]*:\]\]//g; s/\[\^[^]]*\]//g; s/\[ef\]?grep//g; s/-\[A-Za-z\]\*\[[a-z]*\]//g')"
+for uec_m in $(printf '%s\n%s\n%s\n' "$uec_long" "$uec_cmd" "$uec_exit" | grep -v '^$'); do
+  uec_rest="$(printf '%s\n' "$uec_rest" | sed "s/$(printf '%s' "$uec_m" | sed 's/[^a-zA-Z0-9]/\\&/g')//g")"
+done
+uec_left="$(printf '%s\n' "$uec_rest" | grep -oE '[a-z]{2,}|--?[a-z]+' | sort -u | tr '\n' ' ')"
+# The predicate itself, lifted out and driven. Running it is what separates a
+# derivation of the live rule from a derivation of a comment beside it.
+uec_fn="$(sed -n '/^jeffy_verify_pipefail()/,/^}/p' "$uec_src")"
+uec_pf() { ( eval "$uec_fn"; jeffy_verify_pipefail "$1" ); }
+uec_unprobed=""; uec_dead=""
+for uec_m in $uec_set; do
+  case "$uec_m" in
+    grep|egrep|fgrep)   uec_probe="suite | $uec_m -q PASS" ;;
+    -q|--quiet|--silent) uec_probe="suite | grep $uec_m PASS" ;;
+    -m|--max-count)     uec_probe="suite | grep $uec_m 1 PASS" ;;
+    head)               uec_probe="suite | head" ;;
+    awk|exit)           uec_probe="suite | awk '{exit}'" ;;
+    *) uec_unprobed="$uec_unprobed $uec_m"; continue ;;
+  esac
+  [ "$(uec_pf "$uec_probe")" = "+o" ] || uec_dead="$uec_dead ${uec_m}[$uec_probe]"
+done
+uec_control="$(uec_pf 'suite | tee verify.log')"
+# Floor plus discovery, the shape Q and P use: the five known sites are held
+# to the set even if one drops the sentence, and any other shipped file that
+# grows the sentence is held to it too.
+uec_floor="$(printf '%s\n' \
+  skills/jeffy/SKILL.md \
+  skills/jeffy/references/plan-default.md \
+  skills/jeffy/references/plan-highs.md \
+  skills/jeffy/references/iteration-prompt.txt \
+  skills/jeffy/references/iteration-prompt-highs.txt)"
+uec_found="$(find skills -type f \( -name '*.md' -o -name '*.txt' \) -exec grep -l 'closes the pipe early' {} + 2>/dev/null)"
+uec_docs="$(printf '%s\n%s\n' "$uec_floor" "$uec_found" | grep -v '^$' | sort -u)"
+uec_bad=""
+# The document set is read a line at a time rather than split on whitespace:
+# a tracked document whose path carries a space arrives as two fragments
+# otherwise, both of which hit the (missing) arm below, so the fault names
+# the fragments and the document itself is never compared - a red suite over
+# a document that agrees with the engine. Same idiom check Q uses for its own
+# file set, and the same class as check 5's NUL-delimited walk. (U4)
+while IFS= read -r uec_f; do
+  [ -n "$uec_f" ] || continue
+  if [ ! -f "$uec_f" ]; then uec_bad="$uec_bad $uec_f(missing)"; continue; fi
+  uec_seen=0
+  while IFS= read -r uec_site; do
+    [ -n "$uec_site" ] || continue
+    uec_seen=$((uec_seen + 1))
+    # shellcheck disable=SC2016
+    uec_got="$(printf '%s\n' "$uec_site" | grep -o '`[a-z-][a-z-]*`' | tr -d '`' | sort -u | tr '\n' ' ')"
+    [ "$uec_got" = "$uec_want" ] || uec_bad="$uec_bad ${uec_f}#${uec_seen}[${uec_got}]"
+  done < <(grep -o 'closes the pipe early ([^)]*)' "$uec_f")
+  [ "$uec_seen" -gt 0 ] || uec_bad="$uec_bad $uec_f(states no early-closer enumeration)"
+done < <(printf '%s\n' "$uec_docs")
+if [ -z "$uec_payload" ]; then
+  fault "the wrapper's early-closer predicate could not be located; jeffy_verify_pipefail moved and this check went blind"
+elif [ -n "$uec_left" ]; then
+  fault "the early-closer predicate carries an alternative this check cannot classify [$uec_left]; it would be dropped from the derived set and no document would be asked to state it"
+elif [ -n "$uec_unprobed" ]; then
+  fault "the early-closer set derives members this check never drives [$uec_unprobed]; an extracted member with no probe is an unverified claim"
+elif [ -n "$uec_dead" ]; then
+  fault "a derived early-closer does not actually flip the predicate:$uec_dead; the derivation is reading text the wrapper no longer acts on"
+elif [ "$uec_control" != "-o" ]; then
+  fault "the control stage (suite | tee verify.log) reads as an early closer, so the predicate answers +o for everything and every probe above is vacuous"
+elif [ -n "$uec_bad" ]; then
+  fault "the wrapper recognises [$uec_want] as early closers but the product text disagrees:$uec_bad"
+else
+  pass "the pipe early-closer set is derived from the wrapper's predicate, driven against it, and stated in every document that carries it ($uec_want)"
+fi
+
 # O. The evaluator artifact is required committed and unmodified, so its
 #    hygiene cannot be repaired after the fact - a redaction would break the
 #    very property the Stop hook checks. The rule therefore lands at write
@@ -1641,13 +1759,21 @@ else
   # the detector really answered four. A guard that extracts and a guard that
   # counts must not share a blind spot. (E1)
   q_body="$(grep -v '^[[:space:]]*#' "$q_src")"
-  # The whole argument token, never its leading lowercase run: `echo no-signal`
-  # read as `no` and left the published set unchanged on a branch no grading
-  # host executes (F1, the gate's observation beside its PASS). An answer the
-  # documents cannot spell in their pipe form then faults on comparison, which
-  # is the right direction.
-  q_hits="$(printf '%s\n' "$q_body" | grep -oE '(^|[^[:alnum:]_])echo +[^[:space:];&|)}]+')"
-  q_ans="$(printf '%s\n' "$q_hits" | sed 's/.*echo *//' | grep -v '^$' | sort -u | tr '\n' ' ')"
+  # The whole argument, never its leading lowercase run and never its first
+  # word: `echo no-signal` read as `no` and left the published set unchanged
+  # on a branch no grading host executes, and after that class was narrowed to
+  # one token `echo no reason-unknown` did the same thing for the same reason -
+  # a truncated answer whose head is already published reads as agreement. The
+  # argument is bounded by what ends a shell statement rather than by a class
+  # that stops at the first space, with `#` among the terminators so a trailing
+  # inline comment cannot be derived as part of an answer, and the trailing
+  # whitespace that bound then admits is trimmed. An answer the documents
+  # cannot spell in their pipe form faults on comparison, which is the right
+  # direction. The strip is anchored rather than greedy because the argument
+  # can now carry spaces and therefore the word `echo` itself, which a leading
+  # `.*` would consume along with the real answer. (F1)
+  q_hits="$(printf '%s\n' "$q_body" | grep -oE '(^|[^[:alnum:]_])echo +[^;&|)}#]+')"
+  q_ans="$(printf '%s\n' "$q_hits" | sed -E 's/^[^[:alnum:]_]?echo[[:space:]]+//; s/[[:space:]]+$//' | grep -v '^$' | sort -u | tr '\n' ' ')"
   q_echo_all="$(printf '%s\n' "$q_body" | grep -oE '(^|[^[:alnum:]_])echo([^[:alnum:]_]|$)' | grep -c .)"
   q_echo_kept="$(printf '%s\n' "$q_hits" | grep -c .)"
   # The same widening on the other-output guard, for the same reason: a printf
@@ -10052,6 +10178,95 @@ else
       pass "the stop hook re-feeds an ordinary iteration with stderr silent (AA1)"
     fi
     rm -rf "$s_tmp"
+  fi
+fi
+
+# V. The shipped Python installer, executed rather than read. Check I2 pairs
+#    its version string with pyproject.toml and nothing else in this suite had
+#    ever run it, so a user-facing installer carrying the settings.json write
+#    path was graded on one string - which is how T1's traceback on a
+#    read-only settings.json shipped unseen. Two halves. Every module under
+#    src/jeffy_loop compiles, with bytecode redirected into the sandbox so the
+#    source tree is left untouched. And main() is driven against a sandbox
+#    HOME in the layout the wheel actually ships: the force-include map is
+#    read out of pyproject.toml rather than typed here, because a packaging
+#    change that moved the skills would otherwise leave this check staging a
+#    layout no wheel has, and a map that reads empty is reported rather than
+#    passed over. The sandbox seeds the two shapes the installer promises to
+#    handle - a 1.2-to-1.14 registration at the 600s timeout the verify bound
+#    can exceed, and an unrelated Stop hook - and the assertion is that
+#    exactly one jeffy registration survives at 1800s with the stranger
+#    intact, unchanged by a second run. python3 is its only gate. (T5)
+if ! command -v python3 >/dev/null 2>&1; then
+  skip "shipped Python installer runtime (python3 not on PATH)"
+else
+  v_tmp="$(mktemp -d)" || v_tmp=""
+  if [ -z "$v_tmp" ]; then
+    fault "the Python installer check could not create its sandbox (mktemp failed)"
+  else
+    v_mods=0
+    for v_m in src/jeffy_loop/*.py; do [ -f "$v_m" ] && v_mods=$((v_mods + 1)); done
+    if [ "$v_mods" -eq 0 ]; then
+      fault "no Python module found under src/jeffy_loop; the packaged installer this check grades is gone"
+    elif v_err="$(PYTHONPYCACHEPREFIX="$v_tmp/pyc" python3 -m py_compile src/jeffy_loop/*.py 2>&1)"; then
+      pass "src/jeffy_loop compiles ($v_mods modules, py_compile)"
+    else
+      echo "$v_err"
+      fault "src/jeffy_loop does not compile (py_compile)"
+    fi
+    v_pairs="$(sed -n '/^\[tool.hatch.build.targets.wheel.force-include\]/,/^\[/p' pyproject.toml \
+      | sed -n 's/^"\{0,1\}\([^"=]*\)"\{0,1\}[[:space:]]*=[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1|\2/p')"
+    v_stage="$v_tmp/pkg"; v_home="$v_tmp/home"; v_bin="$v_tmp/bin"
+    mkdir -p "$v_stage/jeffy_loop" "$v_home/.claude" "$v_bin"
+    cp src/jeffy_loop/*.py "$v_stage/jeffy_loop/" 2>/dev/null
+    v_staged=0
+    while IFS='|' read -r v_src v_dst; do
+      [ -n "$v_src" ] || continue
+      mkdir -p "$v_stage/${v_dst%/*}"
+      cp -R "$v_src" "$v_stage/$v_dst" && v_staged=$((v_staged + 1))
+    done <<EOF
+$v_pairs
+EOF
+    printf '#!/bin/sh\nexit 0\n' > "$v_bin/claude"; chmod +x "$v_bin/claude"
+    printf '#!/bin/sh\nexit 0\n' > "$v_bin/jq"; chmod +x "$v_bin/jq"
+    printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash \\"%s/.claude/skills/jeffy/hooks/stop-hook.sh\\"","timeout":600}]},{"hooks":[{"type":"command","command":"bash /somewhere/other-hook.sh","timeout":5}]}]}}\n' \
+      "$v_home" > "$v_home/.claude/settings.json"
+    # Read with the stdlib rather than jq: the Python installer writes this
+    # file itself, so the reader has no business depending on a binary the
+    # writer never touches.
+    v_read='
+import json, os, sys
+p = os.path.join(sys.argv[1], ".claude", "settings.json")
+with open(p, encoding="utf-8") as f:
+    s = json.load(f)
+stop = s.get("hooks", {}).get("Stop", []) if isinstance(s, dict) else []
+hooks = [h for g in stop for h in (g.get("hooks", []) if isinstance(g, dict) else [])]
+j = [h for h in hooks if "skills/jeffy/hooks/stop-hook.sh" in str(h.get("command", ""))]
+o = [h for h in hooks if "other-hook.sh" in str(h.get("command", ""))]
+print("jeffy=%d timeouts=%s other=%d" % (len(j), ",".join(str(h.get("timeout")) for h in j), len(o)))
+'
+    if [ "$v_staged" -eq 0 ]; then
+      fault "pyproject.toml's wheel force-include map read as empty, so this check staged no skills and would pass over a packaging change"
+    elif ! HOME="$v_home" PATH="$v_bin:/usr/bin:/bin" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" \
+        python3 -m jeffy_loop.cli install </dev/null >"$v_tmp/install.log" 2>&1; then
+      sed -n '1,20p' "$v_tmp/install.log"
+      fault "the shipped console script's install exited non-zero against a sandbox HOME (log above)"
+    elif [ ! -f "$v_home/.claude/skills/jeffy/hooks/stop-hook.sh" ] || [ ! -f "$v_home/.claude/skills/cancel-jeffy/SKILL.md" ]; then
+      fault "the console script's install left the sandbox HOME without the Stop hook or the cancel-jeffy skill"
+    else
+      v_got="$(python3 -c "$v_read" "$v_home" 2>&1)"
+      HOME="$v_home" PATH="$v_bin:/usr/bin:/bin" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" \
+        python3 -m jeffy_loop.cli install </dev/null >"$v_tmp/install2.log" 2>&1
+      v_again="$(python3 -c "$v_read" "$v_home" 2>&1)"
+      if [ "$v_got" != "jeffy=1 timeouts=1800 other=1" ]; then
+        fault "the console script's install did not leave one Stop hook registration at the 1800s timeout with the unrelated hook intact: $v_got"
+      elif [ "$v_again" != "$v_got" ]; then
+        fault "a second install changed the registration ($v_got then $v_again); the installer is not idempotent"
+      else
+        pass "the shipped console script installs into a sandbox HOME ($v_got), is idempotent on a second run, and staged $v_staged force-include pairs read from pyproject"
+      fi
+    fi
+    rm -rf "$v_tmp"; v_tmp=""
   fi
 fi
 

@@ -53,9 +53,15 @@ done
 git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   echo "measure-surface: $root is not a git work tree; nothing measured" >&2; exit 2; }
 
-# Source extensions, one alternation. A tree in a language missing here measures
-# low, never high, which is the safe direction for a ceiling.
-ext='\.(c|cc|cpp|cxx|h|hh|hpp|cs|dart|ex|exs|go|java|js|jsx|kt|kts|lua|m|mm|php|py|rb|rs|scala|swift|ts|tsx|zig)$'
+# Source extensions, one alternation. A language missing here is invisible
+# rather than undercounted, and that is the unsafe direction, not the safe
+# one: refusing is the only thing this file does, so a tree it cannot see
+# passes every ceiling. Shell was missing until W1, which left this engine's
+# own repository - the largest files in it are a shell hook and a shell
+# harness - reporting a seventh of its real size at every launch. The list is
+# still a floor; a tree in a language not named here measures low, so add the
+# extension rather than rely on that.
+ext='\.(bash|c|cc|clj|cljs|cpp|cs|cxx|dart|erl|ex|exs|fs|go|groovy|h|hh|hpp|hs|java|jl|js|jsx|kt|kts|lua|m|ml|mli|mm|nim|php|pl|pm|ps1|psm1|py|r|R|rb|rs|scala|sh|sql|svelte|swift|ts|tsx|vue|zig)$'
 # Directories that conventionally hold code the project did not write or will
 # regenerate; anchored at a path segment so `vendored_api.go` still counts.
 skip='(^|/)(vendor|vendored|node_modules|third_party|thirdparty|external|_vendor)/'
