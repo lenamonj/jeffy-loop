@@ -31,6 +31,9 @@
 # work tree, so nothing was measured; 3 over the ceiling; 64 bad usage.
 # Dependency-free: bash, git, wc, sort.
 set -u
+# C locale: wc's "total" line is translated under other locales and grep
+# would treat a non-UTF-8 path as binary and drop it.
+export LC_ALL=C
 
 root="${1:-}"
 ceiling=0
@@ -40,6 +43,7 @@ while [ $# -gt 0 ]; do
     --ceiling)
       case "${2:-}" in
         ''|*[!0-9]*) echo "measure-surface: --ceiling takes a whole number of lines" >&2; exit 64 ;;
+        ???????????????*) echo "measure-surface: --ceiling ${2} is past any tree; use 0 to turn the check off" >&2; exit 64 ;;
       esac
       ceiling="$2"; shift 2 ;;
     *) echo "measure-surface: unknown argument $1" >&2; exit 64 ;;
@@ -72,10 +76,13 @@ echo "lines=$lines files=$files"
 [ -n "$counts" ] && printf '%s\n' "$counts" | head -n 5 | sed 's/^[[:space:]]*//'
 
 if [ "$ceiling" -gt 0 ] && [ "$lines" -gt "$ceiling" ]; then
+  # The loop adds lines as it fixes, so the suggested ceiling carries headroom:
+  # a fifth above the measurement, rounded up to the next ten thousand.
+  suggest=$(( (lines + lines / 5 + 9999) / 10000 * 10000 ))
   cat <<EOF
 SURFACE OVER CEILING: $lines tracked source lines in $files files; the ceiling for this launch is $ceiling.
 Every iteration audits the whole surface, so wall clock and usage grow with it. A tree this size was not part of the budget's approval.
-Relaunch with --max-surface $lines (or any ceiling above the measurement) to run it knowingly, or --max-surface 0 to turn the check off for this run.
+Relaunch with --max-surface $suggest (a fifth above the measurement, since the loop adds lines as it fixes) to run it knowingly, or --max-surface 0 to turn the check off for this run.
 EOF
   exit 3
 fi

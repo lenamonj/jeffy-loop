@@ -872,7 +872,7 @@ else
   k4_over="$(bash "$k4_sh" "$k4_dir" --ceiling 3 2>&1)"; k4_rc=$?
   [ "$k4_rc" = 3 ] || k4_bad="$k4_bad; over the ceiling exited $k4_rc, expected 3"
   printf '%s\n' "$k4_over" | grep -q 'SURFACE OVER CEILING: 4 tracked source lines' || k4_bad="$k4_bad; the refusal does not state the measurement"
-  printf '%s\n' "$k4_over" | grep -q -- '--max-surface 4' || k4_bad="$k4_bad; the refusal does not name the relaunch flag with the measured value"
+  printf '%s\n' "$k4_over" | grep -q -- '--max-surface 10000 ' || k4_bad="$k4_bad; the refusal does not name the relaunch flag with headroom above the measurement"
   bash "$k4_sh" "$k4_dir" --ceiling 4 >/dev/null 2>&1 || k4_bad="$k4_bad; at the ceiling exited $?, expected 0"
   k4_nogit="$k4_tmp/nogit"; mkdir -p "$k4_nogit"
   bash "$k4_sh" "$k4_nogit" >/dev/null 2>&1; k4_rc=$?
