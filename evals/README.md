@@ -128,25 +128,25 @@ The table is in [CONTRIBUTING.md](../CONTRIBUTING.md#agreements-signed-for-upstr
 | pflag | Go | [details](./pflag/REPORT.md) - deprecated flag field ignored - [PR merged](https://github.com/spf13/pflag/pull/507) | Fixed |
 | commons-csv | Java | [details](./commons-csv/REPORT.md) - six documented promises the code did not keep, and a serialization skew the loop introduced and caught - [PR merged](https://github.com/apache/commons-csv/pull/633) | Fixed |
 | chalk | JavaScript | [details](./chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
-| dayjs | JavaScript | [details](./dayjs/REPORT.md) - 45 findings, 10 High - [PR open](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
+| dayjs | JavaScript | [details](./dayjs/REPORT.md) - 45 findings, 10 High - [PR closed](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
 | yfinance | Python | [details](./yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
 | PHP-Parser | PHP | [details](./php-parser/REPORT.md) - test class ran no code - [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | Fixed |
 | python-dotenv | Python | [details](./python-dotenv/REPORT.md) - 8 runs, 48 findings - [PR open](https://github.com/theskumar/python-dotenv/pull/678) | Fixed |
-| PyPortfolioOpt | Python | [details](./pyportfolioopt/REPORT.md) - CI-red to 356 passing - [PR open](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
-| go-yaml | Go | [details](./go-yaml/REPORT.md) - 20 findings, 6 High - [PR open](https://github.com/goccy/go-yaml/pull/915) | Fixed |
-| rust-url | Rust | [details](./rust-url/REPORT.md) - 20 findings, 10 High - [PR open](https://github.com/servo/rust-url/pull/1147) | Fixed |
+| PyPortfolioOpt | Python | [details](./pyportfolioopt/REPORT.md) - CI-red to 356 passing - [PR closed](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
+| go-yaml | Go | [details](./go-yaml/REPORT.md) - 20 findings, 6 High - [PR closed](https://github.com/goccy/go-yaml/pull/915) | Fixed |
+| rust-url | Rust | [details](./rust-url/REPORT.md) - 20 findings, 10 High - [PR closed](https://github.com/servo/rust-url/pull/1147) | Fixed |
 | rouge | Ruby | [details](./rouge/REPORT.md) - unknown theme crashed the CLI - [PR merged](https://github.com/rouge-ruby/rouge/pull/2332) | Fixed |
-| classnames | JavaScript | [details](./classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR open](https://github.com/JedWatson/classnames/pull/579) | Fixed |
+| classnames | JavaScript | [details](./classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR closed](https://github.com/JedWatson/classnames/pull/579) | Fixed |
 | assert | PHP | [details](./assert/REPORT.md) - isInitialized threw the wrong exception - [PR open](https://github.com/webmozarts/assert/pull/365), [PR closed](https://github.com/webmozarts/assert/pull/366) | Fixed |
 | natsort | Python | [details](./natsort/REPORT.md) - locale sentinel was three ASCII bytes - [PR merged](https://github.com/SethMMorton/natsort/pull/196) | Fixed |
 | uuid | Rust | [details](./uuid/REPORT.md) - v7 counter lost its top four bits to the version nibble - [PR merged](https://github.com/uuid-rs/uuid/pull/907) | Fixed |
-| i18n | Ruby | [details](./i18n/REPORT.md) - a pluralized lookup handed out the store's own String - [PR open](https://github.com/ruby-i18n/i18n/pull/751), [PR open](https://github.com/ruby-i18n/i18n/pull/752) | Fixed |
+| i18n | Ruby | [details](./i18n/REPORT.md) - a pluralized lookup handed out the store's own String - [PR closed](https://github.com/ruby-i18n/i18n/pull/751), [PR closed](https://github.com/ruby-i18n/i18n/pull/752) | Fixed |
 | kotlinx-io | Kotlin | [details](./kotlinx-io/REPORT.md) - the temporary directory was an empty path when TMPDIR was unset - [PR open](https://github.com/Kotlin/kotlinx-io/pull/521) | Fixed |
 | shouldly | C# | [details](./shouldly/REPORT.md) - a failing dictionary assertion over a pair sequence threw InvalidCastException - [PR open](https://github.com/shouldly/shouldly/pull/1335) | Fixed |
 | valinor | PHP | [details](./valinor/REPORT.md) - a captured closure earlier in the file made registerConstructor resolve a class that does not exist - [PR open](https://github.com/CuyZ/Valinor/pull/838) | Fixed |
 | swift-http-types | Swift | [details](./swift-http-types/REPORT.md) - a schemeless URL trapped an Optional-returning conversion, and the fast path of == ignored two of a field's three stored properties - [PR open](https://github.com/apple/swift-http-types/pull/152), [PR closed](https://github.com/apple/swift-http-types/pull/153) | Fixed |
 | money | Ruby | [details](./money/REPORT.md) - imported JSON rates went through JSON.load, and reset! kept a key cache that turned UnknownCurrency into NoMethodError - [PR merged](https://github.com/RubyMoney/money/pull/1227), [PR merged](https://github.com/RubyMoney/money/pull/1228) | Fixed |
-| ohash | TypeScript | [details](./ohash/REPORT.md) - the browser digest crashed on a lone surrogate, and diff dropped a leaf-to-container change and overflowed on cycles - [PR open](https://github.com/unjs/ohash/pull/204) | Fixed |
+| ohash | TypeScript | [details](./ohash/REPORT.md) - the browser digest crashed on a lone surrogate, and diff dropped a leaf-to-container change and overflowed on cycles - [PR closed](https://github.com/unjs/ohash/pull/204) | Fixed |
 | typer | Python | [details](./typer/REPORT.md) - hash seed chose which app runs - [PR open](https://github.com/fastapi/typer/pull/1952), [PR closed as a duplicate](https://github.com/fastapi/typer/pull/1946) | Fixed |
 | claude-agent-sdk-python | Python | [details](./claude-agent-sdk-python/REPORT.md) - converged on attempt 2 - [PR open](https://github.com/anthropics/claude-agent-sdk-python/pull/1247) | Fixed |
 | swift-metrics | Swift | [details](./swift-metrics/REPORT.md) - the package's own test kit crashed on a repeated dimension name, and the published recorder example reported a minimum of zero - [PR merged](https://github.com/apple/swift-metrics/pull/244) | Fixed |
@@ -232,7 +232,7 @@ The table is in [CONTRIBUTING.md](../CONTRIBUTING.md#agreements-signed-for-upstr
 | libuv | C | [details](./ATTEMPTS.md) - started, then abandoned | Failed |
 | mruby | C | [details](./ATTEMPTS.md) - 10 runs, 113 iters, not converged | Failed |
 | node-semver | JavaScript | [details](./ATTEMPTS.md) - 4 runs, 30 iters, not converged | Failed |
-| picomatch | JavaScript | [details](./ATTEMPTS.md) - 5 runs, 45 iters, not converged - [PR open](https://github.com/micromatch/picomatch/pull/204), [PR open](https://github.com/micromatch/picomatch/pull/205) | Failed |
+| picomatch | JavaScript | [details](./ATTEMPTS.md) - 5 runs, 45 iters, not converged - [PR closed](https://github.com/micromatch/picomatch/pull/204), [PR closed](https://github.com/micromatch/picomatch/pull/205) | Failed |
 | shopspring/decimal | Go | [details](./ATTEMPTS.md) - 4 runs, 33 iters, not converged | Failed |
 | spdlog | C++ | [details](./ATTEMPTS.md) - 4 runs, 40 iters, not converged | Failed |
 | tenacity | Python | [details](./ATTEMPTS.md) - 2 runs, 20 iters, not converged | Failed |
