@@ -157,226 +157,95 @@ Each finding below was accepted upstream by the project's own maintainers.
   <tr>
     <th align="left">Merged by</th>
     <th align="left">Finding</th>
-    <th align="left">Merged in</th>
   </tr>
   <tr>
-    <td rowspan="4"><img src="https://github.com/NVIDIA.png" width="20" height="20" alt="" align="absmiddle"> NVIDIA</td>
-    <td><a href="https://github.com/NVIDIA/go-nvml/pull/207">go-nvml #207</a><br>The buffer handed to <code>dlinfo</code> for a library's directory was allocated with zero bytes, so the first <code>Path()</code> on a library opened by soname wrote past it and the next <code>dlclose</code> crashed</td>
-    <td>12 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/NVIDIA/k8s-device-plugin/pull/2002">k8s-device-plugin #2002</a><br>An empty <code>deviceListStrategy</code> list in the config file passed validation, and the container started with no GPU access and no error</td>
-    <td>13 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/NVIDIA/nvidia-container-toolkit/pull/2108">nvidia-container-toolkit #2108</a><br>A GPU id repeated in the visible devices request left an empty device in the list, and in CDI mode the container failed to start with an unresolvable device</td>
-    <td>11 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/NVIDIA/go-nvml/pull/206">go-nvml #206</a><br><code>Shutdown()</code> called <code>nvmlShutdown()</code> whether or not the library had loaded, so on a host without <code>libnvidia-ml.so.1</code> the shutdown paired with a failed <code>Init()</code> took the process down with a symbol lookup error instead of returning <code>ERROR_UNINITIALIZED</code></td>
-    <td>30 days</td>
+    <td><img src="https://github.com/NVIDIA.png" width="20" height="20" alt="" align="absmiddle"> NVIDIA</td>
+    <td><a href="https://github.com/NVIDIA/go-nvml/pull/207">go-nvml #207</a> - merged in 12 days<br>The buffer handed to <code>dlinfo</code> for a library's directory was allocated with zero bytes, so the first <code>Path()</code> on a library opened by soname wrote past it and the next <code>dlclose</code> crashed<br><br><a href="https://github.com/NVIDIA/k8s-device-plugin/pull/2002">k8s-device-plugin #2002</a> - merged in 13 days<br>An empty <code>deviceListStrategy</code> list in the config file passed validation, and the container started with no GPU access and no error<br><br><a href="https://github.com/NVIDIA/nvidia-container-toolkit/pull/2108">nvidia-container-toolkit #2108</a> - merged in 11 days<br>A GPU id repeated in the visible devices request left an empty device in the list, and in CDI mode the container failed to start with an unresolvable device<br><br><a href="https://github.com/NVIDIA/go-nvml/pull/206">go-nvml #206</a> - merged in 30 days<br><code>Shutdown()</code> called <code>nvmlShutdown()</code> whether or not the library had loaded, so on a host without <code>libnvidia-ml.so.1</code> the shutdown paired with a failed <code>Init()</code> took the process down with a symbol lookup error instead of returning <code>ERROR_UNINITIALIZED</code></td>
   </tr>
   <tr>
     <td><img src="https://github.com/ARM-software.png" width="20" height="20" alt="" align="absmiddle"> Arm</td>
-    <td><a href="https://github.com/ARM-software/astc-encoder/pull/668">astc-encoder #668</a><br>On F16C builds <code>float16_to_float(vint4)</code> packed the half-float codes with signed saturation, so every negative half decoded as NaN and a half-float normal map compressed differently on AVX2 than on SSE4.1</td>
-    <td>28 days</td>
+    <td><a href="https://github.com/ARM-software/astc-encoder/pull/668">astc-encoder #668</a> - merged in 28 days<br>On F16C builds <code>float16_to_float(vint4)</code> packed the half-float codes with signed saturation, so every negative half decoded as NaN and a half-float normal map compressed differently on AVX2 than on SSE4.1</td>
   </tr>
   <tr>
-    <td rowspan="2"><img src="https://github.com/facebook.png" width="20" height="20" alt="" align="absmiddle"> Meta</td>
-    <td><a href="https://github.com/facebook/stylex/pull/1850">stylex #1850</a><br><code>stylex.positionTry</code> emitted every declaration twice, one of them with the property name as its own value, and an RTL variant for every rule</td>
-    <td>17 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/facebook/stylex/pull/1849">stylex #1849</a><br>Configuring a custom <code>importSources</code> on the rollup plugin or unplugin narrowed the compile gate, so ordinary <code>@stylexjs/stylex</code> modules stopped reaching the compiler and the custom source was never transformed</td>
-    <td>17 days</td>
+    <td><img src="https://github.com/facebook.png" width="20" height="20" alt="" align="absmiddle"> Meta</td>
+    <td><a href="https://github.com/facebook/stylex/pull/1850">stylex #1850</a> - merged in 17 days<br><code>stylex.positionTry</code> emitted every declaration twice, one of them with the property name as its own value, and an RTL variant for every rule<br><br><a href="https://github.com/facebook/stylex/pull/1849">stylex #1849</a> - merged in 17 days<br>Configuring a custom <code>importSources</code> on the rollup plugin or unplugin narrowed the compile gate, so ordinary <code>@stylexjs/stylex</code> modules stopped reaching the compiler and the custom source was never transformed</td>
   </tr>
   <tr>
     <td><img src="https://github.com/teslamotors.png" width="20" height="20" alt="" align="absmiddle"> Tesla</td>
-    <td><a href="https://github.com/teslamotors/vehicle-command/pull/479">vehicle-command #479</a><br>The proxy read every client request body with no size limit, so any client that reached the listener could drive memory allocation without bound</td>
-    <td>15 days</td>
+    <td><a href="https://github.com/teslamotors/vehicle-command/pull/479">vehicle-command #479</a> - merged in 15 days<br>The proxy read every client request body with no size limit, so any client that reached the listener could drive memory allocation without bound</td>
   </tr>
   <tr>
-    <td rowspan="3"><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
-    <td><a href="https://github.com/google/snappy/pull/257">snappy #257</a><br>Every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes</td>
-    <td>1 day</td>
+    <td><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
+    <td><a href="https://github.com/google/snappy/pull/257">snappy #257</a> - merged in 1 day<br>Every release build compressed a 4 GiB input into a stream whose header claimed 0 bytes<br><br><a href="https://github.com/google/benchmark/pull/2294">benchmark #2294</a> - merged in 7 days<br>The complexity report gave its BigO coefficient in nanoseconds whatever time unit the benchmark declared<br><br><a href="https://github.com/google/brotli/pull/1537">brotli #1537</a> - merged in 45 days<br><code>brotli --rm</code> deleted its input and exited 0 after the output write had failed, because the only flush sat in a metadata copy whose failure returned silently; the close now flushes, reports the failure and keeps the input</td>
   </tr>
   <tr>
-    <td><a href="https://github.com/google/benchmark/pull/2294">benchmark #2294</a><br>The complexity report gave its BigO coefficient in nanoseconds whatever time unit the benchmark declared</td>
-    <td>7 days</td>
+    <td><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
+    <td><a href="https://github.com/apple/swift-log/pull/504">swift-log #504</a> - merged in 2 days<br>A documented no-op setter asserted instead<br><br><a href="https://github.com/apple/swift-log/pull/503">swift-log #503</a> - merged in 5 days<br>A handler implementing only <code>log(event:)</code> overflowed the stack on the SwiftLog 1.0 entry point<br><br><a href="https://github.com/apple/swift-protobuf/pull/2164">swift-protobuf #2164</a> - merged in 15 hours<br>The project's own CMake build of <code>protoc-gen-swift</code> had not compiled since June<br><br><a href="https://github.com/swiftlang/swift-format/pull/1286">swift-format #1286</a> - merged in 4 days<br>Formatting in place replaced the file, so a 0600 source came back 0644 and a read-only one lost its bit<br><br><a href="https://github.com/apple/swift-metrics/pull/244">swift-metrics #244</a> - merged in 4 days<br>The package's own test kit crashed on a repeated dimension name<br><br><a href="https://github.com/apple/swift-certificates/pull/317">swift-certificates #317</a> - merged in 16 days<br>A <code>/0</code> iPAddress name constraint matched nothing, so a CA barred from every IP address by <code>0.0.0.0/0</code> and <code>::/0</code> exclusions still verified a leaf with an IP SAN</td>
   </tr>
   <tr>
-    <td><a href="https://github.com/google/brotli/pull/1537">brotli #1537</a><br><code>brotli --rm</code> deleted its input and exited 0 after the output write had failed, because the only flush sat in a metadata copy whose failure returned silently; the close now flushes, reports the failure and keeps the input</td>
-    <td>45 days</td>
-  </tr>
-  <tr>
-    <td rowspan="6"><img src="https://github.com/apple.png" width="20" height="20" alt="" align="absmiddle"> Apple</td>
-    <td><a href="https://github.com/apple/swift-log/pull/504">swift-log #504</a><br>A documented no-op setter asserted instead</td>
-    <td>2 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/apple/swift-log/pull/503">swift-log #503</a><br>A handler implementing only <code>log(event:)</code> overflowed the stack on the SwiftLog 1.0 entry point</td>
-    <td>5 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/apple/swift-protobuf/pull/2164">swift-protobuf #2164</a><br>The project's own CMake build of <code>protoc-gen-swift</code> had not compiled since June</td>
-    <td>15 hours</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/swiftlang/swift-format/pull/1286">swift-format #1286</a><br>Formatting in place replaced the file, so a 0600 source came back 0644 and a read-only one lost its bit</td>
-    <td>4 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/apple/swift-metrics/pull/244">swift-metrics #244</a><br>The package's own test kit crashed on a repeated dimension name</td>
-    <td>4 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/apple/swift-certificates/pull/317">swift-certificates #317</a><br>A <code>/0</code> iPAddress name constraint matched nothing, so a CA barred from every IP address by <code>0.0.0.0/0</code> and <code>::/0</code> exclusions still verified a leaf with an IP SAN</td>
-    <td>16 days</td>
-  </tr>
-  <tr>
-    <td rowspan="4"><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
-    <td><a href="https://github.com/microsoft/mimalloc/pull/1385">mimalloc #1385</a><br>The zeroing allocator returned uninitialized memory above the small-size threshold</td>
-    <td>8 hours</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/microsoft/snmalloc/pull/878">snmalloc #878</a><br>The header-only build recipe named a CMake target removed in 2021 and include paths that resolved nowhere</td>
-    <td>2 hours</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/microsoft/GSL/pull/1271">GSL #1271</a><br>The documented conversion from an iterator to its <code>const_iterator</code> was an access error at every use</td>
-    <td>4 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/microsoft/GSL/pull/1272">GSL #1272</a><br><code>dyn_array_iterator</code> declared random access but had no relational operators, no <code>-&gt;</code> and no <code>n + it</code>, so <code>std::sort</code> over a <code>dyn_array</code> did not compile</td>
-    <td>9 days</td>
+    <td><img src="https://github.com/microsoft.png" width="20" height="20" alt="" align="absmiddle"> Microsoft</td>
+    <td><a href="https://github.com/microsoft/mimalloc/pull/1385">mimalloc #1385</a> - merged in 8 hours<br>The zeroing allocator returned uninitialized memory above the small-size threshold<br><br><a href="https://github.com/microsoft/snmalloc/pull/878">snmalloc #878</a> - merged in 2 hours<br>The header-only build recipe named a CMake target removed in 2021 and include paths that resolved nowhere<br><br><a href="https://github.com/microsoft/GSL/pull/1271">GSL #1271</a> - merged in 4 days<br>The documented conversion from an iterator to its <code>const_iterator</code> was an access error at every use<br><br><a href="https://github.com/microsoft/GSL/pull/1272">GSL #1272</a> - merged in 9 days<br><code>dyn_array_iterator</code> declared random access but had no relational operators, no <code>-&gt;</code> and no <code>n + it</code>, so <code>std::sort</code> over a <code>dyn_array</code> did not compile</td>
   </tr>
   <tr>
     <td><img src="https://github.com/Netflix.png" width="20" height="20" alt="" align="absmiddle"> Netflix</td>
-    <td><a href="https://github.com/Netflix/zuul/pull/2213">zuul #2213</a><br><code>HttpQueryParams.get</code> lower-cased the lookup key against names stored verbatim, so every query parameter with an uppercase letter in its name came back empty</td>
-    <td>17 days</td>
+    <td><a href="https://github.com/Netflix/zuul/pull/2213">zuul #2213</a> - merged in 17 days<br><code>HttpQueryParams.get</code> lower-cased the lookup key against names stored verbatim, so every query parameter with an uppercase letter in its name came back empty</td>
   </tr>
   <tr>
-    <td rowspan="6"><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
-    <td><a href="https://github.com/apache/commons-text/pull/768">commons-text #768</a><br>A <code>StringMatcher</code> overload forwarded the buffer end as its start</td>
-    <td>2 days</td>
+    <td><img src="https://github.com/apache.png" width="20" height="20" alt="" align="absmiddle"> Apache</td>
+    <td><a href="https://github.com/apache/commons-text/pull/768">commons-text #768</a> - merged in 2 days<br>A <code>StringMatcher</code> overload forwarded the buffer end as its start<br><br><a href="https://github.com/apache/commons-csv/pull/633">commons-csv #633</a> - merged in 3 days<br>The record counter's Javadoc said headers were not counted while the constructor's header was<br><br><a href="https://github.com/apache/commons-lang/pull/1784">commons-lang #1784</a> - merged in 1 day<br><code>Fraction.add</code> and <code>subtract</code> overflowed on operands not in lowest terms, or returned them unreduced<br><br><a href="https://github.com/apache/commons-lang/pull/1783">commons-lang #1783</a> - merged in 1 day<br><code>MethodUtils.invokeMethod</code> threw on an instance of any non-public class, every JDK collection factory result included<br><br><a href="https://github.com/apache/commons-lang/pull/1787">commons-lang #1787</a> - merged in 6 hours<br><code>Fraction</code>'s zero shortcuts returned the other operand unreduced, and threw where the reduced result fits<br><br><a href="https://github.com/apache/commons-codec/pull/443">commons-codec #443</a> - merged in 9 days<br>The Git tree-id builder sorted entries by UTF-16 code units where Git sorts UTF-8 bytes, so a name outside the Basic Multilingual Plane gave a different id from <code>git write-tree</code></td>
   </tr>
   <tr>
-    <td><a href="https://github.com/apache/commons-csv/pull/633">commons-csv #633</a><br>The record counter's Javadoc said headers were not counted while the constructor's header was</td>
-    <td>3 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/apache/commons-lang/pull/1784">commons-lang #1784</a><br><code>Fraction.add</code> and <code>subtract</code> overflowed on operands not in lowest terms, or returned them unreduced</td>
-    <td>1 day</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/apache/commons-lang/pull/1783">commons-lang #1783</a><br><code>MethodUtils.invokeMethod</code> threw on an instance of any non-public class, every JDK collection factory result included</td>
-    <td>1 day</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/apache/commons-lang/pull/1787">commons-lang #1787</a><br><code>Fraction</code>'s zero shortcuts returned the other operand unreduced, and threw where the reduced result fits</td>
-    <td>6 hours</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/apache/commons-codec/pull/443">commons-codec #443</a><br>The Git tree-id builder sorted entries by UTF-16 code units where Git sorts UTF-8 bytes, so a name outside the Basic Multilingual Plane gave a different id from <code>git write-tree</code></td>
-    <td>9 days</td>
-  </tr>
-  <tr>
-    <td rowspan="3"><img src="https://github.com/PaloAltoNetworks.png" width="20" height="20" alt="" align="absmiddle"> Palo Alto Networks</td>
-    <td><a href="https://github.com/PaloAltoNetworks/docusaurus-openapi-docs/pull/1625">docusaurus-openapi-docs #1625</a><br>A query or header parameter declared <code>explode: true</code> with a scalar value was enumerated as an object, so <code>status=available</code> went out as <code>status=</code> in the API explorer request and its code snippet, and a <code>null</code> header threw</td>
-    <td>31 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/PaloAltoNetworks/docusaurus-openapi-docs/pull/1624">docusaurus-openapi-docs #1624</a><br><code>clean-api-docs</code> deleted every <code>*.json</code> in the output directory and all of <code>schemas/</code>, so a hand-authored <code>_category_.json</code> went with the generated files</td>
-    <td>31 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/PaloAltoNetworks/docusaurus-openapi-docs/pull/1626">docusaurus-openapi-docs #1626</a><br>Every copy of the docs spelled the credential-persistence option <code>authPersistance</code> while the theme reads <code>authPersistence</code>, so a site set to <code>false</code> still wrote reader API keys and passwords to <code>sessionStorage</code></td>
-    <td>31 days</td>
+    <td><img src="https://github.com/PaloAltoNetworks.png" width="20" height="20" alt="" align="absmiddle"> Palo Alto Networks</td>
+    <td><a href="https://github.com/PaloAltoNetworks/docusaurus-openapi-docs/pull/1625">docusaurus-openapi-docs #1625</a> - merged in 31 days<br>A query or header parameter declared <code>explode: true</code> with a scalar value was enumerated as an object, so <code>status=available</code> went out as <code>status=</code> in the API explorer request and its code snippet, and a <code>null</code> header threw<br><br><a href="https://github.com/PaloAltoNetworks/docusaurus-openapi-docs/pull/1624">docusaurus-openapi-docs #1624</a> - merged in 31 days<br><code>clean-api-docs</code> deleted every <code>*.json</code> in the output directory and all of <code>schemas/</code>, so a hand-authored <code>_category_.json</code> went with the generated files<br><br><a href="https://github.com/PaloAltoNetworks/docusaurus-openapi-docs/pull/1626">docusaurus-openapi-docs #1626</a> - merged in 31 days<br>Every copy of the docs spelled the credential-persistence option <code>authPersistance</code> while the theme reads <code>authPersistence</code>, so a site set to <code>false</code> still wrote reader API keys and passwords to <code>sessionStorage</code></td>
   </tr>
   <tr>
     <td><img src="https://github.com/oracle.png" width="20" height="20" alt="" align="absmiddle"> Oracle</td>
-    <td><a href="https://github.com/oracle/macaron/pull/1466">macaron #1466</a><br>The build spec dropped the JDK version read from the JAR whenever the artifact recorded no language version</td>
-    <td>3 days</td>
+    <td><a href="https://github.com/oracle/macaron/pull/1466">macaron #1466</a> - merged in 3 days<br>The build spec dropped the JDK version read from the JAR whenever the artifact recorded no language version</td>
   </tr>
   <tr>
-    <td rowspan="2"><img src="https://github.com/IBM.png" width="20" height="20" alt="" align="absmiddle"> IBM</td>
-    <td><a href="https://github.com/IBM/sarama/pull/3740">sarama #3740</a><br>The round-robin balancer never returned when the topics map held a topic no consumer group member subscribed to</td>
-    <td>14 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/IBM/fp-go/pull/236">fp-go #236</a><br>A provider graph that referred back to itself deadlocked the dependency injector forever with no diagnostic; it now reports the chain that closes the circle</td>
-    <td>10 hours</td>
+    <td><img src="https://github.com/IBM.png" width="20" height="20" alt="" align="absmiddle"> IBM</td>
+    <td><a href="https://github.com/IBM/sarama/pull/3740">sarama #3740</a> - merged in 14 days<br>The round-robin balancer never returned when the topics map held a topic no consumer group member subscribed to<br><br><a href="https://github.com/IBM/fp-go/pull/236">fp-go #236</a> - merged in 10 hours<br>A provider graph that referred back to itself deadlocked the dependency injector forever with no diagnostic; it now reports the chain that closes the circle</td>
   </tr>
   <tr>
     <td><img src="https://github.com/hashicorp.png" width="20" height="20" alt="" align="absmiddle"> HashiCorp</td>
-    <td><a href="https://github.com/hashicorp/hcl/pull/841">hcl #841</a><br>hclwrite's <code>Expression.Variables</code> returned nothing for an object value and <code>RenameVariablePrefix</code> left its references untouched, so a rename tool silently missed every variable inside an object</td>
-    <td>18 days</td>
+    <td><a href="https://github.com/hashicorp/hcl/pull/841">hcl #841</a> - merged in 18 days<br>hclwrite's <code>Expression.Variables</code> returned nothing for an object value and <code>RenameVariablePrefix</code> left its references untouched, so a rename tool silently missed every variable inside an object</td>
   </tr>
   <tr>
     <td><img src="https://github.com/cisco.png" width="20" height="20" alt="" align="absmiddle"> Cisco</td>
-    <td><a href="https://github.com/cisco/libsrtp/pull/821">libsrtp #821</a><br>Encrypted packets carrying no authentication tag failed to unprotect, because the key lookup stepped a full tag length back from the packet end to find the key identifier</td>
-    <td>4 days</td>
+    <td><a href="https://github.com/cisco/libsrtp/pull/821">libsrtp #821</a> - merged in 4 days<br>Encrypted packets carrying no authentication tag failed to unprotect, because the key lookup stepped a full tag length back from the packet end to find the key identifier</td>
   </tr>
   <tr>
     <td><img src="https://github.com/uber.png" width="20" height="20" alt="" align="absmiddle"> Uber</td>
-    <td><a href="https://github.com/uber/h3/pull/1235">h3 #1235</a><br><code>gridRing</code> zeroed the caller's output buffer with a width computed from <code>k</code> before checking <code>k</code>, so a negative <code>k</code> became a size near 1.8e19 and the write ran off the end of the buffer; the domain check now runs first</td>
-    <td>39 days</td>
+    <td><a href="https://github.com/uber/h3/pull/1235">h3 #1235</a> - merged in 39 days<br><code>gridRing</code> zeroed the caller's output buffer with a width computed from <code>k</code> before checking <code>k</code>, so a negative <code>k</code> became a size near 1.8e19 and the write ran off the end of the buffer; the domain check now runs first</td>
   </tr>
   <tr>
-    <td rowspan="3"><img src="https://github.com/square.png" width="20" height="20" alt="" align="absmiddle"> Square</td>
-    <td><a href="https://github.com/square/kotlinpoet/pull/2380">kotlinpoet #2380</a><br>String literals it emitted turned CRLF into LF, and raw strings in a constant context let newlines pick up indentation</td>
-    <td>4 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/square/kotlinpoet/pull/2382">kotlinpoet #2382</a><br>A class in the default package got a <code>ClassName</code> whose <code>toString()</code> threw</td>
-    <td>4 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/square/kotlinpoet/pull/2391">kotlinpoet #2391</a><br><code>trimTrailingNewLine()</code> rewrote the last <code>String</code> argument of any trailing placeholder, so <code>initializer("%S", "cheese
+    <td><img src="https://github.com/square.png" width="20" height="20" alt="" align="absmiddle"> Square</td>
+    <td><a href="https://github.com/square/kotlinpoet/pull/2380">kotlinpoet #2380</a> - merged in 4 days<br>String literals it emitted turned CRLF into LF, and raw strings in a constant context let newlines pick up indentation<br><br><a href="https://github.com/square/kotlinpoet/pull/2382">kotlinpoet #2382</a> - merged in 4 days<br>A class in the default package got a <code>ClassName</code> whose <code>toString()</code> threw<br><br><a href="https://github.com/square/kotlinpoet/pull/2391">kotlinpoet #2391</a> - merged in 19 days<br><code>trimTrailingNewLine()</code> rewrote the last <code>String</code> argument of any trailing placeholder, so <code>initializer("%S", "cheese
 ")</code> emitted a literal denoting <code>"cheese"</code> and nothing reported the change</td>
-    <td>19 days</td>
   </tr>
   <tr>
-    <td rowspan="2"><img src="https://github.com/cloudflare.png" width="20" height="20" alt="" align="absmiddle"> Cloudflare</td>
-    <td><a href="https://github.com/cloudflare/circl/pull/700">circl #700</a><br>The PKI marshal functions panicked on the library's own post-quantum keys instead of returning an error</td>
-    <td>1 day</td>
+    <td><img src="https://github.com/cloudflare.png" width="20" height="20" alt="" align="absmiddle"> Cloudflare</td>
+    <td><a href="https://github.com/cloudflare/circl/pull/700">circl #700</a> - merged in 1 day<br>The PKI marshal functions panicked on the library's own post-quantum keys instead of returning an error<br><br><a href="https://github.com/cloudflare/circl/pull/699">circl #699</a> - merged in 1 day<br>The hybrid KEM derived a different key pair from the same seed on a random subset of calls</td>
   </tr>
   <tr>
-    <td><a href="https://github.com/cloudflare/circl/pull/699">circl #699</a><br>The hybrid KEM derived a different key pair from the same seed on a random subset of calls</td>
-    <td>1 day</td>
-  </tr>
-  <tr>
-    <td rowspan="2"><img src="https://github.com/JetBrains.png" width="20" height="20" alt="" align="absmiddle"> JetBrains</td>
-    <td><a href="https://github.com/Kotlin/kotlinx-datetime/pull/650">kotlinx-datetime #650</a><br>Deprecation quick-fixes pointed developers at the wrong replacement</td>
-    <td>90 minutes</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/Kotlin/kotlinx-datetime/pull/649">kotlinx-datetime #649</a><br>The Unicode pattern parser dropped the escaped quote inside a literal</td>
-    <td>4 days</td>
+    <td><img src="https://github.com/JetBrains.png" width="20" height="20" alt="" align="absmiddle"> JetBrains</td>
+    <td><a href="https://github.com/Kotlin/kotlinx-datetime/pull/650">kotlinx-datetime #650</a> - merged in 90 minutes<br>Deprecation quick-fixes pointed developers at the wrong replacement<br><br><a href="https://github.com/Kotlin/kotlinx-datetime/pull/649">kotlinx-datetime #649</a> - merged in 4 days<br>The Unicode pattern parser dropped the escaped quote inside a literal</td>
   </tr>
   <tr>
     <td><img src="https://github.com/nodejs.png" width="20" height="20" alt="" align="absmiddle"> Node.js</td>
-    <td><a href="https://github.com/ada-url/ada/pull/1244">ada #1244</a><br>The URL parser Node.js ships reported <code>host_end</code> one byte short</td>
-    <td>12 minutes</td>
+    <td><a href="https://github.com/ada-url/ada/pull/1244">ada #1244</a> - merged in 12 minutes<br>The URL parser Node.js ships reported <code>host_end</code> one byte short</td>
   </tr>
   <tr>
-    <td rowspan="2"><img src="https://github.com/canonical.png" width="20" height="20" alt="" align="absmiddle"> Canonical (Ubuntu)</td>
-    <td><a href="https://github.com/canonical/pebble/pull/938">pebble #938</a><br>With more than one service or check, the metrics endpoint repeated each <code># HELP</code> and <code># TYPE</code> family and the Prometheus parser rejected the whole response</td>
-    <td>16 days</td>
-  </tr>
-  <tr>
-    <td><a href="https://github.com/canonical/pebble/pull/937">pebble #937</a><br>Appending a layer that parsed but failed plan validation left the daemon's live layer list changed, because <code>slices.Insert</code> shifted the existing slice in place before validation ran; the insert now goes into a copy</td>
-    <td>43 days</td>
+    <td><img src="https://github.com/canonical.png" width="20" height="20" alt="" align="absmiddle"> Canonical (Ubuntu)</td>
+    <td><a href="https://github.com/canonical/pebble/pull/938">pebble #938</a> - merged in 16 days<br>With more than one service or check, the metrics endpoint repeated each <code># HELP</code> and <code># TYPE</code> family and the Prometheus parser rejected the whole response<br><br><a href="https://github.com/canonical/pebble/pull/937">pebble #937</a> - merged in 43 days<br>Appending a layer that parsed but failed plan validation left the daemon's live layer list changed, because <code>slices.Insert</code> shifted the existing slice in place before validation ran; the insert now goes into a copy</td>
   </tr>
   <tr>
     <td><img src="https://github.com/SethMMorton.png" width="20" height="20" alt="" align="absmiddle"> natsort</td>
-    <td><a href="https://github.com/SethMMorton/natsort/pull/196">natsort #196</a><br>The locale sentinel meant to sort last was three ASCII bytes, so PyICU keys sorted after it (19 million PyPI downloads a month)</td>
-    <td>8 days</td>
+    <td><a href="https://github.com/SethMMorton/natsort/pull/196">natsort #196</a> - merged in 8 days<br>The locale sentinel meant to sort last was three ASCII bytes, so PyICU keys sorted after it (19 million PyPI downloads a month)</td>
   </tr>
   <tr>
     <td><img src="https://github.com/uuid-rs.png" width="20" height="20" alt="" align="absmiddle"> uuid-rs</td>
-    <td><a href="https://github.com/uuid-rs/uuid/pull/907">uuid #907</a><br>The UUIDv7 counter lost its top four bits to the version nibble (179 million crates.io downloads in the last 90 days)</td>
-    <td>6 days</td>
+    <td><a href="https://github.com/uuid-rs/uuid/pull/907">uuid #907</a> - merged in 6 days<br>The UUIDv7 counter lost its top four bits to the version nibble (179 million crates.io downloads in the last 90 days)</td>
   </tr>
 </table>
 
