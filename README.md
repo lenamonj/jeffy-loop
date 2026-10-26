@@ -13,7 +13,7 @@
 
 **[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)** &nbsp;·&nbsp; **[STE100 description](https://github.com/lenamonj/jeffy-loop/raw/main/Jeffy-Loop-STE100.pdf)**
 
-## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->70<!-- /count --> of its patches.
+## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->71<!-- /count --> of its patches.
 
 </div>
 
@@ -21,7 +21,7 @@ The model writes the patch. The harness around it decides whether that patch can
 
 The harness is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI agent with no part in the run signs off. The goal is fixes that survive scrutiny.
 
-There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->70<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, and more. [See them all.](#independent-validation---the-receipts)
+There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->71<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, Dropbox, and more. [See them all.](#independent-validation---the-receipts)
 
 <div align="center">
 
@@ -38,7 +38,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->70<!-- /count -->** | **<!-- count:prs-open -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->71<!-- /count -->** | **<!-- count:prs-open -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Converged:** the closing audit came back clean and the loop's adversarial evaluator, a fresh-context sub-agent, countersigned it, a standard this repository set and checks itself. That happened in <!-- count:converged -->103<!-- /count --> projects across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer. **Failed:** the run spent the budget declared before it started without converging, or, for libuv, was abandoned before it had one. That leaves PapaParse, an audit held to the same method rather than a loop run, which the receipts page counts as Fixed alongside the 103.
 
@@ -238,6 +238,10 @@ Each finding below was accepted upstream by the project's own maintainers.
   <tr>
     <td><img src="https://github.com/canonical.png" width="20" height="20" alt="" align="absmiddle"> Canonical (Ubuntu)</td>
     <td><a href="https://github.com/canonical/pebble/pull/938">pebble #938</a> - merged in 16 days<br>With more than one service or check, the metrics endpoint repeated each <code># HELP</code> and <code># TYPE</code> family and the Prometheus parser rejected the whole response<br><br><a href="https://github.com/canonical/pebble/pull/937">pebble #937</a> - merged in 43 days<br>Appending a layer that parsed but failed plan validation left the daemon's live layer list changed, because <code>slices.Insert</code> shifted the existing slice in place before validation ran; the insert now goes into a copy</td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/dropbox.png" width="20" height="20" alt="" align="absmiddle"> Dropbox</td>
+    <td><a href="https://github.com/dropbox/rust-brotli/pull/267">rust-brotli #267</a> - merged in 48 days<br>Under the <code>disallow_large_window_size</code> feature the distance histogram was sized 520 while every bound still read 544, so compressing ordinary text panicked with an index out of bounds</td>
   </tr>
   <tr>
     <td><img src="https://github.com/SethMMorton.png" width="20" height="20" alt="" align="absmiddle"> natsort</td>
