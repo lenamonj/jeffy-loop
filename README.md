@@ -13,7 +13,7 @@
 
 **[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)** &nbsp;·&nbsp; **[STE100 description](https://github.com/lenamonj/jeffy-loop/raw/main/Jeffy-Loop-STE100.pdf)**
 
-## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->73<!-- /count --> of its patches.
+## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->74<!-- /count --> of its patches.
 
 </div>
 
@@ -21,7 +21,7 @@ The model writes the patch. The harness around it decides whether that patch can
 
 The harness is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI agent with no part in the run signs off. The goal is fixes that survive scrutiny.
 
-There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->73<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, Dropbox, Tencent, and more. [See them all.](#independent-validation---the-receipts)
+There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->74<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, Dropbox, Tencent, and more. [See them all.](#independent-validation---the-receipts)
 
 <div align="center">
 
@@ -38,7 +38,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->73<!-- /count -->** | **<!-- count:prs-open -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->74<!-- /count -->** | **<!-- count:prs-open -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Converged:** the closing audit came back clean and the loop's adversarial evaluator, a fresh-context sub-agent, countersigned it, a standard this repository set and checks itself. That happened in <!-- count:converged -->103<!-- /count --> projects across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer. **Failed:** the run spent the budget declared before it started without converging, or, for libuv, was abandoned before it had one. That leaves PapaParse, an audit held to the same method rather than a loop run, which the receipts page counts as Fixed alongside the 103.
 
@@ -241,7 +241,7 @@ Each finding below was accepted upstream by the project's own maintainers.
   </tr>
   <tr>
     <td><img src="https://github.com/dropbox.png" width="20" height="20" alt="" align="absmiddle"> Dropbox</td>
-    <td><a href="https://github.com/dropbox/rust-brotli/pull/268">rust-brotli #268</a> - merged in 49 days<br>The README's concatenation recipe, <code>brotli -c -bare -catable</code>, was rejected by the CLI, which wrote nothing and exited 0, so a pipeline joined an empty part and the combined stream decoded to the first input alone<br><br><a href="https://github.com/dropbox/rust-brotli/pull/267">rust-brotli #267</a> - merged in 48 days<br>Under the <code>disallow_large_window_size</code> feature the distance histogram was sized 520 while every bound still read 544, so compressing ordinary text panicked with an index out of bounds</td>
+    <td><a href="https://github.com/dropbox/rust-brotli/pull/269">rust-brotli #269</a> - merged in 49 days<br>Concatenating an empty stream between two others aborted whenever the preceding stream ended at bit offset 7, and <code>catbrotli</code> panicked with no output<br><br><a href="https://github.com/dropbox/rust-brotli/pull/268">rust-brotli #268</a> - merged in 49 days<br>The README's concatenation recipe, <code>brotli -c -bare -catable</code>, was rejected by the CLI, which wrote nothing and exited 0, so a pipeline joined an empty part and the combined stream decoded to the first input alone<br><br><a href="https://github.com/dropbox/rust-brotli/pull/267">rust-brotli #267</a> - merged in 48 days<br>Under the <code>disallow_large_window_size</code> feature the distance histogram was sized 520 while every bound still read 544, so compressing ordinary text panicked with an index out of bounds</td>
   </tr>
   <tr>
     <td><img src="https://github.com/Tencent.png" width="20" height="20" alt="" align="absmiddle"> Tencent (WeChat)</td>
