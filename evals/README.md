@@ -4,7 +4,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:fixed -->104<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->74<!-- /count -->** | **<!-- count:prs-open -->17<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:fixed -->104<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->74<!-- /count -->** | **<!-- count:prs-open -->16<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->103<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
@@ -220,7 +220,7 @@ The table is in [CONTRIBUTING.md](../CONTRIBUTING.md#agreements-signed-for-upstr
 | kotlinx-collections-immutable | Kotlin | [details](./kotlinx-collections-immutable/REPORT.md) - the vector builder broke its build() identity promise on a no-op set, and two pass-through sentences promised more than the code | Fixed |
 | BurntSushi/toml | Go | [details](./ATTEMPTS.md) - 5 runs, 52 iters, not converged | Failed |
 | Carbon | PHP | [details](./ATTEMPTS.md) - 4 runs, 17 iters, not converged | Failed |
-| casbin | Go | [details](./casbin/REPORT.md) - 5 runs, 46 iters, not converged - [PR open](https://github.com/apache/casbin/pull/1753) | Failed |
+| casbin | Go | [details](./casbin/REPORT.md) - 5 runs, 46 iters, not converged - [PR closed](https://github.com/apache/casbin/pull/1753) | Failed |
 | cast | Go | [details](./ATTEMPTS.md) - 2 runs, 22 iters, not converged | Failed |
 | chroma.js | JavaScript | [details](./ATTEMPTS.md) - 4 runs, 30 iters, not converged | Failed |
 | click | Python | [details](./ATTEMPTS.md) - 5 runs, 42 iters, not converged | Failed |
