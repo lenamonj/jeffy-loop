@@ -48,17 +48,36 @@ done
 #     index, not the filesystem: 100644 here means every Linux and Mac clone
 #     fails the README's ./install.sh with Permission denied. Skips cleanly
 #     outside a git checkout (release tarballs).
+#     X1: the list of entry points was hand-typed at three while the shipped
+#     text told a run to execute two further scripts by bare path, and both
+#     were committed 100644 - following the iteration prompt returned 126,
+#     and nothing here could see it because the scripts it named were not on
+#     the list. The set is derived now: every .sh the engine ships under
+#     skills/ plus the two root entry points. A library added later is then
+#     covered by the property rather than by whoever remembers to extend a
+#     list, which is the same remedy check 5 already carries rather than the
+#     same defect: S1 derived that check's shellcheck file list from the tree
+#     in run 102989a0 and the comment at that site records it by ID, so
+#     neither list is typed now. An empty derivation faults rather than
+#     passing silently.
 if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-  for exec_src in install.sh scripts/validate.sh skills/jeffy/hooks/stop-hook.sh; do
+  exec_set="$(git ls-files -- skills install.sh scripts/validate.sh | grep '\.sh$' | sort -u)"
+  if [ -z "$exec_set" ]; then
+    fault "the exec-bit derivation returned no file, so no shipped script's mode was compared"
+  fi
+  while IFS= read -r exec_src; do
+    [ -n "$exec_src" ] || continue
     mode="$(git ls-files -s "$exec_src" 2>/dev/null | awk '{print $1}')"
     if [ "$mode" = "100755" ]; then
       pass "$exec_src carries the exec bit in the git index (100755)"
     elif [ -z "$mode" ]; then
       fault "$exec_src is not in the git index"
     else
-      fault "$exec_src committed without exec bit ($mode): ./install.sh breaks on Linux and Mac"
+      fault "$exec_src committed without exec bit ($mode): ./install.sh breaks on Linux and Mac, and a shipped instruction naming it by bare path exits 126"
     fi
-  done
+  done <<EOF
+$exec_set
+EOF
 else
   skip "exec-bit checks (not a git checkout)"
 fi
@@ -3762,6 +3781,77 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       else
         printf '%s\n' "$hb_out"
         fault "stop hook rejected a freshly re-recorded Surface inventory row"
+      fi
+
+      # Y1: the battery-name extractor's character class accepts the dot a
+      # name may legitimately carry, so it also swallowed the full stop that
+      # ends the sentence a row names its battery in. The paths lookup then
+      # missed, the row went into the no-paths tally and was skipped, and its
+      # staleness was never derived - the gate accepted this exact fixture,
+      # which differs from the stale case above by one character, and said
+      # nothing but an advisory note on stderr. Both halves are asserted here:
+      # the refusal, and a no-paths tally of 0 rather than 1, since a row the
+      # hook could not look up is the shape that reads as health.
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_write_plan_full none "- [x] core: swept at $hb_c1 via .jeffy/probes/core. Probed every entry point."
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'is stale' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'product.txt has changed since' \
+        && ! grep -q 'has no paths file' "$hb_tmp/hb_err_cap.txt"; then
+        pass "stop hook derives staleness for a row naming its battery before a full stop (Y1)"
+      else
+        printf '%s\n' "$hb_out"
+        cat "$hb_tmp/hb_err_cap.txt"
+        fault "stop hook swallowed a row's terminating full stop into the battery name and accepted convergence over a stale row"
+      fi
+
+      # V1: jeffy_section normalizes an indented checkbox into a row so one
+      # space of indent cannot hide an open task, which is right for the
+      # ledger and wrong for the map. A PLAN.md that documents its own row
+      # grammar by example - the two forms a no-sweep row may take, indented
+      # so a human reads them as examples - acquires phantom rows no sweep can
+      # ever clear, and the gate then refuses every future declaration telling
+      # the user to sweep `<surface>`. Reproduced on a live project, where the
+      # hook counted one unswept row against a map with none. The placeholder
+      # is what tells an example from a row, which is the same shape the
+      # engine already reads for an unanswered field; keying on the indent
+      # instead would break a user whose real rows are legitimately indented,
+      # and the control below is what holds that line.
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_write_plan_full none \
+        "- [x] core: swept at $hb_c2 via .jeffy/probes/core - re-swept after the change" \
+        "  - [ ] <surface>: <scope>. Paths: <space-separated paths>." \
+        "  - [~] <surface>: unreachable on this host - <reason>. Paths: <space-separated paths>."
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+        pass "stop hook reads an indented <placeholder> row-grammar example as documentation, not as surface (V1)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused convergence over a row-grammar example no sweep can ever clear"
+      fi
+
+      # The control that keeps the fix narrow. An indented row naming a real
+      # surface is still a row, so the reason jeffy_section normalizes indent
+      # at all survives this change. Without this case the fix could have been
+      # written as line-start-only matching and the scenario above would still
+      # have passed, while every user whose rows carry a leading space lost
+      # their whole map.
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c2 - 2026-01-01"
+      hb_write_plan_full none \
+        "- [x] core: swept at $hb_c2 via .jeffy/probes/core - re-swept after the change" \
+        "  - [ ] indented but real: a surface written with a leading space. Paths: product.txt."
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'still lists an unswept row' \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'indented but real'; then
+        pass "stop hook still reads an indented row naming a real surface as unswept (V1 control)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook stopped reading indented inventory rows altogether"
       fi
 
       # P0-8: the template says one glob per line, and through 1.14.0 the
@@ -10280,6 +10370,79 @@ print("jeffy=%d timeouts=%s other=%d" % (len(j), ",".join(str(h.get("timeout")) 
       fi
     fi
     rm -rf "$v_tmp"; v_tmp=""
+  fi
+fi
+
+# V2. `jeffy uninstall` is the other half of the shipped console script's
+#     user-facing surface, and check V drives only install. Uninstall rewrites
+#     the user's ~/.claude/settings.json and rmtree's two directories beneath
+#     it, so the property worth grading is what it leaves behind rather than
+#     what it removes: the Jeffy registration gone, and an unrelated Stop
+#     hook, an unrelated PreToolUse entry and unrelated top-level keys all
+#     intact. The sandbox seeds the post-install state directly instead of
+#     running install first, because that contract is about the state and not
+#     about how it was reached, and because check V already grades the install
+#     path; uninstall is dispatched before the packaged-skills lookup, so it
+#     needs neither the force-include staging nor the claude and jq stubs that
+#     check V builds. The fixture is read back before the command runs, since
+#     an assertion over a sandbox that was never seeded passes by vacuity.
+#     python3 is its only gate and the interpreter is taken by absolute path,
+#     both for the reasons check V records. (U3 of run 04244cbe)
+if ! command -v python3 >/dev/null 2>&1; then
+  skip "shipped Python installer uninstall path (python3 not on PATH)"
+else
+  u_py="$(command -v python3)"
+  u_tmp="$(mktemp -d)" || u_tmp=""
+  if [ -z "$u_tmp" ]; then
+    fault "the uninstall check could not create its sandbox (mktemp failed)"
+  else
+    u_stage="$u_tmp/pkg"; u_home="$u_tmp/home"
+    u_profile="$u_home"; command -v cygpath >/dev/null 2>&1 && u_profile="$(cygpath -w "$u_home")"
+    mkdir -p "$u_stage/jeffy_loop" "$u_home/.claude/skills/jeffy/hooks" "$u_home/.claude/skills/cancel-jeffy"
+    cp src/jeffy_loop/*.py "$u_stage/jeffy_loop/" 2>/dev/null
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$u_home/.claude/skills/jeffy/hooks/stop-hook.sh"
+    printf 'placeholder\n' > "$u_home/.claude/skills/cancel-jeffy/SKILL.md"
+    printf '{"model":"opus","env":{"FOO":"bar"},"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"bash /somewhere/pre.sh"}]}],"Stop":[{"hooks":[{"type":"command","command":"bash \\"%s/.claude/skills/jeffy/hooks/stop-hook.sh\\"","timeout":1800}]},{"hooks":[{"type":"command","command":"bash /somewhere/other-hook.sh","timeout":5}]}]}}\n' \
+      "$u_home" > "$u_home/.claude/settings.json"
+    # Read with the stdlib, for check V's reason: the installer writes this
+    # file itself, so the reader has no business needing a binary the writer
+    # never touches. Every preserved shape is printed, not just the Stop list,
+    # because a writer that dropped the top-level keys would otherwise pass.
+    u_read='
+import json, os, sys
+p = os.path.join(sys.argv[1], ".claude", "settings.json")
+with open(p, encoding="utf-8") as f:
+    s = json.load(f)
+h = s.get("hooks", {}) if isinstance(s, dict) else {}
+stop = h.get("Stop", []) if isinstance(h, dict) else []
+hooks = [x for g in stop for x in (g.get("hooks", []) if isinstance(g, dict) else [])]
+j = [x for x in hooks if "skills/jeffy/hooks/stop-hook.sh" in str(x.get("command", ""))]
+o = [x for x in hooks if "other-hook.sh" in str(x.get("command", ""))]
+pre = h.get("PreToolUse", []) if isinstance(h, dict) else []
+print("jeffy=%d other=%d pre=%d model=%s env=%s" % (len(j), len(o), len(pre), s.get("model"), (s.get("env") or {}).get("FOO")))
+'
+    u_want="jeffy=0 other=1 pre=1 model=opus env=bar"
+    u_before="$("$u_py" -c "$u_read" "$u_home" 2>&1)"
+    if [ "$u_before" != "jeffy=1 other=1 pre=1 model=opus env=bar" ]; then
+      fault "the uninstall check's own fixture did not read back as seeded ($u_before), so nothing it asserts below would mean anything"
+    elif ! HOME="$u_home" USERPROFILE="$u_profile" PYTHONPATH="$u_stage" PYTHONPYCACHEPREFIX="$u_tmp/pyc" \
+        "$u_py" -m jeffy_loop.cli uninstall </dev/null >"$u_tmp/uninstall.log" 2>&1; then
+      sed -n '1,20p' "$u_tmp/uninstall.log"
+      fault "the shipped console script's uninstall exited non-zero against a sandbox HOME (log above)"
+    else
+      u_after="$("$u_py" -c "$u_read" "$u_home" 2>&1)"
+      u_left=0
+      [ -e "$u_home/.claude/skills/jeffy" ] && u_left=$((u_left + 1))
+      [ -e "$u_home/.claude/skills/cancel-jeffy" ] && u_left=$((u_left + 1))
+      if [ "$u_after" != "$u_want" ]; then
+        fault "uninstall left the wrong settings.json behind ($u_after, wanted $u_want): the Jeffy registration must be gone and the unrelated Stop hook, the PreToolUse entry and the top-level keys intact"
+      elif [ "$u_left" -ne 0 ]; then
+        fault "uninstall left $u_left of the two skill directories under the sandbox HOME"
+      else
+        pass "the shipped console script's uninstall removes both skills and only the Jeffy Stop hook ($u_after)"
+      fi
+    fi
+    rm -rf "$u_tmp"; u_tmp=""
   fi
 fi
 

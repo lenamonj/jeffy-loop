@@ -610,6 +610,16 @@ jeffy_derive_stale_rows() { # $1 project root
     [ -n "$jsr_row" ] || continue
     jsr_c="$(printf '%s' "$jsr_row" | grep -oE 'swept at [0-9a-f]{7,40}' | head -n 1 | awk '{print $3}')"
     jsr_b="$(printf '%s' "$jsr_row" | grep -oE '\.jeffy/probes/[A-Za-z0-9._-]+' | head -n 1)"
+    # 1.26.11 (Y1): the class above accepts the dot a battery name may
+    # legitimately carry, so it also swallows the full stop that ends the
+    # sentence a row names its battery in. The paths lookup below then misses,
+    # the row is counted into the no-paths tally and skipped, and its
+    # staleness is never derived at all - so a declaration is accepted over a
+    # stale row because its author ended a sentence instead of using the
+    # template's dash, and the only thing said about it is an advisory note on
+    # stderr. Trailing dots are stripped after extraction; a battery directory
+    # never ends in one.
+    jsr_b="${jsr_b%"${jsr_b##*[!.]}"}"
     if [ -z "$jsr_c" ] || [ -z "$jsr_b" ]; then
       jsr_unlinked=$((jsr_unlinked + 1))
       continue
@@ -643,8 +653,39 @@ EOF2
       break
     fi
   done <<EOF
-$(jeffy_section "$1/PLAN.md" 'Surface inventory' | grep '^- \[x\]')
+$(jeffy_inventory_rows "$1" | grep '^- \[x\]')
 EOF
+}
+
+# 1.26.11 (V1): an unfilled `<...>` placeholder is not an inventory row.
+# jeffy_section normalizes any indented checkbox into a row so one space of
+# indent cannot hide an open task, which is right for the ledger and wrong
+# here: a PLAN.md that documents its own row grammar by example - two
+# indented `- [ ] <surface>: ...` lines, written to be read by a human -
+# acquires phantom rows no sweep can ever clear, and the declaration gate
+# then refuses forever telling the user to sweep a surface that does not
+# exist. Keying on the placeholder rather than on the indent is what makes
+# the fix safe for a user whose real rows are legitimately indented, and it
+# is the same shape the engine already uses for an unanswered field -
+# quiet-verify.sh's template guard and oracle_unfilled both read `<...>`.
+# The template's own unfilled row stops counting too, which is correct: a
+# bootstrapped map nobody has filled in is an empty map, and the empty-map
+# refusal below says so far better than an instruction to sweep `<surface>`.
+# Every reader of the inventory goes through here, because the count the run
+# state publishes, the staleness scan, the stall digest and the gate must
+# agree on what a row is.
+jeffy_inventory_rows() { # $1 project root
+  jir_raw="$(jeffy_section "$1/PLAN.md" 'Surface inventory')" || return 1
+  [ -n "$jir_raw" ] || return 0
+  printf '%s\n' "$jir_raw" | awk '
+    /^- \[.\] / {
+      jir_rest = substr($0, 7)
+      jir_ci = index(jir_rest, ":")
+      jir_surf = (jir_ci > 0) ? substr(jir_rest, 1, jir_ci - 1) : jir_rest
+      if (jir_surf ~ /^<[^<>]*>$/) next
+    }
+    { print }
+  '
 }
 
 # True when the certified line's second field is a hash and not a rev
@@ -1149,7 +1190,7 @@ if [ -n "$promise" ]; then
       # a stderr note made one letter on the heading, or deleting it, the
       # price of declaring over an unswept map.
       if [ "$hunt" = 0 ] && [ -z "$violation" ] && [ -f "$root/PLAN.md" ]; then
-        if inv_rows="$(jeffy_section "$root/PLAN.md" 'Surface inventory')"; then
+        if inv_rows="$(jeffy_inventory_rows "$root")"; then
           unswept="$(printf '%s\n' "$inv_rows" | grep '^- \[ \]' | head -n 1)"
           # P1-7c: refusing [ ] alone let a map made entirely of [~] rows
           # declare with nothing swept. A [~] row is a disclosure, not a
@@ -1886,7 +1927,7 @@ if [ -f "$root/BACKLOG.md" ]; then
   ')"
 fi
 unswept_rows=""
-if [ -f "$root/PLAN.md" ] && inv_rows="$(jeffy_section "$root/PLAN.md" 'Surface inventory')"; then
+if [ -f "$root/PLAN.md" ] && inv_rows="$(jeffy_inventory_rows "$root")"; then
   unswept_rows="$(printf '%s\n' "$inv_rows" | grep -c '^- \[ \]')"
 fi
 # 1.22.0: a hunt never sweeps, so the unswept count is not a quantity any
@@ -2388,7 +2429,7 @@ fi
 # read over the row lines alone so PLAN.md prose stays out of it, the same
 # shape as the ledger signal above.
 cur_inventory="none"
-if [ -f "$root/PLAN.md" ] && inv_rows="$(jeffy_section "$root/PLAN.md" 'Surface inventory')"; then
+if [ -f "$root/PLAN.md" ] && inv_rows="$(jeffy_inventory_rows "$root")"; then
   cur_inventory="$(printf '%s\n' "$inv_rows" | grep '^- \[[ xb]\]' | cksum | tr ' \t' '--')"
 fi
 last_head="$(fm last_head)"
