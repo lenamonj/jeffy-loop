@@ -72,7 +72,9 @@ for name in jeffy cancel-jeffy; do
   done < <(cd "$dest" && find . -type f | sed 's|^\./||')
   echo "[OK] /$name skill installed to $dest"
 done
-chmod +x "$HOME/.claude/skills/jeffy/hooks/stop-hook.sh" 2>/dev/null || true
+# cp over an existing file keeps that file's mode, so an upgrade from a release
+# that shipped a hook script at 644 would keep it there; every one is set here.
+find "$HOME/.claude/skills/jeffy/hooks" -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 
 # 4. Register the Stop hook (the loop engine) in ~/.claude/settings.json.
 #    Idempotent: a settings file that already names the hook is left alone, and

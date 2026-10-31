@@ -2239,6 +2239,26 @@ else
   else
     skip "install.sh hook-registration assertions (jq not on PATH)"
   fi
+  # The upgrade half of the exec bit, for the same reason check V records:
+  # cp over an existing file keeps that file's mode.
+  rt_hooks="$rt_home/.claude/skills/jeffy/hooks"
+  if [ -f "$rt_hooks/lib/quiet-verify.sh" ]; then
+    find "$rt_hooks" -type f -name '*.sh' -exec chmod 644 {} +
+    if [ -x "$rt_hooks/lib/quiet-verify.sh" ]; then
+      skip "install.sh upgrade restores the hook scripts' exec bit (this filesystem does not clear it)"
+    else
+      HOME="$rt_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/modes.log" 2>&1 || true
+      rt_noexec="$(find "$rt_hooks" -type f -name '*.sh' ! -perm -u+x | sed "s|^$rt_hooks/||" | tr '
+' ' ')"
+      if [ -z "$rt_noexec" ]; then
+        pass "install.sh over a 644 install leaves every hook script executable"
+      else
+        fault "install.sh over an existing install left hook scripts without the exec bit: $rt_noexec"
+      fi
+    fi
+  else
+    fault "install.sh runtime check found no installed hooks/lib/quiet-verify.sh to test the upgrade mode against"
+  fi
   rm -rf "$rt_tmp"
 fi
 
@@ -10367,6 +10387,28 @@ print("jeffy=%d timeouts=%s other=%d" % (len(j), ",".join(str(h.get("timeout")) 
         fault "a second install changed the registration ($v_got then $v_again); the installer is not idempotent"
       else
         pass "the shipped console script installs into a sandbox HOME ($v_got), is idempotent on a second run, and staged $v_staged force-include pairs read from pyproject"
+      fi
+    fi
+    # An upgrade, not a fresh install: a copy over an existing file keeps that
+    # file's mode, so a host first installed before 1.26.11 kept the hook
+    # libraries at 644 and their bare-path calls returned 126. Every installed
+    # hook script is set back to 644 and the install run again. A filesystem
+    # that cannot clear the bit (NTFS under Git Bash) cannot show the defect,
+    # and says so rather than passing.
+    v_hooks="$v_home/.claude/skills/jeffy/hooks"
+    if [ -f "$v_hooks/lib/quiet-verify.sh" ]; then
+      find "$v_hooks" -type f -name '*.sh' -exec chmod 644 {} +
+      if [ -x "$v_hooks/lib/quiet-verify.sh" ]; then
+        skip "console script upgrade restores the hook scripts' exec bit (this filesystem does not clear it)"
+      else
+        HOME="$v_home" USERPROFILE="$v_profile" PATH="$v_bin:$PATH" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc"           "$v_py" -m jeffy_loop.cli install </dev/null >"$v_tmp/install3.log" 2>&1
+        v_noexec="$(find "$v_hooks" -type f -name '*.sh' ! -perm -u+x | sed "s|^$v_hooks/||" | tr '
+' ' ')"
+        if [ -z "$v_noexec" ]; then
+          pass "the console script's install over a 644 install leaves every hook script executable"
+        else
+          fault "the console script's install over an existing install left hook scripts without the exec bit: $v_noexec"
+        fi
       fi
     fi
     rm -rf "$v_tmp"; v_tmp=""
