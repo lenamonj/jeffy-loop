@@ -68,7 +68,7 @@ for name in jeffy cancel-jeffy; do
   # edited is still overwritten by the copy above, as it always was.
   while IFS= read -r stale; do
     [ -n "$stale" ] || continue
-    [ -e "$script_dir/skills/$name/$stale" ] || { rm -f "$dest/$stale"; echo "[OK] removed $dest/$stale (no longer shipped)"; }
+    [ -e "$script_dir/skills/$name/$stale" ] || { rm -f "$dest/$stale"; echo "[OK] removed $dest/$stale (not in this version)"; }
   done < <(cd "$dest" && find . -type f | sed 's|^\./||')
   echo "[OK] /$name skill installed to $dest"
 done
@@ -85,6 +85,14 @@ hook_cmd="bash \"$HOME/.claude/skills/jeffy/hooks/stop-hook.sh\""
 if command -v jq >/dev/null 2>&1; then
   mkdir -p "$HOME/.claude"
   [[ -s "$settings" ]] || printf '{}\n' > "$settings"
+  # The replacement lands beside the real file, so the rename is a rename: a link
+  # stays a link, the mode stays, and a full disk fails the write and leaves the
+  # file alone. macOS before 12.3 has no readlink -f and replaces the link.
+  real="$settings"
+  if [ -L "$settings" ]; then
+    real="$(readlink -f "$settings" 2>/dev/null || true)"
+    [ -n "$real" ] || real="$settings"
+  fi
   # A registration names the hook by path, and a settings.json carried in
   # from another home names that home's hook: "already registered" would
   # hold while the loop never fires. A Jeffy registration whose path is no
@@ -102,10 +110,10 @@ if command -v jq >/dev/null 2>&1; then
       [ -f "$reg_path" ] || dead_cmds="$dead_cmds$reg_cmd"$'\n'
     done < <(jq -r --arg frag "$hook_frag" '.hooks.Stop[]?.hooks[]?.command // empty | select(contains($frag))' "$settings")
     if [ -n "$dead_cmds" ]; then
-      tmp="$(mktemp)"
+      tmp="$(mktemp "$real.XXXXXX")"; cp -p "$real" "$tmp" || true
       if jq --arg dead "$dead_cmds" '($dead | split("\n") | map(select(. != ""))) as $d | .hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | select(((.command // "") as $c | any($d[]; . == $c)) | not)]) else . end | select((.hooks | type) != "array" or (.hooks | length) > 0)]' "$settings" > "$tmp" \
         && jq empty "$tmp" >/dev/null 2>&1; then
-        mv "$tmp" "$settings"
+        mv "$tmp" "$real"
         echo "[OK] removed a Stop hook registration naming a hook that does not exist: $(printf '%s' "$dead_cmds" | head -n 1)"
       else
         rm -f "$tmp"
@@ -125,10 +133,10 @@ if command -v jq >/dev/null 2>&1; then
     if jq -e --arg frag "$hook_frag" '[.hooks.Stop[]?.hooks[]? | select((.command // "") | contains($frag)) | (has("timeout") and .timeout != 600)] | all' "$settings" >/dev/null 2>&1; then
       echo "[OK] Jeffy Stop hook already registered in $settings"
     else
-      tmp="$(mktemp)"
+      tmp="$(mktemp "$real.XXXXXX")"; cp -p "$real" "$tmp" || true
       if jq --arg frag "$hook_frag" '.hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | if ((.command // "") | contains($frag)) and ((has("timeout") | not) or .timeout == 600) then . + {"timeout": 1800} else . end]) else . end]' "$settings" > "$tmp" \
         && jq empty "$tmp" >/dev/null 2>&1; then
-        mv "$tmp" "$settings"
+        mv "$tmp" "$real"
         echo "[OK] Jeffy Stop hook registration upgraded to an 1800s timeout in $settings"
       else
         rm -f "$tmp"
@@ -137,10 +145,10 @@ if command -v jq >/dev/null 2>&1; then
       fi
     fi
   else
-    tmp="$(mktemp)"
+    tmp="$(mktemp "$real.XXXXXX")"; cp -p "$real" "$tmp" || true
     if jq --arg cmd "$hook_cmd" '.hooks //= {} | .hooks.Stop //= [] | .hooks.Stop += [{"hooks": [{"type": "command", "command": $cmd, "timeout": 1800}]}]' "$settings" > "$tmp" \
       && jq empty "$tmp" >/dev/null 2>&1; then
-      mv "$tmp" "$settings"
+      mv "$tmp" "$real"
       echo "[OK] Jeffy Stop hook registered in $settings (1800s timeout)"
     else
       rm -f "$tmp"

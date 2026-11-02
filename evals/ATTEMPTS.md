@@ -1,9 +1,11 @@
-# Every target ever started
+# Every study target ever started
 
 The receipts table in the README lists what converged. This file lists
 everything that was ever *started*, including what did not finish and what was
 abandoned, because a method that only publishes the runs that worked is not
 being measured.
+
+High-hunt runs are not study attempts and are not listed here; their only product is a pull request.
 
 Derived from the run journals rather than from prose. The iteration column
 reproduces each receipt's own published figure, so this table and the README
@@ -61,7 +63,7 @@ loss rather than hiding it.
 | godotenv | 2 | 19 | converged | evaluator countersigned | 0 |
 | goldmark | 5 | 47 | **not converged** | n/a | 0 |
 | gson | 1 | 2 | converged | evaluator countersigned | 0 |
-| heck | 2 | 17 | converged | evaluator countersigned | 0 |
+| heck | 2 | 17 | converged | evaluator countersigned, one blocked High | 0 |
 | humanize | 3 | 30 | converged | evaluator countersigned | 0 |
 | Humanizer | 4 | 32 | **not converged** | n/a | 0 |
 | immer | 3 | 31 | **not converged** | n/a | 1 |
@@ -88,8 +90,8 @@ loss rather than hiding it.
 | nanoid (attempt 1) | 3 | 30 | **not converged** | n/a | 3 |
 | nanoid | 2 | 16 | converged | evaluator countersigned | 0 |
 | node-semver | 4 | 30 | **not converged** | n/a | 0 |
-| path-to-regexp | 3 | 27 | converged | evaluator countersigned | 1 |
-| pflag | 1 | 11 | converged | evaluator countersigned | 0 |
+| path-to-regexp | 3 | 27 | converged | evaluator countersigned, one blocked Medium | 1 |
+| pflag | 1 | 11 | converged | evaluator countersigned, two blocked Mediums | 0 |
 | PHP-Parser | 3 | 29 | converged | evaluator countersigned | 0 |
 | phpdotenv | 1 | 10 | converged | evaluator countersigned | 0 |
 | PyPortfolioOpt | 6 | 58 | converged | evaluator countersigned | 1 |
@@ -118,7 +120,7 @@ loss rather than hiding it.
 | testify | 4 | 40 | **not converged** | n/a | 2 |
 | thor | 2 | 20 | **not converged** | n/a | 0 |
 | typer | 1 | 11 | converged | evaluator countersigned | 0 |
-| underscore | 2 | 20 | converged | evaluator countersigned | 0 |
+| underscore | 2 | 20 | converged | evaluator countersigned, one blocked Medium | 0 |
 | unicode-segmentation | 2 | 15 | converged | evaluator countersigned | 0 |
 | unicode-width | 1 | 6 | converged | evaluator countersigned | 0 |
 | urfave-cli | 2 | 18 | converged | evaluator countersigned | 0 |
@@ -130,6 +132,35 @@ loss rather than hiding it.
 | zstd | 6 | 54 | **not converged** | n/a | 1 |
 | PapaParse | audit only | - | audit, not a loop run | n/a | - |
 | **libuv** | at least 1 | at least 1 | **abandoned, no receipt** | n/a | - |
+| go-runewidth | 2 | 20 | converged | evaluator countersigned | 0 |
+| itertools | 1 | 8 | converged | evaluator countersigned | 0 |
+| nanostores | 2 | 18 | converged | evaluator countersigned | 0 |
+| natsort | 1 | 11 | converged | evaluator countersigned | 0 |
+| picomatch | 5 | 45 | **not converged** | n/a | 2 |
+| swift-collections | 5 | 25 | converged | evaluator countersigned | 1 |
+| utf8proc | 1 | 9 | converged | evaluator countersigned | 0 |
+| commons-text | 3 | 24 | converged | evaluator countersigned, one blocked Medium | 0 |
+| rubyzip | 5 | 46 | converged | evaluator countersigned | 1 |
+| xid | 1 | 10 | converged | evaluator countersigned | 0 |
+| uuid | 1 | 10 | converged | evaluator countersigned | 0 |
+| swift-log | 2 | 16 | converged | evaluator countersigned | 0 |
+| commons-cli | 2 | 20 | converged | evaluator countersigned | 1 |
+| commons-codec | 2 | 18 | converged | evaluator countersigned, one blocked High | 0 |
+| jansson | 1 | 10 | converged | evaluator countersigned | 0 |
+| shouldly | 1 | 8 | converged | evaluator countersigned | 0 |
+| valinor | 2 | 17 | converged | evaluator countersigned | 0 |
+| i18n | 2 | 14 | converged | evaluator countersigned | 0 |
+| kotlinx-io | 2 | 19 | converged | evaluator countersigned | 0 |
+| csv | 4 | 37 | converged | evaluator countersigned | 0 |
+| swift-system | 1 | 10 | converged | evaluator countersigned | 0 |
+| commons-csv | 2 | 18 | converged | evaluator countersigned | 1 |
+| kotlinx-datetime | 2 | 17 | converged | evaluator countersigned | 0 |
+| swift-http-types | 2 | 18 | converged | evaluator countersigned | 0 |
+| money | 1 | 10 | converged | evaluator countersigned | 0 |
+| ohash | 1 | 10 | converged | evaluator countersigned | 0 |
+| kotlinx-collections-immutable | 1 | 9 | converged | evaluator countersigned | 0 |
+| macaron | 4 | 36 | converged | evaluator countersigned | 0 |
+| swift-metrics | 1 | 12 | converged | evaluator countersigned | 0 |
 
 ## Greenfield
 
@@ -137,48 +168,11 @@ loss rather than hiding it.
 |---|---:|---:|---|---:|
 | TOML decoder | 1 | 11 | converged | 0 |
 | gitignore matcher | 5 | 42 | converged | 3 |
-| go-runewidth | 2 | 20 | converged | evaluator countersigned | 0 |
-| itertools | 1 | 8 | converged | evaluator countersigned | 0 |
-| nanostores | 2 | 18 | converged | evaluator countersigned | 0 |
-| natsort | 1 | 11 | converged | evaluator countersigned | 0 |
-| picomatch | 5 | 45 | **not converged** | n/a | 2 |
-| swift-collections | 5 | 25 | converged | evaluator countersigned | 1 |
 | TOML-M (mutated spec) | 1 | 14 | converged, with a disclosed process violation | 0 |
-| utf8proc | 1 | 9 | converged | evaluator countersigned | 0 |
-| commons-text | 3 | 24 | converged | evaluator countersigned | 0 |
-| rubyzip | 5 | 46 | converged | evaluator countersigned | 1 |
-| xid | 1 | 10 | converged | evaluator countersigned | 0 |
-| uuid | 1 | 10 | converged | evaluator countersigned | 0 |
-| swift-log | 2 | 16 | converged | evaluator countersigned | 0 |
-| commons-cli | 2 | 20 | converged | evaluator countersigned | 1 |
-| commons-codec | 2 | 18 | converged | evaluator countersigned | 0 |
-| jansson | 1 | 10 | converged | evaluator countersigned | 0 |
-| shouldly | 1 | 8 | converged | evaluator countersigned | 0 |
-| valinor | 2 | 17 | converged | evaluator countersigned | 0 |
-| i18n | 2 | 14 | converged | evaluator countersigned | 0 |
-| kotlinx-io | 2 | 19 | converged | evaluator countersigned | 0 |
-| csv | 4 | 37 | converged | evaluator countersigned | 0 |
 
 ## The convergence standard is not uniform, and here is the split
 
-The engine tightened over time. Of the 62 brownfield convergences:
-
-- **57** were countersigned by the adversarial evaluator, the current standard.
-  Nineteen of those met the empty-ledger rule, `urfave-cli` being the most recent;
-  `cJSON`, `swift-algorithms`,
-  `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
-  `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp`, `godotenv`, `go-uuid`, `rust-semver`, `heck`, `ryu`, `marshmallow`, `more-itertools`, `underscore`, `js-uuid`, `phpdotenv`, `vavr`, `itoa`, `qs`, `indicatif`, `cli11`, `typer`, `mimalloc`, `pflag`, `rack`, `idna`, `rouge` and `json` met
-  the v1.9.0 severity floor described below, `cJSON` being the first convergence in the study that
-  the empty-ledger rule would have refused.
-- **1** (`ta`) records the evaluator as `unavailable` - that session carried a
-  standing instruction against sub-agents, and the receipt says so rather than
-  working around it.
-- **4** (`chalk`, `mustache.js`, `records`, `speedtest-cli`) predate the gate
-  entirely and converged under the earlier standard: a clean closing audit and
-  an empty backlog.
-
-Every receipt names the standard its own run met. Pooling all 62 as one number
-would overstate the earliest four.
+The engine tightened over time. Every brownfield convergence but five was countersigned by the adversarial evaluator, the current standard. ta records the evaluator as unavailable: that session carried a standing instruction against sub-agents, and the receipt says so. chalk, mustache.js, records and speedtest-cli predate the gate and converged under the earlier standard, a clean closing audit and an empty backlog. Each countersignature rests on the run's own journal; no evaluator artifact is published, so the receipt shows the form of the claim and a reader checks nothing behind it. Every receipt names the standard its own run met, and pooling them as one number would overstate the earliest four.
 
 A third era begins at engine v1.9.0. From that version a declaration requires
 zero open High and zero open Medium findings; an open Low no longer blocks and
@@ -191,7 +185,7 @@ rule made the gate always reachable and never passable there. Severity became
 the load-bearing input at the same moment, so it came under adversarial check:
 a finding filed below the rubric's suggestion must carry its rationale, and
 the evaluator re-scores every open and carried finding, a misscoring being a
-REJECT reason in itself. **21 of the 58 convergences above predate v1.9.0 and met the stricter
+REJECT reason in itself. **The convergences before v1.9.0 met the stricter
 empty-ledger rule; `cJSON` is the first under this one, then `swift-algorithms`,
 `magic_enum`, `commander.js`, `path-to-regexp`, `claude-code-action`,
 `claude-agent-sdk-python`, `validator`, `clap`, `zod`, `go-cmp` and `godotenv`, and each receipt names what it
@@ -484,15 +478,6 @@ stopped it was the map:
 | run 1 | 4 of 23 | 19 | **0** |
 | run 2 | 14 of 23 | 9 | **0** |
 | run 3 | 17 of 23 | 6 | **0** |
-| swift-system | 1 | 10 | converged | evaluator countersigned | 0 |
-| commons-csv | 2 | 18 | converged | evaluator countersigned | 1 |
-| kotlinx-datetime | 2 | 17 | converged | evaluator countersigned | 0 |
-| swift-http-types | 2 | 18 | converged | evaluator countersigned | 0 |
-| money | 1 | 10 | converged | evaluator countersigned | 0 |
-| ohash | 1 | 10 | converged | evaluator countersigned | 0 |
-| kotlinx-collections-immutable | 1 | 9 | converged | evaluator countersigned | 0 |
-| macaron | 4 | 36 | converged | evaluator countersigned | 0 |
-| swift-metrics | 1 | 12 | converged | evaluator countersigned | 0 |
 
 **Thirty iterations, and the adversarial gate was never invoked once**, because
 convergence requires no unswept row and the declaration path therefore never

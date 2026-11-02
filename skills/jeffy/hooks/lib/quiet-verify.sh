@@ -334,7 +334,8 @@ qv_main() {
     qv_count="$(printf '%s' "$qv_summary" | grep -oE '[0-9]+' | head -n 1)"
     if [ -n "$qv_count" ] && mkdir -p "$qv_root/.jeffy/metrics" 2>/dev/null; then
       jq -n --arg c "$qv_count" --arg s "$qv_summary" --arg h "$(git -C "$qv_root" rev-parse HEAD 2>/dev/null)" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{count: ($c | tonumber), summary: $s, head: $h, ts: $t}' > "$qv_root/.jeffy/metrics/verify-last.json" 2>/dev/null || true
+        '{count: ($c | tonumber), summary: $s, head: $h, ts: $t}' > "$qv_out.vl" 2>/dev/null         && mv -f "$qv_out.vl" "$qv_root/.jeffy/metrics/verify-last.json" 2>/dev/null
+      rm -f "$qv_out.vl"
     fi
   fi
   if [ -n "$qv_summary" ]; then

@@ -2736,7 +2736,8 @@ fi
 # The next iteration starts when this hook hands it the prompt, so its start
 # is stamped now, after this hook's own work, not at the turn end above.
 stamp_epoch="$(date +%s 2>/dev/null || echo 0)"
-tmp="$state.tmp"
+# A fresh name, so a link a repository tracks at a fixed temp path is never written through.
+tmp="$(mktemp "$state.XXXXXX")" || { echo "jeffy stop hook: could not create a temp file beside $state; ending the run." >&2; rm -f "$state"; exit 0; }
 # The rewriter owns the keys it names and prints every other line verbatim,
 # so the schema is additive: a state file carrying keys this version never
 # heard of survives the re-feed untouched. max_iterations and

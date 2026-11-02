@@ -13,13 +13,13 @@
 
 **[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/The-Jeffy-Loop.pdf)** &nbsp;·&nbsp; **[STE100 description](https://github.com/lenamonj/jeffy-loop/raw/main/Jeffy-Loop-STE100.pdf)**
 
-## A Claude Code loop that finds bugs in your repo, fixes them, and proves every fix before it commits. Maintainers have merged <!-- count:merged -->74<!-- /count --> of its patches.
+## A Claude Code loop that finds bugs in your repo, fixes them, and checks every fix before it commits. Maintainers have merged <!-- count:merged -->74<!-- /count --> of its patches.
 
 </div>
 
 The model writes the patch. The harness around it decides whether that patch can be trusted. Jeffy Loop is a verification harness for Claude Code: type `/jeffy` and it audits your codebase, finds a problem, fixes it, checks the fix, and commits the result locally, one task at a time. It keeps going until the codebase passes a fresh audit.
 
-The harness is deliberately hard to fool. If a fix breaks your tests, it is undone. Nothing is ever pushed. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI agent with no part in the run signs off. The goal is fixes that survive scrutiny.
+The harness is deliberately hard to fool. If a fix breaks your tests, the loop is told to revert it. The loop is told never to push, and the hook never pushes; keep push off its allowlist. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI agent with no part in the run signs off. The goal is fixes that survive scrutiny.
 
 There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->74<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, Dropbox, Tencent, and more. [See them all.](#independent-validation---the-receipts)
 
@@ -34,13 +34,15 @@ There is a real-world test for that. Maintainers with no stake in this project h
 
 ## The record
 
-Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projects with no connection to this repository, each judged by its own test suite. Every run is published, failures included.
+Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projects with no connection to this repository, each judged by its own test suite. Every one of these runs is published, failures included.
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->74<!-- /count -->** | **<!-- count:prs-open -->16<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
-**Converged:** the closing audit came back clean and the loop's adversarial evaluator, a fresh-context sub-agent, countersigned it, a standard this repository set and checks itself. That happened in <!-- count:converged -->103<!-- /count --> projects across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer. **Failed:** the run spent the budget declared before it started without converging, or, for libuv, was abandoned before it had one. That leaves PapaParse, an audit held to the same method rather than a loop run, which the receipts page counts as Fixed alongside the 103.
+**Converged:** the closing audit came back clean and the loop's adversarial evaluator, a fresh-context sub-agent, countersigned it, a standard this repository set and checks itself. That happened in <!-- count:converged -->103<!-- /count --> projects across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer; all but five were countersigned, four predate the gate and one ran without it, and six carry a finding blocked at the close, named on its row. **Failed:** the run spent the budget declared before it started without converging, was stopped short of it by decision (thor), or, for libuv, was abandoned before it had one. That leaves PapaParse, an audit held to the same method rather than a loop run, which the receipts page counts as Fixed alongside the 103.
+
+PRs merged counts every patch a maintainer merged, including patches from High hunts, shorter runs that leave no receipt and are not among the projects tested. PRs open and Issues filed count only the projects tested.
 
 **[See every project, every patch, and every failure](evals/README.md)**
 
@@ -128,9 +130,9 @@ Each rule is enforced by the iteration prompt, the state files or the Stop hook,
 | Rule | What it means |
 |:---|:---|
 | **A finding needs proof** | The loop must point at the defect and prove it with a check that runs. |
-| **Three gates decide done** | A fresh audit with no High or Medium findings, an adversarial evaluator's countersignature, and a shell re-run of your tests. In one greenfield build the evaluator was invoked 8 times and rejected 7. A High hunt skips the evaluator and never claims convergence. |
-| **No convergence over unswept surface** | The Stop hook refuses to converge while any row of the public-surface checklist is unswept, and a row reopens when its code changes. |
-| **Lessons become checks** | A rule learned once binds every later iteration. The engine passes at least <!-- count:checks -->**477 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS. [How the loop improves itself.](docs/how-it-works.md#the-loop-improves-the-loop) |
+| **Three gates decide done** | A fresh audit with no High or Medium findings, an adversarial evaluator's countersignature, and a shell re-run of your tests. In one greenfield build in August 2026, before the gate was narrowed to the run's own changes, the evaluator was invoked 8 times and rejected 7. A High hunt skips the evaluator and never claims convergence. |
+| **No convergence over unswept surface** | The Stop hook refuses to converge while any row of the public-surface checklist is unswept, and a row that names its battery reopens when its code changes. |
+| **Lessons become checks** | A rule learned once binds every later iteration. The engine passes at least <!-- count:checks -->**495 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS. [How the loop improves itself.](docs/how-it-works.md#the-loop-improves-the-loop) |
 
 ### <img src="media/seal-mark.png" width="30" alt="" align="absmiddle"> Trust model
 
@@ -259,7 +261,7 @@ Each finding below was accepted upstream by the project's own maintainers.
 
 ### Fixed upstream on our report
 
-Each finding below was reproduced by the project's own maintainers, who shipped a fix of their own instead of merging ours.
+Each finding below was reproduced upstream, and the project shipped its own fix instead of merging ours.
 
 <table>
   <tr>

@@ -410,6 +410,17 @@ check_markers skills/jeffy/references/backlog-default.md \
   "certifies nothing and the next run audits rather than ratchets"
 check_markers skills/jeffy/hooks/lib/quiet-verify.sh \
   "verify-last.json"
+# The no-push and revert rules live in the prompts and templates only, no hook
+# enforces them, so an inverted sentence would otherwise pass this whole suite.
+for gm_prompt in iteration-prompt.txt iteration-prompt-highs.txt; do
+  check_markers "skills/jeffy/references/$gm_prompt" \
+    "never push and never create branches" \
+    "revert the working tree to the last jeffy checkpoint"
+done
+for gm_plan in plan-default.md plan-highs.md; do
+  check_markers "skills/jeffy/references/$gm_plan" \
+    "never push, never create branches, and never rewrite"
+done
 check_markers skills/jeffy/hooks/lib/check-claims.sh \
   "expect <value> :: <command>" \
   "MISMATCH"
@@ -2236,6 +2247,23 @@ else
       cat "$rt_tmp/space.log"
       fault "install.sh called a live registration whose path holds a space dead"
     fi
+    # A settings.json that is a link stays one, and the mode it had stays.
+    rt_ln_home="$rt_tmp/link-home"; mkdir -p "$rt_ln_home/.claude"
+    rt_dot="$rt_tmp/dotfile.json"
+    printf '{"model": "opus"}\n' > "$rt_dot"; chmod 640 "$rt_dot"
+    ln -s "$rt_dot" "$rt_ln_home/.claude/settings.json" 2>/dev/null || true
+    if [ ! -L "$rt_ln_home/.claude/settings.json" ]; then
+      skip "install.sh keeps a linked settings.json (this filesystem made no symlink)"
+    else
+      HOME="$rt_ln_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/link.log" 2>&1 || true
+      if [ -L "$rt_ln_home/.claude/settings.json" ] && grep -qF 'stop-hook.sh' "$rt_dot" && grep -qF 'opus' "$rt_dot" \
+        && [ -n "$(find "$rt_dot" -perm 640)" ] && [ -z "$(find "$rt_tmp" -maxdepth 1 -name 'dotfile.json.*')" ]; then
+        pass "install.sh writes through a linked settings.json, keeps its mode and leaves no temp file"
+      else
+        cat "$rt_tmp/link.log"; ls -la "$rt_ln_home/.claude" "$rt_tmp"
+        fault "install.sh replaced a linked settings.json or changed its mode"
+      fi
+    fi
   else
     skip "install.sh hook-registration assertions (jq not on PATH)"
   fi
@@ -2333,7 +2361,7 @@ if [ -n "$ps" ]; then
     # 1.15.0's stale-file sync computed each installed file's relative path by
     # string arithmetic against $HOME, and a $HOME spelled as an 8.3 short path
     # (RUNNER~1 on the CI runner) does not match the long path Get-ChildItem
-    # reports: every installed file was removed as "no longer shipped". The
+    # reports: every installed file was removed as "not in this version". The
     # sync now lists relative names, and this runs the installer under the
     # short-path spelling to keep it that way.
     if command -v cygpath >/dev/null 2>&1 && pr_home_s="$(cygpath -d "$pr_home" 2>/dev/null)" && [ -n "$pr_home_s" ]; then
@@ -2345,7 +2373,7 @@ if [ -n "$ps" ]; then
         && [ -f "$pr_home/.claude/skills/jeffy/hooks/lib/quiet-verify.sh" ] \
         && [ -f "$pr_home/.claude/skills/jeffy/references/iteration-prompt.txt" ] \
         && [ -f "$pr_home/.claude/skills/cancel-jeffy/SKILL.md" ] \
-        && ! grep -q 'SKILL.md (no longer shipped)' "$pr_tmp/short.log"; then
+        && ! grep -q 'SKILL.md (not in this version)' "$pr_tmp/short.log"; then
         pass "install.ps1 keeps every installed file under an 8.3 short-path HOME ($ps)"
       else
         echo "---- install.ps1 short-path run output ----"
@@ -2422,6 +2450,30 @@ if [ -n "$ps" ]; then
         cat "$pr_tmp/msys.log"; cat "$pr_home/.claude/settings.json"
         fault "install.ps1 called a live Git Bash /c/... registration dead"
       fi
+    fi
+    # settings.json is UTF-8 with no BOM. Windows PowerShell 5.1 reads that as
+    # the ANSI page unless told, and the registration write then stores the damage.
+    pr_e_acute="$(printf 'Jos\303\251')"; pr_check="$(printf '\342\234\223 done')"
+    printf '{\n  "env": { "NAME": "%s", "TAG": "%s" }\n}\n' "$pr_e_acute" "$pr_check" > "$pr_home/.claude/settings.json"
+    pr_run >"$pr_tmp/utf8.log" 2>&1 || true
+    if [ "$(pr_count)" = "1" ] && LC_ALL=C grep -qF "$pr_e_acute" "$pr_home/.claude/settings.json" \
+      && LC_ALL=C grep -qF "$pr_check" "$pr_home/.claude/settings.json"; then
+      pass "install.ps1 keeps non-ASCII settings byte for byte when it registers the hook ($ps)"
+    else
+      cat "$pr_tmp/utf8.log"; cat "$pr_home/.claude/settings.json"
+      fault "install.ps1 corrupted non-ASCII settings when it registered the hook"
+    fi
+    # A bracket in the home path is a wildcard to any cmdlet not given -LiteralPath.
+    pr_br_home="$pr_tmp/h [w]"; mkdir -p "$pr_br_home/.claude"
+    printf '{"model": "opus"}\n' > "$pr_br_home/.claude/settings.json"
+    pr_br_n="$pr_br_home"
+    command -v cygpath >/dev/null 2>&1 && pr_br_n="$(cygpath -w "$pr_br_home")"
+    ( pr_home="$pr_br_home"; pr_home_n="$pr_br_n"; pr_drive="${pr_br_n%%\\*}"; pr_rest="${pr_br_n#"$pr_drive"}"; pr_run ) >"$pr_tmp/bracket.log" 2>&1 || true
+    if grep -qF 'opus' "$pr_br_home/.claude/settings.json" && grep -qF 'stop-hook.sh' "$pr_br_home/.claude/settings.json"; then
+      pass "install.ps1 keeps existing settings under a bracketed home path ($ps)"
+    else
+      cat "$pr_tmp/bracket.log"; cat "$pr_br_home/.claude/settings.json"
+      fault "install.ps1 lost settings under a bracketed home path"
     fi
     rm -rf "$pr_tmp"
   fi
@@ -10103,6 +10155,35 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     fi
     rm -f "$hh_state"
     hh_proj="$hh_saved_proj"; hh_state="$hh_saved_state"
+
+    # A link a repository tracks at a temp name the engine used to fix is never
+    # written through: the state rewrite and verify-last.json both use fresh names.
+    hl_victim="$hb_tmp/link-victim"; printf 'victim\n' > "$hl_victim"
+    hl_proj="$hb_tmp/link-proj"; mkdir -p "$hl_proj/.claude" "$hl_proj/.jeffy/metrics"
+    ln -s "$hl_victim" "$hl_proj/.claude/jeffy-loop.local.md.tmp" 2>/dev/null || true
+    ln -s "$hl_victim" "$hl_proj/.jeffy/metrics/verify-last.json" 2>/dev/null || true
+    if [ ! -L "$hl_proj/.jeffy/metrics/verify-last.json" ]; then
+      skip "hook writes never follow a tracked link (this filesystem made no symlink)"
+    else
+      hl_saved_proj="$hb_proj"; hl_saved_state="$hb_state"
+      hb_proj="$hl_proj"; hb_state="$hl_proj/.claude/jeffy-loop.local.md"
+      hb_write_state sess-1 1 5
+      hl_out="$(hb_run sess-1 'still working' '' 2>/dev/null)"
+      if [ "$(cat "$hl_victim")" = victim ] && [ ! -L "$hb_state" ] && grep -q '^iteration: 2$' "$hb_state" && [ -n "$hl_out" ]; then
+        pass "stop hook re-feed does not write through a link at the old temp name"
+      else
+        printf '%s\n' "$hl_out"; fault "stop hook wrote through a link at its temp name"
+      fi
+      printf '## Verify command\nCommand: echo 7 passed\nOracle class: deterministic\nVerify summary pattern: passed\n' > "$hl_proj/PLAN.md"
+      bash skills/jeffy/hooks/lib/quiet-verify.sh "$hl_proj/PLAN.md" "$hl_proj" >/dev/null 2>"$hb_tmp/hl_err.txt"
+      if [ "$(cat "$hl_victim")" = victim ] && [ ! -L "$hl_proj/.jeffy/metrics/verify-last.json" ] \
+        && [ "$(jq -r .count "$hl_proj/.jeffy/metrics/verify-last.json" 2>/dev/null)" = 7 ]; then
+        pass "quiet-verify replaces a link at verify-last.json and still records the count"
+      else
+        cat "$hb_tmp/hl_err.txt"; fault "quiet-verify wrote through a link at verify-last.json"
+      fi
+      hb_proj="$hl_saved_proj"; hb_state="$hl_saved_state"
+    fi
 
     rm -rf "$hb_tmp"
   fi

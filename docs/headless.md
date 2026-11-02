@@ -7,9 +7,9 @@
 1. Install Jeffy as in the [Quick Install](../README.md#quick-install) and sign in to Claude Code once interactively (`claude` then `/login`); the headless form reuses that session.
 2. Clone the target and make sure the tree is clean and on a branch you are willing to see commits on. The loop checkpoints every iteration as a commit, and its pre-flight asks what to do about uncommitted work - a question a headless session never answers, so the round ends with nothing done.
 3. Decide the budget before the first round and write it down: rounds and iterations per round. Below 10 iterations a round rarely reaches its own gate; narrow single-purpose libraries in the receipts converged in 10 to 20 iterations, wide surfaces (30+ inventory rows) took 40 or more.
-4. Pass `--permission-mode bypassPermissions`. A headless session has nobody to answer a permission prompt, so without it the round stalls silently at the first tool call.
+4. Pass `--permission-mode bypassPermissions`. A headless session has nobody to answer a permission prompt, so without it the round stalls silently at the first tool call. Run the session in a container that mounts the target and nothing else, read the clone's .claude/ before the first round, and see [SECURITY.md](../SECURITY.md): under -p, hooks committed in a repository's .claude/settings.json run without a trust dialog.
 
-Two targets from the receipts, at the pins they were run at:
+Two targets from the receipts, at their current heads rather than the pins they were run at:
 
 ```bash
 git clone https://github.com/dtolnay/itoa.git   ~/targets/itoa     # Rust,  converged in 2 rounds of 10
@@ -25,15 +25,19 @@ set -euo pipefail
 TARGET=~/targets/itoa
 ROUNDS=3
 ITERS=10
+# Outside the tree: an untracked log would stop pre-flight, and git add -A would commit it.
+LOG="${TMPDIR:-/tmp}/jeffy-$(basename "$TARGET").log"
+# A Converged line can sit in BACKLOG.md after the hook refused it, so only a new accepted record counts.
+accepted() { cat .jeffy/metrics/*.jsonl 2>/dev/null | grep -c '"verdict":"accepted"' || true; }
 
 cd "$TARGET"
 for r in $(seq 1 "$ROUNDS"); do
-  before=$(git rev-parse HEAD)
-  claude -p "/jeffy $ITERS" --permission-mode bypassPermissions >> jeffy-run.log 2>&1
+  before=$(git rev-parse HEAD); a0=$(accepted)
+  claude -p "/jeffy $ITERS" --permission-mode bypassPermissions >> "$LOG" 2>&1
   # A round that made no checkpoint commit almost always hit a pre-flight
   # question nobody answered. Stop rather than burn the remaining rounds.
   [ "$before" != "$(git rev-parse HEAD)" ] || { echo "round $r: no progress, stopping"; exit 1; }
-  grep -q '^Converged:' BACKLOG.md && { echo "converged in round $r"; exit 0; }
+  [ "$(accepted)" -gt "$a0" ] && { echo "converged in round $r"; exit 0; }
 done
 echo "budget spent: $ROUNDS rounds of $ITERS, not converged"
 ```
@@ -47,13 +51,17 @@ Two rounds of 15 instead: `ROUNDS=2 ITERS=15`. A single `/jeffy 10` is `ROUNDS=1
 $Target = "$HOME\targets\itoa"
 $Rounds = 3
 $Iters  = 10
+# Outside the tree: an untracked log would stop pre-flight, and git add -A would commit it.
+$Log = Join-Path $env:TEMP "jeffy-$(Split-Path $Target -Leaf).log"
+# A Converged line can sit in BACKLOG.md after the hook refused it, so only a new accepted record counts.
+function Get-Accepted { @(Select-String -Path .jeffy\metrics\*.jsonl -Pattern '"verdict":"accepted"' -ErrorAction SilentlyContinue).Count }
 
 Set-Location $Target
 for ($r = 1; $r -le $Rounds; $r++) {
-    $before = git rev-parse HEAD
-    claude -p "/jeffy $Iters" --permission-mode bypassPermissions 2>&1 | Add-Content jeffy-run.log
+    $before = git rev-parse HEAD; $a0 = Get-Accepted
+    claude -p "/jeffy $Iters" --permission-mode bypassPermissions 2>&1 | Add-Content $Log
     if ($before -eq (git rev-parse HEAD)) { Write-Host "round $r: no progress, stopping"; exit 1 }
-    if (Select-String -Path BACKLOG.md -Pattern '^Converged:' -Quiet) { Write-Host "converged in round $r"; exit 0 }
+    if ((Get-Accepted) -gt $a0) { Write-Host "converged in round $r"; exit 0 }
 }
 Write-Host "budget spent: $Rounds rounds of $Iters, not converged"
 ```

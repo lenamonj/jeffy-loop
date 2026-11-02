@@ -93,7 +93,7 @@ def install_skills(skills_root):
         for rel in relative_files(dest):
             if not (src / rel).exists():
                 (dest / rel).unlink()
-                print(f"[OK] removed {dest / rel} (no longer shipped)")
+                print(f"[OK] removed {dest / rel} (not in this version)")
         print(f"[OK] /{name} skill installed to {dest}")
 
 

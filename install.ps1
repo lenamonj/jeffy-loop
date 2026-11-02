@@ -65,7 +65,7 @@ foreach ($name in @("jeffy", "cancel-jeffy")) {
     foreach ($rel in @(Get-ChildItem -Path $dest -Recurse -File -Name)) {
         if (-not (Test-Path -LiteralPath (Join-Path $srcDir $rel))) {
             Remove-Item -LiteralPath (Join-Path $dest $rel) -Force
-            Write-Host "[OK] removed $(Join-Path $dest $rel) (no longer shipped)"
+            Write-Host "[OK] removed $(Join-Path $dest $rel) (not in this version)"
         }
     }
     Write-Host "[OK] /$name skill installed to $dest"
@@ -108,9 +108,9 @@ function Write-JeffySettings {
 }
 
 $settings = $null
-if ((Test-Path $settingsPath) -and ((Get-Item $settingsPath).Length -gt 0)) {
+if ((Test-Path -LiteralPath $settingsPath) -and ((Get-Item -LiteralPath $settingsPath).Length -gt 0)) {
     try {
-        $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+        $settings = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
     } catch {
         Write-Host "[FAILED] $settingsPath is not valid JSON; fix it, then re-run this installer to register the hook."
         $ok = $false

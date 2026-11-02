@@ -62,7 +62,7 @@ The restart is also the natural review point. Between runs the tree is committed
 - **Budget counts turns, and a single turn is unbounded in time and cost.** Keep N small on a first run and watch it. Check spend anytime with `/cost`.
 - **Edit `PLAN.md` or `BACKLOG.md` between iterations, not mid-iteration.** The Proposed section is the designed channel for decisions.
 - **A `.jeffy/` directory appears at the root of a project the loop has swept.** It holds the known-answer probe batteries a later sweep re-runs instead of rebuilding, and the evaluator artifacts under `.jeffy/evaluator/` - one per gate invocation, naming the commands the adversarial gate actually ran and what they exited. The checkpoints commit all of it on purpose - loop memory, exactly like the three state files. Only the transient loop state file is gitignored.
-- **`bash ~/.claude/skills/jeffy/hooks/stop-hook.sh --lint` from a project root, during a run, prints what a declaration would be refused on.** It runs nothing and changes nothing; the loop calls it itself before each gate invocation.
+- **`bash ~/.claude/skills/jeffy/hooks/stop-hook.sh --lint` from a project root, during a run, prints what a declaration would be refused on.** It does not run your tests; on a Rust or npm project it calls `cargo package --list --allow-dirty` or `npm pack --dry-run --json --ignore-scripts` to read what would ship. The loop calls it itself before each gate invocation.
 
 ## Already installed? Upgrade
 
@@ -82,7 +82,7 @@ jeffy install
 
 Then start a new Claude Code session. Skills and hook registrations are read at session start, so an open session keeps running the old engine until you restart it. `/jeffy` names the engine version on its first line, so you will see the new one immediately.
 
-- **Re-running an installer is always safe.** It skips what is installed, upgrades in place, removes the files the new version no longer ships, and never duplicates the hook registration.
+- **Re-running an installer is always safe.** It skips what is installed, upgrades in place, removes the files the new version no longer ships, and never duplicates the hook registration. `references/` under the installed skill is replaced on reinstall: edits there do not survive.
 - **Do not upgrade underneath a live run.** The Stop hook is read from disk every time it fires, so replacing it mid-run changes that run's rules halfway through. Let the run finish, or stop it with `/cancel-jeffy` first.
 - **Deleted the clone since installing?** Clone it again and run the installer from there; it only ever reads from the clone.
 - **Uninstall.** `jeffy uninstall` from a PyPI install; otherwise delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy` and remove the hook entry from `~/.claude/settings.json`.
