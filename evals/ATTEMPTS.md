@@ -202,6 +202,8 @@ a public behaviour change, so it sits under Proposed as an owner's decision
 rather than as work the loop declined. Receipts from v1.9.0 onward name this
 standard and list what they carried; the eras are never pooled.
 
+A fourth era begins at engine v1.27.0. From that version a blocked High or Medium blocks the declaration as an open one does; the exits are a fix or a Declined entry with its derivation. Six earlier convergences carried one at the close, each named on its row: heck, commons-codec, pflag, underscore, commons-text, path-to-regexp.
+
 ## What was started and never published
 
 - **libuv.** A real loop run on a WSL clone, 2026-07-31. At least one full

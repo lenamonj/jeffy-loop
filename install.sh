@@ -81,10 +81,12 @@ find "$HOME/.claude/skills/jeffy/hooks" -type f -name '*.sh' -exec chmod +x {} +
 #    an unparseable settings file is never overwritten.
 settings="$HOME/.claude/settings.json"
 hook_frag="skills/jeffy/hooks/stop-hook.sh"
-hook_cmd="bash \"$HOME/.claude/skills/jeffy/hooks/stop-hook.sh\""
+# The command runs under a shell, so a $ in the home path is escaped.
+hook_cmd="bash \"${HOME//\$/\\\$}/.claude/skills/jeffy/hooks/stop-hook.sh\""
 if command -v jq >/dev/null 2>&1; then
   mkdir -p "$HOME/.claude"
-  [[ -s "$settings" ]] || printf '{}\n' > "$settings"
+  # A file of only whitespace is valid to jq empty and yields nothing to edit.
+  [[ -n "$(tr -d '[:space:]' < "$settings" 2>/dev/null)" ]] || printf '{}\n' > "$settings"
   # The replacement lands beside the real file, so the rename is a rename: a link
   # stays a link, the mode stays, and a full disk fails the write and leaves the
   # file alone. macOS before 12.3 has no readlink -f and replaces the link.
@@ -97,45 +99,68 @@ if command -v jq >/dev/null 2>&1; then
   # from another home names that home's hook: "already registered" would
   # hold while the loop never fires. A Jeffy registration whose path is no
   # file is removed here, so the steps below see this home's truth.
-  if jq empty "$settings" >/dev/null 2>&1; then
+  # A temp file beside the real settings file, so the write lands by rename on
+  # the same filesystem and a link stays a link. A file in a directory that
+  # cannot be written, a store a dotfile manager generates, has nowhere for one,
+  # and under set -e a failed assignment would end the run with no [FAILED]
+  # line; each caller says what it left as it was.
+  settings_tmp() {
+    tmp="$(mktemp "$real.XXXXXX" 2>/dev/null)" || return 1
+    cp -p "$real" "$tmp" || true
+  }
+  # jq reads every file on stdin: under Git Bash a native jq is handed a POSIX
+  # path unconverted when it holds an apostrophe, and cannot open it.
+  prune_failed=0
+  if jq empty < "$settings" >/dev/null 2>&1; then
     dead_cmds=""
     while IFS= read -r reg_cmd; do
       # jq on Windows ends every -r line in CRLF.
       reg_cmd="${reg_cmd%$'\r'}"
       # A quoted path may hold a space, so the quoted token is read first.
-      reg_path="$(printf '%s' "$reg_cmd" | grep -oE "\"[^\"]*$hook_frag\"|'[^']*$hook_frag'|[^\"' ]*$hook_frag" | head -n 1 | tr -d "\"'")"
+      reg_path="$(printf '%s' "$reg_cmd" | grep -oE "\"[^\"]*$hook_frag\"|'[^']*$hook_frag'|[^\"' ]*$hook_frag" | head -n 1)"
+      # Only the surrounding quotes go: a home path can hold an apostrophe.
+      reg_path="${reg_path#[\"\']}"; reg_path="${reg_path%[\"\']}"
       reg_path="${reg_path/#\~/$HOME}"
       reg_path="${reg_path//\$\{HOME\}/$HOME}"
       reg_path="${reg_path//\$HOME/$HOME}"
+      reg_path="${reg_path//\\\$/\$}"
       [ -f "$reg_path" ] || dead_cmds="$dead_cmds$reg_cmd"$'\n'
-    done < <(jq -r --arg frag "$hook_frag" '.hooks.Stop[]?.hooks[]?.command // empty | select(contains($frag))' "$settings")
+    done < <(jq -r --arg frag "$hook_frag" '.hooks.Stop[]?.hooks[]?.command // empty | select(contains($frag))' < "$settings")
     if [ -n "$dead_cmds" ]; then
-      tmp="$(mktemp "$real.XXXXXX")"; cp -p "$real" "$tmp" || true
-      if jq --arg dead "$dead_cmds" '($dead | split("\n") | map(select(. != ""))) as $d | .hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | select(((.command // "") as $c | any($d[]; . == $c)) | not)]) else . end | select((.hooks | type) != "array" or (.hooks | length) > 0)]' "$settings" > "$tmp" \
-        && jq empty "$tmp" >/dev/null 2>&1; then
+      if ! settings_tmp; then
+        echo "[FAILED] no temporary file can be made beside $real, most often because $(dirname "$real") is not writable, so the Stop hook registration naming a hook that does not exist ($(printf '%s' "$dead_cmds" | head -n 1)) was left in place; make that directory writable, or remove that entry and add the registration where that file is generated, then re-run."
+        ok=0; prune_failed=1
+      elif jq --arg dead "$dead_cmds" '($dead | split("\n") | map(select(. != ""))) as $d | .hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | select(((.command // "") as $c | any($d[]; . == $c)) | not)]) else . end | select((.hooks | type) != "array" or (.hooks | length) > 0)]' < "$settings" > "$tmp" \
+        && jq empty < "$tmp" >/dev/null 2>&1; then
         mv "$tmp" "$real"
         echo "[OK] removed a Stop hook registration naming a hook that does not exist: $(printf '%s' "$dead_cmds" | head -n 1)"
       else
         rm -f "$tmp"
         echo "[FAILED] $settings registers a Stop hook that does not exist ($(printf '%s' "$dead_cmds" | head -n 1)) and it could not be removed; delete that entry by hand and re-run."
-        ok=0
+        ok=0; prune_failed=1
       fi
     fi
   fi
-  if ! jq empty "$settings" >/dev/null 2>&1; then
+  if ! jq empty < "$settings" >/dev/null 2>&1; then
     echo "[FAILED] $settings is not valid JSON; fix it, then re-run this installer to register the hook."
     ok=0
-  elif jq -e --arg frag "$hook_frag" '[.hooks.Stop[]?.hooks[]?.command // empty] | any(contains($frag))' "$settings" >/dev/null 2>&1; then
+  elif [ "$prune_failed" = 1 ]; then
+    # The only registration names a hook that does not exist and could not be
+    # removed; the line above said so, and "already registered" would be false.
+    :
+  elif jq -e --arg frag "$hook_frag" '[.hooks.Stop[]?.hooks[]?.command // empty] | any(contains($frag))' < "$settings" >/dev/null 2>&1; then
     # Already registered. A pre-1.2 registration lacks the timeout field and a
     # 1.2-1.14 registration carries 600s; the hook runs the project's verify
     # command at the converged stop under a bound that can exceed 600s (P1-58),
     # so upgrade either shape to 1800s exactly once.
-    if jq -e --arg frag "$hook_frag" '[.hooks.Stop[]?.hooks[]? | select((.command // "") | contains($frag)) | (has("timeout") and .timeout != 600)] | all' "$settings" >/dev/null 2>&1; then
+    if jq -e --arg frag "$hook_frag" '[.hooks.Stop[]?.hooks[]? | select((.command // "") | contains($frag)) | (has("timeout") and .timeout != 600)] | all' < "$settings" >/dev/null 2>&1; then
       echo "[OK] Jeffy Stop hook already registered in $settings"
     else
-      tmp="$(mktemp "$real.XXXXXX")"; cp -p "$real" "$tmp" || true
-      if jq --arg frag "$hook_frag" '.hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | if ((.command // "") | contains($frag)) and ((has("timeout") | not) or .timeout == 600) then . + {"timeout": 1800} else . end]) else . end]' "$settings" > "$tmp" \
-        && jq empty "$tmp" >/dev/null 2>&1; then
+      if ! settings_tmp; then
+        echo "[FAILED] no temporary file can be made beside $real, most often because $(dirname "$real") is not writable, so the Stop hook timeout could not be upgraded; make that directory writable or add \"timeout\": 1800 to the hook entry where that file is generated, then re-run."
+        ok=0
+      elif jq --arg frag "$hook_frag" '.hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | if ((.command // "") | contains($frag)) and ((has("timeout") | not) or .timeout == 600) then . + {"timeout": 1800} else . end]) else . end]' < "$settings" > "$tmp" \
+        && jq empty < "$tmp" >/dev/null 2>&1; then
         mv "$tmp" "$real"
         echo "[OK] Jeffy Stop hook registration upgraded to an 1800s timeout in $settings"
       else
@@ -145,9 +170,11 @@ if command -v jq >/dev/null 2>&1; then
       fi
     fi
   else
-    tmp="$(mktemp "$real.XXXXXX")"; cp -p "$real" "$tmp" || true
-    if jq --arg cmd "$hook_cmd" '.hooks //= {} | .hooks.Stop //= [] | .hooks.Stop += [{"hooks": [{"type": "command", "command": $cmd, "timeout": 1800}]}]' "$settings" > "$tmp" \
-      && jq empty "$tmp" >/dev/null 2>&1; then
+    if ! settings_tmp; then
+      echo "[FAILED] no temporary file can be made beside $real, most often because $(dirname "$real") is not writable, so the Stop hook could not be registered; make that directory writable or add the registration where that file is generated, then re-run."
+      ok=0
+    elif jq --arg cmd "$hook_cmd" '.hooks //= {} | .hooks.Stop //= [] | .hooks.Stop += [{"hooks": [{"type": "command", "command": $cmd, "timeout": 1800}]}]' < "$settings" > "$tmp" \
+      && jq empty < "$tmp" >/dev/null 2>&1; then
       mv "$tmp" "$real"
       echo "[OK] Jeffy Stop hook registered in $settings (1800s timeout)"
     else

@@ -389,6 +389,22 @@ check_markers skills/jeffy/hooks/stop-hook.sh \
 check_markers skills/jeffy/references/iteration-prompt.txt \
   "never a REJECT reason by itself" \
   "defects in the product or in the claims the declaration rests on"
+# 1.27.0: the prompt says what the hook does with a blocked High or Medium.
+check_markers skills/jeffy/references/iteration-prompt.txt \
+  "the class ceiling reads no line deleted or marked [b]" \
+  "a High or Medium marked [b] blocks as an open one does and its exits are a fix or a Declined entry with its Derivation"
+check_markers skills/jeffy/references/iteration-prompt-highs.txt \
+  "the class ceiling reads no line deleted or marked [b]" \
+  "a High marked [b] blocks as an open one does and its exits are a fix or a Declined entry with its Derivation"
+# Once in each prompt: check_markers reads presence, and a fold that pasted the
+# clause twice would pass it.
+for gm_prompt in iteration-prompt.txt iteration-prompt-highs.txt; do
+  gm_n="$(grep -o 'marked \[b\] blocks as an open one does and its exits' "skills/jeffy/references/$gm_prompt" | grep -c .)"
+  if [ "$gm_n" -ne 1 ]; then
+    fault "the blocked-task clause appears $gm_n times in $gm_prompt, not once"
+    gm_missing=1
+  fi
+done
 # The hook's two named notes. The model is taught to read both by name - the
 # run-state arithmetic on every re-feed, the one-time closing extension at the
 # budget boundary - so the names are an interface, not internal wording, and
@@ -410,6 +426,8 @@ check_markers skills/jeffy/references/backlog-default.md \
   "certifies nothing and the next run audits rather than ratchets"
 check_markers skills/jeffy/hooks/lib/quiet-verify.sh \
   "verify-last.json"
+check_markers skills/jeffy/hooks/stop-hook.sh \
+  "log.showSignature=false"
 # The no-push and revert rules live in the prompts and templates only, no hook
 # enforces them, so an inverted sentence would otherwise pass this whole suite.
 for gm_prompt in iteration-prompt.txt iteration-prompt-highs.txt; do
@@ -2247,6 +2265,32 @@ else
       cat "$rt_tmp/space.log"
       fault "install.sh called a live registration whose path holds a space dead"
     fi
+    # A file of only whitespace gets the hook, and a home holding an apostrophe
+    # keeps its live registration rather than re-adding it.
+    rt_bl_home="$rt_tmp/blank-home"; mkdir -p "$rt_bl_home/.claude"; printf '  \n' > "$rt_bl_home/.claude/settings.json"
+    HOME="$rt_bl_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/blank.log" 2>&1 || true
+    if grep -qF 'stop-hook.sh' "$rt_bl_home/.claude/settings.json"; then
+      pass "install.sh registers the hook in a settings.json of only whitespace"
+    else
+      cat "$rt_tmp/blank.log"; fault "install.sh left a whitespace-only settings.json with no hook"
+    fi
+    rt_ap_home="$rt_tmp/o'neil home"; mkdir -p "$rt_ap_home"
+    HOME="$rt_ap_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >/dev/null 2>&1 || true
+    HOME="$rt_ap_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/apos.log" 2>&1 || true
+    if grep -qF 'already registered' "$rt_tmp/apos.log" && ! grep -qF 'does not exist' "$rt_tmp/apos.log"; then
+      pass "install.sh keeps a live registration under a home holding an apostrophe"
+    else
+      cat "$rt_tmp/apos.log"; fault "install.sh called a live registration dead under a home holding an apostrophe"
+    fi
+    rt_dl_home="$rt_tmp/d\$ollar"; mkdir -p "$rt_dl_home"
+    HOME="$rt_dl_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >/dev/null 2>&1 || true
+    HOME="$rt_dl_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/dollar.log" 2>&1 || true
+    rt_dl_cmd="$(jq -r '.hooks.Stop[0].hooks[0].command' "$rt_dl_home/.claude/settings.json")"
+    if grep -qF 'already registered' "$rt_tmp/dollar.log" && [ "$(bash -c "printf '%s' $(printf '%s' "${rt_dl_cmd#bash }")")" = "$rt_dl_home/.claude/skills/jeffy/hooks/stop-hook.sh" ]; then
+      pass "install.sh escapes a dollar in the home path, so the shell reads the real path"
+    else
+      cat "$rt_tmp/dollar.log"; fault "install.sh registered a command the shell reads as another path: $rt_dl_cmd"
+    fi
     # A settings.json that is a link stays one, and the mode it had stays.
     rt_ln_home="$rt_tmp/link-home"; mkdir -p "$rt_ln_home/.claude"
     rt_dot="$rt_tmp/dotfile.json"
@@ -2263,6 +2307,26 @@ else
         cat "$rt_tmp/link.log"; ls -la "$rt_ln_home/.claude" "$rt_tmp"
         fault "install.sh replaced a linked settings.json or changed its mode"
       fi
+    fi
+    # A link into a directory that cannot be written: no temp file can be made
+    # beside the real file, so the installer says so and changes nothing.
+    rt_ro_home="$rt_tmp/ro-home"; mkdir -p "$rt_ro_home/.claude" "$rt_tmp/ro-store"
+    printf '{"model": "opus"}\n' > "$rt_tmp/ro-store/settings.json"
+    ln -s "$rt_tmp/ro-store/settings.json" "$rt_ro_home/.claude/settings.json" 2>/dev/null || true
+    chmod 555 "$rt_tmp/ro-store"
+    if [ ! -L "$rt_ro_home/.claude/settings.json" ] || ( : > "$rt_tmp/ro-store/probe" ) 2>/dev/null; then
+      chmod 755 "$rt_tmp/ro-store"; rm -f "$rt_tmp/ro-store/probe"
+      skip "install.sh refuses a settings.json linked into a read-only directory (this filesystem made no symlink or ignores the mode)"
+    else
+      HOME="$rt_ro_home" PATH="$rt_bin:/usr/bin:/bin" bash "$rt_repo/install.sh" </dev/null >"$rt_tmp/ro.log" 2>&1; rt_ro_rc=$?
+      if [ "$rt_ro_rc" -ne 0 ] && grep -qF '[FAILED]' "$rt_tmp/ro.log" && grep -qF 'not writable' "$rt_tmp/ro.log" \
+        && ! grep -qi 'permission denied' "$rt_tmp/ro.log" && [ -L "$rt_ro_home/.claude/settings.json" ] \
+        && [ "$(cat "$rt_tmp/ro-store/settings.json")" = '{"model": "opus"}' ]; then
+        pass "install.sh refuses a settings.json linked into a read-only directory with a [FAILED] line and changes nothing"
+      else
+        cat "$rt_tmp/ro.log"; fault "install.sh did not refuse a settings.json linked into a read-only directory cleanly (rc $rt_ro_rc)"
+      fi
+      chmod 755 "$rt_tmp/ro-store"
     fi
   else
     skip "install.sh hook-registration assertions (jq not on PATH)"
@@ -2462,6 +2526,18 @@ if [ -n "$ps" ]; then
     else
       cat "$pr_tmp/utf8.log"; cat "$pr_home/.claude/settings.json"
       fault "install.ps1 corrupted non-ASCII settings when it registered the hook"
+    fi
+    # A blank file or a JSON null is an empty object, and a null hooks key an empty one.
+    pr_blank_bad=""
+    for pr_blank in '  ' 'null' '{"hooks":null}'; do
+      printf '%s\n' "$pr_blank" > "$pr_home/.claude/settings.json"
+      pr_run >"$pr_tmp/blank.log" 2>&1 || true
+      [ "$(pr_count)" = "1" ] || pr_blank_bad="$pr_blank_bad [$pr_blank]"
+    done
+    if [ -z "$pr_blank_bad" ]; then
+      pass "install.ps1 registers the hook over a blank, null or hooks-null settings.json ($ps)"
+    else
+      cat "$pr_tmp/blank.log"; fault "install.ps1 registered nothing over:$pr_blank_bad"
     fi
     # A bracket in the home path is a wildcard to any cmdlet not given -LiteralPath.
     pr_br_home="$pr_tmp/h [w]"; mkdir -p "$pr_br_home/.claude"
@@ -4184,19 +4260,16 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       fault "stop hook treated untagged promise text as a declaration or failed to re-feed"
     fi
     rm -f "$hb_state"
-    # P2-30: an entry carrying both verdicts reads as the REJECT. A PASS
-    # that quotes an earlier rejection verbatim is the model's to reword;
-    # a REJECT that also contains the eleven characters of a PASS must not
-    # declare on them.
+    # A journal entry carrying both verdicts decides nothing: the artifact is the
+    # verdict. This legacy fixture has none, so its PASS line stands.
     hb_write_state sess-1 1 3
     hb_write_journal_entries '## iter 1/3 | sess-1-000000 | 2026-01-01 | EVALUATOR | converged:::Verification: Evaluator: PASS - after invocation 1 returned Evaluator: REJECT - one.'
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
-    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'records Evaluator: REJECT'; then
-      pass "stop hook reads an entry carrying both verdicts as the REJECT (P2-30)"
+    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ]; then
+      pass "stop hook does not take a quoted REJECT in a closing entry for the verdict"
     else
       printf '%s\n' "$hb_out"
-      fault "stop hook let a PASS substring outrank a REJECT in the same closing entry"
+      fault "stop hook took a REJECT quoted in a PASS entry for the verdict"
     fi
     hb_write_journal 1 3
 
@@ -4400,16 +4473,16 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     fi
     hb_write_plan none
 
-    # Fail-open contract: a missing PLAN.md is an infrastructure defect,
-    # not a red gate - the hook skips the verify check with a stderr note
-    # and the promise still ends the run. Sits before the timeout check in
-    # the hook, so this scenario runs even where coreutils timeout is absent.
+    # A missing PLAN.md is refused: the inventory, staleness, oracle and verify
+    # checks all read it. Sits before the timeout check in the hook, so this
+    # scenario runs even where coreutils timeout is absent.
     hb_write_state sess-1 1 3
     hb_write_backlog ''
     rm -f "$hb_proj/PLAN.md"
     hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '' 2>"$hb_tmp/hb_err.txt")"
-    if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'PLAN.md missing' "$hb_tmp/hb_err.txt"; then
-      pass "stop hook fails open on a missing PLAN.md at promise time (stderr note, verify skipped)"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'PLAN.md is missing'; then
+      pass "stop hook refuses a declaration over a missing PLAN.md"
     else
       fault "stop hook mishandled a missing PLAN.md at promise time"
     fi
@@ -9783,6 +9856,15 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
       fault "sabotage proof for the open-High refusal could not be built"
     fi
     rm -f "$hh_state"
+    # 1.27.0: a blocked High blocks as an open High, not as a line that is not one.
+    hh_backlog '- [b] H1 (High, runtime, correctness): blocked on a decision' "Hunted: $hh_h1 - 2026-01-01 - 0 Highs closed"
+    hh_close_case "$hb_hook"
+    if hh_refused_with 'open High or Medium tasks' && hh_reason | grep -qF 'H1 (High' && ! hh_reason | grep -qF 'carries Highs only'; then
+      pass "stop hook refuses a hunt close over a blocked High as an open High"
+    else
+      printf '%s\n' "$hh_out"; fault "stop hook did not refuse a hunt close over a blocked High as an open High"
+    fi
+    rm -f "$hh_state"
 
     # 4. a Medium or Low line is refused by name: a hunt ledger carries
     #    Highs only, and nothing is carried.
@@ -10071,7 +10153,11 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
       printf '# Plan\n\n## Verify command\nCommand: none\n\n## Surface inventory\n- [x] core: swept at abc1234 - all entry points probed\n' > "$hh_proj/PLAN.md"
       printf '# Backlog\n\n## Now\n\n## Next\n\n## Later\n\n## Converged\n\nConverged: %s - 2026-01-01\n' "$2" > "$hh_proj/BACKLOG.md"
       rm -f "$hh_proj/.jeffy/metrics/sess-1-000001.jsonl"
-      hh_git add -A >/dev/null 2>&1; hh_git commit -q -m ratchet >/dev/null 2>&1
+      hh_git add -A >/dev/null 2>&1
+      # A real run's certifying record is written after its last checkpoint, so
+      # base_head never carries it; hh_keep_record models a shipped one.
+      [ "${hh_keep_record:-0}" = 1 ] || hh_git rm -r -q --cached --ignore-unmatch .jeffy/metrics >/dev/null 2>&1
+      hh_git commit -q -m ratchet >/dev/null 2>&1
       {
         printf -- '---\nsession_id: sess-1\niteration: 1\nmax_iterations: 3\nprompt_path: %s\nfocus:\n' "$hb_tmp/prompt.txt"
         printf 'completion_promise: JEFFY CONVERGED\nstarted_at: 2026-01-01T00:00:01Z\nbase_head: %s\n---\nJeffy loop state.\n' "$(hh_git rev-parse HEAD)"
@@ -10120,6 +10206,16 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
       pass "stop hook accepts a RATCHET certified by an accepted mode standard record (1.24.0)"
     else
       printf '%s\n' "$hh_out"; fault "stop hook refused a RATCHET over an accepted standard-mode record"
+    fi
+    rm -f "$hh_state"
+    # The same record, committed before the run began: a repository shipped it.
+    hh_keep_record=1
+    hh_ratchet_case "$hb_hook" "$hh_h5"
+    hh_keep_record=0
+    if hh_ratchet_refused; then
+      pass "stop hook refuses a RATCHET certified only by a record base_head already carries"
+    else
+      printf '%s\n' "$hh_out"; fault "a record the repository shipped certified a RATCHET"
     fi
     rm -f "$hh_state"
 
@@ -10189,6 +10285,327 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
   fi
 else
   skip "stop hook behavior checks (jq not on PATH)"
+fi
+
+# W. The declaration gate over an honest close. Each arm builds the close the
+#    iteration prompt lays out, step by step, against the real hook, then changes
+#    one thing, so every refusal sits beside the accepted close it must not touch.
+# shellcheck disable=SC2119,SC2120  # the helpers' arguments are optional
+if command -v jq >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+  rv_tmp="$(mktemp -d)"
+  rv_hook="$PWD/skills/jeffy/hooks/stop-hook.sh"
+  rv_qv="$PWD/skills/jeffy/hooks/lib/quiet-verify.sh"
+  rv_sid=dddddddd-0000-4000-8000-000000000001
+  rv_run=dddddddd-093000
+  rv_n=0
+  printf 'ITERATION PROMPT STUB\n' > "$rv_tmp/prompt.txt"
+  rv_git() { git -C "$rv_r" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
+  rv_edit() { # $1 sed program, $2 file; no -i, BSD and GNU sed disagree on it
+    sed "$1" "$2" > "$2.t" && mv "$2.t" "$2"
+  }
+  rv_new() {
+    rv_n=$((rv_n + 1)); rv_r="$rv_tmp/r$rv_n"
+    mkdir -p "$rv_r/src" "$rv_r/.claude"
+    git -C "$rv_r" init -q
+    printf 'def answer():\n    return 42\n' > "$rv_r/src/calc.py"
+    printf 'grep -q "return 42" src/calc.py || grep -q "return 42" .jeffy/attic/calc.py\n' > "$rv_r/suite.sh"
+    printf '.claude/jeffy-loop.local.md\n.claude/jeffy-loop.local.md.refused\n.jeffy/scratch/\n' > "$rv_r/.gitignore"
+    rv_git add -A; rv_git commit -qm init
+    rv_b0="$(rv_git rev-parse HEAD)"
+  }
+  rv_plan() { # $1 inventory rows, $2 Command, default the suite
+    { printf '# Plan\n\n## Verify command\nCommand: %s\nOracle class: unit tests\nEnvironment fingerprint: linux bash, excludes nothing, enumerated by ls suite.sh\n\n## Surface inventory\n' "${2:-bash suite.sh}"
+      printf '%s\n' "$1"; } > "$rv_r/PLAN.md"
+  }
+  rv_backlog() { # $1 Now body
+    printf '# Backlog\n\n## Now\n%s\n\n## Next\n\n## Later\n\n## Proposed\n\n## Settled classes\n\n## Declined\n\n## Converged\n' "${1:-}" > "$rv_r/BACKLOG.md"
+  }
+  rv_state() { # $1 iteration, $2 max, $3... extra frontmatter lines
+    { rv_i="$1"; rv_m="$2"; shift 2
+      printf -- '---\nsession_id: %s\niteration: %s\nmax_iterations: %s\nprompt_path: %s\nfocus: \ncompletion_promise: JEFFY CONVERGED\n' "$rv_sid" "$rv_i" "$rv_m" "$rv_tmp/prompt.txt"
+      for rv_x in "$@"; do printf '%s\n' "$rv_x"; done
+      printf 'started_at: 2026-11-01T09:30:00Z\nbase_head: %s\n---\nstate\n' "$rv_b0"; } > "$rv_r/.claude/jeffy-loop.local.md"
+  }
+  rv_audit() { # $1 the paths glob, default src/*; $2 the row, %s for the audit hash
+    mkdir -p "$rv_r/.jeffy/probes/core"
+    printf '%s\n' "${1:-src/*}" > "$rv_r/.jeffy/probes/core/paths"
+    printf 'none\n' > "$rv_r/.jeffy/probes/core/claims"
+    rv_backlog
+    printf '# Journal\n\n## iter 1/10 | %s | 2026-11-01 | AUDIT | audit\n\nTask: audit\nVerification: zero High zero Medium.\nCheckpoint: pending\n' "$rv_run" > "$rv_r/JOURNAL.md"
+    rv_plan "- [ ] core: pending"
+    rv_git add -A; rv_git commit -qm 'jeffy: iter 1/10 AUDIT audit'
+    rv_a1="$(rv_git rev-parse HEAD)"
+    # shellcheck disable=SC2059  # the row is the format
+    rv_row="$(printf -- "${2:-- [x] core: swept at %s via .jeffy/probes/core - known answers}" "$rv_a1")"
+    rv_plan "$rv_row"
+    rv_edit "s/Checkpoint: pending/Checkpoint: $rv_a1/" "$rv_r/JOURNAL.md"
+    rv_git add -A; rv_git commit -qm 'jeffy: iter 1/10 bookkeeping'
+  }
+  rv_gate() { # the declaring iteration; $1 the verdict line, $2 the Verification text
+    mkdir -p "$rv_r/.jeffy/evaluator"
+    printf 'run %s invocation 1\nbash suite.sh exit 0\n\n%s\n' "$rv_run" "${1:-Verdict: PASS}" > "$rv_r/.jeffy/evaluator/$rv_run-1.md"
+    printf '\n## iter 2/10 | %s | 2026-11-01 | EVALUATOR | converged\n\nTask: gate\nVerification: %s\nCheckpoint: pending\n' "$rv_run" "${2:-Evaluator: PASS - clean.}" >> "$rv_r/JOURNAL.md"
+    rv_git add -A; rv_git commit -qm 'jeffy: iter 2/10 EVALUATOR converged'
+    rv_h="$(rv_git rev-parse HEAD)"
+    rv_edit "s/Checkpoint: pending/Checkpoint: $rv_h/" "$rv_r/JOURNAL.md"
+    printf 'Converged: %s - 2026-11-01\n' "$rv_h" >> "$rv_r/BACKLOG.md"
+    rv_git add -A; rv_git commit -qm 'jeffy: iter 2/10 bookkeeping'
+    rv_state 2 10
+  }
+  rv_close() { rv_new; rv_audit "${1:-}" "${2:-}"; rv_gate; }
+  rv_fire() { # $1 last assistant message, default the promise
+    jq -n --arg s "$rv_sid" --arg m "${1-Run report. <promise>JEFFY CONVERGED</promise>}" '{session_id:$s,last_assistant_message:$m,hook_event_name:"Stop"}' > "$rv_tmp/in"
+    ( cd "$rv_r" && CLAUDE_PROJECT_DIR="$rv_r" bash "$rv_hook" < "$rv_tmp/in" ) > "$rv_tmp/out" 2> "$rv_tmp/err"
+  }
+  rv_verdict() { tail -n 1 "$rv_r/.jeffy/metrics/$rv_run.jsonl" 2>/dev/null | jq -r '.declaration.verdict // "null"'; }
+  rv_said() { jq -r '.reason // ""' "$rv_tmp/out" 2>/dev/null | grep -qF -- "$1"; }
+  rv_accepted() { # $1 what the arm proves
+    if [ "$(rv_verdict)" = accepted ] && [ ! -f "$rv_r/.claude/jeffy-loop.local.md" ]; then
+      pass "$1"
+    else
+      cat "$rv_tmp/out" "$rv_tmp/err"; fault "$1: the declaration was not accepted"
+    fi
+  }
+  rv_refused() { # $1 text the refusal must carry, $2 what the arm proves
+    if rv_said "$1"; then
+      pass "$2"
+    else
+      cat "$rv_tmp/out" "$rv_tmp/err"; fault "$2: no refusal carrying [$1]"
+    fi
+  }
+  rv_ledger() { # $1 line for Now; the commit lands after the Converged line, loop memory only
+    rv_tmpf="$rv_tmp/ledger"
+    awk -v l="$1" '$0 == "## Now" { print; print l; next } { print }' "$rv_r/BACKLOG.md" > "$rv_tmpf" && mv "$rv_tmpf" "$rv_r/BACKLOG.md"
+    rv_git add -A; rv_git commit -qm ledger
+    rv_state 2 10
+  }
+
+  rv_close; rv_fire
+  rv_accepted "gate fixture: the honest close is accepted"
+
+  # A blocked High or Medium blocks; a blocked Low is carried.
+  rv_close; rv_ledger '- [b] H1 (High, runtime, correctness): blocked on a decision'; rv_fire
+  rv_refused 'H1 (High' "stop hook refuses a declaration over a blocked High"
+  rv_close; rv_ledger '- [b] M1 (Medium, runtime, correctness): blocked on a decision'; rv_fire
+  rv_refused 'M1 (Medium' "stop hook refuses a declaration over a blocked Medium"
+  rv_close; rv_ledger '- [b] L1 (Low, docs, correctness): blocked on a decision'; rv_fire
+  rv_accepted "stop hook accepts a declaration over a blocked Low"
+  rv_close; rv_ledger '- [b] H1 (High, runtime, correctness): blocked on a decision'; rv_state 10 10; rv_fire 'budget spent'
+  if ! grep -q '^extension_granted: 1' "$rv_r/.claude/jeffy-loop.local.md" 2>/dev/null; then
+    pass "a blocked High does not buy the closing extension"
+  else
+    fault "a blocked High bought the closing extension"
+  fi
+
+  # The tree the Verify command grades is the tree the certified commit holds.
+  rv_close; printf '# edited\n' >> "$rv_r/src/calc.py"; rv_fire
+  rv_refused 'uncommitted change at src/calc.py' "stop hook refuses a declaration over an uncommitted product edit"
+  rv_close; printf 'note\n' >> "$rv_r/JOURNAL.md"; printf '{}\n' > "$rv_r/.claude/settings.local.json"; rv_fire
+  rv_accepted "an uncommitted loop memory file does not refuse a declaration"
+
+  # git that cannot read HEAD is not a clean tree.
+  rv_close; printf 'not a config\n' > "$rv_r/.git/config"; rv_fire
+  rv_refused 'git cannot read HEAD' "stop hook refuses a declaration when git cannot read HEAD"
+
+  # Severity floor shapes.
+  rv_close; rv_ledger '1. [ ] H1 (High, runtime, correctness): open'; rv_fire
+  rv_refused 'H1 (High' "stop hook reads a numbered task line as open"
+  rv_close; rv_ledger '- [] H1 (High, runtime, correctness): open'; rv_fire
+  rv_refused 'H1 (High' "stop hook reads an empty bracket as an open task"
+  rv_close; rv_edit 's/^## Later$/## later/' "$rv_r/BACKLOG.md"; rv_git add -A; rv_git commit -qm heading; rv_state 2 10; rv_fire
+  rv_refused 'is not read as a ledger section' "stop hook refuses a ledger heading it would not read"
+
+  # Pipelines in the Command.
+  rv_command() { # $1 Command; re-records PLAN.md after the close
+    rv_plan "$rv_row" "$1"; rv_git add -A; rv_git commit -qm command; rv_state 2 10
+  }
+  # shellcheck disable=SC2016  # read by the hook, not this shell
+  rv_close; rv_command 'git --version | head -n 1; bash suite.sh | tee out.log'; rv_fire
+  rv_refused 'early-closing stage' "stop hook refuses an early closer ahead of a later pipeline"
+  rv_close; rv_command 'set -o pipefail; git --version | head -n 1; bash suite.sh | tee out.log'; rv_fire
+  if ! rv_said 'early-closing stage'; then
+    pass "set -o pipefail at the head of the Command answers that refusal"
+  else
+    fault "the refusal that names set -o pipefail refused a Command opening with it"
+  fi
+  rv_close; rv_command 'git --version | head -n 1; bash suite.sh'; rv_fire
+  rv_accepted "a truncator followed by another command is not the last stage"
+  rv_close; rv_command 'no-such-binary-for-jeffy --run'; rv_fire
+  rv_refused "could not start in the hook's environment" "stop hook names exit 127 as a command that could not start"
+
+  # Staleness spellings: each row was swept before a product edit.
+  rv_stale_case() { # $1 paths glob, $2 row form
+    rv_new; rv_audit "$1" "${2:-}"
+    printf '# edited\n' >> "$rv_r/src/calc.py"; rv_git add -A; rv_git commit -qm 'jeffy: iter 2/10 edit'
+    rv_gate; rv_fire
+  }
+  rv_stale_bad=""
+  for rv_glob in './src/calc.py' 'src/' 'src' 'src/**/*.py'; do
+    rv_stale_case "$rv_glob"
+    rv_said 'stale' || rv_stale_bad="$rv_stale_bad [$rv_glob]"
+  done
+  rv_stale_case 'src/*' '- [x] core: Swept at commit %s via .jeffy/probes/core - known answers'
+  rv_said 'stale' || rv_stale_bad="$rv_stale_bad [Swept at commit]"
+  if [ -z "$rv_stale_bad" ]; then
+    pass "the staleness gate reads every spelling of a paths line and a swept row"
+  else
+    fault "the staleness gate did not read:$rv_stale_bad"
+  fi
+
+  # A rename into loop memory is a change to the path it left.
+  rv_close; mkdir -p "$rv_r/.jeffy/attic"; rv_git mv src/calc.py .jeffy/attic/calc.py; rv_git commit -qm moved; rv_state 2 10; rv_fire
+  rv_refused 'product path src/calc.py changed after' "stop hook sees a rename into loop memory as a product change"
+  rv_close; mkdir -p "$rv_r/.jeffy/attic"; rv_git mv src/calc.py .jeffy/attic/calc.py; rv_fire
+  rv_refused 'uncommitted change at src/calc.py' "stop hook sees a staged, uncommitted rename into loop memory as an uncommitted product change"
+
+  # Inventory rows.
+  rv_close; rv_plan "$rv_row
+- [ ] <file>: unswept"; rv_git add -A; rv_git commit -qm row; rv_state 2 10; rv_fire
+  rv_refused 'unswept' "a <file> surface is a row, only the template's <surface> is a placeholder"
+  rv_close; rv_plan "$rv_row
+$(printf -- '- [ ] caf\351: unswept')"; rv_git add -A; rv_git commit -qm row; rv_state 2 10; rv_fire
+  rv_refused 'unswept' "one non-UTF-8 byte does not hide an unswept row"
+
+  # The verdict is the artifact.
+  rv_new; rv_audit; rv_gate 'Verdict: PASS' 'Evaluator: PASS - invocation 1 of an earlier run returned Evaluator: REJECT, since closed.'; rv_fire
+  rv_accepted "a closing entry quoting an earlier REJECT is not a REJECT when the artifact passes"
+  rv_new; rv_audit; rv_gate 'Verdict: REJECT'; rv_fire
+  rv_refused 'REJECT' "a REJECT artifact is refused whatever the journal says"
+
+  # A CRLF claims file reads as the file it is.
+  rv_new; rv_audit
+  printf 'a battery\n' > "$rv_r/.jeffy/probes/core/README.md"; printf 'none\r\n' > "$rv_r/.jeffy/probes/core/claims"
+  rv_git add -A; rv_git commit -qm 'jeffy: battery'; rv_gate; rv_fire
+  if ! rv_said 'neither'; then
+    pass "a CRLF claims file reading none is accepted as none"
+  else
+    fault "a CRLF claims file was refused as a malformed line"
+  fi
+
+  # A refused declaration on a run-ending path is said once, as a block.
+  rv_ended() { # $1 what the arm proves
+    if rv_said 'CONVERGENCE REFUSED' && [ ! -f "$rv_r/.claude/jeffy-loop.local.md" ]; then
+      rv_fire
+      if [ ! -s "$rv_tmp/out" ]; then
+        pass "$1"
+      else
+        fault "$1: the next stop was not a no-op"
+      fi
+    else
+      cat "$rv_tmp/out" "$rv_tmp/err"; fault "$1: the refusal was not delivered"
+    fi
+  }
+  rv_noart() {
+    rv_close; rm -f "$rv_r/.jeffy/evaluator/$rv_run-1.md"; rv_git add -A; rv_git commit -qm noart
+    rv_edit '/^Checkpoint:/d' "$rv_r/JOURNAL.md"
+    rv_edit 's/| EVALUATOR | converged/| T9 | done/' "$rv_r/JOURNAL.md"; rv_git add -A; rv_git commit -qm journal
+  }
+  rv_noart; rv_state 2 10 'max_wall_clock_seconds: 1' 'run_started_at: 1000000000'; rv_fire
+  rv_ended "a refused declaration at the wall clock ceiling is delivered once"
+  rv_noart; rv_state 2 10 'max_iteration_seconds: 1' 'iteration_started_at: 1000000000' 'overrun: 1'; rv_fire
+  rv_ended "a refused declaration at the second overrun is delivered once"
+
+  # The shell watchdog ends the whole group: a piped Command outlives a kill of
+  # its first process, and a stock macOS has no timeout(1) to do it.
+  if command -v cygpath >/dev/null 2>&1; then
+    skip "shell watchdog group kill (no process groups under Git Bash)"
+  else
+    rv_bin="$rv_tmp/bin"; mkdir -p "$rv_bin"
+    for rv_t in bash sh sleep kill mkdir mktemp date rm wc tr head tail cat grep sed awk mv cut dirname basename jq git; do
+      rv_tp="$(command -v "$rv_t")" && ln -s "$rv_tp" "$rv_bin/$rv_t"
+    done
+    rv_wd="$rv_tmp/wd"; mkdir -p "$rv_wd"
+    printf '## Verify command\nCommand: bash -c "sleep 4; echo late > late.txt" | tee o.log\nOracle class: deterministic\n' > "$rv_wd/PLAN.md"
+    rv_wd_s="$(date +%s)"
+    PATH="$rv_bin" JEFFY_VERIFY_TIMEOUT_SECONDS=1 bash "$rv_qv" "$rv_wd/PLAN.md" "$rv_wd" >/dev/null 2>"$rv_tmp/wd.err"
+    rv_wd_rc=$?
+    rv_wd_e=$(( $(date +%s) - rv_wd_s ))
+    sleep 5
+    if [ "$rv_wd_rc" = 124 ] && [ "$rv_wd_e" -le 3 ] && [ ! -e "$rv_wd/late.txt" ]; then
+      pass "the shell watchdog ends a piped Command at the bound and nothing writes after it"
+    else
+      cat "$rv_tmp/wd.err"; fault "the shell watchdog left a piped Command running (rc=$rv_wd_rc, late write: $([ -e "$rv_wd/late.txt" ] && echo yes || echo no))"
+    fi
+  fi
+
+  # A product file under .claude/ is product: only the harness files are loop memory.
+  rv_close; mkdir -p "$rv_r/.claude/commands"; printf 'ship\n' > "$rv_r/.claude/commands/ship.md"
+  rv_git add -A; rv_git commit -qm product; rv_state 2 10; rv_fire
+  rv_refused 'product path .claude/commands/ship.md changed after' "a product file under .claude/ moves the certified tree"
+
+  # A Converged line naming a hash too short to be one certifies nothing.
+  rv_close; rv_short="$(printf '%.6s' "$rv_h")"
+  rv_edit "s/^Converged: $rv_h/Converged: $rv_short/" "$rv_r/BACKLOG.md"
+  rv_git add -A; rv_git commit -qm short; rv_state 2 10; rv_fire
+  if [ "$(rv_verdict)" != accepted ]; then
+    pass "a Converged line naming a six-character hash is not accepted"
+  else
+    fault "a Converged line naming a six-character hash was accepted"
+  fi
+
+  # Fix, fix, revert, revert: the tree is back at its hash three work iterations ago.
+  rv_close
+  rv_state 1 9; rv_fire 'working'
+  rv_fp="$(sed -n 's/^fingerprints: 1|[^|]*|\([^|]*\)|.*/\1/p' "$rv_r/.claude/jeffy-loop.local.md")"
+  rv_state 4 9 "fingerprints: 1|T1|$rv_fp|1;2|T2|other-2|1;3|T3|other-3|1"
+  rv_fire 'working'
+  rv_said_osc=0; rv_said 'OSCILLATION' && rv_said_osc=1
+  if [ -n "$rv_fp" ] && [ "$rv_said_osc" = 1 ]; then
+    pass "stop hook notes a tree back at its hash three work iterations ago"
+  else
+    cat "$rv_tmp/out"; fault "stop hook did not note a three-back oscillation (fingerprint [$rv_fp])"
+  fi
+
+  # The bound stays inside the hook's own 1800s registration.
+  rv_bd="$rv_tmp/bound"; mkdir -p "$rv_bd"
+  printf '## Verify command\nCommand: true\nVerify duration: 1000s\n' > "$rv_bd/PLAN.md"
+  # shellcheck disable=SC1090  # the wrapper is sourced as the hook sources it
+  rv_bound="$( ( . "$rv_qv"; jeffy_verify_bound "$rv_bd/PLAN.md" "" ) 2>/dev/null)"
+  if [ "$rv_bound" = 1740 ]; then
+    pass "a long Verify duration clamps to 1740s, inside the hook's 1800s registration"
+  else
+    fault "a long Verify duration produced a bound of [$rv_bound], past the hook's registration"
+  fi
+
+  # The wrapper refuses what it cannot run, and check-claims what it cannot find.
+  printf '## Verify command\nOracle class: deterministic\n' > "$rv_bd/PLAN.md"
+  bash "$rv_qv" "$rv_bd/PLAN.md" "$rv_bd" >/dev/null 2>"$rv_tmp/qv.err"; rv_qv_rc=$?
+  if [ "$rv_qv_rc" = 2 ] && grep -qF 'no Command: line' "$rv_tmp/qv.err"; then
+    pass "the verify wrapper exits 2 on a PLAN.md with no Command line"
+  else
+    fault "the verify wrapper exited $rv_qv_rc on a PLAN.md with no Command line"
+  fi
+  bash skills/jeffy/hooks/lib/check-claims.sh "$rv_bd" no-such-battery >/dev/null 2>"$rv_tmp/cc.err"; rv_cc_rc=$?
+  if [ "$rv_cc_rc" != 0 ] && grep -qF 'no such battery' "$rv_tmp/cc.err"; then
+    pass "check-claims refuses a mistyped battery name rather than reading it as clean"
+  else
+    cat "$rv_tmp/cc.err"; fault "check-claims exited $rv_cc_rc on a mistyped battery name"
+  fi
+
+  # measure-surface: a name cannot zero the count and a link cannot hang it.
+  # Git for Windows records an MSYS link as a plain file, so a hang here reads
+  # as a fault under timeout where the host has one, never as a stuck run.
+  rv_ms="$rv_tmp/ms"; mkdir -p "$rv_ms"; git -C "$rv_ms" init -q
+  seq 1 20 > "$rv_ms/a.py"; printf 'x\n' > "$rv_ms/--oops.py"
+  ln -s /dev/zero "$rv_ms/z.py" 2>/dev/null || true
+  git -C "$rv_ms" add -A
+  if command -v timeout >/dev/null 2>&1; then
+    rv_ms_out="$(timeout 30 bash skills/jeffy/hooks/lib/measure-surface.sh "$rv_ms" 2>/dev/null | head -n 1)"
+  else
+    rv_ms_out="$(bash skills/jeffy/hooks/lib/measure-surface.sh "$rv_ms" 2>/dev/null | head -n 1)"
+  fi
+  if [ "$rv_ms_out" = "lines=21 files=2" ]; then
+    pass "measure-surface counts past a flag-shaped file name and leaves a link out"
+  else
+    fault "measure-surface read [$rv_ms_out], expected lines=21 files=2"
+  fi
+  # Host-limited: the memory ceiling needs systemd-run and the cgroup signal a
+  # container, so these two are held by text where no host here can run them.
+  # shellcheck disable=SC2016  # the marker is source text
+  check_markers skills/jeffy/hooks/lib/run-probe.sh 'MemoryMax=${mem_mb}M'
+  check_markers skills/jeffy/hooks/lib/detect-sandbox.sh '(docker|containerd|kubepods|lxc|podman)'
+else
+  skip "declaration gate over an honest close (needs jq and git)"
 fi
 
 # T. The severity ceiling by class, derived from the Stop hook that enforces it
@@ -10490,6 +10907,72 @@ print("jeffy=%d timeouts=%s other=%d" % (len(j), ",".join(str(h.get("timeout")) 
         else
           fault "the console script's install over an existing install left hook scripts without the exec bit: $v_noexec"
         fi
+      fi
+    fi
+    # A linked settings.json stays a link and keeps its mode through the rename.
+    v_dot="$v_tmp/dotfile.json"
+    printf '{"model": "opus"}\n' > "$v_dot"; chmod 640 "$v_dot"
+    rm -f "$v_home/.claude/settings.json"
+    ln -s "$v_dot" "$v_home/.claude/settings.json" 2>/dev/null || true
+    if [ ! -L "$v_home/.claude/settings.json" ]; then
+      skip "console script keeps a linked settings.json (this filesystem made no symlink)"
+    else
+      HOME="$v_home" USERPROFILE="$v_profile" PATH="$v_bin:$PATH" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" "$v_py" -m jeffy_loop.cli install </dev/null >"$v_tmp/link.log" 2>&1
+      if [ -L "$v_home/.claude/settings.json" ] && grep -qF 'stop-hook.sh' "$v_dot" && [ -n "$(find "$v_dot" -perm 640)" ]; then
+        pass "the console script writes through a linked settings.json and keeps its mode"
+      else
+        cat "$v_tmp/link.log"; fault "the console script replaced a linked settings.json or changed its mode"
+      fi
+    fi
+    # A home whose path holds a dollar sign: the written command runs under a
+    # shell, so the sign is escaped, and the installer reads its own escaped
+    # registration back as live on the second run rather than adding a twin.
+    # The token is read back through bash the way Claude Code runs it.
+    v_cmd='
+import json, os, sys
+p = os.path.join(sys.argv[1], ".claude", "settings.json")
+with open(p, encoding="utf-8") as f:
+    s = json.load(f)
+stop = s.get("hooks", {}).get("Stop", []) if isinstance(s, dict) else []
+hooks = [h for g in stop for h in (g.get("hooks", []) if isinstance(g, dict) else [])]
+j = [str(h.get("command", "")) for h in hooks if "skills/jeffy/hooks/stop-hook.sh" in str(h.get("command", ""))]
+print(len(j))
+print(j[0] if j else "")
+'
+    v_dl="$v_tmp/d\$ollar"; v_dl_profile="$v_dl"; v_dl_mixed="$v_dl"
+    if command -v cygpath >/dev/null 2>&1; then v_dl_profile="$(cygpath -w "$v_dl")"; v_dl_mixed="$(cygpath -m "$v_dl")"; fi
+    mkdir -p "$v_dl/.claude"
+    for v_i in 1 2; do
+      HOME="$v_dl" USERPROFILE="$v_dl_profile" PATH="$v_bin:$PATH" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" \
+        "$v_py" -m jeffy_loop.cli install </dev/null >"$v_tmp/dollar$v_i.log" 2>&1
+    done
+    v_dl_out="$("$v_py" -c "$v_cmd" "$v_dl" 2>&1)"
+    v_dl_n="${v_dl_out%%$'\n'*}"; v_dl_cmd="${v_dl_out#*$'\n'}"
+    if [ "$v_dl_n" = 1 ] && grep -qF 'already registered' "$v_tmp/dollar2.log" \
+      && [ "$(bash -c "printf '%s' $(printf '%s' "${v_dl_cmd#bash }")")" = "$v_dl_mixed/.claude/skills/jeffy/hooks/stop-hook.sh" ]; then
+      pass "the console script escapes a dollar in the home path, so the shell reads the real path, and reads it back as live"
+    else
+      cat "$v_tmp/dollar2.log"; fault "the console script registered a command the shell reads as another path, or re-added it: $v_dl_n registration(s), $v_dl_cmd"
+    fi
+    # `jeffy version` names an installed engine that is not the package's: the
+    # packaged pair agree and the sandbox install matches (control, exit 0),
+    # then the installed hook's JEFFY_VERSION is set to 0.0.0 and the command
+    # exits 2 naming it. -S keeps a jeffy-loop installed on this host out of
+    # metadata.version, so the package version read is the staged tree's own.
+    v_vhook="$v_home/.claude/skills/jeffy/hooks/stop-hook.sh"
+    HOME="$v_home" USERPROFILE="$v_profile" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" \
+      "$v_py" -S -m jeffy_loop.cli version >"$v_tmp/version0.out" 2>"$v_tmp/version0.err"; v_v0=$?
+    sed 's/^JEFFY_VERSION=.*/JEFFY_VERSION="0.0.0"/' "$v_vhook" > "$v_tmp/hook.edit" && cat "$v_tmp/hook.edit" > "$v_vhook"
+    if ! grep -q '^JEFFY_VERSION="0.0.0"' "$v_vhook"; then
+      fault "the version check could not set the installed engine to 0.0.0 (the edit landed nothing)"
+    else
+      HOME="$v_home" USERPROFILE="$v_profile" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" \
+        "$v_py" -S -m jeffy_loop.cli version >"$v_tmp/version1.out" 2>"$v_tmp/version1.err"; v_v1=$?
+      if [ "$v_v0" -eq 0 ] && [ "$v_v1" -eq 2 ] && grep -qF 'the installed engine is 0.0.0, not ' "$v_tmp/version1.err"; then
+        pass "jeffy version exits 0 when the installed engine matches the package and 2 naming an installed engine of 0.0.0"
+      else
+        cat "$v_tmp/version0.out" "$v_tmp/version0.err" "$v_tmp/version1.out" "$v_tmp/version1.err"
+        fault "jeffy version did not report the installed engine (control exit $v_v0, mismatch exit $v_v1)"
       fi
     fi
     rm -rf "$v_tmp"; v_tmp=""

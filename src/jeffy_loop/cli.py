@@ -112,6 +112,8 @@ def hook_command():
     if os.name == "nt":
         # The command runs under bash (Git Bash on Windows), as install.ps1 writes it.
         path = path.replace("\\", "/")
+    # The command runs under a shell, so a $ in the home path is escaped.
+    path = path.replace("$", "\\$")
     return f'bash "{path}"'
 
 
@@ -145,7 +147,11 @@ def registered_path(command):
     if os.name == "nt":
         # install.sh run from Git Bash writes the hook as /c/...; Windows reads C:/...
         path = re.sub(r"^/([A-Za-z])/", r"\1:/", path)
-    return Path(os.path.expandvars(os.path.expanduser(path)))
+    # A "\$" in the command is a literal dollar in the path: expand variables in
+    # the pieces around it, never in the joined result, or a home such as a$USER
+    # reads back as another path and the registration as dead.
+    pieces = os.path.expanduser(path).split("\\$")
+    return Path("$".join(os.path.expandvars(piece) for piece in pieces))
 
 
 def prune_dead_hooks(settings):
@@ -367,13 +373,23 @@ def cmd_version(skills_root):
             file=sys.stderr,
         )
         return 2
+    installed = claude_home() / "skills"
+    if (installed / "jeffy" / "hooks" / "stop-hook.sh").is_file():
+        running = engine_version(installed)
+        if running != pkg:
+            print(
+                f"jeffy: the installed engine is {running}, not {pkg}; run jeffy install "
+                "and start a new Claude Code session.",
+                file=sys.stderr,
+            )
+            return 2
     return 0
 
 
 def cmd_help():
     print("jeffy install    install both skills and register the Stop hook in settings.json")
     print("jeffy uninstall  remove both skills and the Jeffy Stop hook entry")
-    print("jeffy version    print the package version and the packaged engine version")
+    print("jeffy version    print the package and engine versions; exit 2 when the installed engine differs")
     print("jeffy path       print the packaged skills directory")
     return 0
 
@@ -389,6 +405,11 @@ def main():
     """
     try:
         return _run()
+    except shutil.Error as exc:
+        # copytree gathers its failures into a list of (src, dst, why) with no filename.
+        source, _, why = exc.args[0][0]
+        print(f"[FAILED] {source}: {why}; fix that, then re-run this installer.")
+        return 1
     except OSError as exc:
         # os.replace reports the source in filename and the destination in
         # filename2, and the destination is the path the user recognises - the

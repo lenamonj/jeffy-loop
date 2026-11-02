@@ -67,10 +67,15 @@ ext='\.(bash|c|cc|clj|cljs|cpp|cs|cxx|dart|erl|ex|exs|fs|go|groovy|h|hh|hpp|hs|j
 skip='(^|/)(vendor|vendored|node_modules|third_party|thirdparty|external|_vendor)/'
 
 # wc on the file list from git, read as NUL-separated so a path with a space
-# or a quote is one path. Paths relative to the root, so wc runs there.
-counts="$(cd "$root" && git ls-files -z \
-  | tr '\0' '\n' | grep -E "$ext" | grep -vE "$skip" \
-  | tr '\n' '\0' | xargs -0 -r wc -l 2>/dev/null \
+# or a quote is one path. Paths relative to the root, so wc runs there. A link
+# is no source of its own and one aimed at /dev/zero never returns, so links and
+# submodules are left out, by git's mode and by -L, since Git for Windows records
+# an MSYS link as a plain file that wc would follow; -- keeps a file named like a
+# flag from refusing the list.
+counts="$(cd "$root" && git ls-files -s -z \
+  | tr '\0' '\n' | grep -vE '^(120000|160000) ' | cut -f2- | grep -E "$ext" | grep -vE "$skip" \
+  | while IFS= read -r path; do [ -L "$path" ] || printf '%s\n' "$path"; done \
+  | tr '\n' '\0' | xargs -0 -r wc -l -- 2>/dev/null \
   | grep -v ' total$' | sort -rn)"
 
 lines=0; files=0

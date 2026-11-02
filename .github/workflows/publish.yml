@@ -4,15 +4,29 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: command -v shellcheck || sudo apt-get install -y shellcheck
+      - run: bash scripts/validate.sh
+      - name: The tag names the version the wheel carries
+        run: |
+          ver="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)"
+          [ "$GITHUB_REF_NAME" = "v$ver" ] || { echo "tag $GITHUB_REF_NAME does not match pyproject version $ver"; exit 1; }
   pypi:
+    needs: validate
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - run: uv build
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

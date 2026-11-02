@@ -110,9 +110,17 @@ function Write-JeffySettings {
 $settings = $null
 if ((Test-Path -LiteralPath $settingsPath) -and ((Get-Item -LiteralPath $settingsPath).Length -gt 0)) {
     try {
-        $settings = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $settingsText = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8
+        if ([string]::IsNullOrWhiteSpace($settingsText) -or $settingsText.Trim() -ceq 'null') {
+            $settings = New-Object psobject
+        } else {
+            $settings = $settingsText | ConvertFrom-Json
+            if ($settings -isnot [System.Management.Automation.PSCustomObject]) { throw "not a JSON object" }
+            if ($settings.PSObject.Properties['hooks'] -and $null -eq $settings.hooks) { $settings.hooks = New-Object psobject }
+        }
     } catch {
-        Write-Host "[FAILED] $settingsPath is not valid JSON; fix it, then re-run this installer to register the hook."
+        $why = if ($_.Exception.Message -eq 'not a JSON object') { 'is valid JSON but not an object' } else { 'is not valid JSON' }
+        Write-Host "[FAILED] $settingsPath $why; fix it, then re-run this installer to register the hook."
         $ok = $false
     }
 } else {

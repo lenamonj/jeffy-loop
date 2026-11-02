@@ -12,6 +12,16 @@
 set -u
 JEFFY_VERSION="1.26.13"
 
+# Referee fix A7: every run-ending path after the promise read says a refusal
+# once, as a block, then the state file is gone so the next stop is a no-op.
+jeffy_end_run() { # $1 stderr message
+  echo "$1" >&2
+  rm -f "$state"
+  if [ "${decl_seen:-0}" = 1 ] && [ -n "${violation:-}" ]; then
+    jq -n --arg r "CONVERGENCE REFUSED by the stop hook: $violation. The run has ended and did not converge; state that in one line and stop." '{decision: "block", reason: $r}'
+  fi
+  exit 0
+}
 # 1.21.0 (P1-70): `stop-hook.sh --lint [project root]` derives every check
 # the declaration path enforces and prints the first refusal, or clean,
 # without re-feeding, verifying, ending a run or writing a record. The
@@ -340,7 +350,8 @@ jeffy_declaration_certified() { # $1 project root, $2 this run's id, $3.. hashes
   # that yields no record at all is named on stderr, prefixed "!" here.
   jdc_out="$(for jdc_f in "$jdc_root"/.jeffy/metrics/*.jsonl; do
     [ -f "$jdc_f" ] || continue
-    jq -R -r --arg me "$jdc_me" --arg f "${jdc_f##*/}" 'select(test("[^ \t\r]")) | [fromjson?] as $one | (if ($one | length) > 0 then $one else [splits("(?<=[}])(?=[{])") | fromjson?] end) as $recs | if ($recs | length) == 0 then "!\($f):\(input_line_number)" else ($recs[] | objects | select(.declaration != null) | select((.mode // "standard") != "highs") | select(.declaration.verdict == "accepted") | select((.run_token // "") != $me) | (.declaration.hash // "")) end' "$jdc_f" 2>/dev/null
+    jdc_ship="$(git -C "$jdc_root" show "$(fm base_head):./.jeffy/metrics/${jdc_f##*/}" 2>/dev/null)"
+    { if [ -n "$jdc_ship" ]; then printf '%s\n' "$jdc_ship" | grep -vxFf - "$jdc_f"; else cat "$jdc_f"; fi; } | jq -R -r --arg me "$jdc_me" --arg f "${jdc_f##*/}" 'select(test("[^ \t\r]")) | [fromjson?] as $one | (if ($one | length) > 0 then $one else [splits("(?<=[}])(?=[{])") | fromjson?] end) as $recs | if ($recs | length) == 0 then "!\($f):\(input_line_number)" else ($recs[] | objects | select(.declaration != null) | select((.mode // "standard") != "highs") | select(.declaration.verdict == "accepted") | select((.run_token // "") != $me) | (.declaration.hash // "")) end' 2>/dev/null
   done)"
   printf '%s\n' "$jdc_out" | sed -n 's/^!//p' | while IFS= read -r jdc_bad; do
     echo "jeffy stop hook: .jeffy/metrics/$jdc_bad holds no metrics record this hook can parse, so nothing on that line certifies a hash" >&2
@@ -415,7 +426,7 @@ jeffy_claims_form_violation() { # $1 project root, $2 base commit
       printf '%s' "the battery $jcf_dir was written or its README edited this run and carries no claims file; every measurement its README states is a line 'expect <value> :: <command>' in $jcf_dir/claims, or the file holds the single line 'none'"
       return 0
     fi
-    jcf_bad="$(grep -vE '^[[:space:]]*$|^none$|^expect .+ :: .+$' "$1/$jcf_dir/claims" 2>/dev/null | head -n 1)"
+    jcf_bad="$(tr -d '\r' < "$1/$jcf_dir/claims" 2>/dev/null | grep -vE '^[[:space:]]*$|^none$|^expect .+ :: .+$' | head -n 1)"
     if [ -n "$jcf_bad" ]; then
       printf '%s' "the claims file $jcf_dir/claims carries the line '$(printf '%s' "$jcf_bad" | cut -c1-80)', which is neither 'none' nor 'expect <value> :: <command>'"
       return 0
@@ -526,7 +537,7 @@ jeffy_section() { # $1 file, $2 section names joined by |, $3 non-empty prefixes
     fenced && tolower($0) !~ /high|medium/ { next }
     !fenced && /^## / { sec = jeffy_heading($0, names); if (sec != "") found = 1; next }
     sec == "" { next }
-    /^[ \t]*[-*+] \[.\]/ { sub(/^[ \t]*[-*+] /, "- ") }
+    /^[ \t]*([-*+]|[0-9]+[.)])[ \t]+\[.?\]/ { sub(/^[ \t]*([-*+]|[0-9]+[.)])[ \t]+/, "- "); sub(/^- \[\]/, "- [ ]") }
     { if (tag != "") print sec "|" $0; else print }
     END { exit !found }
   ' "$1" "$1" 2>/dev/null
@@ -608,7 +619,7 @@ jeffy_derive_stale_rows() { # $1 project root
   jsr_nopaths=0
   while IFS= read -r jsr_row; do
     [ -n "$jsr_row" ] || continue
-    jsr_c="$(printf '%s' "$jsr_row" | grep -oE 'swept at [0-9a-f]{7,40}' | head -n 1 | awk '{print $3}')"
+    jsr_c="$(printf '%s' "$jsr_row" | grep -oE '[Ss]wept at (commit )?`?[0-9a-f]{7,40}' | head -n 1 | grep -oE '[0-9a-f]{7,40}$')"
     jsr_b="$(printf '%s' "$jsr_row" | grep -oE '\.jeffy/probes/[A-Za-z0-9._-]+' | head -n 1)"
     # 1.26.11 (Y1): the class above accepts the dot a battery name may
     # legitimately carry, so it also swallows the full stop that ends the
@@ -638,22 +649,24 @@ jeffy_derive_stale_rows() { # $1 project root
     while IFS= read -r jsr_chg; do
       [ -n "$jsr_chg" ] || continue
       while IFS= read -r jsr_gl; do
+        jsr_gl="${jsr_gl#./}"; jsr_gl="${jsr_gl%"${jsr_gl##*[![:space:]]}"}"; jsr_gl="${jsr_gl%/}"
         [ -n "$jsr_gl" ] || continue
+        jsr_g2="${jsr_gl//\*\*\//}"
         # shellcheck disable=SC2254  # the pattern is the point
-        case "$jsr_chg" in $jsr_gl) jsr_moved="$jsr_chg"; break ;; esac
+        case "$jsr_chg" in $jsr_gl|$jsr_gl/*|$jsr_g2) jsr_moved="$jsr_chg"; break ;; esac
       done <<EOF2
 $jsr_pat
 EOF2
       [ -n "$jsr_moved" ] && break
     done <<EOF2
-$(git -C "$1" diff --no-renames --name-only --relative "$jsr_c" HEAD 2>/dev/null)
+$(git -C "$1" -c core.quotePath=false diff --no-renames --name-only --relative "$jsr_c" HEAD 2>/dev/null)
 EOF2
     if [ -n "$jsr_moved" ]; then
       jsr_stale="$(printf '%s' "$jsr_row" | cut -c1-90) (recorded at $jsr_c; $jsr_moved has changed since)"
       break
     fi
   done <<EOF
-$(jeffy_inventory_rows "$1" | grep '^- \[x\]')
+$(jeffy_inventory_rows "$1" | LC_ALL=C grep '^- \[x\]')
 EOF
 }
 
@@ -682,7 +695,7 @@ jeffy_inventory_rows() { # $1 project root
       jir_rest = substr($0, 7)
       jir_ci = index(jir_rest, ":")
       jir_surf = (jir_ci > 0) ? substr(jir_rest, 1, jir_ci - 1) : jir_rest
-      if (jir_surf ~ /^<[^<>]*>$/) next
+      if (jir_surf == "<surface>") next
     }
     { print }
   '
@@ -811,7 +824,7 @@ jeffy_cert_hash_check() {
     # project root, so without it the exclusion matched nothing and the
     # gate rejected every declaration it saw.
     if [ -z "$violation" ]; then
-      nonstate="$(git -C "$root" diff --name-only --relative "$conv_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
+      nonstate="$(git -C "$root" diff --no-renames --name-only --relative "$conv_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
       if [ -n "$nonstate" ]; then
         violation="product path $nonstate changed after the $cert_sec hash $conv_hash; certify the current tree before declaring"
       fi
@@ -1149,7 +1162,13 @@ if [ -n "$promise" ]; then
         # A ledger with no Now section gives the floor nothing to read, and an
         # empty scan is exactly what a clean ledger returns.
         jeffy_section "$root/BACKLOG.md" 'Now' >/dev/null || ledger_no_now=1
-        open_scan="$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' | awk '/^- \[ \]/ { if ($0 ~ /^- \[ \] [^ ]+ \(Low[,)]/) print "L\t" $0; else print "B\t" $0 }')"
+        ledger_near=""
+        for ln in Next Later; do
+          jeffy_section "$root/BACKLOG.md" "$ln" >/dev/null && continue
+          ledger_near="$(jeffy_near_heading "$root/BACKLOG.md" "$ln")"
+          [ -n "$ledger_near" ] && break
+        done
+        open_scan="$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' | awk '/^- \[ \]/ { if ($0 ~ /^- \[ \] [^ ]+ \(Low[,)]/) print "L\t" $0; else print "B\t" $0 } /^- \[b\] [^ ]+ \((High|Medium)[,)]/ { print "B\t" $0 }')"
         open_blocking="$(printf '%s\n' "$open_scan" | awk -F'\t' '$1 == "B" { print $2 }')"
         open_carried="$(printf '%s\n' "$open_scan" | awk -F'\t' '$1 == "L" { print $2 }')"
         if [ "$hunt" = 1 ]; then
@@ -1157,10 +1176,10 @@ if [ -n "$promise" ]; then
           # not a High - a Medium, a Low, a line with no parseable severity -
           # is a violation naming the line, because a Medium or Low an audit
           # notices belongs on that AUDIT entry's Noted, not filed: line and
-          # a hunt never works one; an open High blocks as it always has, and
-          # nothing is carried.
-          hunt_nonhigh="$(printf '%s\n' "$open_scan" | awk -F'\t' '{ print $2 }' | grep -v '^- \[ \] [^ ]* (High[,)]' | grep . | head -n 1)"
-          open_blocking="$(printf '%s\n' "$open_scan" | awk -F'\t' '{ print $2 }' | grep '^- \[ \] [^ ]* (High[,)]' | head -n 1)"
+          # a hunt never works one; an open High blocks as it always has, a
+          # blocked High blocks as an open one (1.27.0), and nothing is carried.
+          hunt_nonhigh="$(printf '%s\n' "$open_scan" | awk -F'\t' '{ print $2 }' | grep -v '^- \[[ b]\] [^ ]* (High[,)]' | grep . | head -n 1)"
+          open_blocking="$(printf '%s\n' "$open_scan" | awk -F'\t' '{ print $2 }' | grep '^- \[[ b]\] [^ ]* (High[,)]' | head -n 1)"
           open_carried=""
         fi
         # The line a refusal will name, when it carries no parseable severity
@@ -1173,12 +1192,18 @@ if [ -n "$promise" ]; then
       fi
       if [ ! -f "$root/BACKLOG.md" ]; then
         violation="BACKLOG.md is missing at $root, and every closing gate reads it - the open-task test and the $cert_sec hash that certifies the tree live in that file; restore the ledger with its Now and $cert_sec sections, then re-declare"
+      elif printf '%s' "$(fm base_head)" | grep -qE '^[0-9a-f]{7,64}$' && ! git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+        violation="git cannot read HEAD at $root though this run started at a commit, so the certified-tree checks have nothing to compare; repair the repository, then re-declare"
+      elif [ ! -f "$root/PLAN.md" ]; then
+        violation="PLAN.md is missing at $root, and the inventory, staleness, oracle and verify checks all read it; restore it, then re-declare"
       elif [ "$ledger_no_now" = 1 ]; then
         violation="BACKLOG.md has no Now section, and the closing rule reads open tasks under the Now, Next and Later headings - a ledger without them is one the severity floor cannot read, not a clean one; restore the ## Now heading with every open task beneath it, then re-declare"
+      elif [ -n "${ledger_near:-}" ]; then
+        violation="the BACKLOG.md heading \"$ledger_near\" is not read as a ledger section, so nothing under it counts as open; spell it as the template does, then re-declare"
       elif [ "$hunt" = 1 ] && [ -n "$hunt_nonhigh" ]; then
         violation="BACKLOG.md lists an open task that is not a High, and a hunt ledger carries Highs only - a Medium or Low an audit notices goes on that AUDIT entry's Noted, not filed: line, never on the ledger, and a line with no parseable severity is refused the same way, first: $hunt_nonhigh$open_substep"
       elif [ -n "$open_blocking" ]; then
-        violation="BACKLOG.md still lists open High or Medium tasks in Now, Next, or Later (a task line with no parseable severity counts as blocking - the closing rule reads severity from the task line itself), first: $(printf '%s' "$open_blocking" | head -n 1)$open_substep"
+        violation="BACKLOG.md still lists open High or Medium tasks in Now, Next, or Later (a task line with no parseable severity counts as blocking - the closing rule reads severity from the task line itself, and a High or Medium marked [b] blocks as an open one does: fix it, or move it to Declined with its Derivation), first: $(printf '%s' "$open_blocking" | head -n 1)$open_substep"
       elif [ "$hunt" = 0 ] && command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
         jeffy_cert_hash_check
       fi
@@ -1191,7 +1216,7 @@ if [ -n "$promise" ]; then
       # price of declaring over an unswept map.
       if [ "$hunt" = 0 ] && [ -z "$violation" ] && [ -f "$root/PLAN.md" ]; then
         if inv_rows="$(jeffy_inventory_rows "$root")"; then
-          unswept="$(printf '%s\n' "$inv_rows" | grep '^- \[ \]' | head -n 1)"
+          unswept="$(printf '%s\n' "$inv_rows" | LC_ALL=C grep '^- \[ \]' | head -n 1)"
           # P1-7c: refusing [ ] alone let a map made entirely of [~] rows
           # declare with nothing swept. A [~] row is a disclosure, not a
           # sweep, so a map has to hold a swept one. A section with no row at
@@ -1483,7 +1508,7 @@ if [ -n "$promise" ]; then
               violation="$fa_msg"
             fi
           else
-            fa_moved="$(git -C "$root" diff --name-only --relative "$fa_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
+            fa_moved="$(git -C "$root" diff --no-renames --name-only --relative "$fa_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
             if [ -n "$fa_moved" ]; then
               violation="product path $fa_moved changed after the last AUDIT entry's checkpoint $fa_hash (iteration $fa_iter); a hunt closes on a fresh audit of the tree it certifies, so audit again and close in that same iteration"
             fi
@@ -1577,7 +1602,7 @@ if [ -n "$promise" ]; then
             END {
               if (!found) print "none"
               else if (type == "RATCHET") print "ratchet"
-              else if (rj) print "reject"
+              else if (rj && !ev) print "reject"
               else if (un) print "unavailable"
               else if (ev) print "pass"
               else print "missing"
@@ -1724,7 +1749,7 @@ if [ -n "$promise" ]; then
               elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
                 ev_head_blob="$(git -C "$root" rev-parse --quiet --verify "HEAD:./$ev_art" 2>/dev/null || true)"
                 ev_work_blob="$(git -C "$root" hash-object -- "$ev_art" 2>/dev/null || true)"
-                ev_art_commit="$(git -C "$root" log -1 --format=%H -- "$ev_art" 2>/dev/null || true)"
+                ev_art_commit="$(git -C "$root" -c log.showSignature=false log -1 --format=%H -- "$ev_art" 2>/dev/null || true)"
                 # HEAD:<path> resolves from the repository root, not from the
                 # working directory, so the ./ prefix is what keeps this
                 # correct in a project below the root - the same shape that
@@ -1768,6 +1793,15 @@ if [ -n "$promise" ]; then
               fi
               ;;
           esac
+        fi
+      fi
+      # Referee fix A1: the tree the Verify command grades has to be the tree
+      # the certified commit holds. Skipped under lint, which the prompt runs
+      # before the checkpoint.
+      if [ -z "$violation" ] && [ "$lint" = 0 ] && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
+        tree_dirty="$( { git -C "$root" -c core.quotePath=false diff --no-renames --name-only --relative HEAD; git -C "$root" -c core.quotePath=false ls-files --others --exclude-standard; } 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
+        if [ -n "$tree_dirty" ]; then
+          violation="the working tree holds an uncommitted change at $tree_dirty, so the Verify command would grade a tree no commit holds; checkpoint it or remove it, then re-declare convergence"
         fi
       fi
       if [ -z "$violation" ]; then
@@ -1820,6 +1854,7 @@ if [ -n "$promise" ]; then
               case "$verify_cmd" in
                 *'|'*)
                   vc_last="${verify_cmd##*|}"
+                  case "$vc_last" in *';'* | *'&&'*) vc_last="" ;; esac
                   vc_last="${vc_last#"${vc_last%%[![:space:]]*}"}"
                   case "$vc_last" in
                     head|head\ *|tail|tail\ *|less|less\ *|more|more\ *|cat|cat\ *)
@@ -1828,8 +1863,16 @@ if [ -n "$promise" ]; then
                   esac
                   ;;
               esac
+              vc_closer='[|][[:space:]]*([ef]?grep[[:space:]]([^|;&]*[[:space:]])?(-[A-Za-z]*[qm]|--quiet|--silent|--max-count)|head([[:space:]]|$)|awk[[:space:]][^|]*exit)'
+              vc_nofail=""
+              case "$verify_cmd" in
+                'set -o pipefail'*) ;;
+                *) printf '%s\n' "$verify_cmd" | grep -Eq "${vc_closer}[^;&]*(;|&&|[|][|]).*[^|][|][^|]" && vc_nofail=1 ;;
+              esac
               if [ -n "$vc_lint" ]; then
                 violation="the Verify command ($verify_cmd) ends in $vc_lint, so its exit status is the truncator's, not the suite's; drop the trailing stage, then re-declare convergence"
+              elif [ -n "$vc_nofail" ]; then
+                violation="the Verify command ($verify_cmd) holds an early-closing stage ahead of a later pipeline, which switches pipefail off for the whole Command, so a failing suite can read green; open the Command with set -o pipefail, then re-declare convergence"
               elif [ "$lint" = 1 ]; then
                 # Lint never executes the Verify command: the run has the
                 # wrapper for that, and a read-only pass runs nothing.
@@ -1846,7 +1889,10 @@ if [ -n "$promise" ]; then
                 elif [ "$vrc" -eq 141 ]; then
                   violation="the Verify command ($verify_cmd) exited 141, which is SIGPIPE: a stage closed its pipe early and the Command runs under pipefail; let that stage drain its input, or open the Command with set +o pipefail, then re-declare convergence"
                 elif [ "$vrc" -ne 0 ]; then
-                  violation="the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence"
+                  case "$vrc" in
+                    126 | 127) violation="the Verify command ($verify_cmd) could not start in the hook's environment (exit $vrc, PATH=$PATH); name the binary by full path in Command: or add its directory to the PATH hooks run with, then re-declare convergence" ;;
+                    *) violation="the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence" ;;
+                  esac
                 fi
               fi
             fi
@@ -1946,7 +1992,7 @@ fi
 # BACKLOG.md is absent, and every reader treats empty as cannot-evaluate.
 open_hm=""
 if [ -f "$root/BACKLOG.md" ]; then
-  open_hm="$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' | awk '/^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \(Low[,)]/ { n++ } END { printf "%d", n }')"
+  open_hm="$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' | awk '(/^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \(Low[,)]/) || /^- \[b\] [^ ]+ \((High|Medium)[,)]/ { n++ } END { printf "%d", n }')"
 fi
 # P0-5: the High-or-unparseable count, beside the High-or-Medium one. Under
 # coverage-first ordering only an open High outranks the map, so the sweep
@@ -2067,7 +2113,7 @@ new_low_refill=""
 cur_lows=""
 if [ -n "$ext_lows_rec" ] && [ -n "$open_now" ] && [ -n "$open_hm" ]; then
   case "$ext_lows_rec" in *[!0-9]*) ;; *)
-    cur_lows=$((open_now + open_next + open_later - open_hm))
+    cur_lows="$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' | awk '/^- \[ \] [^ ]+ \(Low[,)]/ { n++ } END { printf "%d", n }')"
     [ "$cur_lows" -gt "$ext_lows_rec" ] && new_low_refill=1
   ;; esac
 fi
@@ -2257,9 +2303,7 @@ if [ "$iter_max" -gt 0 ] && [ -n "$iter_started" ] && [ "$now_epoch" -ge "$iter_
     # The hook fires after the turn, so it cannot cut a long iteration short;
     # what it can do is refuse to let the next one be shaped the same way.
     if [ "$overrun_flag" = "1" ] && [ -z "$in_window" ]; then
-      echo "jeffy stop hook: two consecutive iterations exceeded the ${iter_max}s per-iteration ceiling (latest: iteration $iter at ${iter_elapsed}s); ending the run. Split the work or mark the task blocked in the next run." >&2
-      rm -f "$state"
-      exit 0
+      jeffy_end_run "jeffy stop hook: two consecutive iterations exceeded the ${iter_max}s per-iteration ceiling (latest: iteration $iter at ${iter_elapsed}s); ending the run. Split the work or mark the task blocked in the next run."
     fi
     new_overrun=1
     overrun_note="iteration $iter took ${iter_elapsed}s against a ${iter_max}s per-iteration ceiling; split the next task into work that fits, or mark it blocked with the reason - a second consecutive overrun ends the run"
@@ -2268,9 +2312,7 @@ fi
 
 if [ "$wall_max" -gt 0 ] && [ -n "$wall_elapsed" ] && [ "$wall_elapsed" -gt "$wall_max" ] \
   && [ -z "$in_window" ] && [ -z "$corrective" ]; then
-  echo "jeffy stop hook: the run reached its wall-clock ceiling (${wall_elapsed}s against ${wall_max}s) at iteration $iter of $max; ending the run out of time rather than out of turns. The ledger and the map carry to the next run." >&2
-  rm -f "$state"
-  exit 0
+  jeffy_end_run "jeffy stop hook: the run reached its wall-clock ceiling (${wall_elapsed}s against ${wall_max}s) at iteration $iter of $max; ending the run out of time rather than out of turns. The ledger and the map carry to the next run."
 fi
 
 # Re-feed: advance the iteration counter in place, then block the stop with
@@ -2454,7 +2496,7 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ] || [ -n "$last_inventory" ]; 
   elif [ "$cur_head" != "none" ] && [ "$cur_head" != "$last_head" ]; then
     if [ -n "$last_head" ] && [ "$last_head" != "none" ] \
       && git -C "$root" rev-parse --verify --quiet "$last_head^{commit}" >/dev/null 2>&1; then
-      moved="$(git -C "$root" diff --name-only --relative "$last_head" "$cur_head" 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
+      moved="$(git -C "$root" diff --no-renames --name-only --relative "$last_head" "$cur_head" 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
       [ -n "$moved" ] && progress=1
     else
       progress=1
@@ -2528,9 +2570,7 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ] || [ -n "$last_inventory" ]; 
       if [ -n "$extension" ]; then
         stall_ext=" the closing extension decided this turn is forfeited with it;"
       fi
-      echo "jeffy stop hook: two consecutive flat iterations (latest: iteration $iter) with nothing changed outside the loop state files;$stall_ext ending the run as stalled." >&2
-      rm -f "$state"
-      exit 0
+      jeffy_end_run "jeffy stop hook: two consecutive flat iterations (latest: iteration $iter) with nothing changed outside the loop state files;$stall_ext ending the run as stalled."
     else
       # The second strike yields to a corrective re-feed decided this turn.
       # Both want to end the same turn, and letting the stall stop win puts
@@ -2700,6 +2740,9 @@ if [ -z "$violation" ] && [ -f "$root/PLAN.md" ] \
   jeffy_derive_stale_rows "$root"
   if [ -n "$jsr_stale" ]; then
     stale_note="a swept Surface inventory row is stale - $jsr_stale; re-record it at the current content state in this iteration, before any evaluator invocation"
+    if [ "${jsr_unlinked:-0}" -gt 0 ] || [ "${jsr_nopaths:-0}" -gt 0 ]; then
+      stale_note="$stale_note; $jsr_unlinked swept rows name no battery and $jsr_nopaths name one with no paths file, so the gate cannot check those"
+    fi
   fi
 fi
 
