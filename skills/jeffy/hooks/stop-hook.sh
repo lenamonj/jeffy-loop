@@ -254,7 +254,10 @@ jeffy_metrics_written="$lint"
 # outside reader called the tree converged). decl_seen is raised on the
 # promise path; the verdict is read off `violation` at exit.
 decl_seen=0
-# shellcheck disable=SC2317  # reached through the EXIT trap installed below
+# Reached only through the EXIT trap installed below; a shellcheck that does
+# not read a trap as a call reports it unreachable (SC2317) or unused (SC2329,
+# the CI runner's 0.11).
+# shellcheck disable=SC2317,SC2329
 jeffy_write_metrics() {
   [ "$jeffy_metrics_written" = 0 ] || return 0
   jeffy_metrics_written=1
