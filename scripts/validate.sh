@@ -10927,7 +10927,10 @@ print("jeffy=%d timeouts=%s other=%d" % (len(j), ",".join(str(h.get("timeout")) 
     # A home whose path holds a dollar sign: the written command runs under a
     # shell, so the sign is escaped, and the installer reads its own escaped
     # registration back as live on the second run rather than adding a twin.
-    # The token is read back through bash the way Claude Code runs it.
+    # The token is read back through bash the way Claude Code runs it. A
+    # Windows Python writes CRLF into the pipe, and Git Bash strips only the
+    # final pair from a substitution, so the two-line answer keeps a CR on its
+    # first line and the count read "1\r" on the Windows CI leg of 1.27.0.
     v_cmd='
 import json, os, sys
 p = os.path.join(sys.argv[1], ".claude", "settings.json")
@@ -10946,7 +10949,7 @@ print(j[0] if j else "")
       HOME="$v_dl" USERPROFILE="$v_dl_profile" PATH="$v_bin:$PATH" PYTHONPATH="$v_stage" PYTHONPYCACHEPREFIX="$v_tmp/pyc" \
         "$v_py" -m jeffy_loop.cli install </dev/null >"$v_tmp/dollar$v_i.log" 2>&1
     done
-    v_dl_out="$("$v_py" -c "$v_cmd" "$v_dl" 2>&1)"
+    v_dl_out="$("$v_py" -c "$v_cmd" "$v_dl" 2>&1 | tr -d '\r')"
     v_dl_n="${v_dl_out%%$'\n'*}"; v_dl_cmd="${v_dl_out#*$'\n'}"
     if [ "$v_dl_n" = 1 ] && grep -qF 'already registered' "$v_tmp/dollar2.log" \
       && [ "$(bash -c "printf '%s' $(printf '%s' "${v_dl_cmd#bash }")")" = "$v_dl_mixed/.claude/skills/jeffy/hooks/stop-hook.sh" ]; then
