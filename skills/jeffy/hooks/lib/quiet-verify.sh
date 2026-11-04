@@ -336,10 +336,30 @@ qv_main() {
   if [ -n "$qv_summary" ] && command -v jq >/dev/null 2>&1; then
     qv_count="$(printf '%s' "$qv_summary" | grep -oE '[0-9]+' | head -n 1)"
     if [ -n "$qv_count" ] && mkdir -p "$qv_root/.jeffy/metrics" 2>/dev/null; then
-      jq -n --arg c "$qv_count" --arg s "$qv_summary" --arg h "$(git -C "$qv_root" rev-parse HEAD 2>/dev/null)" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{count: ($c | tonumber), summary: $s, head: $h, ts: $t}' > "$qv_out.vl" 2>/dev/null \
-        && mv -f "$qv_out.vl" "$qv_root/.jeffy/metrics/verify-last.json" 2>/dev/null
-      rm -f "$qv_out.vl"
+      # J3: the temp is staged inside the destination directory, never beside
+      # $qv_out under TMPDIR. Staging exists so that a reader never sees a
+      # partial file, and that only holds when the move is a rename, which it
+      # is only within one filesystem. TMPDIR is routinely elsewhere - tmpfs
+      # against the project's disk here, /var/folders against the volume on
+      # macOS, which `stat -c %d` answers as two different devices - so the
+      # old staged write was a cross-device copy and left open the very window
+      # it was added to close. The name stays fresh rather than fixed: the
+      # check asserting this write replaces a tracked symlink instead of
+      # following it depends on a new name being renamed over the link.
+      qv_vl_dir="$qv_root/.jeffy/metrics"
+      # A kill between the write and the rename would leave a temp inside a
+      # tracked directory, where the next `git add -A` commits it - the shape
+      # J5 records for the state rewriter's own temp. Sweeping any leftover
+      # before staging bounds that to the window before the next verify
+      # instead of letting interrupted runs accumulate in the user's history.
+      rm -f "$qv_vl_dir"/verify-last.json.?????? 2>/dev/null
+      qv_vl="$(mktemp "$qv_vl_dir/verify-last.json.XXXXXX" 2>/dev/null)" || qv_vl=""
+      if [ -n "$qv_vl" ]; then
+        jq -n --arg c "$qv_count" --arg s "$qv_summary" --arg h "$(git -C "$qv_root" rev-parse HEAD 2>/dev/null)" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          '{count: ($c | tonumber), summary: $s, head: $h, ts: $t}' > "$qv_vl" 2>/dev/null \
+          && mv -f "$qv_vl" "$qv_vl_dir/verify-last.json" 2>/dev/null
+        rm -f "$qv_vl"
+      fi
     fi
   fi
   if [ -n "$qv_summary" ]; then

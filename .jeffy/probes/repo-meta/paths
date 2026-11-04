@@ -1,0 +1,10 @@
+SECURITY.md
+CONTRIBUTING.md
+LICENSE
+.github
+.gitattributes
+.gitignore
+README.md
+docs
+pyproject.toml
+.jeffy/probes/repo-meta

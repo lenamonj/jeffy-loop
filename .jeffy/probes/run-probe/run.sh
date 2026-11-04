@@ -26,6 +26,18 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
   JEFFY_PROBE_TIMEOUT_S=1 bash "$P" sleep 5 >/dev/null 2>"$e"; ck "wall ceiling kills" 124 $?
   cktext "wall ceiling names itself" "exceeded the 1s wall ceiling" "$e"
   JEFFY_PROBE_TIMEOUT_S=10 bash "$P" sleep 5 >/dev/null 2>"$e"; ck "wall ceiling admits" 0 $?
+  # J13: an exit status does not name the ceiling that fired. systemd answers a
+  # scope it stops - a MemoryMax kill among them - with SIGTERM, and GNU timeout
+  # answers a SIGTERM with 124, the same status it uses for its own expiry, so a
+  # probe killed for memory 13 seconds in was announced as having exceeded a
+  # 600s ceiling. Driven on the status, which is portable, rather than on a real
+  # OOM, which is not, and asserted as the absence of the false claim, because
+  # the branch that now replaces it needs a user scope this host may not have.
+  JEFFY_PROBE_TIMEOUT_S=600 bash "$P" bash -c 'exit 124' >/dev/null 2>"$e"; ck "an early 124 passes through" 124 $?
+  if grep -q -- "wall ceiling and was ended" "$e"; then
+    echo "FAIL an early 124 is announced as a wall-ceiling timeout: the wrapper claims a ceiling the probe never reached"
+    fails=$((fails + 1))
+  fi
 else
   bash "$P" true >/dev/null 2>"$e"
   cktext "wall degradation is announced" "wall ceiling unavailable" "$e"

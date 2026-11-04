@@ -90,8 +90,24 @@ fi
 if [ "$rc" -eq 137 ] && [ "$wall_s" -ne 0 ] && [ "$SECONDS" -ge "$wall_s" ]; then
   rc=124
 fi
-if [ "$rc" -eq 124 ] && [ "$wall_s" -ne 0 ]; then
+# The wall-ceiling claim is gated on the same elapsed-time comparison the
+# conversion above already reads, and for the same reason one line apart: an
+# exit status does not name the ceiling that fired. systemd answers a scope it
+# stops - a MemoryMax kill among them - by sending SIGTERM, and GNU timeout
+# answers a SIGTERM with 124, which is also the status it uses for its own
+# expiry. So a probe killed for memory 13 seconds in arrived here as 124 and
+# was announced as having exceeded a 600s ceiling, which reads as a probe that
+# cannot finish in bounded time and sends the operator to make it faster when
+# the remedy is more memory. The guard was already written one line up and had
+# not been applied to the branch that makes the statement. (J13)
+if [ "$rc" -eq 124 ] && [ "$wall_s" -ne 0 ] && [ "$SECONDS" -ge "$wall_s" ]; then
   echo "run-probe.sh: probe exceeded the ${wall_s}s wall ceiling and was ended; a probe that cannot finish in bounded time is an instrument finding about the probe." >&2
+elif [ "$rc" -eq 124 ] && [ "$wall_s" -ne 0 ] && [ "$have_scope" -eq 1 ]; then
+  # 124 inside the ceiling, with a scope in the chain: the wall ceiling is not
+  # what ended it, and the likeliest sender of the SIGTERM timeout reported is
+  # the scope being stopped. Named as the thing to check first rather than
+  # asserted, because a probe may also exit 124 of its own accord.
+  echo "run-probe.sh: probe exited 124 after ${SECONDS}s, inside the ${wall_s}s wall ceiling, so the wall ceiling is not what ended it; systemd answers a scope it stops - a kill under the ${mem_mb}MB memory ceiling among them - with SIGTERM, which timeout reports as 124, so check memory before wall time." >&2
 elif [ "$rc" -eq 137 ] && [ "$have_scope" -eq 1 ]; then
   echo "run-probe.sh: probe was killed under the ${mem_mb}MB memory ceiling (SIGKILL); a probe that exhausts bounded memory is an instrument finding about the probe, and the run continues." >&2
 elif [ "$rc" -ne 0 ]; then

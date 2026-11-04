@@ -244,6 +244,49 @@ run_hook sess-own 'done <promise>JEFFY CONVERGED</promise>'
 ran=$((ran + 1))
 reason "$out" | grep -qF 'indented but real' || note "the gate stopped refusing an indented row naming a real surface"
 
+# --- J5: the state rewriter's temp is loop memory, and its name has to say so.
+# The temp mktemp made beside the state file was matched by neither the
+# bootstrap's gitignore lines nor JEFFY_LOOP_MEMORY_RE, so one a killed hook
+# left behind was staged by the next checkpoint's `git add -A` - a session id
+# into the user's history - and named by the working-tree gate as the
+# uncommitted change that refuses a declaration. Two arms: the location is
+# derived from the hook rather than retyped, and the sweep is driven.
+# The dollar below is a literal being searched for in the hook's source, not a
+# variable to expand, so the single quotes are deliberate and the info-level
+# finding about them is suppressed by the next line rather than by widening it.
+# shellcheck disable=SC2016
+sh_tpl="$(grep -oE 'mktemp "\$root/[^"]+"' "$hook" | head -n 1 | sed 's|^mktemp "\$root/||; s|"$||')"
+sh_re="$(sed -n "s/^JEFFY_LOOP_MEMORY_RE='\(.*\)'$/\1/p" "$hook")"
+ran=$((ran + 1))
+if [ -z "$sh_tpl" ] || [ -z "$sh_re" ]; then
+  note "the rewriter temp template or the loop-memory regex could not be read out of the hook (tpl='$sh_tpl')"
+else
+  # The claim is about the directory the temp lands in, so the template's own
+  # basename is replaced by a name of that shape before the regex is applied.
+  sh_dir="${sh_tpl%/*}"
+  printf '%s\n' "$sh_dir/jeffy-loop-state.AbC123" | grep -qE "$sh_re" \
+    || note "the rewriter stages its temp at $sh_dir/, which JEFFY_LOOP_MEMORY_RE does not cover, so a survivor reads as a product change"
+fi
+
+# The sweep: what a SIGKILL between the mktemp and the move left behind is
+# collected by the next run rather than accumulating. Driven on a real leftover
+# at the name the hook itself uses, with the file confirmed present first so a
+# fixture that never created it cannot pass this by vacuity.
+write_state sess-sweep 1 5
+mkdir -p "$proj/.jeffy/scratch"
+: > "$proj/.jeffy/scratch/jeffy-loop-state.LEFTOVER"
+ran=$((ran + 1))
+[ -f "$proj/.jeffy/scratch/jeffy-loop-state.LEFTOVER" ] \
+  || note "the sweep fixture could not plant a leftover temp, so the arm below proves nothing"
+run_hook sess-sweep 'working'
+ran=$((ran + 1))
+[ -f "$proj/.jeffy/scratch/jeffy-loop-state.LEFTOVER" ] \
+  && note "a leftover rewriter temp survived the next hook run, so one a killed hook left accumulates"
+ran=$((ran + 1))
+[ "$(decision "$out")" = block ] \
+  || note "the sweep arm's own re-feed did not happen, so the sweep was never reached (decision: $(decision "$out"))"
+
+
 if [ "$fails" -gt 0 ]; then
   echo "stop-hook battery: $((ran - fails))/$ran checks passed"
   exit 1

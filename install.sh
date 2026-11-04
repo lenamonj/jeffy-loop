@@ -85,11 +85,11 @@ hook_frag="skills/jeffy/hooks/stop-hook.sh"
 hook_cmd="bash \"${HOME//\$/\\\$}/.claude/skills/jeffy/hooks/stop-hook.sh\""
 if command -v jq >/dev/null 2>&1; then
   mkdir -p "$HOME/.claude"
-  # A file of only whitespace is valid to jq empty and yields nothing to edit.
-  [[ -n "$(tr -d '[:space:]' < "$settings" 2>/dev/null)" ]] || printf '{}\n' > "$settings"
   # The replacement lands beside the real file, so the rename is a rename: a link
   # stays a link, the mode stays, and a full disk fails the write and leaves the
   # file alone. macOS before 12.3 has no readlink -f and replaces the link.
+  # Resolved ahead of the seed below, because that seed now falls back to this
+  # same temp-and-rename path and so needs $real. (J17)
   real="$settings"
   if [ -L "$settings" ]; then
     real="$(readlink -f "$settings" 2>/dev/null || true)"
@@ -106,8 +106,51 @@ if command -v jq >/dev/null 2>&1; then
   # line; each caller says what it left as it was.
   settings_tmp() {
     tmp="$(mktemp "$real.XXXXXX" 2>/dev/null)" || return 1
-    cp -p "$real" "$tmp" || true
+    # J17: the mode rides over so the rename preserves it, and the copy is then
+    # made writable. cp -p stamps the source's mode on the temp, so a read-only
+    # settings.json - the store a dotfile manager generates, named just above -
+    # handed the temp its own 444 and every write below failed, while a rename
+    # over that same file needs the directory rather than the file and works.
+    # The sibling installer in src/jeffy_loop/cli.py writes its temp first and
+    # copies the mode after, which is this fix in the other order, and its own
+    # docstring states the property: a rename needs write permission on the
+    # directory rather than on the file. settings_mv puts the mode back.
+    cp -p "$real" "$tmp" 2>/dev/null || true
+    chmod u+w "$tmp" 2>/dev/null || true
   }
+  # The destination's own mode goes back on before the rename, so replacing a
+  # read-only settings.json leaves it read-only. One bound, stated rather than
+  # implied: root tests writable on every file, so a 444 settings.json replaced
+  # by a root install comes back 644 - the file's accessibility to its readers
+  # is unchanged, and no arm below claims otherwise.
+  settings_mv() {
+    if [ -e "$real" ] && [ ! -w "$real" ]; then
+      chmod a-w "$tmp" 2>/dev/null || true
+    fi
+    mv "$tmp" "$real"
+  }
+  # A file of only whitespace is valid to jq empty and yields nothing to edit.
+  # J17: the direct write stays the first attempt, so a fresh install still
+  # creates the file at the umask's mode exactly as it always has and as the
+  # sibling installer does. It fails only where the file exists and cannot be
+  # written, and under set -euo pipefail that ended the installer at this line
+  # with a bare Permission denied, no [FAILED] line and no closing summary -
+  # the skills installed and the hook not. The 2>/dev/null precedes the
+  # redirection it silences, because bash applies them left to right and the
+  # message is the shell's own rather than printf's. The tr reads its input the
+  # same way for the same reason: with the 2>/dev/null written after the input
+  # redirection, as it was, a fresh install where settings.json does not exist
+  # yet leaked a bare "No such file or directory" on every single run.
+  if [ -z "$(tr -d '[:space:]' 2>/dev/null < "$settings")" ] \
+    && ! printf '{}\n' 2>/dev/null > "$settings"; then
+    if settings_tmp && printf '{}\n' > "$tmp" && settings_mv; then
+      :
+    else
+      rm -f "$tmp" 2>/dev/null || true
+      echo "[FAILED] $settings holds no JSON object and could not be seeded with one: neither it nor $(dirname "$real") can be written; put {} in that file by hand, or make that directory writable, then re-run."
+      ok=0
+    fi
+  fi
   # jq reads every file on stdin: under Git Bash a native jq is handed a POSIX
   # path unconverted when it holds an apostrophe, and cannot open it.
   prune_failed=0
@@ -132,7 +175,7 @@ if command -v jq >/dev/null 2>&1; then
         ok=0; prune_failed=1
       elif jq --arg dead "$dead_cmds" '($dead | split("\n") | map(select(. != ""))) as $d | .hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | select(((.command // "") as $c | any($d[]; . == $c)) | not)]) else . end | select((.hooks | type) != "array" or (.hooks | length) > 0)]' < "$settings" > "$tmp" \
         && jq empty < "$tmp" >/dev/null 2>&1; then
-        mv "$tmp" "$real"
+        settings_mv
         echo "[OK] removed a Stop hook registration naming a hook that does not exist: $(printf '%s' "$dead_cmds" | head -n 1)"
       else
         rm -f "$tmp"
@@ -161,7 +204,7 @@ if command -v jq >/dev/null 2>&1; then
         ok=0
       elif jq --arg frag "$hook_frag" '.hooks.Stop |= [.[] | if (.hooks | type) == "array" then (.hooks |= [.[] | if ((.command // "") | contains($frag)) and ((has("timeout") | not) or .timeout == 600) then . + {"timeout": 1800} else . end]) else . end]' < "$settings" > "$tmp" \
         && jq empty < "$tmp" >/dev/null 2>&1; then
-        mv "$tmp" "$real"
+        settings_mv
         echo "[OK] Jeffy Stop hook registration upgraded to an 1800s timeout in $settings"
       else
         rm -f "$tmp"
@@ -175,7 +218,7 @@ if command -v jq >/dev/null 2>&1; then
       ok=0
     elif jq --arg cmd "$hook_cmd" '.hooks //= {} | .hooks.Stop //= [] | .hooks.Stop += [{"hooks": [{"type": "command", "command": $cmd, "timeout": 1800}]}]' < "$settings" > "$tmp" \
       && jq empty < "$tmp" >/dev/null 2>&1; then
-      mv "$tmp" "$real"
+      settings_mv
       echo "[OK] Jeffy Stop hook registered in $settings (1800s timeout)"
     else
       rm -f "$tmp"

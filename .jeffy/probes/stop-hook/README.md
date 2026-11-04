@@ -37,6 +37,46 @@ What it covers, by row:
   other side: an indented row naming a *real* surface is still a row, counted
   by the run state and refused by the gate.
 
+## The state rewriter's temp (J5)
+
+The rewriter stages the next state file in a temp and renames it into place.
+Where that temp lands is a claim about loop memory rather than about the
+rename: a name matched by neither the bootstrap's gitignore lines nor
+`JEFFY_LOOP_MEMORY_RE` is, to git and to the hook's own gates, a product
+change. One a killed hook left behind was therefore staged by the next
+checkpoint's `git add -A`, putting a session id into the user's history, and
+named by the working-tree gate as the uncommitted change that refuses a
+declaration. Both halves were reproduced before the fix: `git check-ignore`
+reported the old name unignored and `git ls-files --others --exclude-standard`
+returned it.
+
+Two arms, deliberately of different kinds. The location arm derives the mktemp
+template out of the hook and the regex out of the same file, replaces the
+template's basename with a name of that shape, and requires the regex to cover
+it - so neither value is retyped here and a move to any uncovered directory
+faults. The sweep arm plants a leftover at the name the hook itself uses and
+requires the next run to collect it, with the planted file confirmed present
+first so a fixture that failed to create it cannot pass by vacuity, and with
+the re-feed's own decision asserted so an arm that never reached the rewriter
+is not read as a sweep that worked.
+
+The mutations recorded in `claims`, each isolating to one arm: moving the
+template back under `.claude/` falls the location arm alone, and replacing the
+sweep's removal with a no-op falls the sweep arm alone.
+
+What these arms do not reach: the temp is observed through where the hook is
+told to create it and through what survives, never by catching it mid-flight.
+Catching it mid-flight needs an `mv` shim on PATH, which the fix was driven
+with by hand - the shipped hook stages under `.jeffy/scratch/` and the pre-fix
+one beside the state file - and which is not kept here, because a shim that
+makes the rename a no-op stops the counter advancing and the hook's own
+counter guard then ends the run, so the fixture is single-use.
+
+Only SIGKILL escapes the removal on the run's own side; bash does run an EXIT
+trap for an untrapped SIGTERM, which was checked rather than assumed, and the
+sweep is what collects what a SIGKILL left.
+
+
 ## Discriminating inputs
 
 Recorded at creation. Each was applied to the shipped hook, run, and restored

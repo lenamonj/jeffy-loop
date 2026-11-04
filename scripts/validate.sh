@@ -9376,6 +9376,25 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         printf 'rc=%s\n' "$hb_rp_rc"; cat "$hb_tmp/rp3.err"
         fault "run-probe.sh billed its capability check to the probe and named an instant SIGKILL a wall timeout"
       fi
+      # J13: the same rule met from the other status. An exit code does not
+      # name the ceiling that fired - systemd answers a scope it stops, a
+      # MemoryMax kill among them, with SIGTERM, and GNU timeout answers a
+      # SIGTERM with 124, which is also the status of its own expiry. So a
+      # probe killed for memory 13 seconds in was announced as having exceeded
+      # a 600s ceiling, which reads as a probe that cannot finish in bounded
+      # time and sends the operator to make it faster when the remedy is more
+      # memory. The elapsed-time guard the conversion above already read is now
+      # read by the branch that makes the claim too. Driven on the status,
+      # which is portable, rather than on a real OOM, which is not, and
+      # asserted as the absence of the false claim, because the branch that
+      # replaces it needs a user scope a CI runner may not have.
+      JEFFY_PROBE_TIMEOUT_S=600 "$BASH" "$hb_rp" bash -c 'exit 124' >/dev/null 2>"$hb_tmp/rp4.err"; hb_rp_rc=$?
+      if [ "$hb_rp_rc" -eq 124 ] && ! grep -qF 'wall ceiling and was ended' "$hb_tmp/rp4.err"; then
+        pass "run-probe.sh does not announce a 124 arriving inside the wall ceiling as a wall-ceiling timeout"
+      else
+        printf 'rc=%s\n' "$hb_rp_rc"; cat "$hb_tmp/rp4.err"
+        fault "run-probe.sh named a 124 that arrived well inside its wall ceiling a wall-ceiling timeout"
+      fi
     else
       skip "run-probe.sh wall-ceiling control (no timeout(1) or gtimeout(1) on this host)"
     fi
@@ -9811,6 +9830,62 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
       printf '%s\n' "$hh_out"
       fault "hunt at budget re-fed or granted a closing extension"
     fi
+
+    # 1b. J18: the figure the re-feed states and the note it turns on are the
+    #     hunt gate's own ledger test, not the count of Highs a run could work.
+    #     Before this the two disagreed and one turn's output both refused the
+    #     close naming a line and said no High was open and to close - two ways
+    #     in, a blocked High and an open Medium, one per arm here.
+    hh_backlog '- [b] H1 (High, runtime, correctness): wrong. Acceptance: x.' ''
+    hh_git add -A >/dev/null 2>&1; hh_git commit -q -m c1b >/dev/null 2>&1
+    hh_write_state 2 5 highs
+    hh_out="$(hh_run "$hb_hook" 'still working')"
+    if hh_reason | grep -qF 'open Highs 1' \
+      && ! hh_reason | grep -qF 'No High is open: run the fresh full audit' \
+      && hh_reason | grep -qF 'refused all the same'; then
+      pass "hunt re-feed counts a blocked High as open and withholds the close-now note (J18)"
+    else
+      printf '%s\n' "$hh_out"
+      fault "hunt re-feed read a blocked High as no open High"
+    fi
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    if hh_sabotage 'open Highs ${open_hunt_high:-unknown}' 'open Highs ${open_high:-unknown}'; then
+      hh_write_state 2 5 highs
+      hh_out="$(hh_run "$hb_tmp/hh_sab.sh" 'still working')"
+      if hh_reason | grep -qF 'open Highs 1'; then
+        fault "sabotage proof: the figure read off open_high still reported 1, so the arm is not testing it"
+      else
+        pass "sabotage proof: the hunt open-High figure rests on the gate's own count (J18)"
+      fi
+    else
+      fault "sabotage proof for the hunt open-High figure could not be built"
+    fi
+    hh_backlog '- [ ] M1 (Medium, runtime): edge. Acceptance: x.' ''
+    hh_git add -A >/dev/null 2>&1; hh_git commit -q -m c1c >/dev/null 2>&1
+    hh_write_state 2 5 highs
+    hh_out="$(hh_run "$hb_hook" 'still working')"
+    if hh_reason | grep -qF 'open Highs 0' \
+      && ! hh_reason | grep -qF 'No High is open: run the fresh full audit' \
+      && hh_reason | grep -qF 'refused all the same'; then
+      pass "hunt re-feed withholds the close-now note while any non-High line is open (J18)"
+    else
+      printf '%s\n' "$hh_out"
+      fault "hunt re-feed told a run with an open Medium to close the hunt"
+    fi
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    if hh_sabotage 'if [ "$open_hunt_block" = "0" ]; then' 'if [ "$open_high" = "0" ]; then'; then
+      hh_write_state 2 5 highs
+      hh_out="$(hh_run "$hb_tmp/hh_sab.sh" 'still working')"
+      if hh_reason | grep -qF 'No High is open: run the fresh full audit'; then
+        pass "sabotage proof: the close-now note rests on the gate's own ledger test (J18)"
+      else
+        fault "sabotage proof: gating the note on open_high left it silent over an open Medium, so the arm is not testing it"
+      fi
+    else
+      fault "sabotage proof for the hunt close-now note could not be built"
+    fi
+    hh_backlog '' ''
+    hh_git add -A >/dev/null 2>&1; hh_git commit -q -m c1d >/dev/null 2>&1
 
     # 2. the accepted close: Now empty, the last AUDIT entry's Checkpoint
     #    resolves to the commit the Hunted line names, loop state only since.
@@ -10428,6 +10503,16 @@ if command -v jq >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
   else
     fault "the refusal that names set -o pipefail refused a Command opening with it"
   fi
+  # J2: the second bar of || is not a pipe. The hook carried its own copy of
+  # the wrapper's early-closer pattern one anchor short - a bare [|] where
+  # jeffy_verify_pipefail carries (^|[^|])[|] - so it read the second bar of
+  # || as a pipe and refused this Command on the premise that pipefail was
+  # off for the whole Command, while the engine's own predicate answered -o
+  # and really ran it under pipefail. The premise was false, and the arm is
+  # written as an accepted close rather than as a silence so the Command the
+  # engine actually runs has to carry the whole declaration.
+  rv_close; rv_command 'bash suite.sh || grep -q ok log; git --version | sort > /dev/null'; rv_fire
+  rv_accepted "an || branch into a grep -q is not an early closer ahead of a later pipeline"
   rv_close; rv_command 'git --version | head -n 1; bash suite.sh'; rv_fire
   rv_accepted "a truncator followed by another command is not the last stage"
   rv_close; rv_command 'no-such-binary-for-jeffy --run'; rv_fire

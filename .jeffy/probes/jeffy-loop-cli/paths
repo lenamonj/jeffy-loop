@@ -1,0 +1,3 @@
+src/jeffy_loop
+pyproject.toml
+.jeffy/probes/jeffy-loop-cli

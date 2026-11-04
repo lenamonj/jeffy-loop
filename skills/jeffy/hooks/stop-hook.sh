@@ -290,7 +290,13 @@ jeffy_write_metrics() {
         {hash: (if $decl_hash == "" then null else $decl_hash end), verdict: $decl_verdict,
          reason: (if $decl_reason == "" then null else $decl_reason end)} end)}' >> "$metrics_dir/$runid8.jsonl" 2>/dev/null || true
 }
-trap jeffy_write_metrics EXIT
+# J5: the state rewriter's temp is removed on every exit path this trap sees,
+# which includes an untrapped SIGTERM - bash runs an EXIT trap for one, checked
+# rather than assumed. $tmp is assigned far below and the trap fires after it,
+# so it is read defensively: set -u inside a trap would abort the hook rather
+# than do the write. Only SIGKILL escapes, and the rewriter's own sweep is what
+# collects what a SIGKILL left.
+trap 'if [ -n "${tmp:-}" ]; then rm -f "$tmp"; fi; jeffy_write_metrics' EXIT
 
 # P1-61: the staleness derivation, defined once because two paths consume the
 # same claim. The declaration has refused stale rows since P0-6, but the gate
@@ -1866,11 +1872,35 @@ if [ -n "$promise" ]; then
                   esac
                   ;;
               esac
-              vc_closer='[|][[:space:]]*([ef]?grep[[:space:]]([^|;&]*[[:space:]])?(-[A-Za-z]*[qm]|--quiet|--silent|--max-count)|head([[:space:]]|$)|awk[[:space:]][^|]*exit)'
+              # The closer half of this decision is the wrapper's own
+              # predicate, called rather than re-typed. A second copy of its
+              # pattern sat here one anchor short - a bare [|] where the
+              # function carries (^|[^|])[|] - so it read the second bar of
+              # || as a pipe: a Command reading
+              # 'make test || grep -q ok log; other | tee out' was refused on
+              # the premise that pipefail was off for it, while the engine's
+              # own predicate answered -o and really ran it under pipefail,
+              # so the refusal's reason was false. Splitting at the
+              # separators first removes that ambiguity at its source -
+              # inside a segment every | is a real pipe, and a || branch is a
+              # segment of its own rather than a stage - and the shape
+              # refused is unchanged: an early closer in one segment and a
+              # pipeline in a later one. (J2)
               vc_nofail=""
               case "$verify_cmd" in
                 'set -o pipefail'*) ;;
-                *) printf '%s\n' "$verify_cmd" | grep -Eq "${vc_closer}[^;&]*(;|&&|[|][|]).*[^|][|][^|]" && vc_nofail=1 ;;
+                *)
+                  vc_closed=""
+                  while IFS= read -r vc_seg; do
+                    if [ -n "$vc_closed" ]; then
+                      case "$vc_seg" in *'|'*) vc_nofail=1; break ;; esac
+                    elif [ "$(jeffy_verify_pipefail "$vc_seg")" = '+o' ]; then
+                      vc_closed=1
+                    fi
+                  done <<EOF
+$(printf '%s\n' "$verify_cmd" | awk '{ gsub(/&&|[|][|]|;/, "\n"); print }')
+EOF
+                  ;;
               esac
               if [ -n "$vc_lint" ]; then
                 violation="the Verify command ($verify_cmd) ends in $vc_lint, so its exit status is the truncator's, not the suite's; drop the trailing stage, then re-declare convergence"
@@ -1996,6 +2026,27 @@ fi
 open_hm=""
 if [ -f "$root/BACKLOG.md" ]; then
   open_hm="$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' | awk '(/^- \[ \]/ && $0 !~ /^- \[ \] [^ ]+ \(Low[,)]/) || /^- \[b\] [^ ]+ \((High|Medium)[,)]/ { n++ } END { printf "%d", n }')"
+fi
+# J18 (1.27.0): the hunt's own ledger test, as two counts from one parse. The
+# hunt block below stated its open-High figure and turned its close-now note
+# on open_high, the count of Highs a run could work, and the hunt gate blocks
+# on a different set: an open or blocked High, and any other open line at all,
+# because a hunt ledger carries Highs only. So one turn's output refused the
+# close naming a line and told the run no High was open and to close it, which
+# reproduced two ways - a ledger whose only High sat [b] after the three failed
+# fix attempts the prompt prescribes, and a ledger holding one open Medium.
+# open_high keeps its own meaning for the three standard-mode readers, each of
+# which is already hunt-guarded: a blocked High is not workable, so sweeping
+# really is the top item there.
+open_hunt_high=""
+open_hunt_block=""
+if [ "$hunt" = 1 ] && [ -f "$root/BACKLOG.md" ]; then
+  read -r open_hunt_high open_hunt_block <<< "$(jeffy_section "$root/BACKLOG.md" 'Now|Next|Later' | awk '
+    /^- \[[ b]\] [^ ]* \(High[,)]/ { h++; b++; next }
+    /^- \[ \]/ { b++; next }
+    /^- \[b\] [^ ]* \(Medium[,)]/ { b++ }
+    END { printf "%d %d", h, b }
+  ')"
 fi
 # P0-5: the High-or-unparseable count, beside the High-or-Medium one. Under
 # coverage-first ordering only an open High outranks the map, so the sweep
@@ -2782,8 +2833,30 @@ fi
 # The next iteration starts when this hook hands it the prompt, so its start
 # is stamped now, after this hook's own work, not at the turn end above.
 stamp_epoch="$(date +%s 2>/dev/null || echo 0)"
-# A fresh name, so a link a repository tracks at a fixed temp path is never written through.
-tmp="$(mktemp "$state.XXXXXX")" || { echo "jeffy stop hook: could not create a temp file beside $state; ending the run." >&2; rm -f "$state"; exit 0; }
+# A fresh name, so a link a repository tracks at a fixed temp path is never
+# written through, and under .jeffy/scratch/ rather than beside the state file.
+# J5: the name mktemp makes beside $state is matched by neither the bootstrap's
+# gitignore lines nor JEFFY_LOOP_MEMORY_RE, so a temp a killed hook left behind
+# was staged by the next checkpoint's `git add -A`, putting a session id into
+# the user's history, and was named by the working-tree gate above as the
+# uncommitted change that refuses a declaration - `git check-ignore` reports it
+# unignored and `git ls-files --others --exclude-standard` returns it, both
+# checked. .jeffy/scratch/ is covered by that regex and bootstrapped ignored, so
+# a survivor is invisible to both readers, and it is under the project root like
+# the state file, so the move below stays a rename rather than a copy.
+tmp=""
+if mkdir -p "$root/.jeffy/scratch" 2>/dev/null; then
+  # What a SIGKILL between the mktemp and the move left behind, collected here
+  # rather than left to accumulate. The pattern is this hook's own name alone,
+  # and an unmatched glob stays literal, which the -f guard absorbs.
+  for stale_tmp in "$root"/.jeffy/scratch/jeffy-loop-state.*; do
+    [ -f "$stale_tmp" ] && rm -f "$stale_tmp"
+  done
+  tmp="$(mktemp "$root/.jeffy/scratch/jeffy-loop-state.XXXXXX" 2>/dev/null)" || tmp=""
+fi
+# A project whose scratch directory cannot be made keeps the old location
+# rather than losing the re-feed, so this never fails where it used to work.
+[ -n "$tmp" ] || tmp="$(mktemp "$state.XXXXXX")" || { echo "jeffy stop hook: could not create a temp file beside $state; ending the run." >&2; rm -f "$state"; exit 0; }
 # The rewriter owns the keys it names and prints every other line verbatim,
 # so the schema is additive: a state file carrying keys this version never
 # heard of survives the re-feed untouched. max_iterations and
@@ -2950,7 +3023,7 @@ fi
 # 1.22.0: a hunt plans against its open Highs and its last audit, not a map.
 hunt_note=""
 if [ "$hunt" = 1 ]; then
-  run_state="$run_state; mode High-hunt; open Highs ${open_high:-unknown}"
+  run_state="$run_state; mode High-hunt; open Highs ${open_hunt_high:-unknown}"
   hunt_last_audit=""
   if [ -n "$run_tok" ] && [ -f "$root/JOURNAL.md" ]; then
     hunt_last_audit="$(awk -v tok="| $runid8 |" '
@@ -2967,8 +3040,10 @@ if [ "$hunt" = 1 ]; then
   else
     run_state="$run_state; no audit on this run's record yet"
   fi
-  if [ "$open_high" = "0" ]; then
+  if [ "$open_hunt_block" = "0" ]; then
     hunt_note="No High is open: run the fresh full audit now, and if it files none, close the hunt in that same iteration - the Hunted line, the closing AUDIT entry with its Checkpoint, and the promise phrase; if it files a High, work it next."
+  elif [ "$open_high" = "0" ]; then
+    hunt_note="Nothing on the ledger can be worked toward the close and the close is refused all the same: $open_hunt_block open task(s) remain and a hunt ledger carries open Highs only - a blocked High is fixed or moved to Declined with its Derivation, and a Medium or Low an audit noticed belongs on that AUDIT entry's Noted, not filed: line. Clear the ledger, then audit and close."
   fi
 fi
 run_state="$run_state; jeffy v$JEFFY_VERSION"
