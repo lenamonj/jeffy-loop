@@ -626,6 +626,8 @@ jeffy_derive_stale_rows() { # $1 project root
   jsr_unlinked=0
   jsr_linked=0
   jsr_nopaths=0
+  jsr_gone=0
+  jsr_gone_row=""
   while IFS= read -r jsr_row; do
     [ -n "$jsr_row" ] || continue
     jsr_c="$(printf '%s' "$jsr_row" | grep -oE '[Ss]wept at (commit )?`?[0-9a-f]{7,40}' | head -n 1 | grep -oE '[0-9a-f]{7,40}$')"
@@ -649,7 +651,20 @@ jeffy_derive_stale_rows() { # $1 project root
     # A battery with no paths file has no scope to check against; counted and
     # reported by the caller rather than silently passed (P0-8).
     [ -f "$jsr_pf" ] || { jsr_nopaths=$((jsr_nopaths + 1)); continue; }
-    git -C "$1" rev-parse --verify --quiet "$jsr_c^{commit}" >/dev/null 2>&1 || continue
+    # K1: a recorded hash this history no longer carries certifies nothing, and
+    # skipping it here left that row indistinguishable from a fresh one - the
+    # failure and the pass were the same observation, which is the very defect
+    # the Swept field was added to catch, arriving at the instrument that reads
+    # it. Reachable through ordinary history maintenance rather than by abuse: a
+    # squash-merge, a rebase, an amend, or a gc after any of them drops the
+    # checkpoint commit a row names, and the row then reads fresh forever. The
+    # row is counted in a tally of its own and refused by the caller the way a
+    # stale row is, because an underivable row blocks exactly as an unswept one
+    # does; the remedy is cheap and the refusal says it - re-record the hash.
+    git -C "$1" rev-parse --verify --quiet "$jsr_c^{commit}" >/dev/null 2>&1 \
+      || { jsr_gone=$((jsr_gone + 1))
+           [ -n "$jsr_gone_row" ] || jsr_gone_row="$(printf '%s' "$jsr_row" | cut -c1-90) (recorded at $jsr_c, which is not a commit in this history)"
+           continue; }
     # CR dropped as every other reader here drops it: a paths file checked out
     # under core.autocrlf=true made each glob "src/a.c\r", which matches nothing.
     jsr_pat="$(tr -d '\r' < "$jsr_pf" 2>/dev/null | grep -v '^[[:space:]]*$')"
@@ -835,7 +850,33 @@ jeffy_cert_hash_check() {
     if [ -z "$violation" ]; then
       nonstate="$(git -C "$root" diff --no-renames --name-only --relative "$conv_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
       if [ -n "$nonstate" ]; then
-        violation="product path $nonstate changed after the $cert_sec hash $conv_hash; certify the current tree before declaring"
+        # K5: lint runs before the declaring iteration appends its own
+        # certified line, so on a project that has converged before, the
+        # latest line is the previous run's and every product change this run
+        # made reads here as an uncertified tree. That is true at the instant
+        # lint runs and false by the time the declaration is evaluated,
+        # because the declaration appends a line naming its own checkpoint
+        # first - provoked both ways on a sandbox converged once and then
+        # carrying one product change. The hunt path above already reports
+        # this shape as pending and the standard path refused it, while the
+        # iteration prompt tells a run to repair whatever lint prints: the
+        # cheapest way to clear a refusal nothing can repair was to edit a
+        # line the template declares un-editable and this hook admits it
+        # cannot detect, which is the move the repoint mechanism exists to
+        # replace. Keyed on the line predating this run rather than on lint
+        # alone, so a run that has already appended its own line and then
+        # changed a product file is still refused - that hash is this run's
+        # checkpoint and no ancestor of base_head.
+        cert_prev=0
+        if [ "$lint" = 1 ] && printf '%s' "$(fm base_head)" | grep -qE '^[0-9a-f]{7,64}$' \
+          && git -C "$root" merge-base --is-ancestor "$conv_hash" "$(fm base_head)" 2>/dev/null; then
+          cert_prev=1
+        fi
+        if [ "$cert_prev" = 1 ]; then
+          hunt_pending="$hunt_pending${hunt_pending:+; and }the ## $cert_sec section of BACKLOG.md still names $conv_hash, an earlier run's, which this iteration's line supersedes ($nonstate has changed since it)"
+        else
+          violation="product path $nonstate changed after the $cert_sec hash $conv_hash; certify the current tree before declaring"
+        fi
       fi
     fi
   fi
@@ -1274,6 +1315,8 @@ if [ -n "$promise" ]; then
         jeffy_derive_stale_rows "$root"
         if [ -n "$jsr_stale" ]; then
           violation="a swept Surface inventory row is stale - $jsr_stale; re-sweep it and re-record the commit, or flip it back to unswept, then re-declare convergence"
+        elif [ "${jsr_gone:-0}" -gt 0 ]; then
+          violation="a swept Surface inventory row records a commit this history does not carry - $jsr_gone_row ($jsr_gone row(s) in all), so its staleness cannot be derived at all and it certifies nothing; re-record each at a commit that resolves, or flip it back to unswept, then re-declare convergence (K1)"
         elif [ "$jsr_linked" -eq 0 ] && [ "$jsr_unlinked" -gt 0 ]; then
           echo "jeffy stop hook: no swept row names the battery that swept it ($jsr_unlinked rows), so staleness could not be derived; rows written from 1.14.0 carry it." >&2
         elif [ "$jsr_unlinked" -gt 0 ]; then
@@ -2791,6 +2834,8 @@ if [ -z "$violation" ] && [ -f "$root/PLAN.md" ] \
     if [ "${jsr_unlinked:-0}" -gt 0 ] || [ "${jsr_nopaths:-0}" -gt 0 ]; then
       stale_note="$stale_note; $jsr_unlinked swept rows name no battery and $jsr_nopaths name one with no paths file, so the gate cannot check those"
     fi
+  elif [ "${jsr_gone:-0}" -gt 0 ]; then
+    stale_note="a swept Surface inventory row records a commit this history does not carry - $jsr_gone_row ($jsr_gone row(s) in all), so the gate cannot derive its staleness and refuses a declaration over it; re-record each at a commit that resolves, in this iteration, before any evaluator invocation (K1)"
   fi
 fi
 

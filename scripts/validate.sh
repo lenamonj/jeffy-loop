@@ -9670,6 +9670,61 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     else
       fault "stop hook --lint wrote a metrics record for a turn end that never happened"
     fi
+
+    # K5: lint runs before the declaring iteration appends its certified line,
+    # so on a project that has converged before, the latest line is the
+    # previous run's and every product change this run made reads here as an
+    # uncertified tree - true when lint runs, false once the declaration
+    # appends a line naming its own checkpoint. The hunt path already reported
+    # that shape as pending while the standard path refused it, and the
+    # iteration prompt tells a run to repair whatever lint prints: a refusal
+    # nothing can repair, whose cheapest resolution was editing a line the
+    # template declares un-editable and this hook admits it cannot detect.
+    printf 'v2\n' > "$hb_proj/product.txt"
+    hb_git add -A >/dev/null; hb_git commit -qm k5prod >/dev/null
+    hb_write_journal 1 3
+    hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
+    hb_write_state_extra sess-1 1 3 "base_head: $(hb_git rev-parse HEAD)"
+    hb_lint "$hb_proj"
+    if [ "$hb_lint_rc" -eq 0 ] \
+      && printf '%s' "$hb_lint_out" | grep -qF 'clean apart from the close itself' \
+      && printf '%s' "$hb_lint_out" | grep -qF "still names $hb_c1" \
+      && printf '%s' "$hb_lint_out" | grep -qF 'product.txt has changed since it'; then
+      pass "stop hook --lint reports a prior run's Converged line as pending rather than refusing the tree this run changed (K5)"
+    else
+      printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+      fault "stop hook --lint refused a declaration over a Converged line the declaring iteration supersedes"
+    fi
+    # The declaration itself is untouched: the exemption is lint's alone, so
+    # the same tree is still refused where it counts.
+    hb_out="$(hb_run sess-1 'Run report. <promise>JEFFY CONVERGED</promise>' '')"
+    if printf '%s' "$hb_out" | jq -r '.reason // ""' | grep -qF 'product path product.txt changed after the Converged hash'; then
+      pass "the declaration path still refuses the tree lint reported pending (K5 control)"
+    else
+      printf '%s\n' "$hb_out"
+      fault "the K5 lint exemption reached the declaration path and weakened the certified-tree test"
+    fi
+    # Sabotage proof: neuter the predating-line test and the refusal returns,
+    # so the arm above rests on the guard rather than on the fixture.
+    # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+    hb_k5_n="$(grep -cF -- 'cert_prev=1' "$hb_hook")"
+    if [ "$hb_k5_n" = "1" ]; then
+      mkdir -p "$hb_tmp/lib" && cp skills/jeffy/hooks/lib/*.sh "$hb_tmp/lib/"
+      # shellcheck disable=SC2016  # both fragments are hook source, matched literally
+      awk -v a='cert_prev=1' -v b='cert_prev=0' \
+        '{ i = index($0, a); if (i) $0 = substr($0, 1, i - 1) b substr($0, i + length(a)) } { print }' \
+        "$hb_hook" > "$hb_tmp/k5_sab.sh"
+      hb_k5_out="$(bash "$hb_tmp/k5_sab.sh" --lint "$hb_proj" 2>&1 < /dev/null)"
+      if printf '%s' "$hb_k5_out" | grep -qF 'would be refused'; then
+        pass "sabotage proof: the pending report rests on the predating-line test (K5)"
+      else
+        printf '%s\n' "$hb_k5_out"
+        fault "sabotage proof: neutering the predating-line test left lint pending, so the arm is not testing it"
+      fi
+    else
+      fault "sabotage proof for the K5 pending report could not be built: cert_prev=1 occurs $hb_k5_n times, not once"
+    fi
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
     # P2-54 (BT-1): the prompt runs lint before the gate and before the
     # Converged line; both are pending there, and a later refusal is still named.
     printf '# Journal\n\n## iter 1/3 | sess-1-000000 | 2026-01-01 | T1 | done\n\nTask: t.\n' > "$hb_proj/JOURNAL.md"
@@ -10550,6 +10605,39 @@ if command -v jq >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
   rv_close; rv_plan "$rv_row
 $(printf -- '- [ ] caf\351: unswept')"; rv_git add -A; rv_git commit -qm row; rv_state 2 10; rv_fire
   rv_refused 'unswept' "one non-UTF-8 byte does not hide an unswept row"
+
+  # K1: a row whose recorded hash this history does not carry certifies nothing,
+  # and the derivation used to skip it - so the failure and the pass were the
+  # same observation and a declaration was accepted over a map nobody checked.
+  # The 40 zeroes are a well-formed hash that is not a commit here, which is the
+  # state a squash-merge, a rebase, an amend or a gc leaves a real row in.
+  rv_close '' '- [x] core: swept at 0000000000000000000000000000000000000000 via .jeffy/probes/core - known answers'
+  rv_git add -A; rv_git commit -qm gonehash; rv_state 2 10; rv_fire
+  rv_refused 'records a commit this history does not carry' "a swept row anchored to a commit this history lost is refused rather than read as fresh (K1)"
+  # The sabotage proof: with the tally removed the row is swallowed again and the
+  # same sandbox converges, so the arm above is testing the guard and not the
+  # fixture. The fragment is the increment alone, matched literally.
+  rv_sab_src="$rv_hook"
+  # shellcheck disable=SC2016  # the fragment is hook source, matched literally
+  rv_sab_n="$(grep -cF -- 'jsr_gone=$((jsr_gone + 1))' "$rv_hook")"
+  if [ "$rv_sab_n" = "1" ]; then
+    mkdir -p "$rv_tmp/sab/lib" && cp skills/jeffy/hooks/lib/*.sh "$rv_tmp/sab/lib/"
+    # shellcheck disable=SC2016  # both fragments are hook source, matched literally
+    awk -v a='jsr_gone=$((jsr_gone + 1))' -v b='jsr_gone=$((jsr_gone + 0))' \
+      '{ i = index($0, a); if (i) $0 = substr($0, 1, i - 1) b substr($0, i + length(a)) } { print }' \
+      "$rv_hook" > "$rv_tmp/sab/stop-hook.sh"
+    rv_hook="$rv_tmp/sab/stop-hook.sh"
+    rv_close '' '- [x] core: swept at 0000000000000000000000000000000000000000 via .jeffy/probes/core - known answers'
+    rv_git add -A; rv_git commit -qm gonehash2; rv_state 2 10; rv_fire
+    if rv_said 'records a commit this history does not carry'; then
+      fault "sabotage proof: the refusal survived removing the jsr_gone tally, so the arm is not testing it"
+    else
+      pass "sabotage proof: the lost-commit refusal rests on the jsr_gone tally (K1)"
+    fi
+    rv_hook="$rv_sab_src"
+  else
+    fault "sabotage proof for the lost-commit refusal could not be built: the increment occurs $rv_sab_n times, not once"
+  fi
 
   # The verdict is the artifact.
   rv_new; rv_audit; rv_gate 'Verdict: PASS' 'Evaluator: PASS - invocation 1 of an earlier run returned Evaluator: REJECT, since closed.'; rv_fire
