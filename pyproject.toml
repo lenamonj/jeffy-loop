@@ -29,6 +29,8 @@ packages = ["src/jeffy_loop"]
 "skills/cancel-jeffy" = "jeffy_loop/skills/cancel-jeffy"
 
 [tool.hatch.build.targets.sdist]
+# hatchling also adds pyproject.toml, PKG-INFO and the root .gitignore to every
+# sdist on its own; an exclude entry for .gitignore does not remove it.
 only-include = [
   "src/jeffy_loop",
   "hatch_build.py",
