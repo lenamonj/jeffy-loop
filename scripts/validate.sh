@@ -10589,6 +10589,11 @@ $(printf -- '- [ ] caf\351: unswept')"; rv_git add -A; rv_git commit -qm row; rv
   rv_ended "a refused declaration at the wall clock ceiling is delivered once"
   rv_noart; rv_state 2 10 'max_iteration_seconds: 1' 'iteration_started_at: 1000000000' 'overrun: 1'; rv_fire
   rv_ended "a refused declaration at the second overrun is delivered once"
+  # J19: the missing-prompt end went through rm and exit in place, so the
+  # refusal reached neither stream on the turn that ended the run.
+  rv_noart; rv_state 2 10; mv "$rv_tmp/prompt.txt" "$rv_tmp/prompt.away"; rv_fire
+  mv "$rv_tmp/prompt.away" "$rv_tmp/prompt.txt"
+  rv_ended "a refused declaration at a missing iteration prompt is delivered once"
 
   # The shell watchdog ends the whole group: a piped Command outlives a kill of
   # its first process, and a stock macOS has no timeout(1) to do it.

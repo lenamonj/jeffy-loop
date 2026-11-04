@@ -127,7 +127,7 @@ if command -v jq >/dev/null 2>&1; then
     if [ -e "$real" ] && [ ! -w "$real" ]; then
       chmod a-w "$tmp" 2>/dev/null || true
     fi
-    mv "$tmp" "$real"
+    mv -f "$tmp" "$real"
   }
   # A file of only whitespace is valid to jq empty and yields nothing to edit.
   # J17: the direct write stays the first attempt, so a fresh install still

@@ -2189,9 +2189,7 @@ if [ "$hunt" = 0 ] && [ "$(fm extension_granted)" = "1" ] && [ "$iter" -ge $((ma
     if [ -z "$open_hm" ] || [ "$open_hm" = "0" ]; then
       refill_kind="new Low tasks (open Lows $cur_lows against $ext_lows_rec recorded at the grant)"
     fi
-    echo "jeffy stop hook: the ledger refilled inside the closing extension with $refill_kind (open tasks Now $open_now Next $open_next Later $open_later; last entry $last_type); the extension buys the convergence sequence, not new work - the Lows the grant recorded ride, new filings do not. Ending the run out of budget; the filed tasks stay on the ledger for the next run." >&2
-    rm -f "$state"
-    exit 0
+    jeffy_end_run "jeffy stop hook: the ledger refilled inside the closing extension with $refill_kind (open tasks Now $open_now Next $open_next Later $open_later; last entry $last_type); the extension buys the convergence sequence, not new work - the Lows the grant recorded ride, new filings do not. Ending the run out of budget; the filed tasks stay on the ledger for the next run."
   fi
 fi
 
@@ -2374,9 +2372,7 @@ fi
 # a moved or removed jeffy skills folder leaves it stale, in which
 # case ending the loop with a pointer beats re-feeding garbage.
 if [ ! -f "$prompt_path" ]; then
-  echo "jeffy stop hook: iteration prompt missing at $prompt_path (was the jeffy skill moved or removed?); ending the loop. Re-run /jeffy to relaunch." >&2
-  rm -f "$state"
-  exit 0
+  jeffy_end_run "jeffy stop hook: iteration prompt missing at $prompt_path (was the jeffy skill moved or removed?); ending the loop. Re-run /jeffy to relaunch."
 fi
 # Iteration hygiene at the re-feed boundary: the finished iteration must
 # have journaled itself under the heading grammar. A missing JOURNAL.md is
@@ -2751,9 +2747,7 @@ if [ "$fp_hash" != "none" ] && [ -z "$stall_exempt" ] && [ -z "$osc_skip" ]; the
   fi
   if [ -n "$fp_match" ]; then
     if [ "$osc_flag" = "1" ] && [ -z "$extension" ] && [ -z "$corrective" ]; then
-      echo "jeffy stop hook: the tree has returned to a state it already held for the second time (iteration $iter matches iteration $fp_match, excluding loop memory); the run is oscillating rather than progressing, so it ends here. The ledger and the map carry to the next run." >&2
-      rm -f "$state"
-      exit 0
+      jeffy_end_run "jeffy stop hook: the tree has returned to a state it already held for the second time (iteration $iter matches iteration $fp_match, excluding loop memory); the run is oscillating rather than progressing, so it ends here. The ledger and the map carry to the next run."
     fi
     new_osc=1
     osc_note="iteration $iter left the tree byte-identical to how iteration $fp_match left it, excluding loop memory - work done since has been undone, so decide which version is right and record why in the journal; a second occurrence ends the run"
