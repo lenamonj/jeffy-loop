@@ -822,9 +822,43 @@ jeffy_cert_hash_check() {
         violation="the $cert_sec line repoints $conv_old to $conv_hash, but those two commits do not carry the same tree; a repoint answers a history rewrite that preserved the tree, and one that changes it is a different convergence claim wearing an old certificate, so converge the current tree through a fresh audit and the gate"
       fi
     fi
+    # T1: does the certified line predate this run? K5 asked that question of
+    # one arm below and answered it by ancestry against base_head; this arm
+    # needed the same question and that answer cannot reach it, because an
+    # orphaned hash is an ancestor of nothing in this history and so answers no
+    # for the very shape it must catch. The predicate is therefore computed once
+    # here, as the disjunction of the two sound tests, and both arms read it -
+    # the class rather than either instance, because a run told to repair what
+    # lint prints was being sent to the same impossible repair by two arms in
+    # one function.
+    #   reachable prior line: conv_hash is an ancestor of base_head (K5).
+    #   orphaned prior line:  conv_hash is reachable from no commit in this
+    #                         history, so it cannot be one this run wrote -
+    #                         every commit this run made is reachable from HEAD.
+    # Lint-only in both halves. A run that types some other unreachable hash,
+    # or changes a product file after appending its own line, is still refused
+    # where it counts, because the declaration path takes neither branch.
+    # Why it mattered: the repair the reachability refusal names is unavailable
+    # whenever the squash changed the tree, since the repoint arms above require
+    # both commits to carry the same tree, so the cheapest way to clear a
+    # refusal nothing can repair was editing a line the template declares
+    # un-editable and this hook admits it cannot detect - the move the repoint
+    # mechanism exists to replace. Provoked both ways on a sandbox converged
+    # once and then squashed onto a different tree.
+    cert_prev=0
+    if [ "$lint" = 1 ] && [ -n "$conv_hash" ] \
+      && { ! git -C "$root" merge-base --is-ancestor "$conv_hash" HEAD 2>/dev/null \
+           || { printf '%s' "$(fm base_head)" | grep -qE '^[0-9a-f]{7,64}$' \
+                && git -C "$root" merge-base --is-ancestor "$conv_hash" "$(fm base_head)" 2>/dev/null; }; }; then
+      cert_prev=1
+    fi
     if [ -z "$violation" ] \
       && ! git -C "$root" merge-base --is-ancestor "$conv_hash" HEAD 2>/dev/null; then
-      violation="the $cert_sec hash $conv_hash resolves but is not reachable from HEAD, so a history rewrite has orphaned the commit this declaration rests on and no clone of this repository can check it; never edit the $cert_sec line - append one beneath it reading $cert_example, naming a reachable commit whose tree equals the orphaned one, and record the rewrite in a dated Note in JOURNAL.md"
+      if [ "$cert_prev" = 1 ]; then
+        hunt_pending="$hunt_pending${hunt_pending:+; and }the ## $cert_sec section of BACKLOG.md still names $conv_hash, an earlier run's, which this iteration's line supersedes (a history rewrite has orphaned it, so it is reachable from no commit in this history and cannot be one this run wrote)"
+      else
+        violation="the $cert_sec hash $conv_hash resolves but is not reachable from HEAD, so a history rewrite has orphaned the commit this declaration rests on and no clone of this repository can check it; never edit the $cert_sec line - append one beneath it reading $cert_example, naming a reachable commit whose tree equals the orphaned one, and record the rewrite in a dated Note in JOURNAL.md"
+      fi
     fi
     # .jeffy/ is loop memory too, so it joins the state files in the
     # exclusion: a row's known-answer battery lives under
@@ -867,11 +901,9 @@ jeffy_cert_hash_check() {
         # alone, so a run that has already appended its own line and then
         # changed a product file is still refused - that hash is this run's
         # checkpoint and no ancestor of base_head.
-        cert_prev=0
-        if [ "$lint" = 1 ] && printf '%s' "$(fm base_head)" | grep -qE '^[0-9a-f]{7,64}$' \
-          && git -C "$root" merge-base --is-ancestor "$conv_hash" "$(fm base_head)" 2>/dev/null; then
-          cert_prev=1
-        fi
+        # cert_prev is computed once above, for the reason T1 records: this
+        # arm's own ancestry test cannot see an orphaned prior line, and on a
+        # squashed history that is exactly the line it meets.
         if [ "$cert_prev" = 1 ]; then
           hunt_pending="$hunt_pending${hunt_pending:+; and }the ## $cert_sec section of BACKLOG.md still names $conv_hash, an earlier run's, which this iteration's line supersedes ($nonstate has changed since it)"
         else
@@ -1811,10 +1843,26 @@ if [ -n "$promise" ]; then
                 elif [ -z "$ev_work_blob" ] || [ "$ev_head_blob" != "$ev_work_blob" ]; then
                   violation="the evaluator artifact $ev_art in the working tree differs from the copy committed in HEAD; the artifact the gate wrote is the one that has to stand, so restore or checkpoint it and re-declare"
                 elif [ -n "$conv_hash" ] && [ -n "$ev_art_commit" ] \
+                  && [ "${cert_prev:-0}" != 1 ] \
                   && ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_art_commit" 2>/dev/null; then
                   violation="the evaluator artifact $ev_art was last committed at $ev_art_commit, which predates the Converged hash $conv_hash; a PASS answers the tree the gate actually examined, so re-invoke the gate in the declaring iteration - a re-invocation writes the next ordinal, .jeffy/evaluator/$runid8-<n+1>.md, which the checkpoint commits alongside the one it supersedes - and re-declare"
                 fi
               fi
+              # The cert_prev guard on the dating arm is the third site of the
+              # shape T1 records, and the reason it belongs to the same
+              # predicate rather than to a test of its own: this arm dates the
+              # artifact against the certified hash, and under lint, before the
+              # declaring iteration has run its gate, both records are the
+              # previous run's. Once a release squash has orphaned that hash it
+              # is an ancestor of nothing in this history, so the ancestry this
+              # arm requires cannot hold however honest the run is - provoked on
+              # a two-commit repository whose converged checkpoint was squashed
+              # onto a different tree, where the orphan is an ancestor neither
+              # of HEAD nor of the commit that carries the artifact. The
+              # declaration is unaffected: by then the certified line names this
+              # run's own artifact commit and the ancestry holds by
+              # construction, which is why the guard reads cert_prev and not
+              # lint.
               # Read last, once the file is known to be the committed one:
               # what it says only matters if it is the gate's.
               # Which branch of "re-invoke or end blocked" applies is a number

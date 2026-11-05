@@ -9724,6 +9724,85 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     else
       fault "sabotage proof for the K5 pending report could not be built: cert_prev=1 occurs $hb_k5_n times, not once"
     fi
+
+    # T1: K5's predating-line test is an ancestry test, so it cannot see the
+    # prior line a release squash leaves behind - that hash is an ancestor of
+    # nothing in this history and the test answers no for the very shape it
+    # must catch. The reachability arm above it then refused, and the repair it
+    # names is unavailable whenever the squash changed the tree, because the
+    # repoint arms require both commits to carry the same tree. So lint sent a
+    # run to an impossible repair and the cheapest way out was editing a line
+    # the template declares un-editable. The predicate is shared by both arms
+    # now, and this drives the orphaned half of it.
+    # The orphan is built on a deleted branch rather than by resetting the
+    # fixture: the commit resolves, is reachable from nothing, and carries a
+    # tree of its own, which is the state a squash-merge, a rebase or an amend
+    # leaves a real Converged line in - and the main history is untouched for
+    # the scenarios after this one.
+    hb_git checkout -q -b hb-t1-orphan
+    printf 'orphan\n' > "$hb_proj/orphan.txt"
+    hb_git add -A >/dev/null; hb_git commit -qm t1orphan >/dev/null
+    hb_t1_orphan="$(hb_git rev-parse HEAD)"
+    hb_git checkout -q - >/dev/null 2>&1
+    hb_git branch -q -D hb-t1-orphan >/dev/null 2>&1
+    rm -f "$hb_proj/orphan.txt"
+    hb_t1_ok=1
+    hb_git merge-base --is-ancestor "$hb_t1_orphan" HEAD 2>/dev/null \
+      && { hb_t1_ok=0; printf 'fixture: the orphan is still reachable\n'; }
+    hb_git rev-parse --verify --quiet "$hb_t1_orphan^{commit}" >/dev/null 2>&1 \
+      || { hb_t1_ok=0; printf 'fixture: the orphan does not resolve\n'; }
+    [ "$(hb_git rev-parse "$hb_t1_orphan^{tree}")" = "$(hb_git rev-parse 'HEAD^{tree}')" ] \
+      && { hb_t1_ok=0; printf 'fixture: the trees match, so a repoint would be legal and the refusal repairable\n'; }
+    if [ "$hb_t1_ok" = 1 ]; then
+      hb_write_journal 1 3
+      hb_write_backlog '' "Converged: $hb_t1_orphan - 2026-01-01"
+      hb_write_state_extra sess-1 1 3 "base_head: $(hb_git rev-parse HEAD)"
+      hb_lint "$hb_proj"
+      if [ "$hb_lint_rc" -eq 0 ] \
+        && printf '%s' "$hb_lint_out" | grep -qF 'clean apart from the close itself' \
+        && printf '%s' "$hb_lint_out" | grep -qF "still names $hb_t1_orphan" \
+        && printf '%s' "$hb_lint_out" | grep -qF 'cannot be one this run wrote' \
+        && ! printf '%s' "$hb_lint_out" | grep -qF 'resolves but is not reachable from HEAD' \
+        && ! printf '%s' "$hb_lint_out" | grep -qF 'changed after the Converged hash' \
+        && ! printf '%s' "$hb_lint_out" | grep -qF 'predates the Converged hash'; then
+        pass "stop hook --lint reports a prior run's orphaned Converged line as pending, on none of the three arms of the shared predicate (T1)"
+      else
+        printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+        fault "stop hook --lint refused a declaration over an orphaned Converged line the declaring iteration supersedes"
+      fi
+      # Control: lint's exemption never reaches the declaration, which still
+      # refuses an orphaned certified hash exactly as it did before T1.
+      hb_out="$(hb_run sess-1 'Run report. <promise>JEFFY CONVERGED</promise>' '')"
+      if printf '%s' "$hb_out" | jq -r '.reason // ""' \
+        | grep -qF 'resolves but is not reachable from HEAD'; then
+        pass "the declaration path still refuses an orphaned Converged hash (T1 control)"
+      else
+        printf '%s\n' "$hb_out"
+        fault "the T1 lint exemption reached the declaration path and weakened the reachability test"
+      fi
+      # Sabotage proof: the shared predicate is what holds the pending report
+      # up, on this arm as on K5's, so neutering it restores this arm's own
+      # refusal rather than some later one.
+      if [ "$hb_k5_n" = "1" ]; then
+        mkdir -p "$hb_tmp/lib" && cp skills/jeffy/hooks/lib/*.sh "$hb_tmp/lib/"
+        # shellcheck disable=SC2016  # both fragments are hook source, matched literally
+        awk -v a='cert_prev=1' -v b='cert_prev=0' \
+          '{ i = index($0, a); if (i) $0 = substr($0, 1, i - 1) b substr($0, i + length(a)) } { print }' \
+          "$hb_hook" > "$hb_tmp/t1_sab.sh"
+        hb_t1_out="$(bash "$hb_tmp/t1_sab.sh" --lint "$hb_proj" 2>&1 < /dev/null)"
+        if printf '%s' "$hb_t1_out" | grep -qF 'resolves but is not reachable from HEAD'; then
+          pass "sabotage proof: the orphaned-line pending report rests on the shared predicate (T1)"
+        else
+          printf '%s\n' "$hb_t1_out"
+          fault "sabotage proof: neutering the shared predicate left the orphaned line pending, so the arm is not testing it"
+        fi
+      else
+        fault "sabotage proof for the T1 pending report could not be built: cert_prev=1 occurs $hb_k5_n times, not once"
+      fi
+    else
+      fault "the T1 orphaned-Converged-line fixture could not be built, so neither arm of the shared predicate was driven"
+    fi
+
     hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
     # P2-54 (BT-1): the prompt runs lint before the gate and before the
     # Converged line; both are pending there, and a later refusal is still named.
