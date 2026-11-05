@@ -99,7 +99,7 @@ fi
 # was announced as having exceeded a 600s ceiling, which reads as a probe that
 # cannot finish in bounded time and sends the operator to make it faster when
 # the remedy is more memory. The guard was already written one line up and had
-# not been applied to the branch that makes the statement. (J13)
+# not been applied to the branch that makes the statement.
 if [ "$rc" -eq 124 ] && [ "$wall_s" -ne 0 ] && [ "$SECONDS" -ge "$wall_s" ]; then
   echo "run-probe.sh: probe exceeded the ${wall_s}s wall ceiling and was ended; a probe that cannot finish in bounded time is an instrument finding about the probe." >&2
 elif [ "$rc" -eq 124 ] && [ "$wall_s" -ne 0 ] && [ "$have_scope" -eq 1 ]; then

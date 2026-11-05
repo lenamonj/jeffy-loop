@@ -831,10 +831,10 @@ jeffy_cert_hash_check() {
     # the class rather than either instance, because a run told to repair what
     # lint prints was being sent to the same impossible repair by two arms in
     # one function.
-    #   reachable prior line: conv_hash is an ancestor of base_head (K5).
+    #   reachable prior line: conv_hash is an ancestor of base_head.
     #   orphaned prior line:  conv_hash is not an ancestor of HEAD, so it
     #                         cannot be one this run wrote - every commit
-    #                         this run made is an ancestor of HEAD (T4).
+    #                         this run made is an ancestor of HEAD.
     # Lint-only in both halves. A run that types some other unreachable hash,
     # or changes a product file after appending its own line, is still refused
     # where it counts, because the declaration path takes neither branch.
@@ -1348,7 +1348,7 @@ if [ -n "$promise" ]; then
         if [ -n "$jsr_stale" ]; then
           violation="a swept Surface inventory row is stale - $jsr_stale; re-sweep it and re-record the commit, or flip it back to unswept, then re-declare convergence"
         elif [ "${jsr_gone:-0}" -gt 0 ]; then
-          violation="a swept Surface inventory row records a commit this history does not carry - $jsr_gone_row ($jsr_gone row(s) in all), so its staleness cannot be derived at all and it certifies nothing; re-record each at a commit that resolves, or flip it back to unswept, then re-declare convergence (K1)"
+          violation="a swept Surface inventory row records a commit this history does not carry - $jsr_gone_row ($jsr_gone row(s) in all), so its staleness cannot be derived at all and it certifies nothing; re-record each at a commit that resolves, or flip it back to unswept, then re-declare convergence"
         elif [ "$jsr_linked" -eq 0 ] && [ "$jsr_unlinked" -gt 0 ]; then
           echo "jeffy stop hook: no swept row names the battery that swept it ($jsr_unlinked rows), so staleness could not be derived; rows written from 1.14.0 carry it." >&2
         elif [ "$jsr_unlinked" -gt 0 ]; then
@@ -1976,7 +1976,7 @@ if [ -n "$promise" ]; then
               # inside a segment every | is a real pipe, and a || branch is a
               # segment of its own rather than a stage - and the shape
               # refused is unchanged: an early closer in one segment and a
-              # pipeline in a later one. (J2)
+              # pipeline in a later one.
               vc_nofail=""
               case "$verify_cmd" in
                 'set -o pipefail'*) ;;
@@ -2883,7 +2883,7 @@ if [ -z "$violation" ] && [ -f "$root/PLAN.md" ] \
       stale_note="$stale_note; $jsr_unlinked swept rows name no battery and $jsr_nopaths name one with no paths file, so the gate cannot check those"
     fi
   elif [ "${jsr_gone:-0}" -gt 0 ]; then
-    stale_note="a swept Surface inventory row records a commit this history does not carry - $jsr_gone_row ($jsr_gone row(s) in all), so the gate cannot derive its staleness and refuses a declaration over it; re-record each at a commit that resolves, in this iteration, before any evaluator invocation (K1)"
+    stale_note="a swept Surface inventory row records a commit this history does not carry - $jsr_gone_row ($jsr_gone row(s) in all), so the gate cannot derive its staleness and refuses a declaration over it; re-record each at a commit that resolves, in this iteration, before any evaluator invocation"
   fi
 fi
 
