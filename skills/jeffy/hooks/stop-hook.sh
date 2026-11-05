@@ -832,9 +832,9 @@ jeffy_cert_hash_check() {
     # lint prints was being sent to the same impossible repair by two arms in
     # one function.
     #   reachable prior line: conv_hash is an ancestor of base_head (K5).
-    #   orphaned prior line:  conv_hash is reachable from no commit in this
-    #                         history, so it cannot be one this run wrote -
-    #                         every commit this run made is reachable from HEAD.
+    #   orphaned prior line:  conv_hash is not an ancestor of HEAD, so it
+    #                         cannot be one this run wrote - every commit
+    #                         this run made is an ancestor of HEAD (T4).
     # Lint-only in both halves. A run that types some other unreachable hash,
     # or changes a product file after appending its own line, is still refused
     # where it counts, because the declaration path takes neither branch.
@@ -855,7 +855,7 @@ jeffy_cert_hash_check() {
     if [ -z "$violation" ] \
       && ! git -C "$root" merge-base --is-ancestor "$conv_hash" HEAD 2>/dev/null; then
       if [ "$cert_prev" = 1 ]; then
-        hunt_pending="$hunt_pending${hunt_pending:+; and }the ## $cert_sec section of BACKLOG.md still names $conv_hash, an earlier run's, which this iteration's line supersedes (a history rewrite has orphaned it, so it is reachable from no commit in this history and cannot be one this run wrote)"
+        hunt_pending="$hunt_pending${hunt_pending:+; and }the ## $cert_sec section of BACKLOG.md still names $conv_hash, an earlier run's, which this iteration's line supersedes (it is not an ancestor of HEAD, so it cannot be one this run wrote)"
       else
         violation="the $cert_sec hash $conv_hash resolves but is not reachable from HEAD, so a history rewrite has orphaned the commit this declaration rests on and no clone of this repository can check it; never edit the $cert_sec line - append one beneath it reading $cert_example, naming a reachable commit whose tree equals the orphaned one, and record the rewrite in a dated Note in JOURNAL.md"
       fi
