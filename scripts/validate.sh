@@ -2040,6 +2040,13 @@ if grep -qF -- 'a `--refeed` value other than `full` or `pointer`' skills/jeffy/
 else
   fault "SKILL.md does not name an invalid --refeed value as a launch refusal"
 fi
+# shellcheck disable=SC2016
+if grep -qF -- '--evaluator-probe' skills/jeffy/SKILL.md && grep -qF -- 'evaluator_probe:' skills/jeffy/SKILL.md \
+  && grep -qF -- '--evaluator-probe' docs/usage.md; then
+  pass "the launcher and the usage page name --evaluator-probe and the evaluator_probe state key"
+else
+  fault "SKILL.md or docs/usage.md does not name --evaluator-probe and its state key"
+fi
 
 # 6b2. P0-2 (1.9.0): the prompt's closing rule is the severity floor, and the
 #      three clauses that make it safe each appear exactly once - the floor
@@ -3846,6 +3853,67 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
         pass "stop hook accepts the promise when the Converged line certifies HEAD"
       else
         fault "stop hook rejected a Converged line naming HEAD"
+      fi
+
+      # 1.28.0: --evaluator-probe k. With the key set above 0, a PASS counts
+      # only when the gate's artifact names the swept rows it probed, at least
+      # min(k, swept) of them; the re-feed tells the run to brief the gate so.
+      # With the key absent or 0 nothing changes.
+      hb_write_state sess-1 1 3; hb_state_addkey 'evaluator_probe: 2'
+      hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'names no probed rows' && [ -f "$hb_state" ]; then
+        pass "stop hook refuses a PASS whose artifact names no probed rows when evaluator_probe is set"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook accepted a PASS that skipped the probe evaluator_probe asks for"
+      fi
+      hb_write_evaluator_artifact sess-1-000000 1 'Probed rows: alpha, beta
+Verdict: PASS'
+      hb_git add .jeffy/evaluator && hb_git commit -q -m probe
+      hb_write_state sess-1 1 3; hb_state_addkey 'evaluator_probe: 2'
+      hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+        pass "stop hook accepts a PASS whose artifact names as many probed rows as evaluator_probe asks"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused a PASS whose artifact names its probed rows"
+      fi
+      hb_write_evaluator_artifact sess-1-000000 1 'Probed rows: core
+Verdict: PASS'
+      hb_git add .jeffy/evaluator && hb_git commit -q -m probe
+      hb_write_state sess-1 1 3; hb_state_addkey 'evaluator_probe: 3'
+      hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+        pass "stop hook asks for no more probed rows than the inventory has swept"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook asked for more probed rows than there are swept rows"
+      fi
+      hb_write_evaluator_artifact
+      hb_git add .jeffy/evaluator && hb_git commit -q -m probe
+      hb_write_state sess-1 1 3
+      hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+        pass "stop hook accepts a PASS without probed rows when evaluator_probe is absent"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook asked for probed rows on a run that set no evaluator_probe"
+      fi
+      hb_write_state sess-1 1 3; hb_state_addkey 'evaluator_probe: 2'
+      hb_out_p="$(hb_run sess-1 'still working' '')"
+      hb_write_state sess-1 1 3
+      hb_out_n="$(hb_run sess-1 'still working' '')"
+      if printf '%s' "$hb_out_p" | jq -r '.reason' 2>/dev/null | grep -qF 'EVALUATOR PROBE:' \
+        && ! printf '%s' "$hb_out_n" | jq -r '.reason' 2>/dev/null | grep -qF 'EVALUATOR PROBE:'; then
+        pass "the re-feed carries the evaluator probe instruction only when evaluator_probe is set"
+      else
+        printf 'with=[%s] without=[%s]\n' "$hb_out_p" "$hb_out_n"
+        fault "the re-feed's evaluator probe instruction does not follow the evaluator_probe key"
       fi
 
       printf 'v2\n' > "$hb_proj/product.txt"

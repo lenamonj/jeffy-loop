@@ -219,6 +219,15 @@ if [ "$lint" = 0 ] && declare -F jeffy_transcript_usage >/dev/null; then
   tk_ctx_last="$(printf '%s' "$tx_json" | jq -r '.context_tokens_last // empty' 2>/dev/null)"
 fi
 
+# --evaluator-probe k (1.28.0): the gate also probes k swept rows on its own,
+# because a gate told not to audit for findings of its own passed trees that
+# still carried Highs a sibling attempt had filed on the same base. Read once
+# for the re-feed note and the declaration check; anything but a whole number
+# above 0 is 0, which is off and leaves every behaviour as it was.
+probe_k="$(fm evaluator_probe)"
+case "$probe_k" in '' | *[!0-9]*) probe_k=0 ;; esac
+probe_k=$((10#$probe_k))
+
 # The turn ended when the hook was called. The time ceilings measure the
 # iteration to this moment, never the hook's own work below: the Verify
 # re-run alone can take up to the 1740s cap, and billed to the iteration it
@@ -1920,6 +1929,21 @@ if [ -n "$promise" ]; then
                 fi
                 violation="the closing entry records Evaluator: PASS but $ev_art carries no verdict line${ev_art_said}the hook reads the verdict from a final line reading exactly 'Verdict: PASS' or 'Verdict: REJECT' - that label, the colon and the word, with no bracket and no further word on the line, the reasons above it, nothing below it but blank lines, and no other line beginning with Verdict, Final Verdict, Overall Verdict, Overall, Result or Outcome anywhere in the file - so nothing the gate wrote says it passed; the artifact is the verdict and the journal line only transcribes it, and it is never edited after the gate returns; $ev_next"
               fi
+              # A run launched with --evaluator-probe asked the gate to probe
+              # swept rows itself; a PASS that names none of them answers a
+              # narrower gate than the one the run was launched under. The
+              # floor is min(k, swept), so a small map is never asked for
+              # rows it does not have.
+              if [ -z "$violation" ] && [ "$probe_k" -gt 0 ]; then
+                swept="$(jeffy_inventory_rows "$root" | grep -c '^- \[x\]')"
+                probe_need="$probe_k"
+                [ "$swept" -lt "$probe_need" ] && probe_need="$swept"
+                probe_names="$(tr -d '\r' < "$root/$ev_art" | sed -n 's/^Probed rows: //p' | head -n 1 \
+                  | tr ',' '\n' | awk '{ gsub(/^[ \t]+|[ \t]+$/, "") } $0 != "" { n++ } END { print n + 0 }')"
+                if ! tr -d '\r' < "$root/$ev_art" | grep -q '^Probed rows: ' || [ "$probe_names" -lt "$probe_need" ]; then
+                  violation="the evaluator artifact names no probed rows (evaluator_probe: $probe_k is set and $swept rows are swept), so the declaration rests on a gate that skipped its probe"
+                fi
+              fi
               ;;
           esac
         fi
@@ -3046,6 +3070,9 @@ else
 fi
 if [ -n "$focus" ]; then
   reason="$reason Focus this run on: $focus."
+fi
+if [ "$probe_k" -gt 0 ]; then
+  reason="$reason EVALUATOR PROBE: this run carries evaluator_probe: $probe_k; when you dispatch the evaluator gate, add this sentence to its brief verbatim: additionally probe $probe_k swept Surface inventory rows, or every swept row when fewer than $probe_k are swept, choosing the rows whose recorded sweep commit is oldest in git history with ties broken by row order and rows over loop memory under .jeffy/ skipped, by re-running each row's battery under .jeffy/probes/ and driving each row with one input from the most exposed trust class among its surfaces that no filed finding or battery already exercises; write one line reading Probed rows: followed by the row names, comma-separated, into the artifact above the verdict; a defect a probe reproduces is a REJECT reason at rubric severity, and a probe that finds nothing is recorded by that line alone."
 fi
 reason="$reason This is jeffy iteration $next of $max for this run."
 if [ -n "$violation" ] && [ -z "$corrective" ]; then
