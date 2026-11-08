@@ -183,6 +183,12 @@ else
   jq -n --arg reason "$qv_msg" '{decision: "block", reason: $reason}'
   exit 0
 fi
+# The token reader is telemetry, so unlike the helper above a missing copy
+# ends nothing: the record's token fields are null and the turn goes on.
+tu_lib="${BASH_SOURCE[0]%/*}/lib/transcript-usage.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/transcript-usage.sh
+[ -f "$tu_lib" ] && . "$tu_lib"
 
 # Each field is validated on its own: the concatenation read "" + "10" as a
 # well-formed "10", and a state file missing its iteration line re-fed
@@ -199,6 +205,19 @@ esac
 # window. Normalized once, here, so every reader below sees one number. (HB-5)
 iter=$((10#$iter))
 max=$((10#$max))
+
+# What the session has consumed since this run started, read here, before
+# any gate, so the record of a turn that ends the run carries it too. The
+# read is cumulative (a final message the transcript had not yet written is
+# counted at the next Stop) and the run is never ended by it.
+tx_json=""
+tk_ctx_last=""
+if [ "$lint" = 0 ] && declare -F jeffy_transcript_usage >/dev/null; then
+  tx_path="$(printf '%s' "$input" | jq -r '.transcript_path // empty')"
+  tx_since="$(fm started_at)"
+  tx_json="$(jeffy_transcript_usage "$tx_path" "$tx_since" 2>/dev/null)" || tx_json=""
+  tk_ctx_last="$(printf '%s' "$tx_json" | jq -r '.context_tokens_last // empty' 2>/dev/null)"
+fi
 
 # The turn ended when the hook was called. The time ceilings measure the
 # iteration to this moment, never the hook's own work below: the Verify
@@ -276,6 +295,8 @@ jeffy_write_metrics() {
     --arg wall "${wall_elapsed:-}" --arg ctx "${ctx_growth:-}" \
     --arg decl_hash "${conv_hash:-}" --arg decl_reason "${violation:-}" \
     --arg mode "${mode:-standard}" \
+    --argjson tx "${tx_json:-null}" --arg s8 "${session_id:0:8}" \
+    --arg itype "$(jeffy_iter_type "$root/JOURNAL.md" "| $runid8 |" "$iter")" \
     --arg decl_verdict "$( [ "${decl_seen:-0}" = 1 ] && { [ -z "${violation:-}" ] && echo accepted || echo refused; } )" \
     '{run_token: $run, iteration: $iter, budget: $budget, mode: $mode, task: $task,
       content_tree_hash: $tree, changed_paths: $changed,
@@ -286,6 +307,14 @@ jeffy_write_metrics() {
       wall_elapsed_s: (if $wall == "" then null else ($wall | tonumber) end),
       context_growth: (if $ctx == "" then null else (($ctx | tonumber) / 10) end),
       cost_estimate_usd: null,
+      session8: $s8, model: $tx.model, api_messages: $tx.api_messages,
+      tokens_input: $tx.tokens_input,
+      tokens_cache_write_5m: $tx.tokens_cache_write_5m,
+      tokens_cache_write_1h: $tx.tokens_cache_write_1h,
+      tokens_cache_read: $tx.tokens_cache_read, tokens_output: $tx.tokens_output,
+      context_tokens_last: $tx.context_tokens_last,
+      context_tokens_peak: $tx.context_tokens_peak,
+      iter_type: (if $itype == "" then null else $itype end),
       declaration: (if $decl_verdict == "" then null else
         {hash: (if $decl_hash == "" then null else $decl_hash end), verdict: $decl_verdict,
          reason: (if $decl_reason == "" then null else $decl_reason end)} end)}' >> "$metrics_dir/$runid8.jsonl" 2>/dev/null || true
@@ -3099,6 +3128,9 @@ fi
 # ever imposed.
 if [ -n "$ctx_growth" ]; then
   run_state="$run_state; context $((ctx_growth / 10)).$((ctx_growth % 10))x"
+fi
+if [ -n "$tk_ctx_last" ]; then
+  run_state="$run_state; context $tk_ctx_last tokens"
 fi
 if [ -n "$wall_elapsed" ]; then
   if [ "$wall_max" -gt 0 ]; then

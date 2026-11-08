@@ -8953,6 +8953,66 @@ TUEOF
       fault "transcript-usage read a different session through a backslashed path"
     fi
 
+    # 1.28.0: every metrics record carries what the session has consumed, so
+    # a run's cost is read from its own records rather than estimated. The
+    # figures are cumulative over the session since the run's started_at, and
+    # the measurement never ends a run: an unreadable transcript leaves the
+    # fields null and the turn goes on as before.
+    hb_tm="$hb_proj/.jeffy/metrics/sess-1-000000.jsonl"
+    hb_write_state sess-1 3 10; hb_write_journal 3 10
+    hb_out="$(hb_run sess-1 'worked the task' "$hb_tmp/usage.jsonl")"
+    if [ -f "$hb_tm" ] && tail -n 1 "$hb_tm" | jq -e '.session8 == "sess-1"
+        and .api_messages == 4 and .tokens_input == 16
+        and .tokens_cache_write_5m == 500 and .tokens_cache_write_1h == 1200
+        and .tokens_cache_read == 75000 and .tokens_output == 280
+        and .context_tokens_last == 30005 and .context_tokens_peak == 30005
+        and .model == "claude-opus-5-5" and .iter_type == "T1"
+        and .cost_estimate_usd == null' >/dev/null 2>&1 \
+      && printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF 'context 30005 tokens' \
+      && hb_end_clean; then
+      pass "every metrics record carries the session's cumulative tokens, its live context and the iteration type, and RUN STATE states the context in tokens"
+    else
+      printf 'rec=[%s] out=[%s]\n' "$(tail -n 1 "$hb_tm" 2>/dev/null)" "$hb_out"
+      fault "the metrics record or RUN STATE is missing the session's token figures"
+    fi
+    hb_write_state sess-1 3 10
+    awk '{ if ($0 ~ /^started_at: /) print "started_at: 2026-01-01T00:00:03Z"; else print }' "$hb_state" > "$hb_state.k" && mv "$hb_state.k" "$hb_state"
+    hb_write_journal 3 10
+    hb_run sess-1 'worked the task' "$hb_tmp/usage.jsonl" >/dev/null
+    hb_tm3="$hb_proj/.jeffy/metrics/sess-1-000003.jsonl"
+    if [ -f "$hb_tm3" ] && tail -n 1 "$hb_tm3" | jq -e '.api_messages == 3
+        and .tokens_output == 230 and .iter_type == null' >/dev/null 2>&1; then
+      pass "the token figures start at the run's started_at, so conversation before the launch is not billed to it"
+    else
+      printf 'rec=[%s]\n' "$(tail -n 1 "$hb_tm3" 2>/dev/null)"
+      fault "the token figures counted conversation from before the run's started_at"
+    fi
+    hb_write_state sess-1 3 10; hb_write_journal 3 10
+    printf '%s\n' '{"type":"assistant","timestamp":"2026-01-01T00:00:10.000Z","message":{"id":"m4","model":"claude-opus-5-5","usage":{"input_tokens":2,"cache_creation_input_tokens":100,"cache_read_input_tokens":31000,"output_tokens":10,"cache_creation":{"ephemeral_1h_input_tokens":100,"ephemeral_5m_input_tokens":0}}}}' >> "$hb_tmp/usage.jsonl"
+    printf '%s\n' '{"type":"assistant","timestamp":"2026-01-01T00:00:11.000Z","message":{"id":"s2","model":"claude-opus-5-5","usage":{"input_tokens":3,"cache_creation_input_tokens":50,"cache_read_input_tokens":5000,"output_tokens":20,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":50}}}}' >> "$hb_tmp/usage/subagents/agent-x.jsonl"
+    hb_run sess-1 'worked the task' "$hb_tmp/usage.jsonl" >/dev/null
+    if tail -n 1 "$hb_tm" | jq -e '.api_messages == 6 and .tokens_input == 21
+        and .tokens_cache_write_5m == 550 and .tokens_cache_write_1h == 1300
+        and .tokens_cache_read == 111000 and .tokens_output == 310
+        and .context_tokens_last == 31102 and .context_tokens_peak == 31102' >/dev/null 2>&1; then
+      pass "a sub-agent file that grew between two turns is counted once, in the turn after it grew"
+    else
+      printf 'rec=[%s]\n' "$(tail -n 1 "$hb_tm" 2>/dev/null)"
+      fault "a sub-agent file that grew between two turns was miscounted"
+    fi
+    hb_write_state sess-1 3 10; hb_write_journal 3 10
+    hb_out="$(hb_run sess-1 'worked the task' "$hb_tmp/no-such.jsonl")"
+    if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+      && [ -f "$hb_state" ] && hb_end_clean \
+      && tail -n 1 "$hb_tm" | jq -e '.session8 == "sess-1" and .api_messages == null
+        and .tokens_cache_read == null and .context_tokens_last == null' >/dev/null 2>&1; then
+      pass "an unreadable transcript leaves every token field null and ends nothing"
+    else
+      printf 'rec=[%s] out=[%s]\n' "$(tail -n 1 "$hb_tm" 2>/dev/null)" "$hb_out"
+      fault "an unreadable transcript changed the turn's outcome or left token figures behind"
+    fi
+    rm -rf "$hb_proj/.jeffy/metrics"
+
     # P2-26: context pressure, measured from the transcript rather than
     # counted in iterations. The engine re-feeds one session, so context
     # accumulates within a run; an iteration ordinal is a proxy for that,
