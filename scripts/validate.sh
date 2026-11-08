@@ -3863,13 +3863,14 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
       hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
       hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
       if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
-        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'names no probed rows' && [ -f "$hb_state" ]; then
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'probed row(s) and evaluator_probe' && [ -f "$hb_state" ]; then
         pass "stop hook refuses a PASS whose artifact names no probed rows when evaluator_probe is set"
       else
         printf '%s\n' "$hb_out"
         fault "stop hook accepted a PASS that skipped the probe evaluator_probe asks for"
       fi
-      hb_write_evaluator_artifact sess-1-000000 1 'Probed rows: alpha, beta
+      hb_write_evaluator_artifact sess-1-000000 1 'Probed row: alpha
+Probed row: beta
 Verdict: PASS'
       hb_git add .jeffy/evaluator && hb_git commit -q -m probe
       hb_write_state sess-1 1 3; hb_state_addkey 'evaluator_probe: 2'
@@ -3881,7 +3882,7 @@ Verdict: PASS'
         printf '%s\n' "$hb_out"
         fault "stop hook refused a PASS whose artifact names its probed rows"
       fi
-      hb_write_evaluator_artifact sess-1-000000 1 'Probed rows: core
+      hb_write_evaluator_artifact sess-1-000000 1 'Probed row: core
 Verdict: PASS'
       hb_git add .jeffy/evaluator && hb_git commit -q -m probe
       hb_write_state sess-1 1 3; hb_state_addkey 'evaluator_probe: 3'
@@ -3893,6 +3894,45 @@ Verdict: PASS'
         printf '%s\n' "$hb_out"
         fault "stop hook asked for more probed rows than there are swept rows"
       fi
+      # W1: row names carry commas; a five-row map keeps min(k, swept) at 5.
+      hb_probe_row='stop-hook.sh fast paths and identity (no-state, jq-missing, foreign session, malformed counter, run token)'
+      hb_write_plan_full none \
+        "- [x] $hb_probe_row: swept at abc1234 - probed" \
+        '- [x] beta: swept at abc1234 - probed' \
+        '- [x] gamma: swept at abc1234 - probed' \
+        '- [x] delta: swept at abc1234 - probed' \
+        '- [x] epsilon: swept at abc1234 - probed'
+      hb_write_evaluator_artifact sess-1-000000 1 "Probed row: $hb_probe_row
+Verdict: PASS"
+      hb_git add .jeffy/evaluator && hb_git commit -q -m probe
+      hb_write_state sess-1 1 3; hb_state_addkey 'evaluator_probe: 5'
+      hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ "$(printf '%s' "$hb_out" | jq -r '.decision' 2>/dev/null)" = "block" ] \
+        && printf '%s' "$hb_out" | jq -r '.reason' | grep -qF 'names 1 probed row(s) and evaluator_probe: 5' \
+        && [ -f "$hb_state" ]; then
+        pass "stop hook counts a probed row whose name carries commas as one row, not as one per comma"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook let one comma-bearing probed row name satisfy evaluator_probe 5"
+      fi
+      hb_write_evaluator_artifact sess-1-000000 1 "Probed row: $hb_probe_row
+Probed row: beta
+Probed row: gamma
+Probed row: delta
+Probed row: epsilon
+Verdict: PASS"
+      hb_git add .jeffy/evaluator && hb_git commit -q -m probe
+      hb_write_state sess-1 1 3; hb_state_addkey 'evaluator_probe: 5'
+      hb_write_backlog '' "Converged: $hb_c1 - 2026-01-01"
+      hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+      if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && hb_end_clean; then
+        pass "stop hook accepts five probed rows named one to a line, one of their names carrying commas"
+      else
+        printf '%s\n' "$hb_out"
+        fault "stop hook refused five honestly named probed rows"
+      fi
+      hb_write_plan none
       hb_write_evaluator_artifact
       hb_git add .jeffy/evaluator && hb_git commit -q -m probe
       hb_write_state sess-1 1 3
