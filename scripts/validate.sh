@@ -9013,6 +9013,40 @@ TUEOF
     fi
     rm -rf "$hb_proj/.jeffy/metrics"
 
+    # 1.28.0: jeffy-stats reads the token fields. A run's figures are each
+    # session's last record summed (the records are cumulative per session),
+    # weights and a price come only from the operator because the cache-read
+    # multiplier differs by model, and the per-type table is built from
+    # per-record deltas so an iteration is charged what it alone consumed.
+    mkdir -p "$hb_proj/.jeffy/metrics"
+    cat > "$hb_proj/.jeffy/metrics/aaaaaaaa-010101.jsonl" <<'JSEOF'
+{"run_token":"aaaaaaaa-010101","iteration":1,"budget":10,"session8":"s1","iter_type":"AUDIT","tokens_input":100,"tokens_cache_write_5m":0,"tokens_cache_write_1h":0,"tokens_cache_read":1000000,"tokens_output":1000,"cost_estimate_usd":null}
+{"run_token":"aaaaaaaa-010101","iteration":2,"budget":10,"session8":"s1","iter_type":"T1","tokens_input":100,"tokens_cache_write_5m":0,"tokens_cache_write_1h":0,"tokens_cache_read":3000000,"tokens_output":1400,"cost_estimate_usd":null}
+{"run_token":"aaaaaaaa-010101","iteration":3,"budget":10,"session8":"s2","iter_type":"T2","tokens_input":50,"tokens_cache_write_5m":0,"tokens_cache_write_1h":0,"tokens_cache_read":500000,"tokens_output":100,"cost_estimate_usd":null}
+JSEOF
+    printf '%s\n' '{"run_token":"bbbbbbbb-020202","iteration":1,"budget":3,"cost_estimate_usd":null}' > "$hb_proj/.jeffy/metrics/bbbbbbbb-020202.jsonl"
+    hb_js0="$(bash scripts/jeffy-stats.sh "$hb_proj" 2>&1)"
+    hb_js1="$(bash scripts/jeffy-stats.sh "$hb_proj" --weights 1,1.25,2,0.1,5 --input-price 4 2>&1)"
+    hb_js2="$(bash scripts/jeffy-stats.sh "$hb_proj" --weights 1,1.25,2,0.05,5 --input-price 4 2>&1)"
+    hb_js3="$(bash scripts/jeffy-stats.sh "$hb_proj" --weights 1,2,3 2>&1 >/dev/null)"; hb_js3_rc=$?
+    if printf '%s\n' "$hb_js0" | awk '$1 == "aaaaaaaa-010101" && $8 == "3.5" && $9 == "1" { a = 1 }
+          $1 == "bbbbbbbb-020202" && $8 == "-" && $9 == "-" { b = 1 }
+          $1 == "AUDIT" && $2 == "1" && $3 == "1.0" && $4 == "1" { t = 1 }
+          $1 == "task" && $2 == "2" && $3 == "2.5" && $4 == "0" { k = 1 }
+          END { exit !(a && b && t && k) }' \
+      && printf '%s\n' "$hb_js1" | awk '$1 == "aaaaaaaa-010101" && $10 == "0.4" && $11 == "98" && $12 == "1.43" { a = 1 }
+          $1 == "bbbbbbbb-020202" && $10 == "-" && $11 == "-" && $12 == "-" { b = 1 }
+          END { exit !(a && b) }' \
+      && printf '%s\n' "$hb_js2" | awk '$1 == "aaaaaaaa-010101" && $10 == "0.2" && $11 == "96" && $12 == "0.73" { a = 1 }
+          END { exit !a }' \
+      && [ "$hb_js3_rc" = "2" ] && printf '%s' "$hb_js3" | grep -qF -- '--weights'; then
+      pass "jeffy-stats sums each session's last record per run, weights by the given vector, prices by the given input price, pools iteration types from per-record deltas and prints - for unmeasured runs"
+    else
+      printf 'default:\n%s\n0.1x:\n%s\n0.05x:\n%s\nbad weights rc=%s [%s]\n' "$hb_js0" "$hb_js1" "$hb_js2" "$hb_js3_rc" "$hb_js3"
+      fault "jeffy-stats misread the token fields of a measured run or an unmeasured one"
+    fi
+    rm -f "$hb_proj/.jeffy/metrics/aaaaaaaa-010101.jsonl" "$hb_proj/.jeffy/metrics/bbbbbbbb-020202.jsonl"
+
     # P2-26: context pressure, measured from the transcript rather than
     # counted in iterations. The engine re-feeds one session, so context
     # accumulates within a run; an iteration ordinal is a proxy for that,

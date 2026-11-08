@@ -86,3 +86,26 @@ Then start a new Claude Code session. Skills and hook registrations are read at 
 - **Do not upgrade underneath a live run.** The Stop hook is read from disk every time it fires, so replacing it mid-run changes that run's rules halfway through. Let the run finish, or stop it with `/cancel-jeffy` first.
 - **Deleted the clone since installing?** Clone it again and run the installer from there; it only ever reads from the clone.
 - **Uninstall.** `jeffy uninstall` from a PyPI install; otherwise delete `~/.claude/skills/jeffy` and `~/.claude/skills/cancel-jeffy` and remove the hook entry from `~/.claude/settings.json`.
+
+## Telemetry
+
+Every Stop writes one JSON record to `.jeffy/metrics/<run>.jsonl`. From 1.28.0 each record also carries what the session has consumed, read from its Claude Code transcript:
+
+- **`session8`** is the first eight characters of the session id, so records from two sessions of one run stay apart.
+- **`model`** names the model or models the session's API messages ran, comma-separated in first-seen order.
+- **`api_messages`** counts API messages, each once, however many transcript entries repeat it.
+- **`tokens_input`, `tokens_cache_write_5m`, `tokens_cache_write_1h`, `tokens_cache_read` and `tokens_output`** are the token components, kept apart because each is priced differently.
+- **`context_tokens_last` and `context_tokens_peak`** are the main session's live context in tokens at its last API message and at its largest; RUN STATE states the last as `context <n> tokens`.
+- **`iter_type`** is the iteration's type from its JOURNAL.md heading (`AUDIT`, `T3`, `EVALUATOR`), null when the heading is not there yet.
+
+The figures are cumulative over the session since the run's `started_at`, sub-agent transcripts included (the evaluator gate is one). The transcript can lag the conversation, so a final message missing at one Stop lands in the next record, and a run's last record can miss its final message. A transcript the hook cannot read leaves every token field null; it never ends a run. `cost_estimate_usd` stays null: the engine records tokens, not prices.
+
+```
+bash scripts/jeffy-stats.sh [project-root] [--weights in,w5m,w1h,read,out] [--input-price <usd per million>]
+```
+
+Without flags it adds `IN_M` (input-side tokens in millions) and `OUT_K` (output tokens in thousands) per run, and a `BY TYPE` table of what each iteration type consumed. `--weights` multiplies the five components into weighted units of base input (`W_M`) and prints the cache reads' share of them (`READ_PCT`); `--input-price` turns weighted units into dollars (`COST`). There is no default, because the weights differ by model. From the pricing page (https://platform.claude.com/docs/en/about-claude/pricing, read 2026-11-08): a five-minute cache write is 1.25 times the base input price, a one-hour write 2 times and output 5 times on every model; a cache read is 0.1 times on most models, 0.05 times on Opus 5.5 and Sonnet 5.5, and 0.025 times on Fable 5.1 and Mythos 5.1. A run on Opus 5.5, whose base input price is $4 per million:
+
+```
+bash scripts/jeffy-stats.sh . --weights 1,1.25,2,0.05,5 --input-price 4
+```
