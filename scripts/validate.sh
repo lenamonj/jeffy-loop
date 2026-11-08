@@ -8890,6 +8890,69 @@ $hb_sec_row" "## Now \n\n- [ ] S11 (Low, docs, documentation): open task. Accept
     fi
     rm -rf "$hb_proj/.jeffy/metrics"
 
+    # 1.28.0: the transcript-usage reader. Tokens are counted once per API
+    # message (a transcript repeats a message's usage on every content-block
+    # entry), the sub-agent transcripts beside the session are included, the
+    # two cache-write tiers stay apart because they are priced apart, and an
+    # API failure's <synthetic> entry is neither a message nor the context.
+    hb_tu="skills/jeffy/hooks/lib/transcript-usage.sh"
+    mkdir -p "$hb_tmp/usage/subagents"
+    cat > "$hb_tmp/usage.jsonl" <<'TUEOF'
+{"type":"user","timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"user","content":"hi"}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:02.000Z","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":20000,"output_tokens":50,"cache_creation":{"ephemeral_1h_input_tokens":1000,"ephemeral_5m_input_tokens":0}}}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:03.000Z","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tokens":0,"cache_creation_input_tokens":500,"cache_read_input_tokens":21000,"output_tokens":80,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":500}}}}
+{"type":"system","subtype":"compact_boundary","timestamp":"2026-01-01T00:00:04.000Z"}
+{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tokens":0,"cache_creation_input_tokens":500,"cache_read_input_tokens":21000,"output_tokens":80,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":500}}}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:06.000Z","message":{"id":"m3","model":"claude-opus-5-5","usage":{"input_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":30000,"output_tokens":120}}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:07.000Z","message":{"id":"m3b","model":"claude-opus-5-5","content":[{"type":"text","text":"no usage here"}]}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:08.000Z","message":{"id":"syn1","model":"<synthetic>","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}
+TUEOF
+    cat > "$hb_tmp/usage/subagents/agent-x.jsonl" <<'TUEOF'
+{"type":"assistant","timestamp":"2026-01-01T00:00:09.000Z","message":{"id":"s1","model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_creation_input_tokens":200,"cache_read_input_tokens":4000,"output_tokens":30,"cache_creation":{"ephemeral_1h_input_tokens":200,"ephemeral_5m_input_tokens":0}}}}
+TUEOF
+    hb_tu_a="$(bash "$hb_tu" "$hb_tmp/usage.jsonl" 2>/dev/null)"
+    if printf '%s' "$hb_tu_a" | jq -e '.api_messages == 4 and .tokens_input == 16
+        and .tokens_cache_write_5m == 500 and .tokens_cache_write_1h == 1200
+        and .tokens_cache_read == 75000 and .tokens_output == 280
+        and .context_tokens_last == 30005 and .context_tokens_peak == 30005
+        and .model == "claude-opus-5-5"' >/dev/null 2>&1; then
+      pass "transcript-usage counts each API message once across the main and sub-agent files, splits the write tiers, drops synthetic entries and reads context from the main file"
+    else
+      printf 'tu=[%s]\n' "$hb_tu_a"
+      fault "transcript-usage miscounted the fixture session (expected 4 messages, 16/500/1200/75000/280, context 30005)"
+    fi
+    hb_tu_b="$(bash "$hb_tu" "$hb_tmp/usage.jsonl" 2026-01-01T00:00:03Z 2>/dev/null)"
+    if printf '%s' "$hb_tu_b" | jq -e '.api_messages == 3 and .tokens_input == 6
+        and .tokens_output == 230 and .context_tokens_last == 30005' >/dev/null 2>&1; then
+      pass "transcript-usage excludes messages before the since bound"
+    else
+      printf 'tu=[%s]\n' "$hb_tu_b"
+      fault "transcript-usage counted messages before the since bound"
+    fi
+    hb_tu_c="$(bash "$hb_tu" "$hb_tmp/no-such.jsonl" 2>&1)"; hb_tu_rc=$?
+    if [ "$hb_tu_rc" = "1" ] && [ -z "$hb_tu_c" ]; then
+      pass "transcript-usage stays silent and returns 1 on an unreadable path"
+    else
+      printf 'rc=%s out=[%s]\n' "$hb_tu_rc" "$hb_tu_c"
+      fault "transcript-usage did not return 1 silently on an unreadable path"
+    fi
+    if command -v cygpath >/dev/null 2>&1; then
+      hb_tu_p="$(cygpath -w "$hb_tmp/usage.jsonl")"
+    else
+      hb_tu_dir="$hb_tmp/C:\new\tab\375"
+      mkdir -p "$hb_tu_dir"
+      cp "$hb_tmp/usage.jsonl" "$hb_tu_dir/usage.jsonl"
+      cp -R "$hb_tmp/usage" "$hb_tu_dir/usage"
+      hb_tu_p="$hb_tu_dir/usage.jsonl"
+    fi
+    hb_tu_d="$(bash "$hb_tu" "$hb_tu_p" 2>/dev/null)"
+    if [ -n "$hb_tu_a" ] && [ "$hb_tu_d" = "$hb_tu_a" ]; then
+      pass "transcript-usage opens the path it was given, backslashes and all, and its subagents folder beside it"
+    else
+      printf 'path=[%s] tu=[%s]\n' "$hb_tu_p" "$hb_tu_d"
+      fault "transcript-usage read a different session through a backslashed path"
+    fi
+
     # P2-26: context pressure, measured from the transcript rather than
     # counted in iterations. The engine re-feeds one session, so context
     # accumulates within a run; an iteration ordinal is a proxy for that,
