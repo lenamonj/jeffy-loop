@@ -4,7 +4,7 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 | Projects tested | Fixed | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:fixed -->104<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->76<!-- /count -->** | **<!-- count:prs-open -->14<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:fixed -->104<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->76<!-- /count -->** | **<!-- count:prs-open -->10<!-- /count -->** | **<!-- count:issues -->4<!-- /count -->** |
 
 **Fixed** means the loop's closing audit came back clean and an independent evaluator countersigned it: <!-- count:converged -->103<!-- /count --> loop runs converged, plus one audit (PapaParse) held to the same method; six of those rows carry a finding blocked at the close, named on the row. That is a standard this repository set and checked itself. A merged pull request is the one outcome it cannot award itself, which is why those rows come first. **Failed** means the project's pre-registered run budget ran out without convergence, the run was stopped short of it by decision (thor), or, for one project (libuv), the run was abandoned before it had a budget or a receipt; every one is published. Counted per attempt rather than per project, [ATTEMPTS.md](./ATTEMPTS.md) holds more non-converged rows than this table holds Failed rows, because a project that failed more than once, or converged only on a retry, contributes each attempt.
 
@@ -118,7 +118,7 @@ The table is in [CONTRIBUTING.md](../CONTRIBUTING.md#agreements-signed-for-upstr
 |:---|:---|:---|:---|
 | bat | Rust | [details](./bat/REPORT.md) - security flag no-op piped - [PR merged](https://github.com/sharkdp/bat/pull/3862) | Fixed |
 | fasthttp | Go | [details](./fasthttp/REPORT.md) - bad Content-Length accepted - [PR merged](https://github.com/valyala/fasthttp/pull/2343) | Fixed |
-| PapaParse | JavaScript | [details](./papaparse/REPORT.md) - *audit*; 4 Highs in streaming - [PR merged](https://github.com/mholt/PapaParse/pull/1135), [PR open](https://github.com/mholt/PapaParse/pull/1133), [PR open](https://github.com/mholt/PapaParse/pull/1134), [PR open](https://github.com/mholt/PapaParse/pull/1136) | Fixed |
+| PapaParse | JavaScript | [details](./papaparse/REPORT.md) - *audit*; 4 Highs in streaming - [PR merged](https://github.com/mholt/PapaParse/pull/1135), [PR open](https://github.com/mholt/PapaParse/pull/1133), [PR closed](https://github.com/mholt/PapaParse/pull/1134), [PR closed](https://github.com/mholt/PapaParse/pull/1136) | Fixed |
 | jsoncpp | C++ | [details](./jsoncpp/REPORT.md) - secure build never compiled - [PR merged](https://github.com/open-source-parsers/jsoncpp/pull/1709) | Fixed |
 | mimalloc | C | [details](./mimalloc/REPORT.md) - zalloc returned dirty memory - [PR merged](https://github.com/microsoft/mimalloc/pull/1385) | Fixed |
 | ada | C++ | [details](./ada/REPORT.md) - host_end truncated the host - [PR merged](https://github.com/ada-url/ada/pull/1244) | Fixed |
@@ -137,7 +137,7 @@ The table is in [CONTRIBUTING.md](../CONTRIBUTING.md#agreements-signed-for-upstr
 | commons-csv | Java | [details](./commons-csv/REPORT.md) - six documented promises the code did not keep, and a serialization skew the loop introduced and caught - [PR merged](https://github.com/apache/commons-csv/pull/633) | Fixed |
 | chalk | JavaScript | [details](./chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
 | dayjs | JavaScript | [details](./dayjs/REPORT.md) - 45 findings, 10 High - [PR closed](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
-| yfinance | Python | [details](./yfinance/REPORT.md) - High its own test advertised - [PR open](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
+| yfinance | Python | [details](./yfinance/REPORT.md) - High its own test advertised - [PR closed](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
 | PHP-Parser | PHP | [details](./php-parser/REPORT.md) - test class ran no code - [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | Fixed |
 | python-dotenv | Python | [details](./python-dotenv/REPORT.md) - 8 runs, 48 findings - [PR open](https://github.com/theskumar/python-dotenv/pull/678) | Fixed |
 | PyPortfolioOpt | Python | [details](./pyportfolioopt/REPORT.md) - CI-red to 356 passing - [PR closed](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
@@ -145,7 +145,7 @@ The table is in [CONTRIBUTING.md](../CONTRIBUTING.md#agreements-signed-for-upstr
 | rust-url | Rust | [details](./rust-url/REPORT.md) - 20 findings, 10 High - [PR closed](https://github.com/servo/rust-url/pull/1147) | Fixed |
 | rouge | Ruby | [details](./rouge/REPORT.md) - unknown theme crashed the CLI - [PR merged](https://github.com/rouge-ruby/rouge/pull/2332) | Fixed |
 | classnames | JavaScript | [details](./classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR closed](https://github.com/JedWatson/classnames/pull/579) | Fixed |
-| assert | PHP | [details](./assert/REPORT.md) - isInitialized threw the wrong exception - [PR open](https://github.com/webmozarts/assert/pull/365), [PR closed](https://github.com/webmozarts/assert/pull/366) | Fixed |
+| assert | PHP | [details](./assert/REPORT.md) - isInitialized threw the wrong exception - [PR closed](https://github.com/webmozarts/assert/pull/365), [PR closed](https://github.com/webmozarts/assert/pull/366) | Fixed |
 | natsort | Python | [details](./natsort/REPORT.md) - locale sentinel was three ASCII bytes - [PR merged](https://github.com/SethMMorton/natsort/pull/196) | Fixed |
 | uuid | Rust | [details](./uuid/REPORT.md) - v7 counter lost its top four bits to the version nibble - [PR merged](https://github.com/uuid-rs/uuid/pull/907) | Fixed |
 | kotlinx-io | Kotlin | [details](./kotlinx-io/REPORT.md) - the temporary directory was an empty path when TMPDIR was unset - [PR merged](https://github.com/Kotlin/kotlinx-io/pull/521) | Fixed |
