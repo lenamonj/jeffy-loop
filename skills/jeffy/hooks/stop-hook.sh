@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.28.0"
+JEFFY_VERSION="1.28.1"
 
 # Referee fix A7: every run-ending path after the promise read says a refusal
 # once, as a block, then the state file is gone so the next stop is a no-op.
