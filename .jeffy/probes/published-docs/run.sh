@@ -27,8 +27,8 @@
 set -u
 pd_root="${JEFFY_PROBE_ROOT:-$PWD}"
 pd_py="$pd_root/.jeffy/probes/published-docs/pdf.py"
-pd_wp="$pd_root/The-Jeffy-Loop.pdf"
-pd_ste="$pd_root/Jeffy-Loop-STE100.pdf"
+pd_wp="$pd_root/docs/The-Jeffy-Loop.pdf"
+pd_ste="$pd_root/docs/Jeffy-Loop-STE100.pdf"
 for pd_f in "$pd_py" "$pd_wp" "$pd_ste"; do
   [ -f "$pd_f" ] || { echo "published-docs battery: no $pd_f"; exit 2; }
 done
@@ -103,10 +103,10 @@ ck "the STE100 description names its own standard" yes \
 # README links both documents by absolute URL, so the sibling battery over
 # relative references cannot see them: a renamed document would break every
 # published download link with nothing going red.
-( cd "$pd_root" && git grep -h -oE 'raw/main/[A-Za-z0-9._-]+' -- '*.md' 2>/dev/null ) | sed 's|^raw/main/||' | sort -u > "$pd_tmp/raw"
+( cd "$pd_root" && git grep -h -oE 'raw/main/[A-Za-z0-9._/-]+' -- '*.md' 2>/dev/null ) | sed 's|^raw/main/||' | sort -u > "$pd_tmp/raw"
 ck "the published raw-link population is non-empty" yes \
   "$([ "$(grep -c . "$pd_tmp/raw")" -ge 1 ] && echo yes || echo no)"
-ck "every published raw link names a tracked file at the repository root" "" \
+ck "every published raw link names a tracked file" "" \
   "$(while IFS= read -r t; do ( cd "$pd_root" && git ls-files --error-unmatch "$t" >/dev/null 2>&1 ) || printf '%s ' "$t"; done < "$pd_tmp/raw" | sed 's/ *$//')"
 
 # --- the figures these documents no longer publish ---------------------------

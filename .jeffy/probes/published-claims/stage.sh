@@ -13,5 +13,5 @@ cp -r evals "$s/"
 # The reference arm resolves paths that leave evals/, so the directories the
 # front page points into are present as themselves.
 for d in docs media scripts skills .github; do [ -e "$d" ] && cp -r "$d" "$s/"; done
-for f in CONTRIBUTING.md SECURITY.md LICENSE The-Jeffy-Loop.pdf Jeffy-Loop-STE100.pdf; do [ -e "$f" ] && cp "$f" "$s/"; done
+for f in CONTRIBUTING.md SECURITY.md LICENSE; do [ -e "$f" ] && cp "$f" "$s/"; done
 printf '%s\n' "$s"
