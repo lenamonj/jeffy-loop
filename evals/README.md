@@ -114,7 +114,7 @@ The table is in [CONTRIBUTING.md](../CONTRIBUTING.md#agreements-signed-for-upstr
 
 ## Scorecard
 
-<sub>Ordered by upstream outcome, then by stars; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](./ATTEMPTS.md).</sub>
+<sub>Ordered by upstream outcome: merged, fixed upstream, open, issue filed, then the rest; failures last, alphabetically. Run-by-run detail for every project, including re-attempts, is in [evals/ATTEMPTS.md](./ATTEMPTS.md).</sub>
 
 | Project | Language | Details | Jeffy Result |
 |:---|:---|:---|:---|
@@ -137,35 +137,35 @@ The table is in [CONTRIBUTING.md](../CONTRIBUTING.md#agreements-signed-for-upstr
 | urfave/cli | Go | [details](./urfave-cli/REPORT.md) - a lone - ended flag parsing - [PR merged](https://github.com/urfave/cli/pull/2423) | Fixed |
 | pflag | Go | [details](./pflag/REPORT.md) - deprecated flag field ignored; two Mediums blocked at the close - [PR merged](https://github.com/spf13/pflag/pull/507) | Fixed |
 | commons-csv | Java | [details](./commons-csv/REPORT.md) - six documented promises the code did not keep, and a serialization skew the loop introduced and caught - [PR merged](https://github.com/apache/commons-csv/pull/633) | Fixed |
-| chalk | JavaScript | [details](./chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
-| dayjs | JavaScript | [details](./dayjs/REPORT.md) - 45 findings, 10 High - [PR closed](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
-| yfinance | Python | [details](./yfinance/REPORT.md) - High its own test advertised - [PR closed](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
-| PHP-Parser | PHP | [details](./php-parser/REPORT.md) - test class ran no code - [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | Fixed |
-| python-dotenv | Python | [details](./python-dotenv/REPORT.md) - 8 runs, 48 findings - [PR open](https://github.com/theskumar/python-dotenv/pull/678) | Fixed |
-| PyPortfolioOpt | Python | [details](./pyportfolioopt/REPORT.md) - CI-red to 356 passing - [PR closed](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
-| go-yaml | Go | [details](./go-yaml/REPORT.md) - 20 findings, 6 High - [PR closed](https://github.com/goccy/go-yaml/pull/915) | Fixed |
-| rust-url | Rust | [details](./rust-url/REPORT.md) - 20 findings, 10 High - [PR closed](https://github.com/servo/rust-url/pull/1147) | Fixed |
 | rouge | Ruby | [details](./rouge/REPORT.md) - unknown theme crashed the CLI - [PR merged](https://github.com/rouge-ruby/rouge/pull/2332) | Fixed |
-| classnames | JavaScript | [details](./classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR closed](https://github.com/JedWatson/classnames/pull/579) | Fixed |
-| assert | PHP | [details](./assert/REPORT.md) - isInitialized threw the wrong exception - [PR closed](https://github.com/webmozarts/assert/pull/365), [PR closed](https://github.com/webmozarts/assert/pull/366) | Fixed |
 | natsort | Python | [details](./natsort/REPORT.md) - locale sentinel was three ASCII bytes - [PR merged](https://github.com/SethMMorton/natsort/pull/196) | Fixed |
 | uuid | Rust | [details](./uuid/REPORT.md) - v7 counter lost its top four bits to the version nibble - [PR merged](https://github.com/uuid-rs/uuid/pull/907) | Fixed |
 | kotlinx-io | Kotlin | [details](./kotlinx-io/REPORT.md) - the temporary directory was an empty path when TMPDIR was unset - [PR merged](https://github.com/Kotlin/kotlinx-io/pull/521) | Fixed |
 | shouldly | C# | [details](./shouldly/REPORT.md) - a failing dictionary assertion over a pair sequence threw InvalidCastException - [PR merged](https://github.com/shouldly/shouldly/pull/1335) | Fixed |
-| i18n | Ruby | [details](./i18n/REPORT.md) - a pluralized lookup handed out the store's own String - [PR closed](https://github.com/ruby-i18n/i18n/pull/751), [PR closed](https://github.com/ruby-i18n/i18n/pull/752) | Fixed |
-| valinor | PHP | [details](./valinor/REPORT.md) - a captured closure earlier in the file made registerConstructor resolve a class that does not exist - [PR open](https://github.com/CuyZ/Valinor/pull/838) | Fixed |
-| swift-http-types | Swift | [details](./swift-http-types/REPORT.md) - a schemeless URL trapped an Optional-returning conversion, and the fast path of == ignored two of a field's three stored properties - [PR open](https://github.com/apple/swift-http-types/pull/152), [PR closed](https://github.com/apple/swift-http-types/pull/153) | Fixed |
 | money | Ruby | [details](./money/REPORT.md) - imported JSON rates went through JSON.load, and reset! kept a key cache that turned UnknownCurrency into NoMethodError - [PR merged](https://github.com/RubyMoney/money/pull/1227), [PR merged](https://github.com/RubyMoney/money/pull/1228) | Fixed |
-| ohash | TypeScript | [details](./ohash/REPORT.md) - the browser digest crashed on a lone surrogate, and diff dropped a leaf-to-container change and overflowed on cycles - [PR closed](https://github.com/unjs/ohash/pull/204) | Fixed |
-| typer | Python | [details](./typer/REPORT.md) - hash seed chose which app runs - [PR open](https://github.com/fastapi/typer/pull/1952), [PR closed as a duplicate](https://github.com/fastapi/typer/pull/1946) | Fixed |
-| claude-agent-sdk-python | Python | [details](./claude-agent-sdk-python/REPORT.md) - converged on attempt 2 - [PR open](https://github.com/anthropics/claude-agent-sdk-python/pull/1247) | Fixed |
 | swift-metrics | Swift | [details](./swift-metrics/REPORT.md) - the package's own test kit crashed on a repeated dimension name, and the published recorder example reported a minimum of zero - [PR merged](https://github.com/apple/swift-metrics/pull/244) | Fixed |
 | commons-codec | Java | [details](./commons-codec/REPORT.md) - the new Git tree-id builder sorted entries by UTF-16 code units where Git sorts UTF-8 bytes, and five Javadoc promises the code did not keep; one High blocked at the close, an upstream decision - [PR merged](https://github.com/apache/commons-codec/pull/443) | Fixed |
 | macaron | Python | [details](./macaron/REPORT.md) - a two-segment Maven group id crashed the repository verifier, and the build-spec generator threw away the JDK version it had just read from the JAR - [PR open](https://github.com/oracle/macaron/pull/1465), [PR merged](https://github.com/oracle/macaron/pull/1466) | Fixed |
+| chalk | JavaScript | [details](./chalk/REPORT.md) - maintainer wrote own fix - [fixed upstream](https://github.com/chalk/chalk/pull/687) | Fixed |
+| PHP-Parser | PHP | [details](./php-parser/REPORT.md) - test class ran no code - [PR open](https://github.com/nikic/PHP-Parser/pull/1162) | Fixed |
+| python-dotenv | Python | [details](./python-dotenv/REPORT.md) - 8 runs, 48 findings - [PR open](https://github.com/theskumar/python-dotenv/pull/678) | Fixed |
+| valinor | PHP | [details](./valinor/REPORT.md) - a captured closure earlier in the file made registerConstructor resolve a class that does not exist - [PR open](https://github.com/CuyZ/Valinor/pull/838) | Fixed |
+| swift-http-types | Swift | [details](./swift-http-types/REPORT.md) - a schemeless URL trapped an Optional-returning conversion, and the fast path of == ignored two of a field's three stored properties - [PR open](https://github.com/apple/swift-http-types/pull/152), [PR closed](https://github.com/apple/swift-http-types/pull/153) | Fixed |
+| typer | Python | [details](./typer/REPORT.md) - hash seed chose which app runs - [PR open](https://github.com/fastapi/typer/pull/1952), [PR closed as a duplicate](https://github.com/fastapi/typer/pull/1946) | Fixed |
+| claude-agent-sdk-python | Python | [details](./claude-agent-sdk-python/REPORT.md) - converged on attempt 2 - [PR open](https://github.com/anthropics/claude-agent-sdk-python/pull/1247) | Fixed |
 | mustache.js | JavaScript | [details](./mustache.js/REPORT.md) - revived a dead suite - [issue filed](https://github.com/janl/mustache.js/issues/848) | Fixed |
 | Spectre.Console | C# | [details](./spectre.console/REPORT.md) - panel header dropped - [issue filed](https://github.com/spectreconsole/spectre.console/issues/2184) | Fixed |
 | quantstats | Python | [details](./quantstats/REPORT.md) - 29 findings behind green - [issue filed](https://github.com/ranaroussi/quantstats/issues/537) | Fixed |
 | records | Python | [details](./records/REPORT.md) - 4 High data-loss bugs - [issue filed](https://github.com/kennethreitz/records/issues/236) | Fixed |
+| dayjs | JavaScript | [details](./dayjs/REPORT.md) - 45 findings, 10 High - [PR closed](https://github.com/iamkun/dayjs/pull/3167) | Fixed |
+| yfinance | Python | [details](./yfinance/REPORT.md) - High its own test advertised - [PR closed](https://github.com/ranaroussi/yfinance/pull/2927) | Fixed |
+| PyPortfolioOpt | Python | [details](./pyportfolioopt/REPORT.md) - CI-red to 356 passing - [PR closed](https://github.com/PyPortfolio/PyPortfolioOpt/pull/751) | Fixed |
+| go-yaml | Go | [details](./go-yaml/REPORT.md) - 20 findings, 6 High - [PR closed](https://github.com/goccy/go-yaml/pull/915) | Fixed |
+| rust-url | Rust | [details](./rust-url/REPORT.md) - 20 findings, 10 High - [PR closed](https://github.com/servo/rust-url/pull/1147) | Fixed |
+| classnames | JavaScript | [details](./classnames/REPORT.md) - null-prototype objects crashed all three modules - [PR closed](https://github.com/JedWatson/classnames/pull/579) | Fixed |
+| assert | PHP | [details](./assert/REPORT.md) - isInitialized threw the wrong exception - [PR closed](https://github.com/webmozarts/assert/pull/365), [PR closed](https://github.com/webmozarts/assert/pull/366) | Fixed |
+| i18n | Ruby | [details](./i18n/REPORT.md) - a pluralized lookup handed out the store's own String - [PR closed](https://github.com/ruby-i18n/i18n/pull/751), [PR closed](https://github.com/ruby-i18n/i18n/pull/752) | Fixed |
+| ohash | TypeScript | [details](./ohash/REPORT.md) - the browser digest crashed on a lone surrogate, and diff dropped a leaf-to-container change and overflowed on cycles - [PR closed](https://github.com/unjs/ohash/pull/204) | Fixed |
 | cobra | Go | [details](./cobra/REPORT.md) - timezone-dependent build | Fixed |
 | zod | TypeScript | [details](./zod/REPORT.md) - cyclic value validated | Fixed |
 | commander.js | JavaScript | [details](./commander-js/REPORT.md) - error named wrong argument | Fixed |
