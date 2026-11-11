@@ -31,6 +31,15 @@ jeffy_refuse() { # $1 rule id, $2 message
   violation="$2"
   violation_rule="$1"
 }
+# A check that runs in a subshell cannot set a variable here, so its result
+# carries the name in front of the message, and is split at the first pipe:
+# a message can hold pipes of its own, a name cannot.
+jeffy_rule_msg() { # $1 rule id, $2 message
+  printf '%s|%s' "$1" "$2"
+}
+jeffy_refuse_from() { # $1 "<rule id>|<message>"
+  jeffy_refuse "${1%%|*}" "${1#*|}"
+}
 jeffy_fire_violation() { # $1 path
   [ -n "${violation_rule:-}" ] || return 0
   jeffy_rule_fire "$violation_rule" "$1"
@@ -47,6 +56,16 @@ jeffy_end_run() { # $1 rule id, $2 stderr message
   exit 0
 }
 # rule helpers: end
+# `stop-hook.sh --rules` prints the name of every refusal and run ending this
+# hook can state, read from its own source below the helpers, one to a line
+# and sorted. A name written at two sites prints twice, which is how the
+# suite sees it.
+if [ "${1:-}" = "--rules" ]; then
+  sed '/^# rule helpers: begin$/,/^# rule helpers: end$/d' "${BASH_SOURCE[0]}" | grep -vE '^[[:space:]]*#' \
+    | grep -oE '(^|[^A-Za-z0-9_])jeffy_(refuse|rule_msg|end_run|rule_fire) [a-z0-9]+(-[a-z0-9]+)+ ' \
+    | awk '{ print $NF }' | sort
+  exit 0
+fi
 # 1.21.0 (P1-70): `stop-hook.sh --lint [project root]` derives every check
 # the declaration path enforces and prints the first refusal, or clean,
 # without re-feeding, verifying, ending a run or writing a record. The
@@ -202,8 +221,10 @@ if [ -f "$qv_lib" ]; then
   . "$qv_lib"
 else
   qv_msg="jeffy stop hook: the helper $qv_lib is missing, and it holds the heading test, the PLAN.md Verify-section reader and the verify runner; ending the run. Reinstall jeffy (the installer copies the whole hooks folder) and re-run /jeffy."
+  qv_msg="$qv_msg (rule helper-missing)"
   echo "$qv_msg" >&2
   [ "$lint" = 1 ] && exit 2
+  jeffy_rule_fire helper-missing end
   rm -f "$state"
   jq -n --arg reason "$qv_msg" '{decision: "block", reason: $reason}'
   exit 0
@@ -474,14 +495,14 @@ jeffy_verify_count_note() { # $1 project root
   vc_cell="$(jeffy_plan_line "$1/PLAN.md" 'Verify count')"
   case "$vc_cell" in '' | '<'*'>') return 0 ;; esac
   vc_cellnum="$(printf '%s' "$vc_cell" | grep -oE '[0-9]+' | head -n 1)"
-  [ -n "$vc_cellnum" ] || { vc_note="PLAN.md's Verify count line reads '$vc_cell', which carries no number; it holds the total the wrapper's green summary reports"; return 0; }
+  [ -n "$vc_cellnum" ] || { vc_note="$(jeffy_rule_msg verify-count-no-number "PLAN.md's Verify count line reads '$vc_cell', which carries no number; it holds the total the wrapper's green summary reports")"; return 0; }
   [ -f "$1/.jeffy/metrics/verify-last.json" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
   vc_last="$(jq -r '.count // empty' "$1/.jeffy/metrics/verify-last.json" 2>/dev/null)"
   vc_sum="$(jq -r '.summary // empty' "$1/.jeffy/metrics/verify-last.json" 2>/dev/null)"
   [ -n "$vc_last" ] || return 0
   if [ "$vc_last" != "$vc_cellnum" ]; then
-    vc_note="PLAN.md's Verify count states $vc_cellnum; the last green verify reported $vc_last (\"$vc_sum\"); the cell holds the wrapper's total, never a typed one - update it"
+    vc_note="$(jeffy_rule_msg verify-count-disagrees "PLAN.md's Verify count states $vc_cellnum; the last green verify reported $vc_last (\"$vc_sum\"); the cell holds the wrapper's total, never a typed one - update it")"
   fi
 }
 
@@ -498,12 +519,12 @@ jeffy_claims_form_violation() { # $1 project root, $2 base commit
     [ -n "$jcf_readme" ] || continue
     jcf_dir="${jcf_readme%/README.md}"
     if [ ! -f "$1/$jcf_dir/claims" ]; then
-      printf '%s' "the battery $jcf_dir was written or its README edited this run and carries no claims file; every measurement its README states is a line 'expect <value> :: <command>' in $jcf_dir/claims, or the file holds the single line 'none'"
+      jeffy_rule_msg claims-file-missing "the battery $jcf_dir was written or its README edited this run and carries no claims file; every measurement its README states is a line 'expect <value> :: <command>' in $jcf_dir/claims, or the file holds the single line 'none'"
       return 0
     fi
     jcf_bad="$(tr -d '\r' < "$1/$jcf_dir/claims" 2>/dev/null | grep -vE '^[[:space:]]*$|^none$|^expect .+ :: .+$' | head -n 1)"
     if [ -n "$jcf_bad" ]; then
-      printf '%s' "the claims file $jcf_dir/claims carries the line '$(printf '%s' "$jcf_bad" | cut -c1-80)', which is neither 'none' nor 'expect <value> :: <command>'"
+      jeffy_rule_msg claims-line-malformed "the claims file $jcf_dir/claims carries the line '$(printf '%s' "$jcf_bad" | cut -c1-80)', which is neither 'none' nor 'expect <value> :: <command>'"
       return 0
     fi
   done <<EOF
@@ -532,11 +553,11 @@ jeffy_severity_class_violation() { # $1 project root, $2 base commit
     jsc_class="$(printf '%s' "$jsc_line" | sed -E -n 's/^- \[[ x]\] [A-Za-z0-9_-]* \((High|Medium), *([a-z-]*).*/\2/p')"
     case "$jsc_class" in
       test|dev-tooling)
-        printf '%s' "BACKLOG.md task $jsc_id is scored High or Medium with class $jsc_class; a user of the shipped product never runs tests or developer tooling, so the severity ceiling by class makes it a Low - re-score it, and put the iterations into what users meet"
+        jeffy_rule_msg severity-above-class-ceiling "BACKLOG.md task $jsc_id is scored High or Medium with class $jsc_class; a user of the shipped product never runs tests or developer tooling, so the severity ceiling by class makes it a Low - re-score it, and put the iterations into what users meet"
         return 0 ;;
       docs|build-ci)
         if ! printf '%s' "$jsc_line" | grep -q 'Consequence:'; then
-          printf '%s' "BACKLOG.md task $jsc_id is scored High or Medium with class $jsc_class and states no Consequence; a High or Medium of that class carries 'Consequence: <what a user of the shipped product meets>' on its line, and a line that cannot state one is a Low"
+          jeffy_rule_msg severity-no-consequence "BACKLOG.md task $jsc_id is scored High or Medium with class $jsc_class and states no Consequence; a High or Medium of that class carries 'Consequence: <what a user of the shipped product meets>' on its line, and a line that cannot state one is a Low"
           return 0
         fi ;;
     esac
@@ -654,12 +675,12 @@ jeffy_stated_counts_violation() { # $1 project root
       [ -n "$jscv_v" ] || continue
       jscv_h="${jscv_v%%-*}"
       if printf '%s' "$jscv_wx" | tr '|' '\n' | grep -qx -- "$jscv_h"; then
-        printf '%s' "$jscv_f states 'returns $jscv_v', a number word this check recognises but cannot value; write the count in digits as returns <count> and carry it as a row of the Stated counts table (P1-67)"
+        jeffy_rule_msg stated-count-number-word "$jscv_f states 'returns $jscv_v', a number word this check recognises but cannot value; write the count in digits as returns <count> and carry it as a row of the Stated counts table (P1-67)"
         return 0
       fi
       case "$jscv_v" in
         *-*) if printf '%s' "$jscv_w" | tr '|' '\n' | grep -qx -- "$jscv_h"; then
-               printf '%s' "$jscv_f states 'returns $jscv_v', a compound number word this check cannot value; write the count in digits as returns <count> and carry it as a row of the Stated counts table (P1-67)"
+               jeffy_rule_msg stated-count-compound-word "$jscv_f states 'returns $jscv_v', a compound number word this check cannot value; write the count in digits as returns <count> and carry it as a row of the Stated counts table (P1-67)"
                return 0
              fi ;;
       esac
@@ -677,7 +698,7 @@ jeffy_stated_counts_violation() { # $1 project root
       # doing so on that run's own board.
       [ "$jscv_n" = 0 ] && continue
       if ! printf '%s\n' "$jscv_tbl" | grep -qx -- "$jscv_n"; then
-        printf '%s' "$jscv_f states 'returns $jscv_v' and PLAN.md's Stated counts table carries no row deriving $jscv_n; a count a governance document states is written as returns <count> and joins the COUNTS table in the commit that states it, and skills/jeffy/hooks/lib/check-claims.sh executes that row (P1-67)"
+        jeffy_rule_msg stated-count-not-in-table "$jscv_f states 'returns $jscv_v' and PLAN.md's Stated counts table carries no row deriving $jscv_n; a count a governance document states is written as returns <count> and joins the COUNTS table in the commit that states it, and skills/jeffy/hooks/lib/check-claims.sh executes that row (P1-67)"
         return 0
       fi
     done <<EOF
@@ -847,9 +868,9 @@ jeffy_cert_hash_check() {
     # name, is itself pending, so the old line certifies nothing here.
     hunt_pending="$hunt_pending; and the last Hunted line names $conv_hash, an earlier hunt's, which this iteration's line supersedes"
   elif [ -n "$conv_hash" ] && ! jeffy_names_hash "$root" "$conv_hash"; then
-    violation="the $cert_sec line names $conv_hash, which is not a commit named by its hexadecimal hash; HEAD, @, a branch or a tag moves with the tree, so every test of the certified tree would compare HEAD with itself and the receipt would record a name no clone resolves to the same commit - write the commit's full hash - the field is read as 7 to 64 hexadecimal characters, so an abbreviation that resolves is accepted"
+    jeffy_refuse cert-ref-not-a-hash "the $cert_sec line names $conv_hash, which is not a commit named by its hexadecimal hash; HEAD, @, a branch or a tag moves with the tree, so every test of the certified tree would compare HEAD with itself and the receipt would record a name no clone resolves to the same commit - write the commit's full hash - the field is read as 7 to 64 hexadecimal characters, so an abbreviation that resolves is accepted"
   elif [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
-    violation="the ## $cert_sec section of BACKLOG.md does not name a commit in this repository; append the $cert_sec line for the certified checkpoint"
+    jeffy_refuse cert-line-missing "the ## $cert_sec section of BACKLOG.md does not name a commit in this repository; append the $cert_sec line for the certified checkpoint"
   else
     # Reachability first, because an orphaned hash makes the
     # nothing-but-state comparison below meaningless: git will happily
@@ -879,13 +900,13 @@ jeffy_cert_hash_check() {
     # has an excuse.
     if [ -z "$violation" ] && [ -n "$conv_old" ]; then
       if ! git -C "$root" rev-parse --verify --quiet "$conv_old^{commit}" >/dev/null 2>&1; then
-        violation="the $cert_sec line repoints $conv_old, which no longer resolves to a commit in this repository, so the tree it certified cannot be compared against $conv_hash and the repoint cannot be checked; a repoint is only ever legal against a commit whose tree can still be read, so converge this tree again through a fresh audit and the gate rather than asserting the old one"
+        jeffy_refuse repoint-old-unresolvable "the $cert_sec line repoints $conv_old, which no longer resolves to a commit in this repository, so the tree it certified cannot be compared against $conv_hash and the repoint cannot be checked; a repoint is only ever legal against a commit whose tree can still be read, so converge this tree again through a fresh audit and the gate rather than asserting the old one"
       elif ! printf '%s\n' "$(awk -v sec="$cert_sec" '{ sub(/\r$/, "") } $0 == "## " sec { take = 1; next } /^## / { take = 0 } take && match($0, /^[-*] +/) && substr($0, RLENGTH + 1, length(sec) + 2) == sec ": " { sub(/^[-*] +/, "") } take && index($0, sec ": ") == 1 { h = $2; gsub(/^`|`$/, "", h); a[++n] = h } END { for (i = 1; i < n; i++) print a[i] }' "$root/BACKLOG.md")" \
         | grep -qix -- "$conv_old"; then
-        violation="the $cert_sec line repoints $conv_old but no earlier $cert_sec line in BACKLOG.md names it; a repoint is appended beneath the line it supersedes and never written over it, because the superseded line is the only evidence that the rewrite happened at all"
+        jeffy_refuse repoint-old-not-on-record "the $cert_sec line repoints $conv_old but no earlier $cert_sec line in BACKLOG.md names it; a repoint is appended beneath the line it supersedes and never written over it, because the superseded line is the only evidence that the rewrite happened at all"
       elif [ "$(git -C "$root" rev-parse --verify --quiet "$conv_old^{tree}" 2>/dev/null)" \
         != "$(git -C "$root" rev-parse --verify --quiet "$conv_hash^{tree}" 2>/dev/null)" ]; then
-        violation="the $cert_sec line repoints $conv_old to $conv_hash, but those two commits do not carry the same tree; a repoint answers a history rewrite that preserved the tree, and one that changes it is a different convergence claim wearing an old certificate, so converge the current tree through a fresh audit and the gate"
+        jeffy_refuse repoint-tree-differs "the $cert_sec line repoints $conv_old to $conv_hash, but those two commits do not carry the same tree; a repoint answers a history rewrite that preserved the tree, and one that changes it is a different convergence claim wearing an old certificate, so converge the current tree through a fresh audit and the gate"
       fi
     fi
     # T1: does the certified line predate this run? K5 asked that question of
@@ -923,7 +944,7 @@ jeffy_cert_hash_check() {
       if [ "$cert_prev" = 1 ]; then
         hunt_pending="$hunt_pending${hunt_pending:+; and }the ## $cert_sec section of BACKLOG.md still names $conv_hash, an earlier run's, which this iteration's line supersedes (it is not an ancestor of HEAD, so it cannot be one this run wrote)"
       else
-        violation="the $cert_sec hash $conv_hash resolves but is not reachable from HEAD, so a history rewrite has orphaned the commit this declaration rests on and no clone of this repository can check it; never edit the $cert_sec line - append one beneath it reading $cert_example, naming a reachable commit whose tree equals the orphaned one, and record the rewrite in a dated Note in JOURNAL.md"
+        jeffy_refuse cert-hash-unreachable "the $cert_sec hash $conv_hash resolves but is not reachable from HEAD, so a history rewrite has orphaned the commit this declaration rests on and no clone of this repository can check it; never edit the $cert_sec line - append one beneath it reading $cert_example, naming a reachable commit whose tree equals the orphaned one, and record the rewrite in a dated Note in JOURNAL.md"
       fi
     fi
     # .jeffy/ is loop memory too, so it joins the state files in the
@@ -973,7 +994,7 @@ jeffy_cert_hash_check() {
         if [ "$cert_prev" = 1 ]; then
           hunt_pending="$hunt_pending${hunt_pending:+; and }the ## $cert_sec section of BACKLOG.md still names $conv_hash, an earlier run's, which this iteration's line supersedes ($nonstate has changed since it)"
         else
-          violation="product path $nonstate changed after the $cert_sec hash $conv_hash; certify the current tree before declaring"
+          jeffy_refuse product-changed-after-cert "product path $nonstate changed after the $cert_sec hash $conv_hash; certify the current tree before declaring"
         fi
       fi
     fi
@@ -1340,17 +1361,17 @@ if [ -n "$promise" ]; then
         fi
       fi
       if [ ! -f "$root/BACKLOG.md" ]; then
-        violation="BACKLOG.md is missing at $root, and every closing gate reads it - the open-task test and the $cert_sec hash that certifies the tree live in that file; restore the ledger with its Now and $cert_sec sections, then re-declare"
+        jeffy_refuse backlog-missing "BACKLOG.md is missing at $root, and every closing gate reads it - the open-task test and the $cert_sec hash that certifies the tree live in that file; restore the ledger with its Now and $cert_sec sections, then re-declare"
       elif printf '%s' "$(fm base_head)" | grep -qE '^[0-9a-f]{7,64}$' && ! git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
-        violation="git cannot read HEAD at $root though this run started at a commit, so the certified-tree checks have nothing to compare; repair the repository, then re-declare"
+        jeffy_refuse git-head-unreadable "git cannot read HEAD at $root though this run started at a commit, so the certified-tree checks have nothing to compare; repair the repository, then re-declare"
       elif [ ! -f "$root/PLAN.md" ]; then
-        violation="PLAN.md is missing at $root, and the inventory, staleness, oracle and verify checks all read it; restore it, then re-declare"
+        jeffy_refuse plan-missing "PLAN.md is missing at $root, and the inventory, staleness, oracle and verify checks all read it; restore it, then re-declare"
       elif [ "$ledger_no_now" = 1 ]; then
-        violation="BACKLOG.md has no Now section, and the closing rule reads open tasks under the Now, Next and Later headings - a ledger without them is one the severity floor cannot read, not a clean one; restore the ## Now heading with every open task beneath it, then re-declare"
+        jeffy_refuse backlog-no-now-section "BACKLOG.md has no Now section, and the closing rule reads open tasks under the Now, Next and Later headings - a ledger without them is one the severity floor cannot read, not a clean one; restore the ## Now heading with every open task beneath it, then re-declare"
       elif [ -n "${ledger_near:-}" ]; then
-        violation="the BACKLOG.md heading \"$ledger_near\" is not read as a ledger section, so nothing under it counts as open; spell it as the template does, then re-declare"
+        jeffy_refuse backlog-heading-unread "the BACKLOG.md heading \"$ledger_near\" is not read as a ledger section, so nothing under it counts as open; spell it as the template does, then re-declare"
       elif [ "$hunt" = 1 ] && [ -n "$hunt_nonhigh" ]; then
-        violation="BACKLOG.md lists an open task that is not a High, and a hunt ledger carries Highs only - a Medium or Low an audit notices goes on that AUDIT entry's Noted, not filed: line, never on the ledger, and a line with no parseable severity is refused the same way, first: $hunt_nonhigh$open_substep"
+        jeffy_refuse hunt-ledger-non-high-open "BACKLOG.md lists an open task that is not a High, and a hunt ledger carries Highs only - a Medium or Low an audit notices goes on that AUDIT entry's Noted, not filed: line, never on the ledger, and a line with no parseable severity is refused the same way, first: $hunt_nonhigh$open_substep"
       elif [ -n "$open_blocking" ]; then
         jeffy_refuse backlog-open-high-medium "BACKLOG.md still lists open High or Medium tasks in Now, Next, or Later (a task line with no parseable severity counts as blocking - the closing rule reads severity from the task line itself, and a High or Medium marked [b] blocks as an open one does: fix it, or move it to Declined with its Derivation), first: $(printf '%s' "$open_blocking" | head -n 1)$open_substep"
       elif [ "$hunt" = 0 ] && command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
@@ -1373,16 +1394,16 @@ if [ -n "$promise" ]; then
           # the heading the price of declaring over an unswept map.
           inv_counts="$(printf '%s\n' "$inv_rows" | awk '/^- \[[ x~]\]/ { r++; if ($0 ~ /^- \[x\]/) s++ } END { print r + 0, s + 0 }')"
           if [ -n "$unswept" ]; then
-            violation="the Surface inventory in PLAN.md still lists an unswept row, first: $unswept; sweep it and record the commit, or record why it is out of scope, then re-declare convergence"
+            jeffy_refuse inventory-row-unswept "the Surface inventory in PLAN.md still lists an unswept row, first: $unswept; sweep it and record the commit, or record why it is out of scope, then re-declare convergence"
           elif [ "${inv_counts%% *}" -eq 0 ]; then
-            violation="the Surface inventory in PLAN.md lists no row: no line under the heading begins - [ ], - [x] or - [~], and a convergence claim covers surface an audit opened, so an empty map certifies nothing; map the surface one row each as - [ ] <surface>: <scope>, sweep the rows this host can reach and record each as - [x] with its commit, then re-declare convergence"
+            jeffy_refuse inventory-no-rows "the Surface inventory in PLAN.md lists no row: no line under the heading begins - [ ], - [x] or - [~], and a convergence claim covers surface an audit opened, so an empty map certifies nothing; map the surface one row each as - [ ] <surface>: <scope>, sweep the rows this host can reach and record each as - [x] with its commit, then re-declare convergence"
           elif [ "${inv_counts##* }" -eq 0 ]; then
-            violation="the Surface inventory in PLAN.md lists ${inv_counts%% *} row(s) and none is swept: a [~] row is not swept, it discloses surface this host cannot reach, and a convergence claim covers surface an audit opened; sweep the rows this host can reach and record each as - [x] with its commit, then re-declare convergence"
+            jeffy_refuse inventory-none-swept "the Surface inventory in PLAN.md lists ${inv_counts%% *} row(s) and none is swept: a [~] row is not swept, it discloses surface this host cannot reach, and a convergence claim covers surface an audit opened; sweep the rows this host can reach and record each as - [x] with its commit, then re-declare convergence"
           fi
         else
           inv_near="$(jeffy_near_heading "$root/PLAN.md" 'Surface inventory')"
           [ -n "$inv_near" ] && inv_near="; the heading \"$inv_near\" begins with the same words and is not read as that section, which is ## Surface inventory alone or followed by a space, a tab, ( or :"
-          violation="PLAN.md has no Surface inventory section, and a convergence claim covers the mapped surface, so a map this hook cannot read is refused rather than skipped$inv_near; add the heading ## Surface inventory to PLAN.md with one row per surface beneath it - an unswept row as - [ ] <surface>: <scope>, a swept one as - [x] <surface>: swept at <commit> via .jeffy/probes/<battery> - <what the sweep exercised> - sweep every row, then re-declare convergence"
+          jeffy_refuse inventory-section-missing "PLAN.md has no Surface inventory section, and a convergence claim covers the mapped surface, so a map this hook cannot read is refused rather than skipped$inv_near; add the heading ## Surface inventory to PLAN.md with one row per surface beneath it - an unswept row as - [ ] <surface>: <scope>, a swept one as - [x] <surface>: swept at <commit> via .jeffy/probes/<battery> - <what the sweep exercised> - sweep every row, then re-declare convergence"
         fi
       fi
       # P0-6: a swept row is a claim about code at a commit, and the code
@@ -1413,9 +1434,9 @@ if [ -n "$promise" ]; then
         && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
         jeffy_derive_stale_rows "$root"
         if [ -n "$jsr_stale" ]; then
-          violation="a swept Surface inventory row is stale - $jsr_stale; re-sweep it and re-record the commit, or flip it back to unswept, then re-declare convergence"
+          jeffy_refuse inventory-row-stale "a swept Surface inventory row is stale - $jsr_stale; re-sweep it and re-record the commit, or flip it back to unswept, then re-declare convergence"
         elif [ "${jsr_gone:-0}" -gt 0 ]; then
-          violation="a swept Surface inventory row records a commit this history does not carry - $jsr_gone_row ($jsr_gone row(s) in all), so its staleness cannot be derived at all and it certifies nothing; re-record each at a commit that resolves, or flip it back to unswept, then re-declare convergence"
+          jeffy_refuse inventory-row-commit-gone "a swept Surface inventory row records a commit this history does not carry - $jsr_gone_row ($jsr_gone row(s) in all), so its staleness cannot be derived at all and it certifies nothing; re-record each at a commit that resolves, or flip it back to unswept, then re-declare convergence"
         elif [ "$jsr_linked" -eq 0 ] && [ "$jsr_unlinked" -gt 0 ]; then
           echo "jeffy stop hook: no swept row names the battery that swept it ($jsr_unlinked rows), so staleness could not be derived; rows written from 1.14.0 carry it." >&2
         elif [ "$jsr_unlinked" -gt 0 ]; then
@@ -1443,7 +1464,7 @@ if [ -n "$promise" ]; then
           /^- / && !/Derivation:[ \t]*[^ \t<]/ && !/cost: exceeds one iteration/ { print substr($0, 1, 120); exit }
         ')"
         if [ -n "$underived" ]; then
-          violation="a Declined entry carries no recorded derivation, first: $underived; record the command or measurement that establishes its premise as Derivation: <command> (the priced reason cost: exceeds one iteration needs none), re-run it, then re-declare convergence"
+          jeffy_refuse declined-no-derivation "a Declined entry carries no recorded derivation, first: $underived; record the command or measurement that establishes its premise as Derivation: <command> (the priced reason cost: exceeds one iteration needs none), re-run it, then re-declare convergence"
         fi
       fi
       # P1-63 (form half): a Settled-class line settled as fixed is a standing
@@ -1468,7 +1489,7 @@ if [ -n "$promise" ]; then
           /^- / && !/[Ee]numerated by/ && !/Derivation:/ && !/[Dd]eclined/ && !/`/ { print substr($0, 1, 120); exit }
         ')"
         if [ -n "$unenumerated" ]; then
-          violation="a Settled-class line settled as fixed records no enumeration, first: $unenumerated; record the command that lists every site of the class on the line as enumerated by: <command> (a declined settlement instead states declined with its reason), run it, then re-declare convergence"
+          jeffy_refuse settled-class-no-enumeration "a Settled-class line settled as fixed records no enumeration, first: $unenumerated; record the command that lists every site of the class on the line as enumerated by: <command> (a declined settlement instead states declined with its reason), run it, then re-declare convergence"
         fi
       fi
       # P1-60: the loop's presence leaks through any channel that derives a
@@ -1502,7 +1523,7 @@ if [ -n "$promise" ]; then
           if pkg_list="$(cd "$root" && "$jeffy_cargo" package --list --allow-dirty 2>/dev/null)"; then
             pkg_leak="$(printf '%s\n' "$pkg_list" | grep -E "$jeffy_pkg_grep" | head -n 3 | tr '\n' ' ')"
             if [ -n "$pkg_leak" ]; then
-              violation="the published crate tarball would carry the loop's own state - cargo package --list includes: $pkg_leak; exclude these paths in Cargo.toml and re-declare convergence"
+              jeffy_refuse crate-carries-loop-state "the published crate tarball would carry the loop's own state - cargo package --list includes: $pkg_leak; exclude these paths in Cargo.toml and re-declare convergence"
             fi
           else
             echo "jeffy stop hook: cargo package --list failed (a workspace virtual manifest has no single package), so the crate-contents check could not run." >&2
@@ -1516,7 +1537,7 @@ if [ -n "$promise" ]; then
           if pkg_list="$(cd "$root" && npm pack --dry-run --json --ignore-scripts 2>/dev/null)"; then
             pkg_leak="$(printf '%s\n' "$pkg_list" | jq -r '.[0].files[].path' 2>/dev/null | grep -E "$jeffy_pkg_grep" | head -n 3 | tr '\n' ' ')"
             if [ -n "$pkg_leak" ]; then
-              violation="the published npm package would carry the loop's own state - npm pack --dry-run includes: $pkg_leak; exclude these paths via the package.json files allowlist or .npmignore and re-declare convergence"
+              jeffy_refuse npm-package-carries-loop-state "the published npm package would carry the loop's own state - npm pack --dry-run includes: $pkg_leak; exclude these paths via the package.json files allowlist or .npmignore and re-declare convergence"
             fi
           else
             echo "jeffy stop hook: npm pack --dry-run failed, so the package-contents check could not run." >&2
@@ -1560,13 +1581,13 @@ if [ -n "$promise" ]; then
         if [ -z "$oc_raw" ] && [ -z "$ef_raw" ]; then
           echo "jeffy stop hook: PLAN.md's Verify command section carries no Oracle class or Environment fingerprint line; skipping the oracle declaration check." >&2
         elif [ -z "$oc_raw" ]; then
-          violation="PLAN.md's Verify command section carries an Environment fingerprint line but no Oracle class line; both are filled by the first audit and re-read at the declaration, so add the Oracle class line naming what the command actually grades - unit tests, a conformance corpus, a differential comparison, or a build only - then re-declare"
+          jeffy_refuse oracle-class-line-missing "PLAN.md's Verify command section carries an Environment fingerprint line but no Oracle class line; both are filled by the first audit and re-read at the declaration, so add the Oracle class line naming what the command actually grades - unit tests, a conformance corpus, a differential comparison, or a build only - then re-declare"
         elif [ -z "$ef_raw" ]; then
-          violation="PLAN.md's Verify command section carries an Oracle class line but no Environment fingerprint line; add it naming the platform, the toolchain versions, and every test target this platform excludes, with the command that enumerated them, then re-declare"
+          jeffy_refuse environment-fingerprint-line-missing "PLAN.md's Verify command section carries an Oracle class line but no Environment fingerprint line; add it naming the platform, the toolchain versions, and every test target this platform excludes, with the command that enumerated them, then re-declare"
         elif oracle_unfilled "$oc_val"; then
-          violation="the Oracle class line in PLAN.md's Verify command section is unfilled; name what the Verify command actually grades - unit tests, a conformance corpus, a differential comparison against a reference implementation, or a build only - then re-declare"
+          jeffy_refuse oracle-class-unfilled "the Oracle class line in PLAN.md's Verify command section is unfilled; name what the Verify command actually grades - unit tests, a conformance corpus, a differential comparison against a reference implementation, or a build only - then re-declare"
         elif oracle_unfilled "$ef_val"; then
-          violation="the Environment fingerprint line in PLAN.md's Verify command section is unfilled; name the platform, the toolchain versions, and every test target this platform excludes, enumerated by a command rather than asserted - a run once converged over 29 iterations while a build-tagged conformance corpus its command could not reach never ran at all - then re-declare"
+          jeffy_refuse environment-fingerprint-unfilled "the Environment fingerprint line in PLAN.md's Verify command section is unfilled; name the platform, the toolchain versions, and every test target this platform excludes, enumerated by a command rather than asserted - a run once converged over 29 iterations while a build-tagged conformance corpus its command could not reach never ran at all - then re-declare"
         fi
       fi
       # P1-66 / P1-65 on the declaration path: a Verify count cell that
@@ -1575,11 +1596,11 @@ if [ -n "$promise" ]; then
       # ordinary checkpoint says as notices, so nothing here is news.
       if [ -z "$violation" ]; then
         jeffy_verify_count_note "$root"
-        [ -n "$vc_note" ] && violation="$vc_note"
+        [ -n "$vc_note" ] && jeffy_refuse_from "$vc_note"
       fi
       if [ -z "$violation" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         cf_v="$(jeffy_claims_form_violation "$root" "$(fm base_head)")"
-        [ -n "$cf_v" ] && violation="$cf_v"
+        [ -n "$cf_v" ] && jeffy_refuse_from "$cf_v"
       fi
       # 1.20.0 (P1-69): the P1-68 README-measurement check no longer refuses a
       # declaration. Three targets in two days (nanoid, python-slugify,
@@ -1590,14 +1611,14 @@ if [ -n "$promise" ]; then
       # 1.19.0: the severity ceiling by class, on the task lines this run filed.
       if [ -z "$violation" ] && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         sv_v="$(jeffy_severity_class_violation "$root" "$(fm base_head)")"
-        [ -n "$sv_v" ] && violation="$sv_v"
+        [ -n "$sv_v" ] && jeffy_refuse_from "$sv_v"
       fi
       # P1-67 on the declaration path: a count PLAN.md or BACKLOG.md states
       # that the Stated counts table does not carry. Derived from the text,
       # never executed here; check-claims.sh is what runs the rows.
       if [ -z "$violation" ]; then
         sc_v="$(jeffy_stated_counts_violation "$root")"
-        [ -n "$sc_v" ] && violation="$sc_v"
+        [ -n "$sc_v" ] && jeffy_refuse_from "$sc_v"
       fi
       # 1.22.0 (P0-11): the fresh-audit test, the check that replaces the
       # evaluator gate in a hunt. The close rests on the last AUDIT entry of
@@ -1620,7 +1641,7 @@ if [ -n "$promise" ]; then
       # skipped there, with a note, as the Hunted line is.
       if [ "$hunt" = 1 ] && [ -z "$violation" ]; then
         if [ ! -f "$root/JOURNAL.md" ]; then
-          violation="JOURNAL.md is missing at $root, and a hunt closes on the last AUDIT entry recorded there; restore the journal, record the closing audit, then close again"
+          jeffy_refuse journal-missing-hunt "JOURNAL.md is missing at $root, and a hunt closes on the last AUDIT entry recorded there; restore the journal, record the closing audit, then close again"
         else
           fa_line="$(awk -v tok="| $runid8 |" '
             { sub(/\r$/, "") }
@@ -1644,11 +1665,11 @@ if [ -n "$promise" ]; then
           fa_cp="${fa_cp#*	}"
           fa_hash="$(printf '%s' "$fa_cp" | grep -oE '[0-9a-f]{7,40}' | head -n 1)"
           if [ -z "$fa_line" ]; then
-            violation="JOURNAL.md holds no AUDIT entry headed with this run's id $runid8, and a hunt closes only on a fresh full audit of this run that found no High; run that audit, record its entry with its Checkpoint, then close"
+            jeffy_refuse audit-entry-missing-hunt "JOURNAL.md holds no AUDIT entry headed with this run's id $runid8, and a hunt closes only on a fresh full audit of this run that found no High; run that audit, record its entry with its Checkpoint, then close"
           elif [ "$fa_st" != "hunted" ]; then
-            violation="the last AUDIT entry of this run (iteration $fa_iter) carries status ${fa_st:-none}, not hunted; the audit that finds no High takes status hunted and closes the hunt in its own iteration, so an audit that filed a High, or a bookkeeping entry, closes nothing - once no High is open, run the fresh full audit and close in that same iteration"
+            jeffy_refuse last-audit-not-hunted "the last AUDIT entry of this run (iteration $fa_iter) carries status ${fa_st:-none}, not hunted; the audit that finds no High takes status hunted and closes the hunt in its own iteration, so an audit that filed a High, or a bookkeeping entry, closes nothing - once no High is open, run the fresh full audit and close in that same iteration"
           elif [ "$fa_after" = 1 ]; then
-            violation="the last AUDIT entry of this run (iteration $fa_iter) carries status hunted but a later entry of this run follows it; the audit that finds no High is the run's closing entry, so audit again and close in that same iteration"
+            jeffy_refuse hunted-audit-not-last "the last AUDIT entry of this run (iteration $fa_iter) carries status hunted but a later entry of this run follows it; the audit that finds no High is the run's closing entry, so audit again and close in that same iteration"
           elif ! command -v git >/dev/null 2>&1 || ! git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
             echo "jeffy stop hook: no git HEAD, so the fresh-audit test cannot compare the tree against the last audit's checkpoint; skipping it." >&2
           elif [ -z "$fa_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$fa_hash^{commit}" >/dev/null 2>&1; then
@@ -1656,12 +1677,12 @@ if [ -n "$promise" ]; then
             if [ "$lint" = 1 ] && [ "$fa_iter" = "$iter" ]; then
               hunt_pending="$fa_msg"
             else
-              violation="$fa_msg"
+              jeffy_refuse last-audit-no-checkpoint "$fa_msg"
             fi
           else
             fa_moved="$(git -C "$root" diff --no-renames --name-only --relative "$fa_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
             if [ -n "$fa_moved" ]; then
-              violation="product path $fa_moved changed after the last AUDIT entry's checkpoint $fa_hash (iteration $fa_iter); a hunt closes on a fresh audit of the tree it certifies, so audit again and close in that same iteration"
+              jeffy_refuse product-changed-after-audit "product path $fa_moved changed after the last AUDIT entry's checkpoint $fa_hash (iteration $fa_iter); a hunt closes on a fresh audit of the tree it certifies, so audit again and close in that same iteration"
             fi
           fi
         fi
@@ -1734,7 +1755,7 @@ if [ -n "$promise" ]; then
       # it would turn a missing key into the bypass this check just closed.
       if [ "$hunt" = 0 ] && [ -z "$violation" ]; then
         if [ ! -f "$root/JOURNAL.md" ]; then
-          violation="JOURNAL.md is missing at $root, and the closing entry is where the evaluator verdict lives; restore the journal, record the verdict, then re-declare"
+          jeffy_refuse journal-missing "JOURNAL.md is missing at $root, and the closing entry is where the evaluator verdict lives; restore the journal, record the verdict, then re-declare"
         else
           ev_verdict="$(awk -v tok="| $runid8 |" '
             { sub(/\r$/, "") }
@@ -1834,16 +1855,16 @@ if [ -n "$promise" ]; then
           fi
           case "$ev_verdict" in
             unaudited)
-              violation="JOURNAL.md and JOURNAL-archive.md hold no AUDIT entry headed with this run's id $runid8, and a declaration rests on a full fresh-evidence audit this run scored zero High and zero Medium in-envelope - only a RATCHET close, which re-declares a tree an earlier run certified, carries none; run that audit, record its AUDIT entry, take a clean result through the gate, then re-declare - except inside the closing extension window, which never admits an audit, where the run ends unconverged and convergence falls to the next run's fresh audit"
+              jeffy_refuse audit-entry-missing "JOURNAL.md and JOURNAL-archive.md hold no AUDIT entry headed with this run's id $runid8, and a declaration rests on a full fresh-evidence audit this run scored zero High and zero Medium in-envelope - only a RATCHET close, which re-declares a tree an earlier run certified, carries none; run that audit, record its AUDIT entry, take a clean result through the gate, then re-declare - except inside the closing extension window, which never admits an audit, where the run ends unconverged and convergence falls to the next run's fresh audit"
               ;;
             capped)
-              violation="this run's journal records $ev_rejects Evaluator: REJECT verdicts, the highest evaluator artifact ordinal on its record - the working tree, the commits since base_head and this hook's own metrics - is $ev_spent, and the latest artifact in the tree reads $ev_art_verdict, past every invocation cap the contract grants - 2, or 3 when the first invocation landed before the midpoint of the budget - so no invocation remains to produce the verdict a declaration requires; spend what budget is left in gate salvage on the findings the gate filed, then end the run blocked as 'blocked - N gate findings closed, declaration deferred', because convergence waits for the next run's fresh gate"
+              jeffy_refuse evaluator-invocations-spent "this run's journal records $ev_rejects Evaluator: REJECT verdicts, the highest evaluator artifact ordinal on its record - the working tree, the commits since base_head and this hook's own metrics - is $ev_spent, and the latest artifact in the tree reads $ev_art_verdict, past every invocation cap the contract grants - 2, or 3 when the first invocation landed before the midpoint of the budget - so no invocation remains to produce the verdict a declaration requires; spend what budget is left in gate salvage on the findings the gate filed, then end the run blocked as 'blocked - N gate findings closed, declaration deferred', because convergence waits for the next run's fresh gate"
               ;;
             undated)
-              violation="the closing entry is typed RATCHET, and a ratchet re-declares a tree an earlier run certified: that needs git and the base_head the launch wrote to the loop state file, so this hook can test that the certified commit predates the run and that its declaration was accepted, and $ev_undated; a RATCHET that cannot be dated is one word in a heading, so audit fresh instead - run the full audit, record its AUDIT entry, take a clean result through the gate, then re-declare"
+              jeffy_refuse ratchet-cannot-be-dated "the closing entry is typed RATCHET, and a ratchet re-declares a tree an earlier run certified: that needs git and the base_head the launch wrote to the loop state file, so this hook can test that the certified commit predates the run and that its declaration was accepted, and $ev_undated; a RATCHET that cannot be dated is one word in a heading, so audit fresh instead - run the full audit, record its AUDIT entry, take a clean result through the gate, then re-declare"
               ;;
             none)
-              violation="JOURNAL.md holds no primary entry headed with the run id $runid8, and that entry is the only place the evaluator verdict is read from; write the closing entry under the run's own heading grammar, then re-declare"
+              jeffy_refuse closing-entry-missing "JOURNAL.md holds no primary entry headed with the run id $runid8, and that entry is the only place the evaluator verdict is read from; write the closing entry under the run's own heading grammar, then re-declare"
               ;;
             ratchet)
               # The ratchet re-declares a tree an earlier run already
@@ -1872,9 +1893,9 @@ if [ -n "$promise" ]; then
               [ -d "$root/.jeffy/metrics" ] || cert_none=" (this tree has no .jeffy/metrics directory at all - one from before 1.18.0, one whose metrics were lost, or one whose .gitignore swallows .jeffy/ - so no record can certify it)"
               # shellcheck disable=SC2086  # cert_chain holds hexadecimal hashes, split on purpose
               if ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_base" 2>/dev/null; then
-                violation="the closing entry is typed RATCHET but the Converged hash $conv_hash is not an ancestor of the commit this run started on; a ratchet re-declares a tree an earlier run certified and never invokes the evaluator, so work committed during this run has to converge the ordinary way, through a fresh audit and the gate"
+                jeffy_refuse ratchet-hash-not-ancestor "the closing entry is typed RATCHET but the Converged hash $conv_hash is not an ancestor of the commit this run started on; a ratchet re-declares a tree an earlier run certified and never invokes the evaluator, so work committed during this run has to converge the ordinary way, through a fresh audit and the gate"
               elif ! jeffy_declaration_certified "$root" "$runid8" $cert_chain; then
-                violation="the Converged hash $conv_hash was declared, but nothing records that the Stop hook accepted that declaration - .jeffy/metrics/ holds no accepted standard declaration for that hash written under a run id other than this run's $runid8$cert_none - and a ratchet re-declares a tree an earlier run certified, so a hash no earlier run's record certifies is one this run vouches for alone; audit and gate this run rather than ratchet over it"
+                jeffy_refuse ratchet-hash-never-accepted "the Converged hash $conv_hash was declared, but nothing records that the Stop hook accepted that declaration - .jeffy/metrics/ holds no accepted standard declaration for that hash written under a run id other than this run's $runid8$cert_none - and a ratchet re-declares a tree an earlier run certified, so a hash no earlier run's record certifies is one this run vouches for alone; audit and gate this run rather than ratchet over it"
               fi
               ;;
             missing)
@@ -1885,18 +1906,18 @@ if [ -n "$promise" ]; then
                 ev_pending=1
                 hunt_pending="$hunt_pending${hunt_pending:+; and }the closing entry records no Evaluator verdict yet"
               else
-                violation="the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare - unless this run has spent every invocation its cap allows, in which case it may not re-invoke at all and ends blocked in gate salvage instead"
+                jeffy_refuse evaluator-verdict-missing "the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare - unless this run has spent every invocation its cap allows, in which case it may not re-invoke at all and ends blocked in gate salvage instead"
               fi
               ;;
             reject)
-              violation="the closing entry records Evaluator: REJECT, which is not a verdict a run declares on; file each reason this run can reproduce and work them - with an invocation remaining, declare on a later PASS, and a second REJECT is not terminal while one is left; with none remaining the REJECT is terminal, so spend the rest of the budget in gate salvage on the findings the gate filed and end blocked as 'blocked - N gate findings closed, declaration deferred', never re-invoking and never declaring, because convergence waits for the next run's fresh gate"
+              jeffy_refuse evaluator-reject-recorded "the closing entry records Evaluator: REJECT, which is not a verdict a run declares on; file each reason this run can reproduce and work them - with an invocation remaining, declare on a later PASS, and a second REJECT is not terminal while one is left; with none remaining the REJECT is terminal, so spend the rest of the budget in gate salvage on the findings the gate filed and end blocked as 'blocked - N gate findings closed, declaration deferred', never re-invoking and never declaring, because convergence waits for the next run's fresh gate"
               ;;
             unavailable)
-              violation="the closing entry records Evaluator: unavailable; the adversarial gate is not optional and no convergence rests on its absence, so end the run with that reason and relaunch in a session where a sub-agent can be spawned"
+              jeffy_refuse evaluator-unavailable-recorded "the closing entry records Evaluator: unavailable; the adversarial gate is not optional and no convergence rests on its absence, so end the run with that reason and relaunch in a session where a sub-agent can be spawned"
               ;;
             pass)
               if [ ! -f "$root/$ev_art" ] || [ ! -s "$root/$ev_art" ]; then
-                violation="the closing entry records Evaluator: PASS but $ev_art is not a file with content; the gate writes .jeffy/evaluator/$runid8-<n>.md, where n is the invocation ordinal, naming every command it ran and that command's real exit status, and a PASS with nothing behind it is eleven typed characters"
+                jeffy_refuse evaluator-artifact-empty "the closing entry records Evaluator: PASS but $ev_art is not a file with content; the gate writes .jeffy/evaluator/$runid8-<n>.md, where n is the invocation ordinal, naming every command it ran and that command's real exit status, and a PASS with nothing behind it is eleven typed characters"
               elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
                 ev_head_blob="$(git -C "$root" rev-parse --quiet --verify "HEAD:./$ev_art" 2>/dev/null || true)"
                 ev_work_blob="$(git -C "$root" hash-object -- "$ev_art" 2>/dev/null || true)"
@@ -1906,13 +1927,13 @@ if [ -n "$promise" ]; then
                 # correct in a project below the root - the same shape that
                 # left both tree gates dead until --relative.
                 if [ -z "$ev_head_blob" ]; then
-                  violation="the evaluator artifact $ev_art is not committed in HEAD; the checkpoint commits it, which is what makes it evidence rather than a scratch file a later turn can rewrite unseen, so a project that ignores .jeffy/ has to un-ignore .jeffy/evaluator/ - then checkpoint it and re-declare"
+                  jeffy_refuse evaluator-artifact-uncommitted "the evaluator artifact $ev_art is not committed in HEAD; the checkpoint commits it, which is what makes it evidence rather than a scratch file a later turn can rewrite unseen, so a project that ignores .jeffy/ has to un-ignore .jeffy/evaluator/ - then checkpoint it and re-declare"
                 elif [ -z "$ev_work_blob" ] || [ "$ev_head_blob" != "$ev_work_blob" ]; then
-                  violation="the evaluator artifact $ev_art in the working tree differs from the copy committed in HEAD; the artifact the gate wrote is the one that has to stand, so restore or checkpoint it and re-declare"
+                  jeffy_refuse evaluator-artifact-modified "the evaluator artifact $ev_art in the working tree differs from the copy committed in HEAD; the artifact the gate wrote is the one that has to stand, so restore or checkpoint it and re-declare"
                 elif [ -n "$conv_hash" ] && [ -n "$ev_art_commit" ] \
                   && [ "${cert_prev:-0}" != 1 ] \
                   && ! git -C "$root" merge-base --is-ancestor "$conv_hash" "$ev_art_commit" 2>/dev/null; then
-                  violation="the evaluator artifact $ev_art was last committed at $ev_art_commit, which predates the Converged hash $conv_hash; a PASS answers the tree the gate actually examined, so re-invoke the gate in the declaring iteration - a re-invocation writes the next ordinal, .jeffy/evaluator/$runid8-<n+1>.md, which the checkpoint commits alongside the one it supersedes - and re-declare"
+                  jeffy_refuse evaluator-artifact-predates-cert "the evaluator artifact $ev_art was last committed at $ev_art_commit, which predates the Converged hash $conv_hash; a PASS answers the tree the gate actually examined, so re-invoke the gate in the declaring iteration - a re-invocation writes the next ordinal, .jeffy/evaluator/$runid8-<n+1>.md, which the checkpoint commits alongside the one it supersedes - and re-declare"
                 fi
               fi
               # The cert_prev guard on the dating arm is the third site of the
@@ -1943,9 +1964,9 @@ if [ -n "$promise" ]; then
                 ev_next="the highest gate ordinal on this run's record is $ev_spent, so an invocation remains: re-invoke the gate, which must end its artifact with the line 'Verdict: PASS' or 'Verdict: REJECT', and declare on the PASS its next ordinal records"
               fi
               if [ -z "$violation" ] && [ "$ev_art_verdict" = "several" ]; then
-                violation="the closing entry records Evaluator: PASS but the gate's own artifact $ev_art carries more than one verdict line - a line that begins with Verdict, Final Verdict, Overall Verdict, Overall, Result or Outcome and states PASS, REJECT or FAIL, in whatever form; the gate ends its artifact with one line reading exactly 'Verdict: PASS' or 'Verdict: REJECT' and writes no other line beginning with a verdict label anywhere in it, an earlier round's quoted verdict included, and the artifact is never edited after it, so nothing here says which one the gate returned; $ev_next"
+                jeffy_refuse evaluator-artifact-two-verdicts "the closing entry records Evaluator: PASS but the gate's own artifact $ev_art carries more than one verdict line - a line that begins with Verdict, Final Verdict, Overall Verdict, Overall, Result or Outcome and states PASS, REJECT or FAIL, in whatever form; the gate ends its artifact with one line reading exactly 'Verdict: PASS' or 'Verdict: REJECT' and writes no other line beginning with a verdict label anywhere in it, an earlier round's quoted verdict included, and the artifact is never edited after it, so nothing here says which one the gate returned; $ev_next"
               elif [ -z "$violation" ] && [ "$ev_art_verdict" = "reject" ]; then
-                violation="the closing entry records Evaluator: PASS but the gate's own artifact $ev_art records REJECT; the artifact is the verdict and the journal line only transcribes it, so file each reason it names that this run can reproduce and work them - with an invocation remaining, re-invoke the gate and declare on the PASS its next ordinal records, and with none remaining end blocked in gate salvage, never re-invoking and never declaring"
+                jeffy_refuse evaluator-artifact-says-reject "the closing entry records Evaluator: PASS but the gate's own artifact $ev_art records REJECT; the artifact is the verdict and the journal line only transcribes it, so file each reason it names that this run can reproduce and work them - with an invocation remaining, re-invoke the gate and declare on the PASS its next ordinal records, and with none remaining end blocked in gate salvage, never re-invoking and never declaring"
               elif [ -z "$violation" ] && [ "$ev_art_verdict" != "pass" ]; then
                 ev_art_said=": "
                 if [ -n "$ev_art_at" ]; then
@@ -1956,7 +1977,7 @@ if [ -n "$promise" ]; then
                     ev_art_said=" the hook accepts: line $ev_art_at reads '$ev_art_line', which counts as a verdict line and is not in the form that is read as one - "
                   fi
                 fi
-                violation="the closing entry records Evaluator: PASS but $ev_art carries no verdict line${ev_art_said}the hook reads the verdict from a final line reading exactly 'Verdict: PASS' or 'Verdict: REJECT' - that label, the colon and the word, with no bracket and no further word on the line, the reasons above it, nothing below it but blank lines, and no other line beginning with Verdict, Final Verdict, Overall Verdict, Overall, Result or Outcome anywhere in the file - so nothing the gate wrote says it passed; the artifact is the verdict and the journal line only transcribes it, and it is never edited after the gate returns; $ev_next"
+                jeffy_refuse evaluator-artifact-no-verdict "the closing entry records Evaluator: PASS but $ev_art carries no verdict line${ev_art_said}the hook reads the verdict from a final line reading exactly 'Verdict: PASS' or 'Verdict: REJECT' - that label, the colon and the word, with no bracket and no further word on the line, the reasons above it, nothing below it but blank lines, and no other line beginning with Verdict, Final Verdict, Overall Verdict, Overall, Result or Outcome anywhere in the file - so nothing the gate wrote says it passed; the artifact is the verdict and the journal line only transcribes it, and it is never edited after the gate returns; $ev_next"
               fi
               # A run launched with --evaluator-probe asked the gate to probe
               # swept rows itself; a PASS that names fewer than it was asked
@@ -1978,7 +1999,7 @@ if [ -n "$promise" ]; then
                   }
                   END { print c + 0 }')"
                 if [ "$probe_names" -lt "$probe_need" ]; then
-                  violation="the evaluator artifact names $probe_names probed row(s) and evaluator_probe: $probe_k asks for $probe_need of the $swept swept rows, so the declaration rests on a gate that skipped its probe; the gate writes one line per probed row reading 'Probed row: <row name>', one row to a line, because a row name carries commas and a comma-separated list of them cannot be counted"
+                  jeffy_refuse evaluator-probe-rows-short "the evaluator artifact names $probe_names probed row(s) and evaluator_probe: $probe_k asks for $probe_need of the $swept swept rows, so the declaration rests on a gate that skipped its probe; the gate writes one line per probed row reading 'Probed row: <row name>', one row to a line, because a row name carries commas and a comma-separated list of them cannot be counted"
                 fi
               fi
               ;;
@@ -1991,7 +2012,7 @@ if [ -n "$promise" ]; then
       if [ -z "$violation" ] && [ "$lint" = 0 ] && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
         tree_dirty="$( { git -C "$root" -c core.quotePath=false diff --no-renames --name-only --relative HEAD; git -C "$root" -c core.quotePath=false ls-files --others --exclude-standard; } 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
         if [ -n "$tree_dirty" ]; then
-          violation="the working tree holds an uncommitted change at $tree_dirty, so the Verify command would grade a tree no commit holds; checkpoint it or remove it, then re-declare convergence"
+          jeffy_refuse tree-uncommitted-change "the working tree holds an uncommitted change at $tree_dirty, so the Verify command would grade a tree no commit holds; checkpoint it or remove it, then re-declare convergence"
         fi
       fi
       if [ -z "$violation" ]; then
@@ -2020,11 +2041,11 @@ if [ -n "$promise" ]; then
           if [ "$vc_rc" -eq 2 ]; then
             vc_near="$(jeffy_near_heading "$root/PLAN.md" 'Verify command')"
             [ -n "$vc_near" ] && vc_near="; the heading \"$vc_near\" begins with the same words and is not read as that section, which is ## Verify command alone or followed by a space, a tab, ( or :"
-            violation="PLAN.md has no Verify command section, so no gate was run$vc_near; add the heading ## Verify command to PLAN.md with the project's real gate beneath it as a labeled line reading Command: <cmd>, or Command: none with a one-line reason if the project genuinely has no runnable gate, then re-declare"
+            jeffy_refuse verify-section-missing "PLAN.md has no Verify command section, so no gate was run$vc_near; add the heading ## Verify command to PLAN.md with the project's real gate beneath it as a labeled line reading Command: <cmd>, or Command: none with a one-line reason if the project genuinely has no runnable gate, then re-declare"
           elif [ "$vc_rc" -ne 0 ]; then
-            violation="the Verify command section of PLAN.md carries no Command line, so no gate was run; write the project's real gate as a labeled line reading Command: <cmd>, or Command: none with a one-line reason if the project genuinely has no runnable gate, then re-declare convergence"
+            jeffy_refuse verify-command-line-missing "the Verify command section of PLAN.md carries no Command line, so no gate was run; write the project's real gate as a labeled line reading Command: <cmd>, or Command: none with a one-line reason if the project genuinely has no runnable gate, then re-declare convergence"
           elif [ -z "$verify_cmd" ]; then
-            violation="the Verify command section of PLAN.md carries an empty Command line, so no gate was run; write the project's real gate after the label, or none with a one-line reason if the project genuinely has no runnable gate, then re-declare convergence"
+            jeffy_refuse verify-command-empty "the Verify command section of PLAN.md carries an empty Command line, so no gate was run; write the project's real gate after the label, or none with a one-line reason if the project genuinely has no runnable gate, then re-declare convergence"
           elif [ "$verify_cmd" != none ] && [ "$verify_cmd" != None ] && [ "$verify_cmd" != NONE ]; then
             # none in the three spellings the wrapper reads as not configured.
             # An annotated line (cargo test (419 tests)) is not runnable
@@ -2033,7 +2054,7 @@ if [ -n "$promise" ]; then
             # which trailing text was the annotation, and never execute a
             # line that did not parse.
             if ! verify_syntax="$(printf '%s\n' "$verify_cmd" | bash -n 2>&1)"; then
-              violation="the Verify command line ($verify_cmd) is not runnable shell (bash -n: $(printf '%s' "$verify_syntax" | head -n 1)); make the Command line a pure runnable command with no annotation, then re-declare convergence"
+              jeffy_refuse verify-command-not-shell "the Verify command line ($verify_cmd) is not runnable shell (bash -n: $(printf '%s' "$verify_syntax" | head -n 1)); make the Command line a pure runnable command with no annotation, then re-declare convergence"
             else
               # A pipeline's exit status is its last stage's. A gate ending in
               # a pager or truncator therefore reports head/tail/cat, not the
@@ -2084,9 +2105,9 @@ EOF
                   ;;
               esac
               if [ -n "$vc_lint" ]; then
-                violation="the Verify command ($verify_cmd) ends in $vc_lint, so its exit status is the truncator's, not the suite's; drop the trailing stage, then re-declare convergence"
+                jeffy_refuse verify-ends-in-truncator "the Verify command ($verify_cmd) ends in $vc_lint, so its exit status is the truncator's, not the suite's; drop the trailing stage, then re-declare convergence"
               elif [ -n "$vc_nofail" ]; then
-                violation="the Verify command ($verify_cmd) holds an early-closing stage ahead of a later pipeline, which switches pipefail off for the whole Command, so a failing suite can read green; open the Command with set -o pipefail, then re-declare convergence"
+                jeffy_refuse verify-early-closer-before-pipeline "the Verify command ($verify_cmd) holds an early-closing stage ahead of a later pipeline, which switches pipefail off for the whole Command, so a failing suite can read green; open the Command with set -o pipefail, then re-declare convergence"
               elif [ "$lint" = 1 ]; then
                 # Lint never executes the Verify command: the run has the
                 # wrapper for that, and a read-only pass runs nothing.
@@ -2099,13 +2120,13 @@ EOF
                 vrc=$?
                 rm -f "$vlog"
                 if [ "$vrc" -eq 124 ]; then
-                  violation="the Verify command ($verify_cmd) exceeded the ${vt}s timeout; if the suite legitimately runs long, record its measured time as a labeled line reading Verify duration: <N>s in PLAN.md under Verify command (or set verify_timeout_seconds in the loop state file frontmatter), then get it green and re-declare convergence"
+                  jeffy_refuse verify-timeout "the Verify command ($verify_cmd) exceeded the ${vt}s timeout; if the suite legitimately runs long, record its measured time as a labeled line reading Verify duration: <N>s in PLAN.md under Verify command (or set verify_timeout_seconds in the loop state file frontmatter), then get it green and re-declare convergence"
                 elif [ "$vrc" -eq 141 ]; then
-                  violation="the Verify command ($verify_cmd) exited 141, which is SIGPIPE: a stage closed its pipe early and the Command runs under pipefail; let that stage drain its input, or open the Command with set +o pipefail, then re-declare convergence"
+                  jeffy_refuse verify-sigpipe "the Verify command ($verify_cmd) exited 141, which is SIGPIPE: a stage closed its pipe early and the Command runs under pipefail; let that stage drain its input, or open the Command with set +o pipefail, then re-declare convergence"
                 elif [ "$vrc" -ne 0 ]; then
                   case "$vrc" in
-                    126 | 127) violation="the Verify command ($verify_cmd) could not start in the hook's environment (exit $vrc, PATH=$PATH); name the binary by full path in Command: or add its directory to the PATH hooks run with, then re-declare convergence" ;;
-                    *) violation="the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence" ;;
+                    126 | 127) jeffy_refuse verify-cannot-start "the Verify command ($verify_cmd) could not start in the hook's environment (exit $vrc, PATH=$PATH); name the binary by full path in Command: or add its directory to the PATH hooks run with, then re-declare convergence" ;;
+                    *) jeffy_refuse verify-exit-nonzero "the Verify command ($verify_cmd) exited $vrc; get it green, then re-declare convergence" ;;
                   esac
                 fi
               fi
@@ -2140,7 +2161,7 @@ EOF
           printf '%s' "$closing_body" | grep -q -- "$cid" || { printf '%s' "$cid"; break; }
         done)"
         if [ -n "$unnamed" ]; then
-          violation="the ledger carries the open Low $unnamed but this run's closing entry never names it; the closing rule lists each carried Low by ID with one line, so name every open Low in the declaring entry, then re-declare convergence"
+          jeffy_refuse carried-low-unnamed "the ledger carries the open Low $unnamed but this run's closing entry never names it; the closing rule lists each carried Low by ID with one line, so name every open Low in the declaring entry, then re-declare convergence"
         fi
       fi
       if [ "$lint" = 1 ]; then
@@ -3077,7 +3098,9 @@ if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory
   # budget, stall or oscillation baseline ever stamped. (HB-4)
   if [ "$(fm iteration)" != "$next" ]; then
     hb4_msg="could not advance the iteration counter in $state (its frontmatter must open and close with a line reading exactly ---); not re-feeding. Run /cancel-jeffy or delete the file."
+    hb4_msg="$hb4_msg (rule counter-stuck)"
     echo "jeffy stop hook: $hb4_msg" >&2
+    jeffy_rule_fire counter-stuck end
     # 1.25.0 (review F9): stderr alone reaches nobody in an unattended run, so
     # the refusal is also said once as a block whose reason is the fix. Once:
     # the state file cannot be rewritten (that is the defect), so a sidecar
@@ -3153,7 +3176,7 @@ fi
 # iteration the total changed, while the fix is one line and costs no gate.
 if [ -n "$root" ]; then jeffy_verify_count_note "$root"; fi
 if [ -n "$vc_note" ]; then
-  reason="$reason VERIFY COUNT: $vc_note."
+  reason="$reason VERIFY COUNT: ${vc_note#*|}."
 fi
 # 1.20.0 (P1-69): a touched battery README's measurements that its claims
 # file does not carry are named here, at the checkpoint, and never refused.

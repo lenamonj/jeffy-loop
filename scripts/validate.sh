@@ -9520,6 +9520,15 @@ JSEOF
       printf '%s\n' "$hb_out"
       fault "stop hook said nothing about a Verify count that disagrees with the measured total"
     fi
+    # The same check refuses at a declaration under a rule's name; the notice
+    # is its text alone.
+    if printf '%s' "$hb_out" | jq -r '.reason' | grep -qF "VERIFY COUNT: PLAN.md's Verify count states 10" \
+      && ! printf '%s' "$hb_out" | jq -r '.reason' | grep -qE 'VERIFY COUNT: [a-z0-9]+(-[a-z0-9]+)+\|'; then
+      pass "a checkpoint notice from a shared check carries no rule prefix"
+    else
+      printf '%s\n' "$hb_out"
+      fault "a checkpoint notice from a shared check shows a rule prefix, or lost its text"
+    fi
     rm -f "$hb_state"
 
     printf '# Plan\n\n## Verify command\nCommand: echo "# pass 12"\nOracle class: unit tests\nEnvironment fingerprint: test host\nVerify summary pattern: # pass [0-9]+\nVerify count: 12\n\n## Surface inventory\n' > "$hb_proj/PLAN.md"
@@ -9581,6 +9590,23 @@ JSEOF
     else
       printf '%s\n' "$hb_out"
       fault "stop hook accepted a malformed claims line"
+    fi
+    rm -f "$hb_state"
+
+    # A shared check hands its rule's name back in front of its message, split
+    # at the first pipe - and a claims line can hold one.
+    printf 'foo | bar\n' > "$hb_proj/.jeffy/probes/newbat/claims"
+    hb_git add -A >/dev/null; hb_git commit -qm claims-pipe
+    hb_write_journal 1 3
+    hb_write_state_extra sess-1 1 3 "base_head: $hb_c1"
+    hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_out="$(hb_run sess-1 'done <promise>JEFFY CONVERGED</promise>' '')"
+    if printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF "'foo | bar'" \
+      && printf '%s' "$hb_out" | jq -r '.reason' 2>/dev/null | grep -qF '(rule claims-line-malformed)'; then
+      pass "a shared check's message that holds a pipe is said whole and names its rule"
+    else
+      printf '%s\n' "$hb_out"
+      fault "a shared check's message that holds a pipe was cut, or names no rule"
     fi
     rm -f "$hb_state"
     rm -rf "$hb_proj/.jeffy/probes/newbat"
@@ -11643,6 +11669,71 @@ print("jeffy=%d other=%d pre=%d model=%s env=%s" % (len(j), len(o), len(pre), s.
     fi
     rm -rf "$u_tmp"; u_tmp=""
   fi
+fi
+
+# X. The rule census. Every refusal and every run ending the Stop hook can
+#    state carries a name of its own, written at the site as the first
+#    argument of one of four helpers, and `stop-hook.sh --rules` prints the
+#    list from the hook's own source. The names key the fire log, so a site
+#    with no name fires unseen and a name on two sites counts two rules as
+#    one. The census reads the hook's text outside its helper block and
+#    outside comments: no line there assigns a message to `violation`
+#    directly, every call of a site helper names a literal slug, and no slug
+#    is written twice. The synthetic hooks come first, because a census that
+#    cannot fail proves nothing about the real one.
+ri_sites() { # $1 a stop hook; its lines outside the helper block and outside comments, numbered
+  grep -n '' "$1" | sed '/^[0-9]*:# rule helpers: begin$/,/^[0-9]*:# rule helpers: end$/d' | grep -vE '^[0-9]+:[[:space:]]*#'
+}
+ri_ids() { # $1 a stop hook; the literal rule id at every site, one per line
+  ri_sites "$1" | grep -oE '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire) [a-z0-9]+(-[a-z0-9]+)+ ' | awk '{ print $2 }'
+}
+ri_census_fault() { # $1 a stop hook; prints the first fault, or nothing when every site carries one name of its own
+  local ri_hit
+  ri_hit="$(ri_sites "$1" | grep -E '[^A-Za-z0-9_]violation="[^"]' | head -n 1)"
+  [ -z "$ri_hit" ] || { printf 'line %s assigns violation without a rule\n' "${ri_hit%%:*}"; return 0; }
+  ri_hit="$(ri_sites "$1" | grep -E '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire) ' \
+    | grep -vE '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire) [a-z0-9]+(-[a-z0-9]+)+ ' | head -n 1)"
+  [ -z "$ri_hit" ] || { printf 'line %s calls a rule helper without a literal rule id\n' "${ri_hit%%:*}"; return 0; }
+  ri_hit="$(ri_ids "$1" | sort | uniq -d | head -n 1)"
+  [ -z "$ri_hit" ] || { printf 'rule id %s names two sites\n' "$ri_hit"; return 0; }
+  return 0
+}
+ri_tmp="$(mktemp -d)" || ri_tmp=""
+if [ -z "$ri_tmp" ]; then
+  fault "the rule census fixture could not create its sandbox (mktemp failed)"
+else
+  # shellcheck disable=SC2016  # the fixture lines are hook source, written literally
+  printf '%s\n' '#!/usr/bin/env bash' '# rule helpers: begin' 'jeffy_refuse() { violation="$2"; violation_rule="$1"; }' \
+    'jeffy_end_run() { jeffy_rule_fire "$1" end; exit 0; }' '# rule helpers: end' 'violation=""' \
+    '  jeffy_refuse one-rule "first"' '  # jeffy_refuse commented-out "x"' 'jeffy_end_run two-rule "second"' \
+    '[ -n "$v" ] && jeffy_refuse_from "$v"' 'cf="$(jeffy_rule_msg three-rule "third | piped")"' \
+    'jeffy_rule_fire four-rule end' '[ -z "$violation" ] && echo ok' > "$ri_tmp/clean.sh"
+  cp "$ri_tmp/clean.sh" "$ri_tmp/dup.sh"; printf '%s\n' 'jeffy_rule_msg dup-id "a"' '  jeffy_refuse dup-id "b"' >> "$ri_tmp/dup.sh"
+  cp "$ri_tmp/clean.sh" "$ri_tmp/bare.sh"; printf '%s\n' '  violation="bare text"' >> "$ri_tmp/bare.sh"
+  # shellcheck disable=SC2016
+  { cp "$ri_tmp/clean.sh" "$ri_tmp/var.sh"; printf '%s\n' 'jeffy_refuse "$var" "text"' >> "$ri_tmp/var.sh"; }
+  if ri_census_fault "$ri_tmp/dup.sh" | grep -qxF 'rule id dup-id names two sites' \
+    && ri_census_fault "$ri_tmp/bare.sh" | grep -qF 'assigns violation without a rule' \
+    && ri_census_fault "$ri_tmp/var.sh" | grep -qF 'without a literal rule id' \
+    && [ -z "$(ri_census_fault "$ri_tmp/clean.sh")" ] \
+    && [ "$(ri_ids "$ri_tmp/clean.sh" | sort | tr '\n' ' ')" = "four-rule one-rule three-rule two-rule " ]; then
+    pass "the rule census refuses a shared id, a bare assignment and an id that is not literal, and accepts a clean hook"
+  else
+    ri_census_fault "$ri_tmp/dup.sh"; ri_census_fault "$ri_tmp/bare.sh"; ri_census_fault "$ri_tmp/var.sh"; ri_census_fault "$ri_tmp/clean.sh"
+    fault "the rule census accepted a shared id, a bare assignment or an id that is not literal, or refused a clean hook"
+  fi
+  rm -rf "$ri_tmp"
+fi
+ri_hook="skills/jeffy/hooks/stop-hook.sh"
+ri_fault="$(ri_census_fault "$ri_hook")"
+ri_listed="$(bash "$ri_hook" --rules 2>/dev/null < /dev/null)"
+ri_n="$(printf '%s\n' "$ri_listed" | grep -c .)"
+if [ -n "$ri_fault" ]; then
+  fault "the stop hook's rule census: $ri_fault"
+elif [ "$ri_n" -eq 0 ] || [ "$ri_listed" != "$(ri_ids "$ri_hook" | sort)" ]; then
+  fault "stop-hook.sh --rules prints $ri_n name(s), which is not the list of its own refusal and run-ending sites"
+else
+  pass "the stop hook names $ri_n refusal and run-ending sites, each once"
 fi
 
 # K. The check count the published pages state is a floor this run clears,
