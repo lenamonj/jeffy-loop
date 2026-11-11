@@ -110,3 +110,11 @@ Without flags it adds `IN_M` (input-side tokens in millions) and `OUT_K` (output
 ```
 bash scripts/jeffy-stats.sh . --weights 1,1.25,2,0.05,5 --input-price 4
 ```
+
+**Which rules fire.** From 1.29.0 every refusal and every run ending the Stop hook can state has a name, stated after its text as `(rule <name>)`. Each time one is stated, the hook appends a line to `.jeffy/metrics/<run>.fires.tsv`: epoch seconds, the iteration, the path and the name, tab separated. The path is `lint` when `stop-hook.sh --lint` printed the refusal, `declaration` when a declaration was refused, and `end` when the hook ended the run. Lint appends its line and still writes no turn record. The log holds names and never message text, and a line that cannot be written changes no verdict. `stop-hook.sh --rules` prints every name the engine carries.
+
+```
+bash scripts/jeffy-stats.sh [project-root] --rules
+```
+
+`--rules` counts each rule's fires by path (`LINT`, `DECLARED`, `ENDED`) and the runs it fired in (`RUNS`). It then lists the rules that never fired in this project, any fired name this engine does not carry, and the refused declarations of runs that predate the log. A count is evidence of use, not a score: a rule can be silent because lint taught the run to avoid it.

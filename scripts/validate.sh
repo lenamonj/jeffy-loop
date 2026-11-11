@@ -1328,6 +1328,53 @@ else
   fi
 fi
 
+# J2. The scorecard says it is "ordered by upstream outcome", and nothing held
+#     it to that: nine rows with a merged pull request sat below rows without
+#     one until the page was resorted by hand. A Fixed row belongs to the first
+#     group whose mark it carries - PR merged, fixed upstream, PR open, issue
+#     filed - or to the rest, and a row of an earlier group below a row of a
+#     later one is the fault, named with both rows.
+so_order_fault() { # $1 the receipts page; prints the first Fixed row that sits below a row of a later group
+  tr -d '\r' < "$1" | awk '
+    function grp(row) {
+      if (index(row, "PR merged")) return 0
+      if (index(row, "fixed upstream")) return 1
+      if (index(row, "PR open")) return 2
+      if (index(row, "issue filed")) return 3
+      return 4
+    }
+    function name(row,   c) { split(row, c, "|"); gsub(/^ +| +$/, "", c[2]); return c[2] }
+    BEGIN { split("merged|fixed upstream|open|issue filed|rest", g, "|") }
+    /^\| .* \| Fixed \|$/ {
+      if (seen && grp($0) < grp(prev)) {
+        printf "%s (%s) sits below %s (%s)\n", name($0), g[grp($0) + 1], name(prev), g[grp(prev) + 1]
+        exit
+      }
+      prev = $0; seen = 1
+    }'
+}
+so_tmp="$(mktemp -d)" || so_tmp=""
+if [ -z "$so_tmp" ]; then
+  fault "the scorecard order fixture could not create its sandbox (mktemp failed)"
+else
+  printf '| a | x [PR merged](u) | Fixed |\n| b | y [PR open](u) | Fixed |\n| c | z | Fixed |\n' > "$so_tmp/good.md"
+  printf '| a | x [PR open](u) | Fixed |\n| b | y [PR merged](u) | Fixed |\n' > "$so_tmp/bad.md"
+  if [ "$(so_order_fault "$so_tmp/bad.md")" = "b (merged) sits below a (open)" ] && [ -z "$(so_order_fault "$so_tmp/good.md")" ]; then
+    pass "the scorecard order check names a merged row below an open one, and accepts an ordered page"
+  else
+    so_order_fault "$so_tmp/bad.md"; so_order_fault "$so_tmp/good.md"
+    fault "the scorecard order check missed a merged row below an open one, or refused an ordered page"
+  fi
+  rm -rf "$so_tmp"
+fi
+so_fault="$(so_order_fault "$scorecard")"
+so_rows="$(tr -d '\r' < "$scorecard" | grep -c '^| .* | Fixed |$')"
+if [ -z "$so_fault" ] && [ "$so_rows" -gt 0 ]; then
+  pass "the scorecard's Fixed rows are in outcome order"
+else
+  fault "the scorecard is out of its published order ($so_rows Fixed rows read): ${so_fault:-no Fixed row was read}"
+fi
+
 # L/M. Enumerations the product text asserts about the engine's own behaviour,
 #      derived from the engine rather than transcribed beside it. Check J
 #      covers the totals the published pages carry; these two cover the other
@@ -9172,6 +9219,70 @@ JSEOF
       fault "jeffy-stats misread the token fields of a measured run or an unmeasured one"
     fi
     rm -f "$hb_proj/.jeffy/metrics/aaaaaaaa-010101.jsonl" "$hb_proj/.jeffy/metrics/bbbbbbbb-020202.jsonl"
+
+    # --rules: each rule's fires by path, read from the fire logs, against the
+    # Stop hook's own list of names. The sandbox holds two runs with a fire
+    # log - one checked out with CRLF line ends, which is what `* text=auto`
+    # gives a committed log on Windows, and one firing a name this engine does
+    # not carry - and one older run with refused declarations and no log.
+    js_proj="$hb_tmp/rules-proj"
+    mkdir -p "$js_proj/.jeffy/metrics"
+    printf '{"declaration":{"verdict":"refused","reason":"x"}}\n{"declaration":{"verdict":"refused","reason":"y"}}\n{"declaration":null}\n' > "$js_proj/.jeffy/metrics/dddddddd-150000.jsonl"
+    printf '{"declaration":{"verdict":"refused","reason":"z"}}\n' > "$js_proj/.jeffy/metrics/aaaaaaaa-120000.jsonl"
+    js_plain_before="$(bash scripts/jeffy-stats.sh "$js_proj" 2>&1)"
+    printf '100\t3\tlint\tbacklog-open-high-medium\n101\t3\tlint\tbacklog-open-high-medium\n102\t3\tdeclaration\tbacklog-open-high-medium\n' > "$js_proj/.jeffy/metrics/aaaaaaaa-120000.fires.tsv"
+    printf '103\t1\tlint\tbacklog-open-high-medium\r\n104\t2\tend\tstall-two-flat\r\n105\t2\tdeclaration\tretired-rule-x\r\n' > "$js_proj/.jeffy/metrics/bbbbbbbb-130000.fires.tsv"
+    js_n="$(bash skills/jeffy/hooks/stop-hook.sh --rules < /dev/null | sort -u | grep -c .)"
+    js_r="$(bash scripts/jeffy-stats.sh "$js_proj" --rules 2>&1)"; js_rc=$?
+    js_fault() { printf 'rc=%s\n%s\n' "$js_rc" "$js_r"; fault "$1"; }
+    if [ "$js_rc" -eq 0 ] && printf '%s\n' "$js_r" | grep -qE '^backlog-open-high-medium +3 +1 +0 +2$'; then
+      pass "jeffy-stats --rules counts each rule's fires by path and the runs it fired in"
+    else
+      js_fault "jeffy-stats --rules miscounted a rule's fires by path, or the runs it fired in"
+    fi
+    if printf '%s\n' "$js_r" | grep -qE '^stall-two-flat +0 +0 +1 +1$'; then
+      pass "a fire log with CRLF line ends counts the same"
+    else
+      js_fault "a fire log with CRLF line ends was miscounted"
+    fi
+    if [ "$js_n" -gt 2 ] && printf '%s\n' "$js_r" | grep -qx "never fired: $((js_n - 2)) of $js_n" \
+      && printf '%s\n' "$js_r" | grep -qx '  inventory-row-stale'; then
+      pass "a rule that never fired is counted against the engine's own list and named"
+    else
+      js_fault "a rule that never fired was not counted against the engine's list ($js_n names), or not named"
+    fi
+    if printf '%s\n' "$js_r" | grep -qx '  retired-rule-x  1 fire(s)'; then
+      pass "a fired id this engine does not carry is listed, not dropped"
+    else
+      js_fault "a fired id this engine does not carry was dropped"
+    fi
+    if printf '%s\n' "$js_r" | grep -qx 'refused declarations in runs with no fire log: 2'; then
+      pass "refused declarations older than the fire log are counted as unidentified, once"
+    else
+      js_fault "refused declarations in runs with no fire log were not counted, or a run with a log was counted too"
+    fi
+    # An unknown flag exits 2 as well, so the refusal is read by its reason.
+    js_mix="$(bash scripts/jeffy-stats.sh "$js_proj" --rules --weights 1,1,1,1,1 2>&1)"; js_mix_rc=$?
+    if [ "$js_mix_rc" -eq 2 ] && printf '%s\n' "$js_mix" | grep -qF 'takes no --weights or --input-price'; then
+      pass "jeffy-stats refuses --rules beside a token flag, and says why"
+    else
+      printf 'rc=%s\n%s\n' "$js_mix_rc" "$js_mix"
+      fault "jeffy-stats took --rules beside a token flag, or refused it without saying why (exit $js_mix_rc)"
+    fi
+    # The rule list is the hook's own, so the script alone cannot answer.
+    mkdir -p "$hb_tmp/stats-alone/scripts" && cp scripts/jeffy-stats.sh "$hb_tmp/stats-alone/scripts/"
+    js_alone="$(bash "$hb_tmp/stats-alone/scripts/jeffy-stats.sh" "$js_proj" --rules 2>&1)"; js_alone_rc=$?
+    if [ "$js_alone_rc" -eq 2 ] && printf '%s\n' "$js_alone" | grep -qF 'which is not there; run it from a clone.'; then
+      pass "jeffy-stats --rules without the Stop hook beside it stops and says where it looked"
+    else
+      printf 'rc=%s\n%s\n' "$js_alone_rc" "$js_alone"
+      fault "jeffy-stats --rules ran with no Stop hook to read the rule list from (exit $js_alone_rc)"
+    fi
+    if [ "$(bash scripts/jeffy-stats.sh "$js_proj" 2>&1)" = "$js_plain_before" ]; then
+      pass "jeffy-stats without --rules prints what it printed before (control)"
+    else
+      fault "a fire log changed what jeffy-stats prints without --rules"
+    fi
 
     # P2-26: context pressure, measured from the transcript rather than
     # counted in iterations. The engine re-feeds one session, so context

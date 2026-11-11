@@ -68,10 +68,11 @@ if [ "${1:-}" = "--rules" ]; then
 fi
 # 1.21.0 (P1-70): `stop-hook.sh --lint [project root]` derives every check
 # the declaration path enforces and prints the first refusal, or clean,
-# without re-feeding, verifying, ending a run or writing a record. The
-# iteration prompt runs it before each gate invocation: commons-cli lost two
-# evaluator PASSes and python-slugify its convergence to state-file forms
-# this hook refuses - refusals the run could have read for itself.
+# without re-feeding, verifying, ending a run or writing a turn record; a
+# refusal it prints is appended to the run's fire log. The iteration prompt
+# runs it before each gate invocation: commons-cli lost two evaluator PASSes
+# and python-slugify its convergence to state-file forms this hook refuses -
+# refusals the run could have read for itself.
 lint=0
 if [ "${1:-}" = "--lint" ]; then
   lint=1

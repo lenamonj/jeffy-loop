@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # jeffy-stats.sh [project-root] [--weights in,w5m,w1h,read,out] [--input-price <usd per million>]
+# jeffy-stats.sh [project-root] --rules
 # - read a project's committed run telemetry.
 #
 # JOURNAL.md is prose: greppable, which is enough for one run and useless
@@ -20,12 +21,15 @@
 # skip where jq is absent rather than a hard failure.
 set -u
 
-usage="usage: jeffy-stats.sh [project-root] [--weights in,w5m,w1h,read,out] [--input-price <usd per million>]"
+usage="usage: jeffy-stats.sh [project-root] [--weights in,w5m,w1h,read,out] [--input-price <usd per million>]
+       jeffy-stats.sh [project-root] --rules"
 root="."
 weights=""
 price=""
+rules=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --rules) rules=1; shift ;;
     --weights)
       if ! printf '%s' "${2:-}" | grep -Eq '^[0-9]+(\.[0-9]+)?(,[0-9]+(\.[0-9]+)?){4}$'; then
         echo "jeffy-stats: --weights takes five comma-separated non-negative decimals (input, five-minute write, one-hour write, cache read, output), got '${2:-}'." >&2
@@ -52,6 +56,18 @@ if [ -n "$price" ] && [ -z "$weights" ]; then
   echo "$usage" >&2
   exit 2
 fi
+hook="$(dirname "$0")/../skills/jeffy/hooks/stop-hook.sh"
+if [ "$rules" = 1 ]; then
+  if [ -n "$weights" ] || [ -n "$price" ]; then
+    echo "jeffy-stats: --rules prints fires per rule and no token column, so it takes no --weights or --input-price." >&2
+    echo "$usage" >&2
+    exit 2
+  fi
+  if [ ! -f "$hook" ]; then
+    echo "jeffy-stats: --rules reads the rule list from $hook, which is not there; run it from a clone." >&2
+    exit 2
+  fi
+fi
 dir="$root/.jeffy/metrics"
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -60,6 +76,55 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 if [ ! -d "$dir" ]; then
   echo "jeffy-stats: no telemetry at $dir (no run has recorded one here yet)."
+  exit 0
+fi
+
+# --rules: fires per rule, read from each run's fire log (one line per refusal
+# the hook printed: epoch, iteration, path, rule) against the names the hook
+# itself lists. Known names and fire lines reach awk as one tagged stream.
+if [ "$rules" = 1 ]; then
+  {
+    bash "$hook" --rules < /dev/null | sort -u | awk '{ print "K\t" $0 }'
+    for f in "$dir"/*.fires.tsv; do
+      [ -f "$f" ] || continue
+      run="$(basename "$f" .fires.tsv)"
+      tr -d '\r' < "$f" | JS_RUN="$run" awk -F'\t' 'NF == 4 { print "F\t" ENVIRON["JS_RUN"] "\t" $3 "\t" $4 }'
+    done
+  } | awk -F'\t' '
+    function sorted(a, n,   i, j, t) {
+      for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (a[j] < a[i]) { t = a[i]; a[i] = a[j]; a[j] = t }
+    }
+    $1 == "K" { if ($2 != "") { known[$2] = 1; total++ }; next }
+    { n[$4, $3]++; fires[$4]++; if (!(($4, $2) in seenrun)) { seenrun[$4, $2] = 1; runs[$4]++ } }
+    END {
+      printf "%-40s %6s %8s %6s %6s\n", "RULE", "LINT", "DECLARED", "ENDED", "RUNS"
+      for (id in fires) if (id in known) row[++k] = sprintf("%09d\t%s", 999999999 - fires[id], id)
+      sorted(row, k)
+      for (i = 1; i <= k; i++) {
+        split(row[i], p, "\t"); id = p[2]
+        printf "%-40s %6d %8d %6d %6d\n", id, n[id, "lint"], n[id, "declaration"], n[id, "end"], runs[id]
+      }
+      for (id in known) if (!(id in fires)) quiet[++q] = id
+      sorted(quiet, q)
+      printf "\nnever fired: %d of %d\n", q, total
+      for (i = 1; i <= q; i++) printf "  %s\n", quiet[i]
+      for (id in fires) if (!(id in known)) other[++o] = id
+      sorted(other, o)
+      if (o) printf "\nnot in this engine\047s rule set: %d\n", o
+      for (i = 1; i <= o; i++) printf "  %s  %d fire(s)\n", other[i], fires[other[i]]
+    }'
+  # A run older than the fire log has refused declarations no rule is known
+  # for: counted as unidentified, never as zero.
+  old=0
+  for f in "$dir"/*.jsonl; do
+    [ -f "$f" ] || continue
+    [ -f "${f%.jsonl}.fires.tsv" ] && continue
+    c="$(jq -s '[.[] | select(.declaration.verdict? == "refused")] | length' "$f" 2>/dev/null)"
+    case "$c" in ''|*[!0-9]*) c=0 ;; esac
+    old=$((old + c))
+  done
+  [ "$old" -gt 0 ] && printf '\nrefused declarations in runs with no fire log: %d\n' "$old"
+  printf '\nA count is evidence of use, not a score: a rule can be silent because lint taught the run to avoid it.\n'
   exit 0
 fi
 
