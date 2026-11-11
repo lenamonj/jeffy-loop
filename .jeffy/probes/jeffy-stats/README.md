@@ -78,11 +78,28 @@ and confirmed to move the same figure.
 
 ## The expected total
 
-`run.sh` records 24 executed checks, while `grep -c '^ *ck "' run.sh` returns
-27. The difference is not a dropped check: the `jq`-absent branch writes its
-three checks once per arm, so three of the 27 sites can never run in the same
+`run.sh` records 31 executed checks, while `grep -c '^ *ck "' run.sh` returns
+34. The difference is not a dropped check: the `jq`-absent branch writes its
+three checks once per arm, so three of the 34 sites can never run in the same
 pass. The executed figure is worked out from the arms beforehand, and a
 disagreement with it gets explained before it gets edited.
+
+It read 24 against 27 until run 27 iteration 2. 1.28.0 gave this reader two
+new columns, `IN_M` and `OUT_K`, and two new parameters behind them,
+`--weights` and `--input-price`, and left four of this battery's arms pinning
+the header and the three row shapes without them - so the instrument was red
+for a release while the columns it existed to grade had no arm at all. The
+seven arms added there are the token section, and their answers were worked
+out before the run and not read off it: the fixture's per-session-last sums
+are 1,500,000 on the input side and 30,000 out, giving `IN_M` 1.5 and `OUT_K`
+30; flat weights total 1,530,000 with the cache read 61 percent of it and
+`1,2,3,4,6` total 4,580,000 with the read 82 percent; and at 4 USD per
+million those two totals cost 6.12 and 18.32. One of the seven was wrong on
+its first run and the way it was wrong is worth the line: `COST` is the
+twelfth field of the squeezed row and the arm read the eleventh, so it
+compared the read share against the cost and reported `61 82` where it wanted
+`6.12 18.32` - a field index is part of the expectation and it was fixed by
+reading the real header rather than by taking what the run returned.
 
 ## What it cannot reach
 

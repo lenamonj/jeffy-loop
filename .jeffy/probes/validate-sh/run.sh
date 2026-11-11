@@ -195,7 +195,7 @@ ck "the EXIT trap names at least one sandbox variable" yes \
 ck "known gap: the sandboxes no path ever removes (J12)" "rv_tmp" \
   "$(comm -23 "$vs_tmp/mk" "$vs_tmp/cleaned" | tr '\n' ' ' | sed 's/ *$//')"
 ck "known gap: the sandboxes removed only on the normal path, outside the trap (J12)" \
-  "cc_tmp hu_tmp qv_tmp s_tmp u_tmp" \
+  "cc_tmp hu_tmp qv_tmp ri_tmp s_tmp so_tmp u_tmp" \
   "$(comm -12 "$vs_tmp/mk" "$vs_tmp/rm" | comm -23 - "$vs_tmp/trap" | tr '\n' ' ' | sed 's/ *$//')"
 ck "the sandboxes the trap covers" "hb_tmp k4_tmp pr_tmp rt_tmp v_tmp" \
   "$(comm -12 "$vs_tmp/mk" "$vs_tmp/trap" | tr '\n' ' ' | sed 's/ *$//')"

@@ -132,7 +132,7 @@ awk '/^## Arguments$/ { f = 1; next } f && /^## / { exit } f' "$lc_skill" > "$lc
 # shellcheck disable=SC2016
 # Literal markdown backticks delimit each flag in the skill's prose; they are
 # not a command substitution.
-ck "the launcher's flag set" "--highs --max-context --max-iter-time --max-surface --max-time --refeed " \
+ck "the launcher's flag set" "--evaluator-probe --highs --max-context --max-iter-time --max-surface --max-time --refeed " \
   "$(grep -ohE '`--[a-z][a-z-]+`' "$lc_args" | tr -d '`' | sort -u | tr '\n' ' ')"
 # shellcheck disable=SC2016
 ck "the two values --refeed accepts" "full pointer" \
