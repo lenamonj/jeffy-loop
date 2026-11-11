@@ -11,7 +11,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Mac%20%7C%20Linux-0EA5E9?style=for-the-badge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
 
-**[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/docs/The-Jeffy-Loop.pdf)** &nbsp;·&nbsp; **[STE100 description](https://github.com/lenamonj/jeffy-loop/raw/main/docs/Jeffy-Loop-STE100.pdf)**
+**[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[RSI](docs/recursive-self-improvement.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/docs/The-Jeffy-Loop.pdf)** &nbsp;·&nbsp; **[STE100 description](https://github.com/lenamonj/jeffy-loop/raw/main/docs/Jeffy-Loop-STE100.pdf)**
 
 ## A Claude Code loop that finds bugs in your repo, fixes them, and checks every fix before it commits. Maintainers have merged <!-- count:merged -->78<!-- /count --> of its patches.
 
@@ -139,6 +139,10 @@ Each rule is enforced by the iteration prompt, the state files or the Stop hook,
 | **Three gates decide done** | A fresh audit with no High or Medium findings, an adversarial evaluator's countersignature, and a shell re-run of your tests. In one greenfield build in August 2026, before the gate was narrowed to the run's own changes, the evaluator was invoked 8 times and rejected 7. A High hunt skips the evaluator and never claims convergence. |
 | **No convergence over unswept surface** | The Stop hook refuses to converge while any row of the public-surface checklist is unswept, and a row that names its battery reopens when its code changes. |
 | **Lessons become checks** | A rule learned once binds every later iteration. The engine passes at least <!-- count:checks -->**545 behavioural checks**<!-- /count --> on each of Linux, Windows and macOS. [How the loop improves itself.](docs/how-it-works.md#the-loop-improves-the-loop) |
+
+### Recursive self-improvement (RSI)
+
+Jeffy runs almost the whole RSI cycle on its own engine. Pointed at its own repository under the same rules as any outside project, it finds a defect, writes the fix, proves it with a behavioural check that fails if the defect returns, and has a second agent try to reject the work; the engine that comes out audits the next round. From 1.29.0 it also names every refusal and run ending and keeps a fire log, so it can count which of its own rules do work. One step is left out on purpose: a human in the loop makes every final decision on what ships. The model itself never changes. [What RSI means here, and where it stops.](docs/recursive-self-improvement.md)
 
 ### <img src="media/seal-mark.png" width="30" alt="" align="absmiddle"> Trust model
 
@@ -320,6 +324,7 @@ Each finding below was reproduced upstream, and the project shipped its own fix 
 |:---|:---|
 | [Usage](docs/usage.md) | Flags, rounds and budgets, [High hunt](docs/usage.md#high-hunt), scoped mode, cancelling, [upgrading](docs/usage.md#already-installed-upgrade), uninstalling, and what to know before a first run |
 | [How it works](docs/how-it-works.md) | The run lifecycle, what the engine enforces, the full rule set, what a converged stop looks like, and how the loop improves itself |
+| [Recursive self-improvement](docs/recursive-self-improvement.md) | What RSI means in Jeffy: the cycle it runs on its own engine, the step a human in the loop keeps, the guardrails, and what it is not |
 | [Headless runs](docs/headless.md) | Running budgeted rounds unattended from bash or PowerShell |
 | [The receipts](evals/README.md) | Every open-source target with its outcome, the merged patches, the greenfield builds |
 | [Contributing](CONTRIBUTING.md) | The validator and the review bar |
