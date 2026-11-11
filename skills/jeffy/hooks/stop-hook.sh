@@ -22,8 +22,13 @@ JEFFY_VERSION="1.29.0"
 # takes no part in deciding it.
 jeffy_rule_fire() { # $1 rule id, $2 path: lint | declaration | end
   [ -n "${run_tok:-}" ] || return 0
+  # The iteration field is a decimal, or 0 when the iteration cannot be read.
+  # It is settled in a statement of its own: the bash 3.2 a stock macOS runs
+  # cannot parse a case inside a command substitution.
+  fire_iter="${iter:-}"
+  case "$fire_iter" in '' | *[!0-9]*) fire_iter=0 ;; esac
   if ! { mkdir -p "$root/.jeffy/metrics" 2>/dev/null \
-    && printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$(case "${iter:-}" in '' | *[!0-9]*) echo 0 ;; *) echo "$iter" ;; esac)" "$2" "$1" 2>/dev/null >> "$root/.jeffy/metrics/$runid8.fires.tsv"; }; then
+    && printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$fire_iter" "$2" "$1" 2>/dev/null >> "$root/.jeffy/metrics/$runid8.fires.tsv"; }; then
     echo "jeffy stop hook: could not append to $root/.jeffy/metrics/$runid8.fires.tsv; the fire of $1 is not recorded." >&2
   fi
 }
