@@ -67,6 +67,11 @@ if [ "$rules" = 1 ]; then
     echo "jeffy-stats: --rules reads the rule list from $hook, which is not there; run it from a clone." >&2
     exit 2
   fi
+  ids="$(bash "$hook" --rules < /dev/null | sort -u)"
+  if [ -z "$ids" ]; then
+    echo "jeffy-stats: $hook --rules listed no rule name, so no fire can be read against it." >&2
+    exit 2
+  fi
 fi
 dir="$root/.jeffy/metrics"
 
@@ -84,17 +89,20 @@ fi
 # itself lists. Known names and fire lines reach awk as one tagged stream.
 if [ "$rules" = 1 ]; then
   {
-    bash "$hook" --rules < /dev/null | sort -u | awk '{ print "K\t" $0 }'
+    printf '%s\n' "$ids" | awk '{ print "K\t" $0 }'
     for f in "$dir"/*.fires.tsv; do
       [ -f "$f" ] || continue
       run="$(basename "$f" .fires.tsv)"
-      tr -d '\r' < "$f" | JS_RUN="$run" awk -F'\t' 'NF == 4 { print "F\t" ENVIRON["JS_RUN"] "\t" $3 "\t" $4 }'
+      tr -d '\r' < "$f" | JS_RUN="$run" awk -F'\t' '
+        NF == 4 && $4 != "" { print "F\t" ENVIRON["JS_RUN"] "\t" $3 "\t" $4; next }
+        $0 != "" { print "B" }'
     done
   } | awk -F'\t' '
     function sorted(a, n,   i, j, t) {
       for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (a[j] < a[i]) { t = a[i]; a[i] = a[j]; a[j] = t }
     }
     $1 == "K" { if ($2 != "") { known[$2] = 1; total++ }; next }
+    $1 == "B" { bad++; next }
     { n[$4, $3]++; fires[$4]++; if (!(($4, $2) in seenrun)) { seenrun[$4, $2] = 1; runs[$4]++ } }
     END {
       printf "%-40s %6s %8s %6s %6s\n", "RULE", "LINT", "DECLARED", "ENDED", "RUNS"
@@ -112,18 +120,27 @@ if [ "$rules" = 1 ]; then
       sorted(other, o)
       if (o) printf "\nnot in this engine\047s rule set: %d\n", o
       for (i = 1; i <= o; i++) printf "  %s  %d fire(s)\n", other[i], fires[other[i]]
+      if (bad) printf "\nfire lines not read (not four tab-separated fields): %d\n", bad
     }'
   # A run older than the fire log has refused declarations no rule is known
-  # for: counted as unidentified, never as zero.
+  # for: counted as unidentified, never as zero. Read line by line, so one
+  # line that is not a record is counted and said instead of voiding its file.
   old=0
+  unread=0
   for f in "$dir"/*.jsonl; do
     [ -f "$f" ] || continue
     [ -f "${f%.jsonl}.fires.tsv" ] && continue
-    c="$(jq -s '[.[] | select(.declaration.verdict? == "refused")] | length' "$f" 2>/dev/null)"
-    case "$c" in ''|*[!0-9]*) c=0 ;; esac
-    old=$((old + c))
+    marks="$(jq -R -r 'select(test("[^ \t\r]")) | [fromjson?] as $one
+      | if ($one | length) == 0 or ($one[0] | type) != "object" then "B"
+        elif ($one[0].declaration | type) == "object" and $one[0].declaration.verdict == "refused" then "R"
+        else empty end' < "$f")"
+    old=$((old + $(printf '%s\n' "$marks" | grep -c '^R$')))
+    unread=$((unread + $(printf '%s\n' "$marks" | grep -c '^B$')))
   done
-  [ "$old" -gt 0 ] && printf '\nrefused declarations in runs with no fire log: %d\n' "$old"
+  if [ "$old" -gt 0 ] || [ "$unread" -gt 0 ]; then
+    printf '\nrefused declarations in runs with no fire log: %d\n' "$old"
+  fi
+  [ "$unread" -gt 0 ] && printf 'turn-record lines not read in those runs: %d\n' "$unread"
   printf '\nA count is evidence of use, not a score: a rule can be silent because lint taught the run to avoid it.\n'
   exit 0
 fi

@@ -319,8 +319,8 @@ fi
 # not depend on which branch ends the turn. Every field defaults, because
 # the early exits fire long before the fingerprint and sweep numbers exist
 # and `set -u` inside a trap would abort the hook rather than the write.
-# Lint records nothing: a record written by a read-only pass would be a turn
-# end that never happened.
+# Lint writes no turn record: one written by a read-only pass would be a turn
+# end that never happened. A refusal it prints goes to the fire log instead.
 jeffy_metrics_written="$lint"
 # P2-41: the verdict on a declaration is written here, on the hook's own
 # metrics line, because a Converged line is appended by the declarer and
@@ -871,7 +871,7 @@ jeffy_cert_hash_check() {
   elif [ -n "$conv_hash" ] && ! jeffy_names_hash "$root" "$conv_hash"; then
     jeffy_refuse cert-ref-not-a-hash "the $cert_sec line names $conv_hash, which is not a commit named by its hexadecimal hash; HEAD, @, a branch or a tag moves with the tree, so every test of the certified tree would compare HEAD with itself and the receipt would record a name no clone resolves to the same commit - write the commit's full hash - the field is read as 7 to 64 hexadecimal characters, so an abbreviation that resolves is accepted"
   elif [ -z "$conv_hash" ] || ! git -C "$root" rev-parse --verify --quiet "$conv_hash^{commit}" >/dev/null 2>&1; then
-    jeffy_refuse cert-line-missing "the ## $cert_sec section of BACKLOG.md does not name a commit in this repository; append the $cert_sec line for the certified checkpoint"
+    jeffy_refuse cert-names-no-commit "the ## $cert_sec section of BACKLOG.md does not name a commit in this repository; append the $cert_sec line for the certified checkpoint"
   else
     # Reachability first, because an orphaned hash makes the
     # nothing-but-state comparison below meaningless: git will happily
@@ -1270,9 +1270,7 @@ if [ "$lint" = 0 ] && [ "$hunt" = 0 ] && [ "$(fm extension_granted)" = "1" ] && 
       }
     ' "$root/JOURNAL.md")"
     if [ -n "$ext_audit" ]; then
-      echo "jeffy stop hook: an AUDIT entry sits at iteration $ext_audit, inside the closing extension window; the extension buys the convergence sequence and never an audit, so a clean audit produced there is not a precondition a declaration may cite. Ending the run out of budget; convergence falls to the next run's fresh audit." >&2
-      rm -f "$state"
-      exit 0
+      jeffy_end_run audit-in-extension "jeffy stop hook: an AUDIT entry sits at iteration $ext_audit, inside the closing extension window; the extension buys the convergence sequence and never an audit, so a clean audit produced there is not a precondition a declaration may cite. Ending the run out of budget; convergence falls to the next run's fresh audit."
     fi
   fi
 fi
@@ -1678,7 +1676,7 @@ if [ -n "$promise" ]; then
             if [ "$lint" = 1 ] && [ "$fa_iter" = "$iter" ]; then
               hunt_pending="$fa_msg"
             else
-              jeffy_refuse last-audit-no-checkpoint "$fa_msg"
+              jeffy_refuse last-audit-no-resolvable-checkpoint "$fa_msg"
             fi
           else
             fa_moved="$(git -C "$root" diff --no-renames --name-only --relative "$fa_hash" HEAD 2>/dev/null | grep -vE "$JEFFY_LOOP_MEMORY_RE" | head -n 1)"
@@ -1907,7 +1905,7 @@ if [ -n "$promise" ]; then
                 ev_pending=1
                 hunt_pending="$hunt_pending${hunt_pending:+; and }the closing entry records no Evaluator verdict yet"
               else
-                jeffy_refuse evaluator-verdict-missing "the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare - unless this run has spent every invocation its cap allows, in which case it may not re-invoke at all and ends blocked in gate salvage instead"
+                jeffy_refuse evaluator-verdict-unrecorded "the closing entry records no Evaluator verdict; run the adversarial evaluator gate and record the verdict it returns, then re-declare - unless this run has spent every invocation its cap allows, in which case it may not re-invoke at all and ends blocked in gate salvage instead"
               fi
               ;;
             reject)
@@ -1918,7 +1916,7 @@ if [ -n "$promise" ]; then
               ;;
             pass)
               if [ ! -f "$root/$ev_art" ] || [ ! -s "$root/$ev_art" ]; then
-                jeffy_refuse evaluator-artifact-empty "the closing entry records Evaluator: PASS but $ev_art is not a file with content; the gate writes .jeffy/evaluator/$runid8-<n>.md, where n is the invocation ordinal, naming every command it ran and that command's real exit status, and a PASS with nothing behind it is eleven typed characters"
+                jeffy_refuse evaluator-artifact-no-content "the closing entry records Evaluator: PASS but $ev_art is not a file with content; the gate writes .jeffy/evaluator/$runid8-<n>.md, where n is the invocation ordinal, naming every command it ran and that command's real exit status, and a PASS with nothing behind it is eleven typed characters"
               elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
                 ev_head_blob="$(git -C "$root" rev-parse --quiet --verify "HEAD:./$ev_art" 2>/dev/null || true)"
                 ev_work_blob="$(git -C "$root" hash-object -- "$ev_art" 2>/dev/null || true)"
@@ -1965,7 +1963,7 @@ if [ -n "$promise" ]; then
                 ev_next="the highest gate ordinal on this run's record is $ev_spent, so an invocation remains: re-invoke the gate, which must end its artifact with the line 'Verdict: PASS' or 'Verdict: REJECT', and declare on the PASS its next ordinal records"
               fi
               if [ -z "$violation" ] && [ "$ev_art_verdict" = "several" ]; then
-                jeffy_refuse evaluator-artifact-two-verdicts "the closing entry records Evaluator: PASS but the gate's own artifact $ev_art carries more than one verdict line - a line that begins with Verdict, Final Verdict, Overall Verdict, Overall, Result or Outcome and states PASS, REJECT or FAIL, in whatever form; the gate ends its artifact with one line reading exactly 'Verdict: PASS' or 'Verdict: REJECT' and writes no other line beginning with a verdict label anywhere in it, an earlier round's quoted verdict included, and the artifact is never edited after it, so nothing here says which one the gate returned; $ev_next"
+                jeffy_refuse evaluator-artifact-several-verdicts "the closing entry records Evaluator: PASS but the gate's own artifact $ev_art carries more than one verdict line - a line that begins with Verdict, Final Verdict, Overall Verdict, Overall, Result or Outcome and states PASS, REJECT or FAIL, in whatever form; the gate ends its artifact with one line reading exactly 'Verdict: PASS' or 'Verdict: REJECT' and writes no other line beginning with a verdict label anywhere in it, an earlier round's quoted verdict included, and the artifact is never edited after it, so nothing here says which one the gate returned; $ev_next"
               elif [ -z "$violation" ] && [ "$ev_art_verdict" = "reject" ]; then
                 jeffy_refuse evaluator-artifact-says-reject "the closing entry records Evaluator: PASS but the gate's own artifact $ev_art records REJECT; the artifact is the verdict and the journal line only transcribes it, so file each reason it names that this run can reproduce and work them - with an invocation remaining, re-invoke the gate and declare on the PASS its next ordinal records, and with none remaining end blocked in gate salvage, never re-invoking and never declaring"
               elif [ -z "$violation" ] && [ "$ev_art_verdict" != "pass" ]; then

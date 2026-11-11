@@ -117,4 +117,4 @@ bash scripts/jeffy-stats.sh . --weights 1,1.25,2,0.05,5 --input-price 4
 bash scripts/jeffy-stats.sh [project-root] --rules
 ```
 
-`--rules` counts each rule's fires by path (`LINT`, `DECLARED`, `ENDED`) and the runs it fired in (`RUNS`). It then lists the rules that never fired in this project, any fired name this engine does not carry, and the refused declarations of runs that predate the log. A count is evidence of use, not a score: a rule can be silent because lint taught the run to avoid it.
+`--rules` counts each rule's fires by path (`LINT`, `DECLARED`, `ENDED`) and the runs it fired in (`RUNS`). It then lists the rules that never fired in this project, any fired name this engine does not carry, and the refused declarations of runs that predate the log. A line it cannot read, in a fire log or in such a run's turn records, is counted and said. A count is evidence of use, not a score: a rule can be silent because lint taught the run to avoid it.

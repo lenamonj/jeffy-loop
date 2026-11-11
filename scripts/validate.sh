@@ -7156,6 +7156,8 @@ Verdict: PASS"
         '## iter 3/4 | sess-1-000000 | 2026-01-01 | AUDIT | audit:::Verification: clean audit, filed nothing.'
       hb_p2_fixture
       hb_write_state_extra sess-1 3 4 'extension_granted: 1'
+      hb_xa_n="$(fl_n "$hb_proj")"
+      hb_xa_h="$(fl_has "$hb_proj" "end${fl_tab}audit-in-extension")"
       hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
       if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] \
         && grep -q 'never an audit' "$hb_tmp/hb_err.txt"; then
@@ -7164,6 +7166,15 @@ Verdict: PASS"
         printf '%s\n' "$hb_out"
         cat "$hb_tmp/hb_err.txt" 2>/dev/null
         fault "stop hook let a full audit run inside the closing extension window"
+      fi
+      if [ "$(fl_n "$hb_proj")" = "$((hb_xa_n + 1))" ] \
+        && [ "$(fl_has "$hb_proj" "end${fl_tab}audit-in-extension")" = "$((hb_xa_h + 1))" ] \
+        && grep -qF '(rule audit-in-extension)' "$hb_tmp/hb_err.txt"; then
+        pass "a run ended by an audit inside the extension window appends a fire line on the end path"
+      else
+        cat "$hb_proj"/.jeffy/metrics/*.fires.tsv 2>/dev/null
+        cat "$hb_tmp/hb_err.txt" 2>/dev/null
+        fault "a run ended by an audit inside the extension window left no fire line on the end path, or its note names no rule"
       fi
 
       # The declaration variant: the same journal one turn later, promise
@@ -9282,6 +9293,39 @@ JSEOF
       pass "jeffy-stats without --rules prints what it printed before (control)"
     else
       fault "a fire log changed what jeffy-stats prints without --rules"
+    fi
+    # Damaged input is said, never read as zero: a turn-record file with one
+    # line that is not JSON between two refused declarations, and a fire log
+    # with one line cut short of its rule.
+    js_dmg="$hb_tmp/rules-damaged"
+    mkdir -p "$js_dmg/.jeffy/metrics"
+    printf '{"declaration":{"verdict":"refused","reason":"x"}}\nnot json\n{"declaration":{"verdict":"refused","reason":"y"}}\n' > "$js_dmg/.jeffy/metrics/eeeeeeee-160000.jsonl"
+    printf '106\t1\tlint\tbacklog-open-high-medium\n107\t1\tlint\n' > "$js_dmg/.jeffy/metrics/ffffffff-170000.fires.tsv"
+    js_d="$(bash scripts/jeffy-stats.sh "$js_dmg" --rules 2>&1)"
+    if printf '%s\n' "$js_d" | grep -qx 'refused declarations in runs with no fire log: 2' \
+      && printf '%s\n' "$js_d" | grep -qx 'turn-record lines not read in those runs: 1'; then
+      pass "a turn-record line that is not JSON is said, and does not void its file's refused declarations"
+    else
+      printf '%s\n' "$js_d"
+      fault "one damaged turn-record line zeroed its file's refused declarations, or was not said"
+    fi
+    if printf '%s\n' "$js_d" | grep -qE '^backlog-open-high-medium +1 +0 +0 +1$' \
+      && printf '%s\n' "$js_d" | grep -qx 'fire lines not read (not four tab-separated fields): 1'; then
+      pass "a fire line cut short of a field is said, not dropped"
+    else
+      printf '%s\n' "$js_d"
+      fault "a fire line cut short of a field was dropped without a word, or took a good line with it"
+    fi
+    # A hook that lists no name would make every fired rule a stranger.
+    mkdir -p "$hb_tmp/stats-mute/scripts" "$hb_tmp/stats-mute/skills/jeffy/hooks" \
+      && cp scripts/jeffy-stats.sh "$hb_tmp/stats-mute/scripts/" \
+      && printf '#!/usr/bin/env bash\nexit 0\n' > "$hb_tmp/stats-mute/skills/jeffy/hooks/stop-hook.sh"
+    js_mute="$(bash "$hb_tmp/stats-mute/scripts/jeffy-stats.sh" "$js_proj" --rules 2>&1)"; js_mute_rc=$?
+    if [ "$js_mute_rc" -eq 2 ] && printf '%s\n' "$js_mute" | grep -qF 'listed no rule name'; then
+      pass "jeffy-stats --rules stops when the Stop hook lists no rule name"
+    else
+      printf 'rc=%s\n%s\n' "$js_mute_rc" "$js_mute"
+      fault "jeffy-stats --rules printed a table against an empty rule list (exit $js_mute_rc)"
     fi
 
     # P2-26: context pressure, measured from the transcript rather than
@@ -11789,19 +11833,29 @@ fi
 #    with no name fires unseen and a name on two sites counts two rules as
 #    one. The census reads the hook's text outside its helper block and
 #    outside comments: no line there assigns a message to `violation`
-#    directly, every call of a site helper names a literal slug, and no slug
-#    is written twice. The synthetic hooks come first, because a census that
-#    cannot fail proves nothing about the real one.
+#    directly, every call of a site helper names a literal slug, no slug is
+#    written twice, and the state file is removed outside jeffy_end_run only
+#    at a counted set of places. The synthetic hooks come first, because a
+#    census that cannot fail proves nothing about the real one.
 ri_sites() { # $1 a stop hook; its lines outside the helper block and outside comments, numbered
   grep -n '' "$1" | sed '/^[0-9]*:# rule helpers: begin$/,/^[0-9]*:# rule helpers: end$/d' | grep -vE '^[0-9]+:[[:space:]]*#'
 }
 ri_ids() { # $1 a stop hook; the literal rule id at every site, one per line
   ri_sites "$1" | grep -oE '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire) [a-z0-9]+(-[a-z0-9]+)+ ' | awk '{ print $2 }'
 }
-ri_census_fault() { # $1 a stop hook; prints the first fault, or nothing when every site carries one name of its own
-  local ri_hit
-  ri_hit="$(ri_sites "$1" | grep -E '[^A-Za-z0-9_]violation="[^"]' | head -n 1)"
+ri_census_fault() { # $1 a stop hook, $2 how many places may remove the state file outside jeffy_end_run (default 0); prints the first fault, or nothing
+  local ri_hit ri_k
+  # The one assignment allowed outside the helpers is the empty reset.
+  ri_hit="$(ri_sites "$1" | sed -E 's/violation=""([[:space:];]|$)/\1/g' \
+    | grep -E '[^A-Za-z0-9_]violation\+?=|printf -v violation([^A-Za-z0-9_]|$)' | head -n 1)"
   [ -z "$ri_hit" ] || { printf 'line %s assigns violation without a rule\n' "${ri_hit%%:*}"; return 0; }
+  # A run ending that states a rule goes through jeffy_end_run, which is the
+  # one place that names it and removes the state file. Every other removal
+  # is counted, so a new ending cannot join them unseen.
+  # shellcheck disable=SC2016  # the pattern is hook source, read literally
+  ri_hit="$(ri_sites "$1" | grep -F 'rm -f "$state"' | cut -d: -f1 | tr '\n' ' ')"
+  ri_k="$(printf '%s' "$ri_hit" | wc -w | tr -d '[:space:]')"
+  [ "$ri_k" -eq "${2:-0}" ] || { printf '%s place(s) remove the state file outside jeffy_end_run (line %s), where %s are known\n' "$ri_k" "${ri_hit% }" "${2:-0}"; return 0; }
   ri_hit="$(ri_sites "$1" | grep -E '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire) ' \
     | grep -vE '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire) [a-z0-9]+(-[a-z0-9]+)+ ' | head -n 1)"
   [ -z "$ri_hit" ] || { printf 'line %s calls a rule helper without a literal rule id\n' "${ri_hit%%:*}"; return 0; }
@@ -11823,20 +11877,40 @@ else
   cp "$ri_tmp/clean.sh" "$ri_tmp/bare.sh"; printf '%s\n' '  violation="bare text"' >> "$ri_tmp/bare.sh"
   # shellcheck disable=SC2016
   { cp "$ri_tmp/clean.sh" "$ri_tmp/var.sh"; printf '%s\n' 'jeffy_refuse "$var" "text"' >> "$ri_tmp/var.sh"; }
+  # Four more ways to write a refusal past the helpers, and a run ending that
+  # removes the state file itself.
+  ri_forms_missed=""
+  ri_i=0
+  # shellcheck disable=SC2016
+  for ri_form in '  violation=$msg' "  violation='single quoted'" '  violation+=" and more"' '  printf -v violation "%s" "$msg"'; do
+    ri_i=$((ri_i + 1))
+    cp "$ri_tmp/clean.sh" "$ri_tmp/form$ri_i.sh"; printf '%s\n' "$ri_form" >> "$ri_tmp/form$ri_i.sh"
+    ri_census_fault "$ri_tmp/form$ri_i.sh" | grep -qF 'assigns violation without a rule' || ri_forms_missed="$ri_forms_missed [$ri_form]"
+  done
+  # shellcheck disable=SC2016
+  { cp "$ri_tmp/clean.sh" "$ri_tmp/ending.sh"; printf '%s\n' '  echo "the run ends here" >&2' '  rm -f "$state"' '  exit 0' >> "$ri_tmp/ending.sh"; }
   if ri_census_fault "$ri_tmp/dup.sh" | grep -qxF 'rule id dup-id names two sites' \
     && ri_census_fault "$ri_tmp/bare.sh" | grep -qF 'assigns violation without a rule' \
+    && [ -z "$ri_forms_missed" ] \
     && ri_census_fault "$ri_tmp/var.sh" | grep -qF 'without a literal rule id' \
+    && ri_census_fault "$ri_tmp/ending.sh" | grep -qF '1 place(s) remove the state file outside jeffy_end_run' \
+    && [ -z "$(ri_census_fault "$ri_tmp/ending.sh" 1)" ] \
     && [ -z "$(ri_census_fault "$ri_tmp/clean.sh")" ] \
     && [ "$(ri_ids "$ri_tmp/clean.sh" | sort | tr '\n' ' ')" = "four-rule one-rule three-rule two-rule " ]; then
-    pass "the rule census refuses a shared id, a bare assignment and an id that is not literal, and accepts a clean hook"
+    pass "the rule census refuses a shared id, an assignment past the helpers in any form, an id that is not literal and an ending that removes the state file itself, and accepts a clean hook"
   else
-    ri_census_fault "$ri_tmp/dup.sh"; ri_census_fault "$ri_tmp/bare.sh"; ri_census_fault "$ri_tmp/var.sh"; ri_census_fault "$ri_tmp/clean.sh"
-    fault "the rule census accepted a shared id, a bare assignment or an id that is not literal, or refused a clean hook"
+    ri_census_fault "$ri_tmp/dup.sh"; ri_census_fault "$ri_tmp/bare.sh"; ri_census_fault "$ri_tmp/var.sh"; ri_census_fault "$ri_tmp/ending.sh"; ri_census_fault "$ri_tmp/clean.sh"
+    echo "assignment forms the census missed:${ri_forms_missed:- none}"
+    fault "the rule census accepted a shared id, an assignment past the helpers, an id that is not literal or an ending of its own, or refused a clean hook"
   fi
   rm -rf "$ri_tmp"
 fi
 ri_hook="skills/jeffy/hooks/stop-hook.sh"
-ri_fault="$(ri_census_fault "$ri_hook")"
+# The four places that remove the state file without jeffy_end_run: the
+# fault block that names helper-missing itself, the accepted close, the
+# spent budget (its refusal fired as a declaration), and the temp-file fault.
+ri_known=4
+ri_fault="$(ri_census_fault "$ri_hook" "$ri_known")"
 ri_listed="$(bash "$ri_hook" --rules 2>/dev/null < /dev/null)"
 ri_n="$(printf '%s\n' "$ri_listed" | grep -c .)"
 if [ -n "$ri_fault" ]; then
@@ -11844,7 +11918,7 @@ if [ -n "$ri_fault" ]; then
 elif [ "$ri_n" -eq 0 ] || [ "$ri_listed" != "$(ri_ids "$ri_hook" | sort)" ]; then
   fault "stop-hook.sh --rules prints $ri_n name(s), which is not the list of its own refusal and run-ending sites"
 else
-  pass "the stop hook names $ri_n refusal and run-ending sites, each once"
+  pass "the stop hook names $ri_n refusal and run-ending sites, each once, and removes the state file itself at $ri_known known places"
 fi
 
 # K. The check count the published pages state is a floor this run clears,
