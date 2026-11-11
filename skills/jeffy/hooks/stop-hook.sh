@@ -23,13 +23,23 @@ JEFFY_VERSION="1.28.1"
 jeffy_rule_fire() { # $1 rule id, $2 path: lint | declaration | end
   [ -n "${run_tok:-}" ] || return 0
   if ! { mkdir -p "$root/.jeffy/metrics" 2>/dev/null \
-    && printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "${iter:-0}" "$2" "$1" 2>/dev/null >> "$root/.jeffy/metrics/$runid8.fires.tsv"; }; then
+    && printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$(case "${iter:-}" in '' | *[!0-9]*) echo 0 ;; *) echo "$iter" ;; esac)" "$2" "$1" 2>/dev/null >> "$root/.jeffy/metrics/$runid8.fires.tsv"; }; then
     echo "jeffy stop hook: could not append to $root/.jeffy/metrics/$runid8.fires.tsv; the fire of $1 is not recorded." >&2
   fi
 }
 jeffy_refuse() { # $1 rule id, $2 message
   violation="$2"
   violation_rule="$1"
+}
+# The run's identity, which names every file it writes. Called rather than
+# re-typed: the helper-missing ending fires before the ordinary derivation
+# below has run, and two derivations of one identity drift - which is the
+# reason the ordinary site gives for being where it is.
+jeffy_run_ids() {
+  runid8="${fm_session:0:8}"
+  run_tok="$(printf '%s' "$(fm started_at)" | sed -n 's/.*T\([0-9][0-9]\):\([0-9][0-9]\):\([0-9][0-9]\).*/\1\2\3/p')"
+  [ -n "$run_tok" ] && runid8="$runid8-$run_tok"
+  return 0
 }
 # A check that runs in a subshell cannot set a variable here, so its result
 # carries the name in front of the message, and is split at the first pipe:
@@ -43,6 +53,16 @@ jeffy_refuse_from() { # $1 "<rule id>|<message>"
 jeffy_fire_violation() { # $1 path
   [ -n "${violation_rule:-}" ] || return 0
   jeffy_rule_fire "$violation_rule" "$1"
+}
+# A name the hook states but cannot record, declared so --rules lists every
+# name the engine carries and the fire log's silence on it is a disclosed
+# absence rather than a name nobody wrote down. One site qualifies and the
+# reason is the hook's own rule about other sessions: it sits above the
+# foreign-session check, so the state file is not yet known to be this run's
+# and writing into another session's project is the one thing this hook must
+# not do.
+jeffy_rule_declare() { # $1 rule id, $2 why it cannot be recorded
+  :
 }
 # Referee fix A7: every run-ending path after the promise read says a refusal
 # once, as a block, then the state file is gone so the next stop is a no-op.
@@ -62,7 +82,7 @@ jeffy_end_run() { # $1 rule id, $2 stderr message
 # suite sees it.
 if [ "${1:-}" = "--rules" ]; then
   sed '/^# rule helpers: begin$/,/^# rule helpers: end$/d' "${BASH_SOURCE[0]}" | grep -vE '^[[:space:]]*#' \
-    | grep -oE '(^|[^A-Za-z0-9_])jeffy_(refuse|rule_msg|end_run|rule_fire) [a-z0-9]+(-[a-z0-9]+)+ ' \
+    | grep -oE '(^|[^A-Za-z0-9_])jeffy_(refuse|rule_msg|end_run|rule_fire|rule_declare) [a-z0-9]+(-[a-z0-9]+)+ ' \
     | awk '{ print $NF }' | sort
   exit 0
 fi
@@ -163,7 +183,8 @@ jeffy_run_audited() { # $1 project root, $2 run token "| <runid8> |"
 # jq is a declared prerequisite; without it the hook cannot parse its stdin,
 # so fail open (allow the stop) and say why, rather than trap the session.
 if ! command -v jq >/dev/null 2>&1; then
-  echo "jeffy stop hook: jq not found on PATH; not re-feeding. Install jq and re-run /jeffy." >&2
+  echo "jeffy stop hook: jq not found on PATH; not re-feeding. Install jq and re-run /jeffy. (rule jq-missing)" >&2
+  jeffy_rule_declare jq-missing above-the-session-check
   exit 0
 fi
 
@@ -221,11 +242,15 @@ if [ -f "$qv_lib" ]; then
   # shellcheck source=lib/quiet-verify.sh
   . "$qv_lib"
 else
-  qv_msg="jeffy stop hook: the helper $qv_lib is missing, and it holds the heading test, the PLAN.md Verify-section reader and the verify runner; ending the run. Reinstall jeffy (the installer copies the whole hooks folder) and re-run /jeffy."
-  qv_msg="$qv_msg (rule helper-missing)"
+  qv_msg="jeffy stop hook: the helper $qv_lib is missing, and it holds the heading test, the PLAN.md Verify-section reader and the verify runner; ending the run. Reinstall jeffy (the installer copies the whole hooks folder) and re-run /jeffy. (rule helper-missing)"
   echo "$qv_msg" >&2
+  # The identity first, because jeffy_rule_fire names the log after it and
+  # the ordinary derivation sits below this branch - without this the one rule
+  # this engine stated without recording was this one, silently, on the run
+  # that needed the record most.
+  jeffy_run_ids
+  jeffy_rule_fire helper-missing "$([ "$lint" = 1 ] && echo lint || echo end)"
   [ "$lint" = 1 ] && exit 2
-  jeffy_rule_fire helper-missing end
   rm -f "$state"
   jq -n --arg reason "$qv_msg" '{decision: "block", reason: $reason}'
   exit 0
@@ -242,7 +267,9 @@ tu_lib="${BASH_SOURCE[0]%/*}/lib/transcript-usage.sh"
 # forever because the rewriter never found a line to advance (P2-30).
 case "${iter:-x}${max:-x}" in
   *[!0-9]*)
-    echo "jeffy stop hook: malformed state file $state (iteration=$iter, max_iterations=$max); not re-feeding. Run /cancel-jeffy or delete the file." >&2
+    echo "jeffy stop hook: malformed state file $state (iteration=$iter, max_iterations=$max); not re-feeding. Run /cancel-jeffy or delete the file. (rule state-file-malformed)" >&2
+    jeffy_run_ids
+    jeffy_rule_fire state-file-malformed end
     exit 0
     ;;
 esac
@@ -291,11 +318,7 @@ turn_end_epoch="$(date +%s 2>/dev/null || echo 0)"
 # Derived here rather than at the re-feed because the declaration's evaluator
 # check reads the journal under the same run id the hygiene checks use, and
 # two derivations of one identity drift.
-runid8="${fm_session:0:8}"
-run_tok="$(printf '%s' "$(fm started_at)" | sed -n 's/.*T\([0-9][0-9]\):\([0-9][0-9]\):\([0-9][0-9]\).*/\1\2\3/p')"
-if [ -n "$run_tok" ]; then
-  runid8="$runid8-$run_tok"
-fi
+jeffy_run_ids
 
 # P2-21: one telemetry record per turn end. JOURNAL.md is prose - greppable,
 # which is enough for one run and useless across fifty - so the numbers this
@@ -3054,7 +3077,7 @@ if mkdir -p "$root/.jeffy/scratch" 2>/dev/null; then
 fi
 # A project whose scratch directory cannot be made keeps the old location
 # rather than losing the re-feed, so this never fails where it used to work.
-[ -n "$tmp" ] || tmp="$(mktemp "$state.XXXXXX")" || { echo "jeffy stop hook: could not create a temp file beside $state; ending the run." >&2; rm -f "$state"; exit 0; }
+[ -n "$tmp" ] || tmp="$(mktemp "$state.XXXXXX")" || jeffy_end_run temp-file-unavailable "jeffy stop hook: could not create a temp file beside $state; ending the run."
 # The rewriter owns the keys it names and prints every other line verbatim,
 # so the schema is additive: a state file carrying keys this version never
 # heard of survives the re-feed untouched. max_iterations and
@@ -3096,8 +3119,7 @@ if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory
   # still parsed through fm(), so the run re-fed forever at one count with no
   # budget, stall or oscillation baseline ever stamped. (HB-4)
   if [ "$(fm iteration)" != "$next" ]; then
-    hb4_msg="could not advance the iteration counter in $state (its frontmatter must open and close with a line reading exactly ---); not re-feeding. Run /cancel-jeffy or delete the file."
-    hb4_msg="$hb4_msg (rule counter-stuck)"
+    hb4_msg="could not advance the iteration counter in $state (its frontmatter must open and close with a line reading exactly ---); not re-feeding. Run /cancel-jeffy or delete the file. (rule counter-stuck)"
     echo "jeffy stop hook: $hb4_msg" >&2
     jeffy_rule_fire counter-stuck end
     # 1.25.0 (review F9): stderr alone reaches nobody in an unattended run, so
@@ -3114,7 +3136,8 @@ if awk -v n="$next" -v lh="$cur_head" -v lb="$cur_backlog" -v li="$cur_inventory
   rm -f "$state.refused"
 else
   rm -f "$tmp"
-  echo "jeffy stop hook: could not update $state; not re-feeding." >&2
+  echo "jeffy stop hook: could not update $state; not re-feeding. (rule state-rewrite-failed)" >&2
+  jeffy_rule_fire state-rewrite-failed end
   exit 0
 fi
 # 1.25.0 (P1-74): the re-fed prompt is 34 KB and was 21 to 29 percent of

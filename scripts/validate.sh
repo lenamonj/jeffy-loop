@@ -10157,6 +10157,76 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
       fault "stop hook --lint wrote a metrics record for a turn end that never happened"
     fi
 
+    # The one run ending that stated its rule and recorded nothing. The
+    # hook resolves lib/ from its own directory, so a copy staged without it
+    # takes the helper-missing branch - the shape a partial install leaves -
+    # and that branch fires before the ordinary identity derivation below it
+    # has run, so the log it names had no name. The fixture is rebuilt per
+    # leg, because the first run deletes the state file and a second
+    # observation through the same one measures a dead run.
+    hb_hm() { # $1 hook to run; prints "<rule in stderr> <rule in block> <fire lines> <named log>"
+      mkdir -p "$hb_proj/.jeffy/metrics"
+      rm -f "$hb_proj"/.jeffy/metrics/*.fires.tsv
+      hb_write_state sess-1 1 3
+      hb_write_journal 1 3
+      jq -n '{session_id: "sess-1", last_assistant_message: "still working",
+        transcript_path: "", hook_event_name: "Stop"}' > "$hb_tmp/hm_stdin.json"
+      CLAUDE_PROJECT_DIR="$hb_proj" bash "$1" < "$hb_tmp/hm_stdin.json" \
+        > "$hb_tmp/hm_out.json" 2> "$hb_tmp/hm_err.txt"
+      printf '%s %s %s %s' \
+        "$(grep -c '(rule helper-missing)' "$hb_tmp/hm_err.txt")" \
+        "$(jq -r '.reason // ""' "$hb_tmp/hm_out.json" 2>/dev/null | grep -c '(rule helper-missing)')" \
+        "$(fl_n "$hb_proj")" \
+        "$([ -f "$hb_proj/.jeffy/metrics/sess-1-000000.fires.tsv" ] && echo named || echo unnamed)"
+    }
+    mkdir -p "$hb_tmp/nolib" && cp "$hb_hook" "$hb_tmp/nolib/stop-hook.sh"
+    hb_hm_fixed="$(hb_hm "$hb_tmp/nolib/stop-hook.sh")"
+    hb_hm_fired="$(fl_has "$hb_proj" "end${fl_tab}helper-missing")"
+    hb_hm_gone=absent; [ -f "$hb_state" ] && hb_hm_gone=present
+    # The sabotage: the identity derivation in that branch replaced by a
+    # no-op, which is the earlier shape - the rule is still stated and the log
+    # still has nowhere to go. A deletion would empty nothing here, but the
+    # substitution keeps the branch's shape identical either way.
+    mkdir -p "$hb_tmp/nolib-sab"
+    sed 's|^  jeffy_run_ids$|  :|' "$hb_hook" > "$hb_tmp/nolib-sab/stop-hook.sh"
+    hb_hm_parses=no; bash -n "$hb_tmp/nolib-sab/stop-hook.sh" 2>/dev/null && hb_hm_parses=yes
+    hb_hm_differs=no; cmp -s "$hb_hook" "$hb_tmp/nolib-sab/stop-hook.sh" || hb_hm_differs=yes
+    hb_hm_sab="$(hb_hm "$hb_tmp/nolib-sab/stop-hook.sh")"
+    if [ "$hb_hm_fixed" = "1 1 1 named" ] && [ "$hb_hm_fired" = 1 ] && [ "$hb_hm_gone" = absent ]; then
+      pass "a run ended by a missing helper names its rule in stderr and in its block, and appends one fire line to the log its own run id names"
+    else
+      printf 'fixed=[%s] fired=%s state=%s\n' "$hb_hm_fixed" "$hb_hm_fired" "$hb_hm_gone"
+      cat "$hb_tmp/hm_err.txt" 2>/dev/null
+      fault "a run ended by a missing helper left no fire line, named no rule, or kept its state file"
+    fi
+    if [ "$hb_hm_parses" = yes ] && [ "$hb_hm_differs" = yes ] && [ "$hb_hm_sab" = "1 1 0 unnamed" ]; then
+      pass "and that fire line rests on the identity derivation in that branch: without it the rule is still stated and nothing is recorded (sabotage proof)"
+    else
+      printf 'parses=%s differs=%s sabotaged=[%s]\n' "$hb_hm_parses" "$hb_hm_differs" "$hb_hm_sab"
+      fault "the missing-helper fire line does not rest on the identity derivation, or the sabotage did not land"
+    fi
+    rm -rf "$hb_tmp/nolib" "$hb_tmp/nolib-sab"
+    rm -f "$hb_proj"/.jeffy/metrics/*.fires.tsv
+    # The second ending this release could provoke, and the one that pins
+    # the fire log's iteration field. A state file whose iteration is not a
+    # decimal is exactly the state in which the iteration cannot be read, so
+    # the field falls to 0 rather than carrying the unreadable value into a
+    # log whose schema is four tab-separated fields.
+    hb_write_state_extra sess-1 x 3
+    hb_hm_mal_before="$(fl_n "$hb_proj")"
+    hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
+    hb_hm_mal_line="$(cat "$hb_proj"/.jeffy/metrics/*.fires.tsv 2>/dev/null | tail -n 1 | cut -f2,3,4)"
+    if [ -z "$hb_out" ] && grep -qF '(rule state-file-malformed)' "$hb_tmp/hb_err.txt" \
+      && [ "$(fl_n "$hb_proj")" = "$((hb_hm_mal_before + 1))" ] \
+      && [ "$hb_hm_mal_line" = "$(printf '0\tend\tstate-file-malformed')" ]; then
+      pass "a run ended by a malformed state file names its rule and fires it with the iteration field at 0, the value it could not read"
+    else
+      printf 'out=[%s] line=[%s]\n' "$hb_out" "$hb_hm_mal_line"
+      cat "$hb_tmp/hb_err.txt" 2>/dev/null
+      fault "a run ended by a malformed state file left no fire line, named no rule, or wrote a non-decimal iteration"
+    fi
+    rm -f "$hb_proj"/.jeffy/metrics/*.fires.tsv
+
     # K5: lint runs before the declaring iteration appends its certified line,
     # so on a project that has converged before, the latest line is the
     # previous run's and every product change this run made reads here as an
@@ -11841,7 +11911,7 @@ ri_sites() { # $1 a stop hook; its lines outside the helper block and outside co
   grep -n '' "$1" | sed '/^[0-9]*:# rule helpers: begin$/,/^[0-9]*:# rule helpers: end$/d' | grep -vE '^[0-9]+:[[:space:]]*#'
 }
 ri_ids() { # $1 a stop hook; the literal rule id at every site, one per line
-  ri_sites "$1" | grep -oE '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire) [a-z0-9]+(-[a-z0-9]+)+ ' | awk '{ print $2 }'
+  ri_sites "$1" | grep -oE '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire|rule_declare) [a-z0-9]+(-[a-z0-9]+)+ ' | awk '{ print $2 }'
 }
 ri_census_fault() { # $1 a stop hook, $2 how many places may remove the state file outside jeffy_end_run (default 0); prints the first fault, or nothing
   local ri_hit ri_k
@@ -11856,8 +11926,8 @@ ri_census_fault() { # $1 a stop hook, $2 how many places may remove the state fi
   ri_hit="$(ri_sites "$1" | grep -F 'rm -f "$state"' | cut -d: -f1 | tr '\n' ' ')"
   ri_k="$(printf '%s' "$ri_hit" | wc -w | tr -d '[:space:]')"
   [ "$ri_k" -eq "${2:-0}" ] || { printf '%s place(s) remove the state file outside jeffy_end_run (line %s), where %s are known\n' "$ri_k" "${ri_hit% }" "${2:-0}"; return 0; }
-  ri_hit="$(ri_sites "$1" | grep -E '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire) ' \
-    | grep -vE '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire) [a-z0-9]+(-[a-z0-9]+)+ ' | head -n 1)"
+  ri_hit="$(ri_sites "$1" | grep -E '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire|rule_declare) ' \
+    | grep -vE '[^A-Za-z0-9_]jeffy_(refuse|rule_msg|end_run|rule_fire|rule_declare) [a-z0-9]+(-[a-z0-9]+)+ ' | head -n 1)"
   [ -z "$ri_hit" ] || { printf 'line %s calls a rule helper without a literal rule id\n' "${ri_hit%%:*}"; return 0; }
   ri_hit="$(ri_ids "$1" | sort | uniq -d | head -n 1)"
   [ -z "$ri_hit" ] || { printf 'rule id %s names two sites\n' "$ri_hit"; return 0; }
@@ -11906,10 +11976,12 @@ else
   rm -rf "$ri_tmp"
 fi
 ri_hook="skills/jeffy/hooks/stop-hook.sh"
-# The four places that remove the state file without jeffy_end_run: the
-# fault block that names helper-missing itself, the accepted close, the
-# spent budget (its refusal fired as a declaration), and the temp-file fault.
-ri_known=4
+# The three places that remove the state file without jeffy_end_run: the
+# fault block that names helper-missing itself, the accepted close, and the
+# spent budget, whose refusal fires as a declaration. The temp-file fault was
+# the fourth until it was routed through jeffy_end_run, which is what gave it a
+# rule name; a fourth here again is a run ending that names nothing.
+ri_known=3
 ri_fault="$(ri_census_fault "$ri_hook" "$ri_known")"
 ri_listed="$(bash "$ri_hook" --rules 2>/dev/null < /dev/null)"
 ri_n="$(printf '%s\n' "$ri_listed" | grep -c .)"
@@ -11919,6 +11991,57 @@ elif [ "$ri_n" -eq 0 ] || [ "$ri_listed" != "$(ri_ids "$ri_hook" | sort)" ]; the
   fault "stop-hook.sh --rules prints $ri_n name(s), which is not the list of its own refusal and run-ending sites"
 else
   pass "the stop hook names $ri_n refusal and run-ending sites, each once, and removes the state file itself at $ri_known known places"
+fi
+# The enumeration the published claim needs, which the census above does
+# not give it. The claim in docs/usage.md is that every refusal and every run
+# ending has a name and that each stating appends a fire line, and the census
+# reads naming at helper call sites only - so a run ending that calls no
+# helper satisfied it by construction, which is how the temp-file fault ended
+# runs namelessly for a release. The set of paths that end the run is derived
+# here, and it has exactly two shapes: a jeffy_end_run call, which names its
+# rule and fires in the one helper that does both, and a removal of the state
+# file on its own, which is named above and counted. Every member of the
+# first shape is listed with its rule, so one added without a name cannot
+# hide, and the behaviour behind the second shape is driven by scenario
+# rather than read - the helper-missing ending in the hb_ block, the accepted
+# close and the spent budget in the rv_ block.
+ri_end_ids="$(ri_sites "$ri_hook" | grep -oE '[^A-Za-z0-9_]jeffy_end_run [a-z0-9]+(-[a-z0-9]+)+ ' | awk '{ print $2 }' | sort)"
+ri_end_n="$(printf '%s\n' "$ri_end_ids" | grep -c .)"
+# A jeffy_end_run whose first argument is not a literal slug is already a
+# fault above; what this adds is that every slug it does name is a name the
+# engine lists, so the two enumerations cannot disagree.
+ri_end_unlisted="$(printf '%s\n' "$ri_end_ids" | while IFS= read -r ri_e; do
+  [ -n "$ri_e" ] || continue
+  printf '%s\n' "$ri_listed" | grep -qxF -- "$ri_e" || printf '%s ' "$ri_e"
+done)"
+if [ "$ri_end_n" -ge 7 ] && [ -z "$ri_end_unlisted" ] \
+  && printf '%s\n' "$ri_end_ids" | grep -qxF temp-file-unavailable \
+  && printf '%s\n' "$ri_end_ids" | grep -qxF prompt-missing; then
+  pass "every one of the $ri_end_n run endings that go through jeffy_end_run names a rule the engine lists, the temp-file fault among them"
+else
+  printf 'endings=%s unlisted=[%s]\n%s\n' "$ri_end_n" "$ri_end_unlisted" "$ri_end_ids"
+  fault "a run ending through jeffy_end_run names no rule the engine lists, or the enumeration lost a member"
+fi
+
+# The other half: the claim covers every run ending the hook *states*, not
+# only the ones that reach jeffy_end_run, and three sites announced an ending
+# with no name at all for a release because nothing read them. Every line that
+# announces one is required to carry either a jeffy_end_run call or a literal
+# `(rule ` of its own. Read rather than driven, with the driven set named in
+# the scenarios above and below; what this adds is that a fourth nameless
+# ending cannot be written without a fault.
+ri_say="$(ri_sites "$ri_hook" \
+  | grep -E 'ending the (run|loop)|not re-feeding|does not converge' \
+  | grep -vE 'jeffy_end_run |\(rule ' | head -n 3)"
+ri_say_n="$(ri_sites "$ri_hook" | grep -cE 'ending the (run|loop)|not re-feeding|does not converge')"
+# A name the hook declares and never fires is legal and disclosed; the set of
+# them is asserted, so a second one cannot appear unremarked.
+ri_declared="$(ri_sites "$ri_hook" | grep -oE '[^A-Za-z0-9_]jeffy_rule_declare [a-z0-9]+(-[a-z0-9]+)+ ' | awk '{ print $2 }' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+if [ -z "$ri_say" ] && [ "$ri_say_n" -ge 10 ] && [ "$ri_declared" = "jq-missing" ]; then
+  pass "all $ri_say_n lines announcing a run ending name a rule, and the one name the hook declares without recording is jq-missing, above the session check"
+else
+  printf 'announcing=%s declared=[%s]\n%s\n' "$ri_say_n" "$ri_declared" "$ri_say"
+  fault "a line announcing a run ending names no rule, or the declared-but-unrecorded set is not exactly jq-missing"
 fi
 
 # K. The check count the published pages state is a floor this run clears,
