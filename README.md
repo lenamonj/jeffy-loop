@@ -23,6 +23,8 @@ The harness is deliberately hard to fool. If a fix breaks your tests, the loop i
 
 There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->78<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, Dropbox, Tencent, and more. [See them all.](#independent-validation---the-receipts)
 
+**Sending a fix upstream?** If you use Jeffy Loop to open pull requests on repositories you do not own, we strongly recommend running [housebroken](https://github.com/lenamonj/housebroken) (`pip install housebroken-cli`) alongside it. Jeffy proves the fix; housebroken gets it through the maintainer's door. It reads the project's AI policy first, checks that the finding is not already fixed or ruled intended, holds the pull request to one finding and the smallest diff, has a second model attack it, and refuses to file until every gate has passed. Every pull request this project has filed since housebroken shipped went through it.
+
 <div align="center">
 
 <picture>
