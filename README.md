@@ -34,6 +34,12 @@ There is a real-world test for that. Maintainers with no stake in this project h
 
 ## The record
 
+<div align="center">
+
+<img src="media/seal-measured.png" alt="A gold foil seal pressed with the words: Jeffy would rather be measured than believed." width="180">
+
+</div>
+
 Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projects with no connection to this repository, each judged by its own test suite. Every one of these runs is published, failures included.
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
