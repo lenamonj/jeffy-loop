@@ -12,16 +12,41 @@
 set -u
 JEFFY_VERSION="1.28.1"
 
+# rule helpers: begin
+# Every refusal and every run ending this hook can state has a name, and each
+# time one is stated a line is appended to the run's fire log,
+# .jeffy/metrics/<run>.fires.tsv: epoch seconds, iteration, the path it fired
+# on (lint, declaration or end) and the name, tab separated. The log holds
+# names and never message text. A line that cannot be written is said on
+# stderr and changes nothing else: the log records what the hook decided and
+# takes no part in deciding it.
+jeffy_rule_fire() { # $1 rule id, $2 path: lint | declaration | end
+  [ -n "${run_tok:-}" ] || return 0
+  if ! { mkdir -p "$root/.jeffy/metrics" 2>/dev/null \
+    && printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "${iter:-0}" "$2" "$1" 2>/dev/null >> "$root/.jeffy/metrics/$runid8.fires.tsv"; }; then
+    echo "jeffy stop hook: could not append to $root/.jeffy/metrics/$runid8.fires.tsv; the fire of $1 is not recorded." >&2
+  fi
+}
+jeffy_refuse() { # $1 rule id, $2 message
+  violation="$2"
+  violation_rule="$1"
+}
+jeffy_fire_violation() { # $1 path
+  [ -n "${violation_rule:-}" ] || return 0
+  jeffy_rule_fire "$violation_rule" "$1"
+}
 # Referee fix A7: every run-ending path after the promise read says a refusal
 # once, as a block, then the state file is gone so the next stop is a no-op.
-jeffy_end_run() { # $1 stderr message
-  echo "$1" >&2
+jeffy_end_run() { # $1 rule id, $2 stderr message
+  echo "$2 (rule $1)" >&2
+  jeffy_rule_fire "$1" end
   rm -f "$state"
   if [ "${decl_seen:-0}" = 1 ] && [ -n "${violation:-}" ]; then
-    jq -n --arg r "CONVERGENCE REFUSED by the stop hook: $violation. The run has ended and did not converge; state that in one line and stop." '{decision: "block", reason: $r}'
+    jq -n --arg r "CONVERGENCE REFUSED by the stop hook: $violation${violation_rule:+ (rule $violation_rule)}. The run has ended and did not converge; state that in one line and stop." '{decision: "block", reason: $r}'
   fi
   exit 0
 }
+# rule helpers: end
 # 1.21.0 (P1-70): `stop-hook.sh --lint [project root]` derives every check
 # the declaration path enforces and prints the first refusal, or clean,
 # without re-feeding, verifying, ending a run or writing a record. The
@@ -290,6 +315,9 @@ jeffy_write_metrics() {
   [ "$jeffy_metrics_written" = 0 ] || return 0
   jeffy_metrics_written=1
   [ -n "$run_tok" ] || return 0
+  # The fire of a refused declaration, ahead of the tests below, so a metrics
+  # directory that cannot be made is still said.
+  if [ "${decl_seen:-0}" = 1 ]; then jeffy_fire_violation declaration; fi
   command -v jq >/dev/null 2>&1 || return 0
   metrics_dir="$root/.jeffy/metrics"
   mkdir -p "$metrics_dir" 2>/dev/null || return 0
@@ -1230,6 +1258,7 @@ fi
 # Completion promise: prefer the last_assistant_message field newer CLIs put
 # on stdin; fall back to the last assistant entry of the JSONL transcript.
 violation=""
+violation_rule=""
 # Set by the converged-hash check below, read by the two evaluator checks that
 # date their evidence against it. Declared here because a non-git project
 # never reaches that branch and set -u would take the difference personally.
@@ -1323,7 +1352,7 @@ if [ -n "$promise" ]; then
       elif [ "$hunt" = 1 ] && [ -n "$hunt_nonhigh" ]; then
         violation="BACKLOG.md lists an open task that is not a High, and a hunt ledger carries Highs only - a Medium or Low an audit notices goes on that AUDIT entry's Noted, not filed: line, never on the ledger, and a line with no parseable severity is refused the same way, first: $hunt_nonhigh$open_substep"
       elif [ -n "$open_blocking" ]; then
-        violation="BACKLOG.md still lists open High or Medium tasks in Now, Next, or Later (a task line with no parseable severity counts as blocking - the closing rule reads severity from the task line itself, and a High or Medium marked [b] blocks as an open one does: fix it, or move it to Declined with its Derivation), first: $(printf '%s' "$open_blocking" | head -n 1)$open_substep"
+        jeffy_refuse backlog-open-high-medium "BACKLOG.md still lists open High or Medium tasks in Now, Next, or Later (a task line with no parseable severity counts as blocking - the closing rule reads severity from the task line itself, and a High or Medium marked [b] blocks as an open one does: fix it, or move it to Declined with its Derivation), first: $(printf '%s' "$open_blocking" | head -n 1)$open_substep"
       elif [ "$hunt" = 0 ] && command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
         jeffy_cert_hash_check
       fi
@@ -2116,7 +2145,8 @@ EOF
       fi
       if [ "$lint" = 1 ]; then
         if [ -n "$violation" ]; then
-          echo "jeffy lint: a declaration on this tree would be refused - $violation"
+          echo "jeffy lint: a declaration on this tree would be refused - $violation${violation_rule:+ (rule $violation_rule)}"
+          jeffy_fire_violation lint
           exit 1
         fi
         if [ -n "$hunt_pending" ]; then
@@ -2341,7 +2371,7 @@ if [ "$hunt" = 0 ] && [ "$(fm extension_granted)" = "1" ] && [ "$iter" -ge $((ma
     if [ -z "$open_hm" ] || [ "$open_hm" = "0" ]; then
       refill_kind="new Low tasks (open Lows $cur_lows against $ext_lows_rec recorded at the grant)"
     fi
-    jeffy_end_run "jeffy stop hook: the ledger refilled inside the closing extension with $refill_kind (open tasks Now $open_now Next $open_next Later $open_later; last entry $last_type); the extension buys the convergence sequence, not new work - the Lows the grant recorded ride, new filings do not. Ending the run out of budget; the filed tasks stay on the ledger for the next run."
+    jeffy_end_run ledger-refilled-in-extension "jeffy stop hook: the ledger refilled inside the closing extension with $refill_kind (open tasks Now $open_now Next $open_next Later $open_later; last entry $last_type); the extension buys the convergence sequence, not new work - the Lows the grant recorded ride, new filings do not. Ending the run out of budget; the filed tasks stay on the ledger for the next run."
   fi
 fi
 
@@ -2413,7 +2443,7 @@ if [ "$iter" -ge "$max" ]; then
     corrective=1
   else
     if [ -n "$violation" ]; then
-      echo "jeffy stop hook: convergence rejected ($violation) but the budget is spent; ending the run." >&2
+      echo "jeffy stop hook: convergence rejected ($violation${violation_rule:+ (rule $violation_rule)}) but the budget is spent; ending the run." >&2
     fi
     rm -f "$state"
     exit 0
@@ -2507,7 +2537,7 @@ if [ "$iter_max" -gt 0 ] && [ -n "$iter_started" ] && [ "$now_epoch" -ge "$iter_
     # The hook fires after the turn, so it cannot cut a long iteration short;
     # what it can do is refuse to let the next one be shaped the same way.
     if [ "$overrun_flag" = "1" ] && [ -z "$in_window" ]; then
-      jeffy_end_run "jeffy stop hook: two consecutive iterations exceeded the ${iter_max}s per-iteration ceiling (latest: iteration $iter at ${iter_elapsed}s); ending the run. Split the work or mark the task blocked in the next run."
+      jeffy_end_run iteration-ceiling-twice "jeffy stop hook: two consecutive iterations exceeded the ${iter_max}s per-iteration ceiling (latest: iteration $iter at ${iter_elapsed}s); ending the run. Split the work or mark the task blocked in the next run."
     fi
     new_overrun=1
     overrun_note="iteration $iter took ${iter_elapsed}s against a ${iter_max}s per-iteration ceiling; split the next task into work that fits, or mark it blocked with the reason - a second consecutive overrun ends the run"
@@ -2516,7 +2546,7 @@ fi
 
 if [ "$wall_max" -gt 0 ] && [ -n "$wall_elapsed" ] && [ "$wall_elapsed" -gt "$wall_max" ] \
   && [ -z "$in_window" ] && [ -z "$corrective" ]; then
-  jeffy_end_run "jeffy stop hook: the run reached its wall-clock ceiling (${wall_elapsed}s against ${wall_max}s) at iteration $iter of $max; ending the run out of time rather than out of turns. The ledger and the map carry to the next run."
+  jeffy_end_run wall-clock-ceiling "jeffy stop hook: the run reached its wall-clock ceiling (${wall_elapsed}s against ${wall_max}s) at iteration $iter of $max; ending the run out of time rather than out of turns. The ledger and the map carry to the next run."
 fi
 
 # Re-feed: advance the iteration counter in place, then block the stop with
@@ -2524,7 +2554,7 @@ fi
 # a moved or removed jeffy skills folder leaves it stale, in which
 # case ending the loop with a pointer beats re-feeding garbage.
 if [ ! -f "$prompt_path" ]; then
-  jeffy_end_run "jeffy stop hook: iteration prompt missing at $prompt_path (was the jeffy skill moved or removed?); ending the loop. Re-run /jeffy to relaunch."
+  jeffy_end_run prompt-missing "jeffy stop hook: iteration prompt missing at $prompt_path (was the jeffy skill moved or removed?); ending the loop. Re-run /jeffy to relaunch."
 fi
 # Iteration hygiene at the re-feed boundary: the finished iteration must
 # have journaled itself under the heading grammar. A missing JOURNAL.md is
@@ -2772,7 +2802,7 @@ elif [ -n "$last_head" ] || [ -n "$last_backlog" ] || [ -n "$last_inventory" ]; 
       if [ -n "$extension" ]; then
         stall_ext=" the closing extension decided this turn is forfeited with it;"
       fi
-      jeffy_end_run "jeffy stop hook: two consecutive flat iterations (latest: iteration $iter) with nothing changed outside the loop state files;$stall_ext ending the run as stalled."
+      jeffy_end_run stall-two-flat "jeffy stop hook: two consecutive flat iterations (latest: iteration $iter) with nothing changed outside the loop state files;$stall_ext ending the run as stalled."
     else
       # The second strike yields to a corrective re-feed decided this turn.
       # Both want to end the same turn, and letting the stall stop win puts
@@ -2899,7 +2929,7 @@ if [ "$fp_hash" != "none" ] && [ -z "$stall_exempt" ] && [ -z "$osc_skip" ]; the
   fi
   if [ -n "$fp_match" ]; then
     if [ "$osc_flag" = "1" ] && [ -z "$extension" ] && [ -z "$corrective" ]; then
-      jeffy_end_run "jeffy stop hook: the tree has returned to a state it already held for the second time (iteration $iter matches iteration $fp_match, excluding loop memory); the run is oscillating rather than progressing, so it ends here. The ledger and the map carry to the next run."
+      jeffy_end_run oscillation-second-return "jeffy stop hook: the tree has returned to a state it already held for the second time (iteration $iter matches iteration $fp_match, excluding loop memory); the run is oscillating rather than progressing, so it ends here. The ledger and the map carry to the next run."
     fi
     new_osc=1
     osc_note="iteration $iter left the tree byte-identical to how iteration $fp_match left it, excluding loop memory - work done since has been undone, so decide which version is right and record why in the journal; a second occurrence ends the run"
@@ -3085,9 +3115,9 @@ fi
 reason="$reason This is jeffy iteration $next of $max for this run."
 if [ -n "$violation" ] && [ -z "$corrective" ]; then
   if [ "$hunt" = 1 ]; then
-    reason="$reason HUNT CLOSE REJECTED by the stop hook: $violation. Fix this, then close the hunt again with the promise phrase."
+    reason="$reason HUNT CLOSE REJECTED by the stop hook: $violation${violation_rule:+ (rule $violation_rule)}. Fix this, then close the hunt again with the promise phrase."
   else
-    reason="$reason CONVERGENCE REJECTED by the stop hook: $violation. Fix this, then re-declare convergence with the promise phrase."
+    reason="$reason CONVERGENCE REJECTED by the stop hook: $violation${violation_rule:+ (rule $violation_rule)}. Fix this, then re-declare convergence with the promise phrase."
   fi
 fi
 # The corrective note replaces that one rather than joining it: telling a run
@@ -3095,9 +3125,9 @@ fi
 # carry out, and the point here is an honest close, not another attempt.
 if [ -n "$corrective" ]; then
   if [ "$hunt" = 1 ]; then
-    reason="$reason CORRECTIVE: the hunt close you declared this turn was refused ($violation), and the budget is spent, so this hunt does not close. Do no further work and do not re-declare: append a journal entry recording the refusal and its reason, then close with a run report that states the run ended out of budget without closing the hunt, naming what remains for the next run."
+    reason="$reason CORRECTIVE: the hunt close you declared this turn was refused ($violation${violation_rule:+ (rule $violation_rule)}), and the budget is spent, so this hunt does not close. Do no further work and do not re-declare: append a journal entry recording the refusal and its reason, then close with a run report that states the run ended out of budget without closing the hunt, naming what remains for the next run."
   else
-    reason="$reason CORRECTIVE: the convergence you declared this turn was refused ($violation), and the budget is spent, so this run does not converge. Do no further work and do not re-declare: append a journal entry recording the refusal and its reason, then close with a run report that states the run ended out of budget without converging, naming what remains for the next run."
+    reason="$reason CORRECTIVE: the convergence you declared this turn was refused ($violation${violation_rule:+ (rule $violation_rule)}), and the budget is spent, so this run does not converge. Do no further work and do not re-declare: append a journal entry recording the refusal and its reason, then close with a run report that states the run ended out of budget without converging, naming what remains for the next run."
   fi
 fi
 if [ -n "$hygiene" ]; then

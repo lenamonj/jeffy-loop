@@ -2617,6 +2617,13 @@ fi
 #     unaffected; a foreign session's state file is left untouched; and a
 #     project with no state file is a silent no-op. Needs jq (the hook's own
 #     runtime dependency); skips cleanly without it.
+#     The fire log: a refusal or a run ending appends one line to
+#     .jeffy/metrics/<run>.fires.tsv - epoch, iteration, path (lint,
+#     declaration or end) and the rule's name. A fixture project holds more
+#     than one run, so the two counters below read every log under it.
+fl_n() { cat "$1"/.jeffy/metrics/*.fires.tsv 2>/dev/null | grep -c .; }
+fl_has() { cat "$1"/.jeffy/metrics/*.fires.tsv 2>/dev/null | cut -f3,4 | grep -cxF -- "$2"; }
+fl_tab="$(printf '\t')"
 if command -v jq >/dev/null 2>&1; then
   hb_tmp="$(mktemp -d)" || hb_tmp=""
   if [ -z "$hb_tmp" ]; then
@@ -4942,12 +4949,23 @@ Verdict: PASS"
       # Second strike: a flat iteration with the flag already armed ends
       # the run the way budget exhaustion does.
       hb_write_state_stall sess-1 2 6 "$hb_head" "$hb_ck" 1
+      hb_fl_before="$(fl_n "$hb_proj")"
+      hb_fh_before="$(fl_has "$hb_proj" "end${fl_tab}stall-two-flat")"
       hb_out="$(hb_run sess-1 'still working' '' 2>"$hb_tmp/hb_err.txt")"
       if [ -z "$hb_out" ] && [ ! -f "$hb_state" ] && grep -q 'ending the run as stalled' "$hb_tmp/hb_err.txt"; then
         pass "stop hook ends the run on the second consecutive flat iteration (state deleted, stderr note)"
       else
         printf '%s\n' "$hb_out"
         fault "stop hook did not end a stalled run on the second flat iteration"
+      fi
+      if [ "$(fl_n "$hb_proj")" = "$((hb_fl_before + 1))" ] \
+        && [ "$(fl_has "$hb_proj" "end${fl_tab}stall-two-flat")" = "$((hb_fh_before + 1))" ] \
+        && grep -qF '(rule stall-two-flat)' "$hb_tmp/hb_err.txt"; then
+        pass "a run ended by the stall gate appends a fire line on the end path"
+      else
+        cat "$hb_proj"/.jeffy/metrics/*.fires.tsv 2>/dev/null
+        cat "$hb_tmp/hb_err.txt"
+        fault "a run ended by the stall gate left no fire line on the end path, or its note names no rule"
       fi
 
       # Progress with the flag armed clears it; a later flat iteration is
@@ -9908,6 +9926,11 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
     hb_write_backlog '- [ ] T9 (Medium, runtime, correctness): open. Acceptance: x.' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
     hb_state_before="$(cksum < "$hb_state")"
     hb_metrics_before="$(hb_metrics_n)"
+    # Turn records by line, across every run of the project: a record appended
+    # to a file that already exists leaves the count of files where it was.
+    hb_rec_n() { cat "$hb_proj"/.jeffy/metrics/*.jsonl 2>/dev/null | grep -c .; }
+    hb_rec_before="$(hb_rec_n)"
+    hb_fl_before="$(fl_n "$hb_proj")"
     hb_lint "$hb_proj"
     if [ "$hb_lint_rc" -eq 1 ] && printf '%s' "$hb_lint_out" | grep -qF 'would be refused' \
       && printf '%s' "$hb_lint_out" | grep -qF 'T9' && [ -f "$hb_state" ] \
@@ -9917,13 +9940,30 @@ expect mbat: 3/5 checks passed :: echo "mbat: 3/5 checks passed"'
       printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
       fault "stop hook --lint did not name the refusal, or rewrote or removed the state file"
     fi
+    if [ "$hb_lint_rc" -eq 1 ] && printf '%s' "$hb_lint_out" | grep -q '(rule backlog-open-high-medium)$' \
+      && [ "$(fl_n "$hb_proj")" = "$((hb_fl_before + 1))" ] \
+      && [ "$(fl_has "$hb_proj" "lint${fl_tab}backlog-open-high-medium")" -ge 1 ] \
+      && [ "$(hb_rec_n)" = "$hb_rec_before" ]; then
+      pass "lint appends a fire line on the lint path and still writes no turn record"
+    else
+      printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
+      cat "$hb_proj"/.jeffy/metrics/*.fires.tsv 2>/dev/null
+      fault "lint left no fire line on the lint path, named no rule, or wrote a turn record"
+    fi
     hb_write_backlog '' "Converged: $(hb_git rev-parse HEAD) - 2026-01-01"
+    hb_fl_before="$(fl_n "$hb_proj")"
     hb_lint "$hb_proj"
     if [ "$hb_lint_rc" -eq 0 ] && printf '%s' "$hb_lint_out" | grep -qF 'jeffy lint: clean' && [ -f "$hb_state" ]; then
       pass "stop hook --lint reports clean on a tree every declaration check passes (P1-70 control)"
     else
       printf 'rc=%s\n%s\n' "$hb_lint_rc" "$hb_lint_out"
       fault "stop hook --lint did not report clean on a declarable tree"
+    fi
+    if [ "$(fl_n "$hb_proj")" = "$hb_fl_before" ]; then
+      pass "a clean lint appends nothing (control)"
+    else
+      cat "$hb_proj"/.jeffy/metrics/*.fires.tsv 2>/dev/null
+      fault "a clean lint appended a fire line"
     fi
     if [ ! -f "$hb_proj/verify-ran" ]; then
       pass "stop hook --lint never runs the Verify command (P1-70)"
@@ -10869,6 +10909,34 @@ if command -v jq >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
     pass "a blocked High does not buy the closing extension"
   else
     fault "a blocked High bought the closing extension"
+  fi
+
+  # The fire log on the declaration path: a refusal leaves one line naming its
+  # rule and says the name, an accepted close leaves none, and a log that
+  # cannot be written changes no verdict.
+  rv_close; rv_ledger '- [b] H1 (High, runtime, correctness): blocked on a decision'; rv_fire
+  if [ "$(fl_n "$rv_r")" = 1 ] && [ "$(fl_has "$rv_r" "declaration${fl_tab}backlog-open-high-medium")" = 1 ] \
+    && rv_said '(rule backlog-open-high-medium)'; then
+    pass "a refused declaration appends one fire line naming its rule, and the reason names the rule"
+  else
+    cat "$rv_tmp/out" "$rv_tmp/err"; cat "$rv_r"/.jeffy/metrics/*.fires.tsv 2>/dev/null
+    fault "a refused declaration left no fire line naming its rule, or its reason names no rule"
+  fi
+  rv_close; rv_fire
+  if [ "$(rv_verdict)" = accepted ] && [ "$(fl_n "$rv_r")" = 0 ]; then
+    pass "an accepted declaration appends no fire line (control)"
+  else
+    cat "$rv_tmp/out" "$rv_tmp/err"; cat "$rv_r"/.jeffy/metrics/*.fires.tsv 2>/dev/null
+    fault "an accepted declaration appended a fire line, or the honest close was not accepted"
+  fi
+  rv_close; rv_ledger '- [b] H1 (High, runtime, correctness): blocked on a decision'
+  printf 'not a directory\n' > "$rv_r/.jeffy/metrics"; rv_fire
+  if rv_said 'H1 (High' && [ "$(jq -r '.decision' "$rv_tmp/out" 2>/dev/null)" = block ] \
+    && grep -qF 'could not append' "$rv_tmp/err"; then
+    pass "a fire log that cannot be written is said on stderr and the refusal stands"
+  else
+    cat "$rv_tmp/out" "$rv_tmp/err"
+    fault "a fire log that cannot be written was not said on stderr, or it changed the refusal"
   fi
 
   # The tree the Verify command grades is the tree the certified commit holds.
