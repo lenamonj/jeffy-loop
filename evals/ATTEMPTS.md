@@ -452,13 +452,13 @@ untrusted contributor and the model.** Described here by class only:
 originally named the exact mechanism of each of the three, and that text was
 public in this repository from 2026-08-14 until this commit. One of the three
 has since been reported to the vendor through their published security channel
-and **was scored Low (2.3) on 2026-08-20**, with Anthropic stating on
+and **was scored on 2026-08-20**, with Anthropic stating on
 2026-08-21 that their review of the report is ongoing; the other two have not
 been reported, so their mechanics are withheld here as well. Anthropic has
 also asked directly that the details stay unpublished until the report
-resolves, which matches the commitment the report already made, so the
-mechanics stay withheld until then - at which point this section says what it
-found.
+resolves, which matches the commitment the report already made. The report
+was closed as Resolved on 2026-11-12 and remains confidential, so the
+mechanics stay withheld.
 
 **A correction, kept visible.** For one day this section read that the vendor
 had "accepted it as a valid finding". That was an inference from a HackerOne

@@ -21,7 +21,7 @@ The model writes the patch. The harness around it decides whether that patch can
 
 The harness is deliberately hard to fool. If a fix breaks your tests, the loop is told to revert it. The loop is told never to push, and the hook never pushes; keep push off its allowlist. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI agent with no part in the run signs off. The goal is fixes that survive scrutiny.
 
-There is a real-world test for that. Maintainers with no stake in this project have merged <!-- count:merged -->78<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, Dropbox, Tencent, and more. [See them all.](#independent-validation---the-receipts)
+There is a real-world test for that. Anthropic fixed a security issue this loop found in claude-code-action, and closed the report as Resolved after we retested the fix. Maintainers with no stake in this project have merged <!-- count:merged -->78<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, Dropbox, Tencent, and more. [See them all.](#independent-validation---the-receipts)
 
 **Sending a fix upstream?** If you use Jeffy Loop to open pull requests on repositories you do not own, we strongly recommend running [housebroken](https://github.com/lenamonj/housebroken) (`pip install housebroken-cli`) alongside it. Jeffy proves the fix; housebroken gets it through the maintainer's door. It reads the project's AI policy first, checks that the finding is not already fixed or ruled intended, holds the pull request to one finding and the smallest diff, has a second model attack it, and refuses to file until every gate has passed. Every pull request this project has filed since housebroken shipped went through it.
 
@@ -165,12 +165,16 @@ Jeffy runs almost the whole RSI cycle on its own engine. Pointed at its own repo
 
 ## Independent Validation - The Receipts
 
-Each finding below was accepted upstream by the project's own maintainers.
+Each finding below was accepted by the project's own people: merged upstream by its maintainers, or reported privately and resolved by its security team.
 
 <table>
   <tr>
-    <th align="left">Merged by</th>
+    <th align="left">Merged or resolved by</th>
     <th align="left">Finding</th>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/anthropics.png" width="20" height="20" alt="" align="absmiddle"> Anthropic</td>
+    <td><a href="https://github.com/anthropics/claude-code-action">claude-code-action</a> - security report resolved in 90 days<br>A security issue reported privately through their program was scored by their own security team and fixed. They asked us to retest, we confirmed the fix holds, and they closed the report as Resolved. The report is confidential, so its details are not published here</td>
   </tr>
   <tr>
     <td><img src="https://github.com/NVIDIA.png" width="20" height="20" alt="" align="absmiddle"> NVIDIA</td>
@@ -300,21 +304,6 @@ Each finding below was reproduced upstream, and the project shipped its own fix 
     <td><img src="https://github.com/google.png" width="20" height="20" alt="" align="absmiddle"> Google</td>
     <td><a href="https://github.com/google/osv-scanner/issues/3107">osv-scanner #3107</a><br>Vulnerability grouping was order dependent: a record that only linked two existing groups when it arrived last left them split, so one alias could appear in two groups of a scan; the maintainer rewrote the grouper around a union-find in his own <a href="https://github.com/google/osv-scanner/pull/3114">pull request</a>, resolving the issue</td>
     <td>16 days</td>
-  </tr>
-</table>
-
-## Private security
-
-<table>
-  <tr>
-    <th align="left">Reported to</th>
-    <th align="left">Outcome</th>
-    <th align="left">Answered in</th>
-  </tr>
-  <tr>
-    <td><img src="https://github.com/anthropics.png" width="20" height="20" alt="" align="absmiddle"> Anthropic</td>
-    <td>A security issue in <a href="https://github.com/anthropics/claude-code-action">claude-code-action</a>, scored Low (2.3), reported through their program and reproduced and triaged by their own security team. The details stay unpublished at their request until the report resolves.</td>
-    <td>Scored Low (2.3) in 6 days</td>
   </tr>
 </table>
 
