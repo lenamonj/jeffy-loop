@@ -10,7 +10,7 @@
 # directory Claude Code was started in, so Bash-tool cwd drift mid-iteration
 # cannot kill the loop.
 set -u
-JEFFY_VERSION="1.29.1"
+JEFFY_VERSION="1.29.2"
 
 # rule helpers: begin
 # Every refusal and every run ending this hook can state has a name, and each
