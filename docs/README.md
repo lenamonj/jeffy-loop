@@ -7,6 +7,7 @@
 | [How it works](how-it-works.md) | The run lifecycle, what the engine enforces, the full rule set, a converged stop, and how the loop improves itself |
 | [Recursive self-improvement](recursive-self-improvement.md) | What RSI means in Jeffy: the cycle it runs on its own engine, the step a human in the loop keeps, the guardrails, and what it is not |
 | [Recursive self-learning](recursive-self-improvement.md#recursive-self-learning) | The standard both tools are held to after a mistake, the records it runs on with an example from each, and how each record feeds the next |
+| [The scheduled review](recursive-self-improvement.md#the-review-runs-on-a-schedule) | The weekly and monthly reviews that apply that standard, the sandbox the unattended session runs in, and what code checks after it |
 | [Receipts](../evals/README.md) | Every open-source target with its outcome, the merged patches, the greenfield builds |
 | [Contributing](../CONTRIBUTING.md) | The validator and the review bar |
 | [White paper](https://github.com/lenamonj/jeffy-loop/raw/main/docs/The-Jeffy-Loop.pdf) | The full argument, written for readers new to agent loops |

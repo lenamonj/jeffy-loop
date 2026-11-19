@@ -8,7 +8,7 @@
 
 In 1965 the mathematician I. J. Good described a machine able to design a better machine than itself, and called what would follow an "intelligence explosion".[^good] Recursive self-improvement (RSI) is the name that idea goes by now: a system that is both the thing being improved and the thing doing the improving.
 
-Jeffy runs almost the whole of that cycle on its own engine. It audits itself, writes the fix, proves the fix with a check, and has a second agent try to reject the work. The last step it leaves out on purpose: a human in the loop makes every final decision on what changes. This page says what each of those claims rests on. It then sets out the standard Jeffy and Housebroken are held to after a miss, the records that standard runs on, and an example from each.
+Jeffy runs almost the whole of that cycle on its own engine. It audits itself, writes the fix, proves the fix with a check, and has a second agent try to reject the work. The last step it leaves out on purpose: a human in the loop makes every final decision on what changes. This page says what each of those claims rests on. It then sets out the standard Jeffy and Housebroken are held to after a miss, the records that standard runs on with an example from each, and the schedule that applies it every week.
 
 ## The closed loop
 
@@ -140,6 +140,52 @@ A gate or a test with no record of having been seen red is counted at rung 6 unt
 - The count of behavioural checks began at 119. The [README](../README.md) carries the current floor, and check K holds that number to the validator run.
 - The [receipts](../evals/README.md) list every merged patch, and [`evals/ATTEMPTS.md`](../evals/ATTEMPTS.md) lists every study target that did not converge.
 - The review in the last row above is new. The first one ran on 2026-11-19. From then on, it reports for each window: how often a closed cause came back, the share of misses first found by someone outside, the time from a miss's origin to its detection, the share of countermeasures at rungs 1 to 3, and the share with a recorded red proof. Those numbers go here once there are two reviews to compare. Until then this section claims no trend.
+
+## The review runs on a schedule
+
+A standard that depends on someone remembering to apply it is prose, the lowest rung of the ladder above. So the review of what went wrong is started by a scheduled task, and what it may do is fixed in code. This is how the project is run. The scheduling code lives with the maintainer's records and is not part of the package you install.
+
+**Every Monday** a task starts a review session with nobody present. Code, and not the session, decides what is owed, gathers the week's records and starts the session with a fixed brief. The session lists every miss recorded since the last review and takes each serious one apart: where the work left its plan, which checks let it through, and what would have stopped it. It ends with two things. The first is a ranked list of what the next version of Jeffy Loop and of Housebroken should carry, or a plain statement that a tool has nothing ready. The second is a written answer to three questions that are asked every week:
+
+1. Is the path we are on reducing mistakes from the start of the process to its end, and what in the record shows it?
+2. Given what we are doing now, what would improve the process?
+3. Of all the mistakes logged, which one thing, built this week, would prevent the most of them?
+
+The answers have to cite the record. "It is going well" is not an answer, and neither is a list of what was built.
+
+**Once a month** a second session reviews the procedure itself. Its questions include these: from all the mistakes logged, what should the procedure gain; is the path reducing mistakes; and where does the scaffolding cost more than it prevents? It may rewrite the procedure's working sections, and each change it makes carries the miss or the measure that motivated it and a prediction that a later review checks. A change whose prediction fails is reverted. It may not rewrite the procedure's purpose, its ground rules or its guardrails. Those it can only propose, and a person decides.
+
+**The rule for rules.** A rule in code is written only from a failure the record shows: the facts first, then the cause, then the code. A guess about what might go wrong is not grounds for one.
+
+### What the scheduled session can do
+
+| | The scheduled session |
+|:---|:---|
+| Reads | Both tools' repositories and the maintainer's records |
+| Writes | Review files and incident analyses, and once a month the working sections of the procedure |
+| Runs | One program: a read-only reader of git history |
+| Cannot | Push, post, release, reply to anyone, edit either tool's code, write the incident register, use the web or any connector |
+
+It is started in a restricted mode with nobody to answer a permission prompt, so anything outside that list is refused, whatever a line in a log or a stranger's comment tells it to do. Its shell's own read-only built-ins work inside the same folders and nowhere else.
+
+### What code checks after it
+
+The session's work is not trusted either. Before anything is recorded, code holds what it wrote to the rules:
+
+| If the session | Code |
+|:---|:---|
+| Changed a file outside its folders, or an earlier review | Fails the run, sets the changes aside and puts the tree back as committed |
+| Rewrote a guarded section of the procedure, or changed it without a new version and a log row | Puts the whole file back and keeps the rewrite for a person |
+| Queued a ruling, a release, a proof or a close | Does not load it: a ruling is a person's, and the rest record things a sandboxed session cannot have done |
+| Failed, ran too long or could not start | Records no review, and logs the failure as an incident for the next one |
+
+Only then is the review recorded, with its cost read from the session's own transcript.
+
+### Seen red before it was switched on
+
+The sandbox was not taken on trust. Before the first scheduled run, the real command was run with a brief that tried each forbidden thing: write the tool, the register and both products, read a file outside its folders, start other programs and push, and in the weekly session write the procedure. Every attempt was refused, and the disk was read afterwards to confirm it. Reading the probe's results turned up two gaps in the first version of the checks above: a session could have queued a ruling, and could have overwritten an earlier review. Writing the tests for those turned up a third: a failed run's changes were committed along with its log line. All three were closed before the schedule was switched on. On 2026-11-19 the scheduling code had 52 tests, and all 68 mutants of its rules were killed.
+
+The schedule was set on 2026-11-19 and its first run is Monday 2026-11-23. It automates finding, analysing and proposing. Nothing it produces ships without a person's word. Until reviews have run on it, this section claims a mechanism and no result.
 
 ## What this is not
 
