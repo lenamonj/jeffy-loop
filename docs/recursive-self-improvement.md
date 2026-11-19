@@ -1,4 +1,4 @@
-# Recursive self-improvement (RSI) in Jeffy
+<h1 align="center">Recursive self-improvement (RSI) in Jeffy</h1>
 
 <div align="center">
 
