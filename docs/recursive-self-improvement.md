@@ -20,7 +20,7 @@ In an RSI loop the system finds its own weak point, changes itself, tests the ch
 4. A second agent with no part in the run tries to reject the result before the run may call itself done.
 5. The engine that comes out is the engine that audits the next round.
 
-Release 1.29.0 is a worked case. A self-run over the change that gave every rule a name found a run ending that stated its rule and recorded nothing, fixed it, and added the checks that now hold it. [The loop improves the loop](how-it-works.md#the-loop-improves-the-loop) has the earlier cases and their commits. [Recursive self-learning](README.md#recursive-self-learning) shows the records this cycle runs on, with a real row from each.
+Release 1.29.0 is a worked case. A self-run over the change that gave every rule a name found a run ending that stated its rule and recorded nothing, fixed it, and added the checks that now hold it. [The loop improves the loop](how-it-works.md#the-loop-improves-the-loop) has the earlier cases and their commits. [Recursive self-learning](README.md#recursive-self-learning) shows the records this cycle runs on, with an example from each.
 
 ## A human in the loop
 

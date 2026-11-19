@@ -316,7 +316,7 @@ Each finding below was reproduced upstream, and the project shipped its own fix 
 | [Usage](docs/usage.md) | Flags, rounds and budgets, [High hunt](docs/usage.md#high-hunt), scoped mode, cancelling, [upgrading](docs/usage.md#already-installed-upgrade), uninstalling, and what to know before a first run |
 | [How it works](docs/how-it-works.md) | The run lifecycle, what the engine enforces, the full rule set, what a converged stop looks like, and how the loop improves itself |
 | [Recursive self-improvement](docs/recursive-self-improvement.md) | What RSI means in Jeffy: the cycle it runs on its own engine, the step a human in the loop keeps, the guardrails, and what it is not |
-| [Recursive self-learning](docs/README.md#recursive-self-learning) | A mistake is allowed once: the standard both tools are held to after a miss, the records it runs on with a real row from each, and how each record feeds the next |
+| [Recursive self-learning](docs/README.md#recursive-self-learning) | A mistake is allowed once: the standard both tools are held to after a miss, the records it runs on with an example from each, and how each record feeds the next |
 | [Headless runs](docs/headless.md) | Running budgeted rounds unattended from bash or PowerShell |
 | [The receipts](evals/README.md) | Every open-source target with its outcome, the merged patches, the greenfield builds |
 | [Contributing](CONTRIBUTING.md) | The validator and the review bar |
