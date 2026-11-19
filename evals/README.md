@@ -95,6 +95,8 @@ Empirical evidence of how an autonomous coding agent performs on real software: 
 
 One more is not a fix and is not counted as one: a **security finding this loop produced in [claude-code-action](./claude-code-action/REPORT.md) was reported to Anthropic's own security program** on 2026-08-14, scored on 2026-08-20, and fixed on 2026-11-12. They asked us to retest, we confirmed the fix holds, and they closed the report as Resolved the same day. The report is confidential, so its details are not published here.
 
+Two more are security findings and are not counted either: two panics on malformed wire input in [smithy-go](https://github.com/aws/smithy-go/pull/713), found by a High hunt, were reported privately to AWS Security on 2026-09-07 with reproductions and patches. The event stream decoder panicked on a header whose value type byte was outside 0 to 9, and the CBOR deserializer converted a 64-bit length to `int` before its bounds check, so a length above `MaxInt64` turned negative, passed the check on string and blob reads, and panicked; skip had no check and left the offset negative for the next read. AWS wrote its own fix for both, merged it on 2026-09-16 and released it in smithy-go v1.28.2 on 2026-09-18.
+
 ## Contributor agreements
 
 The table is in [CONTRIBUTING.md](../CONTRIBUTING.md#agreements-signed-for-upstream-work).
