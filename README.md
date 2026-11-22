@@ -191,7 +191,7 @@ Each finding below was accepted by the project's own people: merged upstream by 
     <td><a href="https://github.com/ARM-software/astc-encoder/pull/668">astc-encoder #668</a> - merged in 28 days<br>On F16C builds <code>float16_to_float(vint4)</code> packed the half-float codes with signed saturation, so every negative half decoded as NaN and a half-float normal map compressed differently on AVX2 than on SSE4.1</td>
   </tr>
   <tr>
-    <td><img src="https://github.com/facebook.png" width="20" height="20" alt="" align="absmiddle"> Meta</td>
+    <td><img src="https://github.com/facebookresearch.png" width="20" height="20" alt="" align="absmiddle"> Meta</td>
     <td><a href="https://github.com/facebook/stylex/pull/1850">stylex #1850</a> - merged in 17 days<br><code>stylex.positionTry</code> emitted every declaration twice, one of them with the property name as its own value, and an RTL variant for every rule<br><br><a href="https://github.com/facebook/stylex/pull/1849">stylex #1849</a> - merged in 17 days<br>Configuring a custom <code>importSources</code> on the rollup plugin or unplugin narrowed the compile gate, so ordinary <code>@stylexjs/stylex</code> modules stopped reaching the compiler and the custom source was never transformed</td>
   </tr>
   <tr>
