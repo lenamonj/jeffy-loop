@@ -272,6 +272,10 @@ Each finding below was accepted by the project's own people: merged upstream by 
     <td><a href="https://github.com/Tencent/MMKV/pull/1700">MMKV #1700</a> - merged in 73 minutes<br>On an instance opened read-only, a <code>set()</code> that overwrote the only key of a single-process store wrote into the read-only mapping and the process died on the write fault (MMKV is the key-value store used in the WeChat app)</td>
   </tr>
   <tr>
+    <td><img src="https://github.com/capitalone.png" width="20" height="20" alt="" align="absmiddle"> Capital One</td>
+    <td><a href="https://github.com/capitalone/datacompy/pull/617">datacompy #617</a> - merged in 41 minutes<br>The HTML comparison report put the text report on the page unescaped, so a missing value printed as <code>&lt;NA&gt;</code> was not shown and any <code>&lt;</code>, <code>&gt;</code> or <code>&amp;</code> in the data was read as markup</td>
+  </tr>
+  <tr>
     <td><img src="https://github.com/SethMMorton.png" width="20" height="20" alt="" align="absmiddle"> natsort</td>
     <td><a href="https://github.com/SethMMorton/natsort/pull/196">natsort #196</a> - merged in 8 days<br>The locale sentinel meant to sort last was three ASCII bytes, so PyICU keys sorted after it (19 million PyPI downloads a month)</td>
   </tr>
