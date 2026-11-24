@@ -25,6 +25,7 @@ A CLA is signed once; a DCO is a `Signed-off-by` line on every commit.
 | Grafana | CLA | 2026-09-24 |
 | HashiCorp | CLA | 2026-09-25 |
 | Tencent | CLA | 2026-10-26 |
+| Capital One | CLA | 2026-11-23 |
 
 ## Before you open a PR
 
