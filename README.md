@@ -13,7 +13,7 @@
 
 **[Quick Install](#quick-install)** &nbsp;·&nbsp; **[Usage](docs/usage.md)** &nbsp;·&nbsp; **[How it works](docs/how-it-works.md)** &nbsp;·&nbsp; **[RSI](docs/recursive-self-improvement.md)** &nbsp;·&nbsp; **[The receipts](evals/README.md)** &nbsp;·&nbsp; **[Headless](docs/headless.md)** &nbsp;·&nbsp; **[White paper](https://github.com/lenamonj/jeffy-loop/raw/main/docs/The-Jeffy-Loop.pdf)** &nbsp;·&nbsp; **[STE100 description](https://github.com/lenamonj/jeffy-loop/raw/main/docs/Jeffy-Loop-STE100.pdf)**
 
-## A Claude Code loop that finds bugs in your repo, fixes them, and checks every fix before it commits. Maintainers have merged <!-- count:merged -->82<!-- /count --> of its patches.
+## A Claude Code loop that finds bugs in your repo, fixes them, and checks every fix before it commits. Maintainers have merged <!-- count:merged -->83<!-- /count --> of its patches.
 
 </div>
 
@@ -21,7 +21,7 @@ The model writes the patch. The harness around it decides whether that patch can
 
 The harness is deliberately hard to fool. If a fix breaks your tests, the loop is told to revert it. The loop is told never to push, and the hook never pushes; keep push off its allowlist. A standard run counts as complete only when a fresh audit is clean, your tests pass again, and an adversarial review by a second AI agent with no part in the run signs off. The goal is fixes that survive scrutiny.
 
-There is a real-world test for that. Anthropic fixed a security issue this loop found in claude-code-action, and closed the report as Resolved after we retested the fix. AWS fixed two panics on malformed input that this loop found in smithy-go and reported privately to AWS Security. Maintainers with no stake in this project have merged <!-- count:merged -->82<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, Dropbox, Tencent, Capital One, and more. [See them all.](#independent-validation---the-receipts)
+There is a real-world test for that. Anthropic fixed a security issue this loop found in claude-code-action, and closed the report as Resolved after we retested the fix. AWS fixed two panics on malformed input that this loop found in smithy-go and reported privately to AWS Security. Maintainers with no stake in this project have merged <!-- count:merged -->83<!-- /count --> of its pull requests, each filed from a local clone, into projects run by NVIDIA, Arm, Meta, Tesla, Google, Apple, Microsoft, Netflix, Apache, Palo Alto Networks, Oracle, IBM, HashiCorp, Cisco, Uber, Square, Cloudflare, Dropbox, Tencent, Capital One, Mozilla, and more. [See them all.](#independent-validation---the-receipts)
 
 **Sending a fix upstream?** If you use Jeffy Loop to open pull requests on repositories you do not own, we strongly recommend running [housebroken](https://github.com/lenamonj/housebroken) (`pip install housebroken-cli`) alongside it. Jeffy proves the fix; housebroken gets it through the maintainer's door. It reads the project's AI policy first, checks that the finding is not already fixed or ruled intended, holds the pull request to one finding and the smallest diff, has a second model attack it, and refuses to file until every gate has passed. Every pull request this project has filed since housebroken shipped went through it.
 
@@ -46,7 +46,7 @@ Jeffy was run against <!-- count:tested -->132<!-- /count --> open-source projec
 
 | Projects tested | Converged | Failed | PRs merged | PRs open | Issues filed |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->82<!-- /count -->** | **<!-- count:prs-open -->10<!-- /count -->** | **<!-- count:issues -->3<!-- /count -->** |
+| **<!-- count:tested -->132<!-- /count -->** | **<!-- count:converged -->103<!-- /count -->** | **<!-- count:failed -->28<!-- /count -->** | **<!-- count:merged -->83<!-- /count -->** | **<!-- count:prs-open -->10<!-- /count -->** | **<!-- count:issues -->3<!-- /count -->** |
 
 **Converged:** the closing audit came back clean and the loop's adversarial evaluator, a fresh-context sub-agent, countersigned it, a standard this repository set and checks itself. That happened in <!-- count:converged -->103<!-- /count --> projects across <!-- count:languages -->13<!-- /count --> languages with no language-specific analyzer; all but five were countersigned, four predate the gate and one ran without it, and six carry a finding blocked at the close, named on its row. **Failed:** the run spent the budget declared before it started without converging, was stopped short of it by decision (thor), or, for libuv, was abandoned before it had one. That leaves PapaParse, an audit held to the same method rather than a loop run, which the receipts page counts as Fixed alongside the 103.
 
@@ -274,6 +274,10 @@ Each finding below was accepted by the project's own people: merged upstream by 
   <tr>
     <td align="center"><img src="https://github.com/capitalone.png" width="20" height="20" alt="" align="absmiddle"> Capital One</td>
     <td><a href="https://github.com/capitalone/datacompy/pull/617">datacompy #617</a> - merged in 41 minutes<br>The HTML comparison report put the text report on the page unescaped, so a missing value printed as <code>&lt;NA&gt;</code> was not shown and any <code>&lt;</code>, <code>&gt;</code> or <code>&amp;</code> in the data was read as markup</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="https://github.com/mozilla.png" width="20" height="20" alt="" align="absmiddle"> Mozilla</td>
+    <td><a href="https://github.com/mozilla/sccache/pull/2954">sccache #2954</a> - merged in 32 days<br>With <code>ignore_time_macros</code> off, a same-size edit to a header containing <code>__DATE__</code> or <code>__TIMESTAMP__</code> was served the old object because <code>result_matches</code> skipped the digest check, and the input file's <code>__TIMESTAMP__</code> was missing from the cache key</td>
   </tr>
   <tr>
     <td align="center"><img src="https://github.com/SethMMorton.png" width="20" height="20" alt="" align="absmiddle"> natsort</td>
